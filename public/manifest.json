@@ -1,0 +1,8 @@
+{
+  "id": "beanie",
+  "name": "Beanie",
+  "description": "Bean-first dial-in workflow for Decent.app.",
+  "version": "0.1.0",
+  "author": "Gilad",
+  "repository": "https://github.com/giladger/beanie"
+}
