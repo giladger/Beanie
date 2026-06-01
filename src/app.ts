@@ -798,18 +798,19 @@ export class BeanieApp {
     const recipe = recipeFromShot(shot);
     const date = new Date(shot.timestamp);
     const notes = shot.annotations?.espressoNotes ?? shot.shotNotes ?? '';
+    const detail = [recipe.profileTitle ?? 'No profile', notes].filter(Boolean).join(' · ');
     return `
       <article class="shot-card">
         <button class="shot-load" data-action="open-shot" data-id="${escapeAttr(shot.id)}">
           <small>${Number.isNaN(date.valueOf()) ? escapeHtml(shot.timestamp) : escapeHtml(date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</small>
-          <b>${formatGrams(recipe.dose)} -> ${formatGrams(recipe.yield)}</b>
-          <span>${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
-          <em>${escapeHtml(notes)}</em>
+          <div class="shot-title-line">
+            <b>${formatGrams(recipe.dose)} -> ${formatGrams(recipe.yield)}</b>
+            ${enjoymentBadge(shot)}
+          </div>
+          <span>${escapeHtml(detail)}</span>
         </button>
-        <div class="shot-stats">
-          ${stat('Gr', recipe.grinderSetting ?? '--')}
-          ${stat('Joy', shot.annotations?.enjoyment != null ? String(shot.annotations.enjoyment) : '--')}
-          ${stat('Frm', String(shot.measurements.length))}
+        <div class="shot-dial">
+          ${stat('Grind', recipe.grinderSetting ?? '--')}
         </div>
         ${renderShotGraph(shot)}
       </article>
@@ -872,19 +873,20 @@ export class BeanieApp {
     return `
       <div class="modal-backdrop">
         <div class="shot-detail-modal panel" role="dialog" aria-modal="true" aria-labelledby="shot-detail-title">
-          <div class="modal-head">
+          <div class="modal-head shot-detail-head">
             <div>
               <span class="eyebrow">Shot</span>
               <h2 id="shot-detail-title">${escapeHtml(title)}</h2>
             </div>
-            <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
+            <div class="shot-detail-head-actions">
+              ${enjoymentBadge(shot, 'detail')}
+              <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
+            </div>
           </div>
           <div class="detail-summary">
             ${stat('Dose', formatGrams(recipe.dose))}
             ${stat('Yield', formatGrams(recipe.yield))}
             ${stat('Grind', recipe.grinderSetting ?? '--')}
-            ${stat('Joy', shot.annotations?.enjoyment != null ? String(shot.annotations.enjoyment) : '--')}
-            ${stat('Frames', String(shot.measurements.length))}
           </div>
           <div class="detail-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</div>
           <div class="detail-chart">
@@ -1000,6 +1002,13 @@ function topStat(label: string, value: string): string {
 
 function stat(label: string, value: string): string {
   return `<div class="stat"><label>${escapeHtml(label)}</label><strong>${escapeHtml(value)}</strong></div>`;
+}
+
+function enjoymentBadge(shot: ShotRecord, size: 'row' | 'detail' = 'row'): string {
+  const value = shot.annotations?.enjoyment;
+  if (value == null) return '';
+  const formatted = Number.isInteger(value) ? value.toString() : value.toFixed(1);
+  return `<span class="enjoyment-badge ${size === 'detail' ? 'large' : ''}" aria-label="Enjoyment ${escapeAttr(formatted)}"><span>Enjoy</span><strong>${escapeHtml(formatted)}</strong></span>`;
 }
 
 function batchSummary(batch: BeanBatch | null): string {
