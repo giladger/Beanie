@@ -15,6 +15,7 @@ export default defineConfig({
     __BUILD_TIME__: JSON.stringify(new Date().toISOString())
   },
   server: {
+    cors: true,
     proxy: {
       '/api': {
         target: `http://${gatewayHost}`,
@@ -28,4 +29,3 @@ export default defineConfig({
     }
   }
 });
-

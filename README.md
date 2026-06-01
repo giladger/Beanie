@@ -14,24 +14,50 @@ The core workflow:
 
 ```bash
 npm install
-npm run dev
+npm run skin:dev
 ```
 
-During development, Vite proxies `/api/*` and `/ws/*` to a running Decent.app gateway at `localhost:8080`. Override with:
+`npm run skin:dev` writes a small development shim into Decent.app's Beanie skin
+folder, then starts Vite on `localhost:5173`. Decent.app still opens the skin
+from `http://localhost:3000/`, but the page loads the app modules from Vite, so
+source changes hot reload without rebuilding or copying `dist`.
+
+During development, Beanie resolves Decent.app API calls from the Decent-served
+page. On the local machine this means the skin uses the gateway at
+`localhost:8080`. Override with:
 
 ```bash
-GATEWAY_HOST=192.168.1.42:8080 npm run dev
+BEANIE_GATEWAY=http://192.168.1.42:8080 npm run skin:dev
 ```
 
 If no gateway is reachable, the skin falls back to realistic demo data so the UI remains inspectable.
+
+Useful development commands:
+
+```bash
+npm run skin:shim     # only install the Decent.app -> Vite shim
+npm run skin:dev      # install the shim and start Vite with hot reload
+npm run skin:deploy   # build and copy the static skin into Decent.app
+```
+
+The default Decent skin folder is:
+
+```text
+~/Library/Containers/net.tadel.reaprime/Data/Documents/web-ui/beanie
+```
+
+Override it with `DECENT_SKIN_DIR=/path/to/beanie`.
 
 ## Release
 
 ```bash
 npm test
-npm run build
+npm run skin:deploy
 npm run release:zip
 ```
+
+`npm run skin:deploy` replaces the dev shim with the current static build in the
+Decent.app skin folder.
 
 The release zip is installable from Decent.app's Web Interface settings. The zip contents place `index.html` and `manifest.json` at the root, matching Decent.app's skin installer expectations.
 

@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "dev": "vite --host 0.0.0.0 --strictPort",
+    "skin:shim": "node scripts/install-dev-shim.mjs",
+    "skin:dev": "npm run skin:shim && vite --host 0.0.0.0 --strictPort",
+    "skin:deploy": "npm run build && npm run validate:manifest && node scripts/deploy-skin.mjs",
     "build": "tsc --noEmit && GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo dev) vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "tsx src/test/runAll.ts",
