@@ -1,8 +1,10 @@
 import {
+  Archive,
   Coffee,
   Delete,
   History,
   Minus,
+  Pencil,
   Play,
   Plus,
   Power,
@@ -20,10 +22,12 @@ import {
 export function refreshIcons(): void {
   createIcons({
     icons: {
+      Archive,
       Coffee,
       Delete,
       History,
       Minus,
+      Pencil,
       Play,
       Plus,
       Power,

@@ -330,6 +330,7 @@ function renderChoices(dialog: InputDialogState): string {
           ${choice.detail ? `<small>${escapeHtml(choice.detail)}</small>` : ''}
         </button>
       `).join('')}
+      <button type="button" class="input-dialog-add-choice" data-action="open-add-grinder">${icon('plus')}<span>Add grinder</span></button>
     </div>
   `;
 }

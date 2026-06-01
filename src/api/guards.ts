@@ -41,6 +41,14 @@ export function readBatches(value: unknown): BeanBatch[] {
   );
 }
 
+export function readBatch(value: unknown): BeanBatch {
+  return checked('BeanBatch', value, validateBeanBatch);
+}
+
+export function readGrinder(value: unknown): Grinder {
+  return checked('Grinder', value, validateGrinder);
+}
+
 export function readGrinders(value: unknown): Grinder[] {
   return checked('Grinder[]', value, (candidate, path, issues) =>
     validateArray(candidate, path, issues, validateGrinder)

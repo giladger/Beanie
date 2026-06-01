@@ -973,10 +973,80 @@ p {
   text-transform: none;
 }
 
+.modal textarea,
+.modal select {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  text-transform: none;
+  font-weight: 700;
+}
+
+.modal .field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.modal-hint {
+  margin: -4px 0 0;
+  color: var(--soft);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.inline-switch {
+  justify-self: start;
+  flex-direction: row;
+  gap: 8px;
+  text-transform: none;
+}
+
 .modal-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.hero-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.hero-bean-actions {
+  display: inline-flex;
+  gap: 4px;
+  flex: none;
+}
+
+.batch-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.batch-control select {
+  height: 32px;
+  max-width: 180px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--soft);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.input-dialog-add-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .settings-row {

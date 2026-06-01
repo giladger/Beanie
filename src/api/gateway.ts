@@ -16,9 +16,11 @@ import type {
 } from './types';
 import {
   ApiValidationError,
+  readBatch,
   readBatches,
   readBean,
   readBeans,
+  readGrinder,
   readGrinders,
   readPaginatedShots,
   readProfiles,
@@ -144,9 +146,15 @@ export const gateway = {
     }),
 
   beans: () => fetchJson<Bean[]>('beans', '/api/v1/beans?includeArchived=false', readBeans),
-  createBean: (bean: Pick<Bean, 'roaster' | 'name'>) =>
+  createBean: (bean: Partial<Bean>) =>
     fetchJson<Bean>('beans', '/api/v1/beans', readBean, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(bean)
+    }),
+  updateBean: (id: string, bean: Partial<Bean>) =>
+    fetchJson<Bean>('beans', `/api/v1/beans/${encodeURIComponent(id)}`, readBean, {
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(bean)
     }),
@@ -156,8 +164,25 @@ export const gateway = {
       `/api/v1/beans/${encodeURIComponent(beanId)}/batches?includeArchived=false`,
       readBatches
     ),
+  createBatch: (beanId: string, batch: Partial<BeanBatch>) =>
+    fetchJson<BeanBatch>(
+      'batches',
+      `/api/v1/beans/${encodeURIComponent(beanId)}/batches`,
+      readBatch,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(batch)
+      }
+    ),
   grinders: () =>
     fetchJson<Grinder[]>('grinders', '/api/v1/grinders?includeArchived=false', readGrinders),
+  createGrinder: (grinder: Partial<Grinder>) =>
+    fetchJson<Grinder>('grinders', '/api/v1/grinders', readGrinder, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(grinder)
+    }),
   profiles: () =>
     fetchJson<ProfileRecord[]>(
       'profiles',

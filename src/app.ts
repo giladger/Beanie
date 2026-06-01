@@ -73,7 +73,14 @@ import {
   writeSettingsPreferences
 } from './domain/settings';
 
-type Modal = 'add-bean' | 'settings' | 'edit-number' | 'shot-detail' | null;
+type Modal =
+  | 'bean-editor'
+  | 'batch-editor'
+  | 'grinder-editor'
+  | 'settings'
+  | 'edit-number'
+  | 'shot-detail'
+  | null;
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
 type ApplyState = 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
 
@@ -99,6 +106,7 @@ interface AppState {
   busy: boolean;
   status: string;
   modal: Modal;
+  editingBeanId: string | null;
   editDialog: InputDialogState | null;
   detailShotId: string | null;
   machine: MachineSnapshot | null;
@@ -137,6 +145,7 @@ export class BeanieApp {
     busy: false,
     status: 'Starting',
     modal: null,
+    editingBeanId: null,
     editDialog: null,
     detailShotId: null,
     machine: null,
@@ -703,10 +712,22 @@ export class BeanieApp {
         await this.resetLocalCache();
         break;
       case 'open-add-bean':
-        this.setState({ modal: 'add-bean' });
+        this.setState({ modal: 'bean-editor', editingBeanId: null });
+        break;
+      case 'open-edit-bean':
+        this.setState({ modal: 'bean-editor', editingBeanId: id ?? this.state.selectedBeanId });
+        break;
+      case 'archive-bean':
+        if (id) await this.archiveBean(id);
+        break;
+      case 'open-add-batch':
+        this.setState({ modal: 'batch-editor' });
+        break;
+      case 'open-add-grinder':
+        this.setState({ modal: 'grinder-editor' });
         break;
       case 'close-modal':
-        this.setState({ modal: null, editDialog: null, detailShotId: null });
+        this.setState({ modal: null, editingBeanId: null, editDialog: null, detailShotId: null });
         break;
       default:
         break;
@@ -737,6 +758,11 @@ export class BeanieApp {
     if (field === 'visualizerUpload') {
       const enabled = (target as HTMLInputElement).checked;
       this.updateSettingsPreferences({ visualizerUpload: enabled });
+      return;
+    }
+
+    if (field === 'batchId') {
+      this.setState({ selectedBatchId: (target as HTMLSelectElement).value || null });
       return;
     }
 
@@ -775,38 +801,179 @@ export class BeanieApp {
       );
       return;
     }
-    if (form.dataset.form !== 'add-bean') return;
-    event.preventDefault();
-    const data = new FormData(form);
-    const roaster = String(data.get('roaster') ?? '').trim();
-    const name = String(data.get('name') ?? '').trim();
-    if (!roaster || !name) return;
+    if (form.dataset.form === 'bean-editor') {
+      event.preventDefault();
+      await this.submitBeanEditor(form);
+      return;
+    }
+    if (form.dataset.form === 'batch-editor') {
+      event.preventDefault();
+      await this.submitBatchEditor(form);
+      return;
+    }
+    if (form.dataset.form === 'grinder-editor') {
+      event.preventDefault();
+      await this.submitGrinderEditor(form);
+    }
+  }
 
-    this.setState({ busy: true, status: 'Adding bean' });
+  private async submitBeanEditor(form: HTMLFormElement): Promise<void> {
+    const data = new FormData(form);
+    const fields: Partial<Bean> = {
+      roaster: String(data.get('roaster') ?? '').trim(),
+      name: String(data.get('name') ?? '').trim(),
+      country: textOrNull(data.get('country')),
+      region: textOrNull(data.get('region')),
+      processing: textOrNull(data.get('processing')),
+      notes: textOrNull(data.get('notes'))
+    };
+    if (!fields.roaster || !fields.name) return;
+
+    const editingId = this.state.editingBeanId;
+    this.setState({ busy: true, status: editingId ? 'Saving bean' : 'Adding bean' });
+
     if (this.state.demo) {
-      const bean: Bean = { id: `demo-${Date.now()}`, roaster, name };
-      this.setState({
-        beans: [bean, ...this.state.beans],
-        modal: null,
-        busy: false,
-        status: 'Bean added in demo'
-      });
-      await this.selectBean(bean.id, { apply: false, preferWorkflow: false });
+      if (editingId) {
+        const beans = this.state.beans.map((bean) =>
+          bean.id === editingId ? { ...bean, ...fields } : bean
+        );
+        this.setState({ beans, modal: null, editingBeanId: null, busy: false, status: 'Bean saved (demo)' });
+      } else {
+        const bean: Bean = { id: `demo-${Date.now()}`, ...fields } as Bean;
+        this.setState({
+          beans: [bean, ...this.state.beans],
+          modal: null,
+          editingBeanId: null,
+          busy: false,
+          status: 'Bean added (demo)'
+        });
+        await this.selectBean(bean.id, { apply: false, preferWorkflow: false });
+      }
       return;
     }
 
     try {
-      const bean = await gateway.createBean({ roaster, name });
+      if (editingId) {
+        const updated = await gateway.updateBean(editingId, fields);
+        const beans = this.state.beans.map((bean) => (bean.id === editingId ? updated : bean));
+        this.setState({ beans, modal: null, editingBeanId: null, busy: false, status: 'Bean saved' });
+      } else {
+        const bean = await gateway.createBean(fields);
+        this.setState({
+          beans: [bean, ...this.state.beans],
+          modal: null,
+          editingBeanId: null,
+          busy: false,
+          status: 'Bean added'
+        });
+        await this.selectBean(bean.id, { apply: false, preferWorkflow: false });
+      }
+    } catch (error) {
+      console.error('[Beanie] Save bean failed', error);
+      this.setState({ busy: false, status: 'Save bean failed' });
+    }
+  }
+
+  private async archiveBean(id: string): Promise<void> {
+    if (!window.confirm('Archive this bag? It will be hidden from the bean list.')) return;
+    this.setState({ busy: true, status: 'Archiving bag' });
+    if (!this.state.demo) {
+      try {
+        await gateway.updateBean(id, { archived: true });
+      } catch (error) {
+        console.error('[Beanie] Archive bean failed', error);
+        this.setState({ busy: false, status: 'Archive failed' });
+        return;
+      }
+    }
+    const beans = this.state.beans.filter((bean) => bean.id !== id);
+    this.setState({ beans, modal: null, editingBeanId: null, busy: false, status: 'Bag archived' });
+    if (this.state.selectedBeanId === id) {
+      const next = beans[0];
+      if (next) await this.selectBean(next.id, { apply: false, preferWorkflow: false });
+      else this.setState({ selectedBeanId: null });
+    }
+  }
+
+  private async submitBatchEditor(form: HTMLFormElement): Promise<void> {
+    const bean = this.selectedBean();
+    if (!bean) return;
+    const data = new FormData(form);
+    const batchInput: Partial<BeanBatch> = {
+      beanId: bean.id,
+      roastDate: textOrNull(data.get('roastDate')),
+      roastLevel: textOrNull(data.get('roastLevel')),
+      weight: numberOrNullInput(data.get('weight')),
+      weightRemaining: numberOrNullInput(data.get('weightRemaining')),
+      frozen: data.get('frozen') === 'on'
+    };
+
+    this.setState({ busy: true, status: 'Adding batch' });
+    if (this.state.demo) {
+      const batch: BeanBatch = { id: `demo-batch-${Date.now()}`, ...batchInput } as BeanBatch;
+      const batches = [batch, ...(this.state.batchesByBean[bean.id] ?? [])];
       this.setState({
-        beans: [bean, ...this.state.beans],
+        batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
+        selectedBatchId: batch.id,
         modal: null,
         busy: false,
-        status: 'Bean added'
+        status: 'Batch added (demo)'
       });
-      await this.selectBean(bean.id, { apply: false, preferWorkflow: false });
+      return;
+    }
+
+    try {
+      const batch = await gateway.createBatch(bean.id, batchInput);
+      const batches = [batch, ...(this.state.batchesByBean[bean.id] ?? [])];
+      this.setState({
+        batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
+        selectedBatchId: batch.id,
+        modal: null,
+        busy: false,
+        status: 'Batch added'
+      });
     } catch (error) {
-      console.error('[Beanie] Add bean failed', error);
-      this.setState({ busy: false, status: 'Add bean failed' });
+      console.error('[Beanie] Add batch failed', error);
+      this.setState({ busy: false, status: 'Add batch failed' });
+    }
+  }
+
+  private async submitGrinderEditor(form: HTMLFormElement): Promise<void> {
+    const data = new FormData(form);
+    const model = String(data.get('model') ?? '').trim();
+    if (!model) return;
+    const grinderInput: Partial<Grinder> = {
+      model,
+      burrs: textOrNull(data.get('burrs')),
+      settingType: String(data.get('settingType') ?? 'numeric'),
+      settingSmallStep: numberOrNullInput(data.get('settingSmallStep')),
+      settingBigStep: numberOrNullInput(data.get('settingBigStep'))
+    };
+
+    this.setState({ busy: true, status: 'Adding grinder' });
+    const selectGrinder = (grinder: Grinder, status: string) => {
+      this.setState({
+        grinders: [grinder, ...this.state.grinders],
+        draft: { ...this.state.draft, grinderId: grinder.id, grinderModel: grinder.model },
+        modal: null,
+        editDialog: null,
+        busy: false,
+        status
+      });
+    };
+
+    if (this.state.demo) {
+      const grinder: Grinder = { id: `demo-grinder-${Date.now()}`, ...grinderInput } as Grinder;
+      selectGrinder(grinder, 'Grinder added (demo)');
+      return;
+    }
+
+    try {
+      const grinder = await gateway.createGrinder(grinderInput);
+      selectGrinder(grinder, 'Grinder added');
+    } catch (error) {
+      console.error('[Beanie] Add grinder failed', error);
+      this.setState({ busy: false, status: 'Add grinder failed' });
     }
   }
 
@@ -1043,12 +1210,21 @@ export class BeanieApp {
   }
 
   private renderHero(bean: Bean | null): string {
-    const batch = this.selectedBatch();
     const draft = this.state.draft;
     return `
       <section class="hero panel">
         <div class="hero-main">
-          <h1>${bean ? escapeHtml(beanLabel(bean)) : 'No bean selected'}</h1>
+          <div class="hero-title-row">
+            <h1>${bean ? escapeHtml(beanLabel(bean)) : 'No bean selected'}</h1>
+            ${
+              bean
+                ? `<div class="hero-bean-actions">
+                    <button class="icon-button" data-action="open-edit-bean" data-id="${escapeAttr(bean.id)}" aria-label="Edit bean" title="Edit bean">${icon('pencil')}</button>
+                    <button class="icon-button" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Archive bag" title="Archive bag">${icon('archive')}</button>
+                  </div>`
+                : ''
+            }
+          </div>
           <p>${escapeHtml(bean?.notes ?? bean?.processing ?? 'Select a bean to load the last dial-in.')}</p>
         </div>
         <div class="hero-side">
@@ -1058,7 +1234,7 @@ export class BeanieApp {
           </label>
           ${this.renderApplyStatus()}
           <span class="chip">${escapeHtml(draft.sourceLabel ?? 'No source')}</span>
-          <span class="chip muted">${escapeHtml(batchSummary(batch))}</span>
+          ${this.renderBatchControl(bean)}
         </div>
       </section>
     `;
@@ -1239,21 +1415,118 @@ export class BeanieApp {
     if (this.state.modal === 'settings') {
       return renderSettingsShell(this.settingsShellModel());
     }
-    if (this.state.modal !== 'add-bean') return '';
+    if (this.state.modal === 'bean-editor') return this.renderBeanEditor();
+    if (this.state.modal === 'batch-editor') return this.renderBatchEditor();
+    if (this.state.modal === 'grinder-editor') return this.renderGrinderEditor();
+    return '';
+  }
+
+  private renderBeanEditor(): string {
+    const editing = this.state.editingBeanId
+      ? this.state.beans.find((bean) => bean.id === this.state.editingBeanId) ?? null
+      : null;
+    const v = (value: string | null | undefined) => escapeAttr(value ?? '');
     return `
       <div class="modal-backdrop">
-        <form class="modal panel" data-form="add-bean" role="dialog" aria-modal="true" aria-labelledby="add-bean-title">
+        <form class="modal panel" data-form="bean-editor" role="dialog" aria-modal="true" aria-labelledby="bean-editor-title">
           <div class="modal-head">
-            <h2 id="add-bean-title">Add Bean</h2>
+            <h2 id="bean-editor-title">${editing ? 'Edit Bean' : 'Add Bean'}</h2>
             <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
           </div>
-          <label>Roaster<input name="roaster" required autocomplete="off" /></label>
-          <label>Coffee<input name="name" required autocomplete="off" /></label>
+          <label>Roaster<input name="roaster" required autocomplete="off" value="${v(editing?.roaster)}" /></label>
+          <label>Coffee<input name="name" required autocomplete="off" value="${v(editing?.name)}" /></label>
+          <div class="field-row">
+            <label>Country<input name="country" autocomplete="off" value="${v(editing?.country)}" /></label>
+            <label>Region<input name="region" autocomplete="off" value="${v(editing?.region)}" /></label>
+          </div>
+          <label>Process<input name="processing" autocomplete="off" value="${v(editing?.processing)}" /></label>
+          <label>Notes<textarea name="notes" rows="2">${escapeHtml(editing?.notes ?? '')}</textarea></label>
           <div class="modal-actions">
-            <button type="button" class="command" data-action="close-modal">Cancel</button>
-            <button class="command primary" type="submit">Add</button>
+            ${
+              editing
+                ? `<button type="button" class="command danger" data-action="archive-bean" data-id="${escapeAttr(editing.id)}">${icon('archive')}<span>Archive</span></button>`
+                : '<button type="button" class="command" data-action="close-modal">Cancel</button>'
+            }
+            <button class="command primary" type="submit">${icon('save')}<span>${editing ? 'Save' : 'Add'}</span></button>
           </div>
         </form>
+      </div>
+    `;
+  }
+
+  private renderBatchEditor(): string {
+    const bean = this.selectedBean();
+    return `
+      <div class="modal-backdrop">
+        <form class="modal panel" data-form="batch-editor" role="dialog" aria-modal="true" aria-labelledby="batch-editor-title">
+          <div class="modal-head">
+            <h2 id="batch-editor-title">Add Batch</h2>
+            <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
+          </div>
+          <p class="modal-hint">${escapeHtml(bean ? beanLabel(bean) : 'No bean selected')}</p>
+          <div class="field-row">
+            <label>Roast date<input type="date" name="roastDate" /></label>
+            <label>Roast level<input name="roastLevel" autocomplete="off" /></label>
+          </div>
+          <div class="field-row">
+            <label>Bag weight (g)<input type="number" name="weight" min="0" step="1" /></label>
+            <label>Remaining (g)<input type="number" name="weightRemaining" min="0" step="1" /></label>
+          </div>
+          <label class="switch inline-switch"><input type="checkbox" name="frozen" /><span>Frozen</span></label>
+          <div class="modal-actions">
+            <button type="button" class="command" data-action="close-modal">Cancel</button>
+            <button class="command primary" type="submit" ${bean ? '' : 'disabled'}>${icon('save')}<span>Add</span></button>
+          </div>
+        </form>
+      </div>
+    `;
+  }
+
+  private renderGrinderEditor(): string {
+    return `
+      <div class="modal-backdrop">
+        <form class="modal panel" data-form="grinder-editor" role="dialog" aria-modal="true" aria-labelledby="grinder-editor-title">
+          <div class="modal-head">
+            <h2 id="grinder-editor-title">Add Grinder</h2>
+            <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
+          </div>
+          <label>Model<input name="model" required autocomplete="off" /></label>
+          <label>Burrs<input name="burrs" autocomplete="off" /></label>
+          <label>Setting type
+            <select name="settingType">
+              <option value="numeric">Numeric</option>
+              <option value="preset">Preset</option>
+            </select>
+          </label>
+          <div class="field-row">
+            <label>Small step<input type="number" name="settingSmallStep" min="0" step="0.01" value="0.1" /></label>
+            <label>Big step<input type="number" name="settingBigStep" min="0" step="0.1" value="1" /></label>
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="command" data-action="close-modal">Cancel</button>
+            <button class="command primary" type="submit">${icon('save')}<span>Add</span></button>
+          </div>
+        </form>
+      </div>
+    `;
+  }
+
+  private renderBatchControl(bean: Bean | null): string {
+    if (!bean) return '';
+    const batches = this.state.batchesByBean[bean.id] ?? [];
+    const selectedId = this.selectedBatch()?.id ?? '';
+    return `
+      <div class="batch-control">
+        <select data-field="batchId" aria-label="Batch">
+          <option value="">No batch</option>
+          ${batches
+            .map(
+              (batch) =>
+                `<option value="${escapeAttr(batch.id)}" ${batch.id === selectedId ? 'selected' : ''}>${escapeHtml(batchOptionLabel(batch))}</option>`
+            )
+            .join('')}
+        </select>
+        <button class="icon-button" data-action="open-add-batch" aria-label="Add batch" title="Add batch">${icon('plus')}</button>
       </div>
     `;
   }
@@ -1441,15 +1714,26 @@ function patchShotAnnotations(
   );
 }
 
-function batchSummary(batch: BeanBatch | null): string {
-  if (!batch) return 'No batch';
+function batchOptionLabel(batch: BeanBatch): string {
   const roast = batch.roastDate ? new Date(batch.roastDate) : null;
   const roastText =
     roast && !Number.isNaN(roast.valueOf())
       ? roast.toLocaleDateString([], { month: 'short', day: 'numeric' })
-      : 'No roast date';
-  const weight = batch.weightRemaining != null ? ` / ${formatGrams(batch.weightRemaining)}` : '';
-  return `${roastText}${weight}`;
+      : 'Batch';
+  const remaining = batch.weightRemaining != null ? ` · ${formatGrams(batch.weightRemaining)}` : '';
+  return `${roastText}${remaining}`;
+}
+
+function textOrNull(value: FormDataEntryValue | null): string | null {
+  const text = String(value ?? '').trim();
+  return text ? text : null;
+}
+
+function numberOrNullInput(value: FormDataEntryValue | null): number | null {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function temp(value: number | null | undefined): string {
