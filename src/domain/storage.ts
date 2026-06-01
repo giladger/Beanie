@@ -36,3 +36,20 @@ export function writePresets(beanId: string, presets: BeanPreset[]): void {
 function presetKey(beanId: string): string {
   return `beanie:presets:${beanId}`;
 }
+
+const favoriteProfilesKey = 'beanie:favorite-profiles';
+
+export function readFavoriteProfiles(): string[] {
+  try {
+    const raw = localStorage.getItem(favoriteProfilesKey);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+export function writeFavoriteProfiles(ids: string[]): void {
+  localStorage.setItem(favoriteProfilesKey, JSON.stringify([...new Set(ids)]));
+}

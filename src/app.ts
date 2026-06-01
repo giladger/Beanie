@@ -31,7 +31,14 @@ import {
   shotFilterForBean,
   yieldForRatio
 } from './domain/beanWorkflow';
-import { readLastBeanId, readPresets, writeLastBeanId, writePresets } from './domain/storage';
+import {
+  readFavoriteProfiles,
+  readLastBeanId,
+  readPresets,
+  writeFavoriteProfiles,
+  writeLastBeanId,
+  writePresets
+} from './domain/storage';
 import {
   demoBatches,
   demoBeans,
@@ -59,6 +66,7 @@ import {
 } from './components/InputDialog';
 import { renderSettingsShell } from './components/SettingsShell';
 import { renderShotGraph } from './components/ShotGraph';
+import { renderProfilePreview } from './components/profilePreview';
 import { LiveChart } from './components/LiveChart';
 import { LiveShotSession, simulateShotFrames, type LiveFrame } from './domain/liveShot';
 import { beanieCache } from './domain/cache';
@@ -77,6 +85,7 @@ type Modal =
   | 'bean-editor'
   | 'batch-editor'
   | 'grinder-editor'
+  | 'profile-picker'
   | 'settings'
   | 'edit-number'
   | 'shot-detail'
@@ -85,6 +94,8 @@ type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
 type ApplyState = 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
 
 const initialSettingsPreferences = readSettingsPreferences();
+
+const FOCUSABLE_SEARCH = new Set(['search', 'profile-search', 'settings-search']);
 
 interface AppState {
   beans: Bean[];
@@ -98,6 +109,8 @@ interface AppState {
   draft: RecipeDraft;
   presets: BeanPreset[];
   search: string;
+  profileSearch: string;
+  favoriteProfiles: string[];
   autoLoad: boolean;
   settingsPreferences: SettingsPreferences;
   settingsSearch: string;
@@ -137,6 +150,8 @@ export class BeanieApp {
     draft: emptyRecipe(),
     presets: [],
     search: '',
+    profileSearch: '',
+    favoriteProfiles: readFavoriteProfiles(),
     autoLoad: initialSettingsPreferences.autoLoad,
     settingsPreferences: initialSettingsPreferences,
     settingsSearch: '',
@@ -726,6 +741,15 @@ export class BeanieApp {
       case 'open-add-grinder':
         this.setState({ modal: 'grinder-editor' });
         break;
+      case 'open-profile-picker':
+        this.setState({ modal: 'profile-picker', profileSearch: '' });
+        break;
+      case 'pick-profile':
+        if (id) this.pickProfile(id);
+        break;
+      case 'toggle-favorite-profile':
+        if (id) this.toggleFavoriteProfile(id);
+        break;
       case 'close-modal':
         this.setState({ modal: null, editingBeanId: null, editDialog: null, detailShotId: null });
         break;
@@ -742,6 +766,36 @@ export class BeanieApp {
     if (target.dataset.action === 'settings-search') {
       this.setState({ settingsSearch: target.value });
     }
+    if (target.dataset.action === 'profile-search') {
+      this.setState({ profileSearch: target.value });
+    }
+  }
+
+  private pickProfile(id: string): void {
+    const record = this.state.profiles.find((profile) => profile.id === id);
+    const draft = { ...this.state.draft };
+    if (record) {
+      draft.profileId = record.id;
+      draft.profile = record.profile;
+      draft.profileTitle = record.profile.title ?? null;
+      // A new profile carries its own temperatures, so drop any prior offset.
+      draft.brewTemp = null;
+    }
+    this.setState({
+      draft: normalizeDraft(draft, this.state.profiles, this.state.grinders),
+      modal: null,
+      profileSearch: '',
+      status: 'Profile selected'
+    });
+  }
+
+  private toggleFavoriteProfile(id: string): void {
+    const favorites = new Set(this.state.favoriteProfiles);
+    if (favorites.has(id)) favorites.delete(id);
+    else favorites.add(id);
+    const favoriteProfiles = [...favorites];
+    writeFavoriteProfiles(favoriteProfiles);
+    this.setState({ favoriteProfiles });
   }
 
   private async onChange(event: Event): Promise<void> {
@@ -1107,6 +1161,7 @@ export class BeanieApp {
 
   private render(): void {
     const bean = this.selectedBean();
+    const focus = this.captureFocus();
     this.root.innerHTML = `
       <div class="app-shell">
         ${this.renderTopbar()}
@@ -1124,6 +1179,29 @@ export class BeanieApp {
     `;
     refreshIcons();
     this.bindLiveElements();
+    this.restoreFocus(focus);
+  }
+
+  private captureFocus(): { action: string; start: number | null } | null {
+    const active = document.activeElement as HTMLInputElement | null;
+    const action = active?.dataset?.action;
+    if (!action || !FOCUSABLE_SEARCH.has(action)) return null;
+    const start = typeof active?.selectionStart === 'number' ? active.selectionStart : null;
+    return { action, start };
+  }
+
+  private restoreFocus(focus: { action: string; start: number | null } | null): void {
+    if (!focus) return;
+    const el = this.root.querySelector<HTMLInputElement>(`[data-action="${focus.action}"]`);
+    if (!el) return;
+    el.focus();
+    if (focus.start != null) {
+      try {
+        el.setSelectionRange(focus.start, focus.start);
+      } catch {
+        /* not a text input */
+      }
+    }
   }
 
   private renderLivePanel(): string {
@@ -1299,16 +1377,68 @@ export class BeanieApp {
   }
 
   private controlProfile(): string {
-    const selectedId = this.profileIdForDraft();
+    const title = this.state.draft.profileTitle ?? 'No profile';
     return `
-      <div class="select-control panel">
+      <div class="select-control panel profile-control">
         <label>Profile</label>
-        <select data-field="profileId">
-          <option value="">No profile</option>
-          ${this.state.profiles.map((profile) => `
-            <option value="${escapeAttr(profile.id)}" ${profile.id === selectedId ? 'selected' : ''}>${escapeHtml(profile.profile.title ?? profile.id)}</option>
-          `).join('')}
-        </select>
+        <button type="button" class="profile-button" data-action="open-profile-picker">
+          <span>${escapeHtml(title)}</span>
+          ${icon('sliders-horizontal')}
+        </button>
+      </div>
+    `;
+  }
+
+  private renderProfilePicker(): string {
+    const query = this.state.profileSearch.trim().toLowerCase();
+    const favorites = new Set(this.state.favoriteProfiles);
+    const selectedId = this.profileIdForDraft();
+    const matches = this.state.profiles.filter((record) => {
+      const title = (record.profile.title ?? '').toLowerCase();
+      const author = (record.profile.author ?? '').toLowerCase();
+      return !query || title.includes(query) || author.includes(query);
+    });
+    const sorted = [...matches].sort((a, b) => {
+      const fa = favorites.has(a.id) ? 0 : 1;
+      const fb = favorites.has(b.id) ? 0 : 1;
+      if (fa !== fb) return fa - fb;
+      return (a.profile.title ?? '').localeCompare(b.profile.title ?? '');
+    });
+
+    return `
+      <div class="modal-backdrop">
+        <div class="modal panel profile-picker" role="dialog" aria-modal="true" aria-labelledby="profile-picker-title">
+          <div class="modal-head">
+            <h2 id="profile-picker-title">Profiles</h2>
+            <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
+          </div>
+          <label class="search">
+            ${icon('search')}
+            <input type="search" data-action="profile-search" value="${escapeAttr(this.state.profileSearch)}" placeholder="Search profiles" />
+          </label>
+          <div class="profile-list">
+            ${
+              sorted.length === 0
+                ? '<p class="empty">No profiles match.</p>'
+                : sorted.map((record) => this.renderProfileRow(record, favorites.has(record.id), record.id === selectedId)).join('')
+            }
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  private renderProfileRow(record: ProfileRecord, favorite: boolean, active: boolean): string {
+    const title = record.profile.title ?? record.id;
+    const author = record.profile.author ?? '';
+    return `
+      <div class="profile-row ${active ? 'active' : ''}">
+        <button type="button" class="profile-fav ${favorite ? 'on' : ''}" data-action="toggle-favorite-profile" data-id="${escapeAttr(record.id)}" aria-label="${favorite ? 'Unfavorite' : 'Favorite'} ${escapeAttr(title)}" aria-pressed="${favorite}">${favorite ? '★' : '☆'}</button>
+        <button type="button" class="profile-pick" data-action="pick-profile" data-id="${escapeAttr(record.id)}">
+          <span class="profile-row-title">${escapeHtml(title)}</span>
+          ${author ? `<span class="profile-row-author">${escapeHtml(author)}</span>` : ''}
+        </button>
+        ${renderProfilePreview(record.profile)}
       </div>
     `;
   }
@@ -1418,6 +1548,7 @@ export class BeanieApp {
     if (this.state.modal === 'bean-editor') return this.renderBeanEditor();
     if (this.state.modal === 'batch-editor') return this.renderBatchEditor();
     if (this.state.modal === 'grinder-editor') return this.renderGrinderEditor();
+    if (this.state.modal === 'profile-picker') return this.renderProfilePicker();
     return '';
   }
 
