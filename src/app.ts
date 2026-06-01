@@ -55,6 +55,8 @@ import {
 } from './components/InputDialog';
 import { renderSettingsShell } from './components/SettingsShell';
 import { renderShotGraph } from './components/ShotGraph';
+import { LiveChart } from './components/LiveChart';
+import { LiveShotSession, simulateShotFrames, type LiveFrame } from './domain/liveShot';
 import { beanieCache } from './domain/cache';
 import {
   applySettingsPreferences,
@@ -96,6 +98,15 @@ interface AppState {
   detailShotId: string | null;
   machine: MachineSnapshot | null;
   scale: ScaleSnapshot | null;
+  liveActive: boolean;
+}
+
+interface LiveReadoutEls {
+  time: HTMLElement | null;
+  weight: HTMLElement | null;
+  pressure: HTMLElement | null;
+  flow: HTMLElement | null;
+  temp: HTMLElement | null;
 }
 
 export class BeanieApp {
@@ -122,7 +133,8 @@ export class BeanieApp {
     editDialog: null,
     detailShotId: null,
     machine: null,
-    scale: null
+    scale: null,
+    liveActive: false
   };
 
   private renderTimer: number | null = null;
@@ -130,6 +142,14 @@ export class BeanieApp {
   private scaleRetryTimer: number | null = null;
   private machineSocket: WebSocket | null = null;
   private scaleSocket: WebSocket | null = null;
+
+  private readonly liveShot = new LiveShotSession();
+  private liveChart: LiveChart | null = null;
+  private liveCanvas: HTMLCanvasElement | null = null;
+  private liveReadoutEls: LiveReadoutEls | null = null;
+  private liveRaf: number | null = null;
+  private liveDirty = false;
+  private simTimer: number | null = null;
 
   constructor(private readonly root: HTMLElement) {}
 
@@ -365,8 +385,8 @@ export class BeanieApp {
     this.machineSocket = ws;
     ws.onmessage = (event) => {
       try {
-        this.state.machine = JSON.parse(event.data) as MachineSnapshot;
-        this.scheduleRender();
+        const snapshot = JSON.parse(event.data) as MachineSnapshot;
+        this.ingestLiveFrame(snapshot, null, Date.now());
       } catch (error) {
         console.warn('[Beanie] Bad machine frame', error);
       }
@@ -385,8 +405,8 @@ export class BeanieApp {
     this.scaleSocket = ws;
     ws.onmessage = (event) => {
       try {
-        this.state.scale = JSON.parse(event.data) as ScaleSnapshot;
-        this.scheduleRender();
+        const snapshot = JSON.parse(event.data) as ScaleSnapshot;
+        this.ingestLiveFrame(null, snapshot, Date.now());
       } catch (error) {
         console.warn('[Beanie] Bad scale frame', error);
       }
@@ -396,6 +416,130 @@ export class BeanieApp {
       if (this.scaleRetryTimer != null) window.clearTimeout(this.scaleRetryTimer);
       this.scaleRetryTimer = window.setTimeout(() => this.connectScaleSocket(), 3000);
     };
+  }
+
+  // Feed one telemetry frame (from either socket, or the demo simulator) into the
+  // live-shot session. The hot path deliberately avoids a full re-render: while a
+  // shot is active we only redraw the canvas and patch readout text by reference.
+  private ingestLiveFrame(
+    machine: MachineSnapshot | null,
+    scale: ScaleSnapshot | null,
+    tMs: number
+  ): void {
+    if (machine) this.state.machine = machine;
+    if (scale) this.state.scale = scale;
+
+    const wasActive = this.state.liveActive;
+    const frame: LiveFrame = { tMs, machine: this.state.machine, scale: this.state.scale };
+    this.liveShot.ingest(frame);
+    const active = this.liveShot.isActive;
+
+    if (active && !wasActive) {
+      // First active frame: render once to mount the live panel + canvas, then draw.
+      this.setState({ liveActive: true, status: 'Live shot' });
+      return;
+    }
+    if (!active && wasActive) {
+      this.onShotEnded();
+      return;
+    }
+    if (active) {
+      this.scheduleLiveDraw();
+      return;
+    }
+    // Idle telemetry: keep the top bar fresh on the existing debounced path.
+    this.scheduleRender();
+  }
+
+  // Coalesce many incoming frames into at most one canvas draw per animation
+  // frame. No rAF is scheduled while idle, so we never spin on a sleeping tablet.
+  private scheduleLiveDraw(): void {
+    this.liveDirty = true;
+    if (this.liveRaf != null) return;
+    this.liveRaf = window.requestAnimationFrame(() => {
+      this.liveRaf = null;
+      if (!this.state.liveActive || !this.liveChart || !this.liveDirty) return;
+      this.liveDirty = false;
+      this.liveChart.resize();
+      this.liveChart.setModel(this.liveShot.model());
+      this.liveChart.draw();
+      this.updateLiveReadouts();
+    });
+  }
+
+  // Re-acquire the canvas + readout nodes after each full render. The DOM is only
+  // rebuilt on user-driven setState, never mid-shot, so these refs stay stable
+  // while telemetry streams in.
+  private bindLiveElements(): void {
+    const canvas = this.root.querySelector<HTMLCanvasElement>('#live-canvas');
+    if (!canvas) {
+      this.liveChart = null;
+      this.liveCanvas = null;
+      this.liveReadoutEls = null;
+      return;
+    }
+    if (canvas !== this.liveCanvas) {
+      this.liveCanvas = canvas;
+      this.liveChart = new LiveChart(canvas, { detailed: true });
+    }
+    this.liveReadoutEls = {
+      time: this.root.querySelector<HTMLElement>('#live-time'),
+      weight: this.root.querySelector<HTMLElement>('#live-weight'),
+      pressure: this.root.querySelector<HTMLElement>('#live-pressure'),
+      flow: this.root.querySelector<HTMLElement>('#live-flow'),
+      temp: this.root.querySelector<HTMLElement>('#live-temp')
+    };
+    this.scheduleLiveDraw();
+  }
+
+  private updateLiveReadouts(): void {
+    const els = this.liveReadoutEls;
+    if (!els) return;
+    const latest = this.liveShot.latest;
+    if (els.time) els.time.textContent = `${this.liveShot.elapsedSeconds.toFixed(1)}s`;
+    if (els.weight) els.weight.textContent = formatNumber(latest.weight, 1);
+    if (els.pressure) els.pressure.textContent = formatNumber(latest.pressure, 1);
+    if (els.flow) els.flow.textContent = formatNumber(latest.flow, 1);
+    if (els.temp) {
+      els.temp.textContent =
+        latest.scaledTemperature == null ? '--' : (latest.scaledTemperature * 10).toFixed(1);
+    }
+  }
+
+  private onShotEnded(): void {
+    const reason = this.liveShot.completionReason;
+    this.setState({
+      liveActive: false,
+      status: reason ? `Shot complete (${reason})` : 'Shot complete'
+    });
+    this.liveShot.reset();
+    const bean = this.selectedBean();
+    if (bean && !this.state.demo) {
+      void this.loadShots(bean).then((shots) => this.setState({ shots }));
+    }
+  }
+
+  // Demo affordance: replay a deterministic simulated shot at real-time pacing so
+  // the live canvas can be throttle-tested without a machine.
+  private startSimulatedShot(): void {
+    if (this.simTimer != null) return;
+    const frames = simulateShotFrames();
+    const startMs = Date.now();
+    let index = 0;
+    const pump = () => {
+      const elapsed = Date.now() - startMs;
+      while (index < frames.length && frames[index]!.tMs <= elapsed) {
+        const frame = frames[index]!;
+        this.ingestLiveFrame(frame.machine ?? null, frame.scale ?? null, startMs + frame.tMs);
+        index += 1;
+      }
+      if (index >= frames.length) {
+        this.simTimer = null;
+        return;
+      }
+      this.simTimer = window.setTimeout(pump, 16);
+    };
+    pump();
   }
 
   private async onClick(event: Event): Promise<void> {
@@ -466,6 +610,9 @@ export class BeanieApp {
         break;
       case 'refresh':
         await this.load();
+        break;
+      case 'simulate-shot':
+        this.startSimulatedShot();
         break;
       case 'open-settings':
         this.setState({ modal: 'settings' });
@@ -687,10 +834,35 @@ export class BeanieApp {
             ${this.renderHistory()}
           </section>
         </main>
+        ${this.renderLivePanel()}
         ${this.renderModal()}
       </div>
     `;
     refreshIcons();
+    this.bindLiveElements();
+  }
+
+  private renderLivePanel(): string {
+    if (!this.state.liveActive) return '';
+    return `
+      <div class="live-panel">
+        <div class="live-card panel">
+          <div class="live-head">
+            <span class="eyebrow">Live shot</span>
+            <div class="live-readouts">
+              ${liveReadout('Time', 'live-time', '0.0s')}
+              ${liveReadout('Weight', 'live-weight', '--', 'g')}
+              ${liveReadout('Pressure', 'live-pressure', '--', 'bar')}
+              ${liveReadout('Flow', 'live-flow', '--', 'ml/s')}
+              ${liveReadout('Temp', 'live-temp', '--', 'C')}
+            </div>
+          </div>
+          <div class="live-canvas-wrap">
+            <canvas id="live-canvas" class="live-canvas"></canvas>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   private renderTopbar(): string {
@@ -707,6 +879,7 @@ export class BeanieApp {
             ${topStat('Scale', scale?.status === 'disconnected' ? 'offline' : `${formatNumber(scale?.weight, 1)} g`)}
           </div>
           <div class="top-icons" role="toolbar" aria-label="Skin actions">
+            ${this.state.demo ? `<button class="icon-tool" data-action="simulate-shot" aria-label="Simulate shot" title="Simulate shot">${icon('play')}</button>` : ''}
             <button class="icon-tool" data-action="open-settings" aria-label="Settings" title="Settings">${icon('settings')}</button>
             <button class="icon-tool" data-action="sleep" aria-label="Sleep" title="Sleep">${icon('power')}</button>
           </div>
@@ -1051,6 +1224,11 @@ export class BeanieApp {
 
 function topStat(label: string, value: string): string {
   return `<div class="top-stat"><label>${escapeHtml(label)}</label><strong>${escapeHtml(value)}</strong></div>`;
+}
+
+function liveReadout(label: string, id: string, value: string, unit = ''): string {
+  const suffix = unit ? `<em>${escapeHtml(unit)}</em>` : '';
+  return `<div class="live-readout"><label>${escapeHtml(label)}</label><strong id="${id}">${escapeHtml(value)}</strong>${suffix}</div>`;
 }
 
 function stat(label: string, value: string): string {
