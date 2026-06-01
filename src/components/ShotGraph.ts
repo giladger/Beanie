@@ -1,44 +1,36 @@
-import type { ShotMeasurement, ShotRecord } from '../api/types';
+import type { ShotRecord } from '../api/types';
+import { buildShotGraphModel, type ShotGraphModel, type ShotGraphSeries } from './shotGraphModel';
 
 interface GraphOptions {
   detailed?: boolean;
+  width?: number;
+  height?: number;
 }
 
-interface GraphPoint {
-  t: number;
-  pressure: number | null;
-  flow: number | null;
-  weight: number | null;
-  temp: number | null;
+interface PlotArea {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
-
-const SERIES = [
-  ['pressure', 'Pressure', 'trace-pressure'],
-  ['flow', 'Flow', 'trace-flow'],
-  ['weight', 'Weight /5', 'trace-weight'],
-  ['temp', 'Temp /10', 'trace-temp']
-] as const;
 
 export function renderShotGraph(shot: ShotRecord | null, options: GraphOptions = {}): string {
-  const measurements = shot?.measurements ?? [];
   const detailed = options.detailed ?? false;
-  const width = detailed ? 920 : 360;
-  const height = detailed ? 340 : 120;
+  const width = options.width ?? (detailed ? 920 : 360);
+  const height = options.height ?? (detailed ? 340 : 120);
   const margin = detailed
-    ? { top: 34, right: 22, bottom: 36, left: 42 }
+    ? { top: 42, right: 22, bottom: 38, left: 42 }
     : { top: 7, right: 7, bottom: 7, left: 7 };
   const className = detailed ? 'shot-graph shot-graph-large' : 'shot-graph';
+  const model = buildShotGraphModel(shot);
+  const ariaLabel = graphAriaLabel(model);
 
-  if (measurements.length < 2) {
-    return `<svg class="${className}" viewBox="0 0 ${width} ${height}" role="img" aria-label="No graph data"></svg>`;
+  if (!model.hasData) {
+    return `<svg class="${className}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeAttr(ariaLabel)}">
+      ${renderNoData(width, height, detailed)}
+    </svg>`;
   }
 
-  const graphPoints = buildPoints(measurements);
-  const maxTime = Math.max(1, ...graphPoints.map((point) => point.t));
-  const allValues = graphPoints.flatMap((point) =>
-    SERIES.map(([key]) => point[key]).filter((value): value is number => value != null)
-  );
-  const maxY = Math.max(10, Math.ceil(Math.max(...allValues, 10) / 2) * 2);
   const plot = {
     x: margin.left,
     y: margin.top,
@@ -46,77 +38,73 @@ export function renderShotGraph(shot: ShotRecord | null, options: GraphOptions =
     height: height - margin.top - margin.bottom
   };
 
-  const xFor = (value: number) => plot.x + (value / maxTime) * plot.width;
-  const yFor = (value: number) => plot.y + (1 - clamp(value / maxY)) * plot.height;
-  const grid = detailed ? renderGrid(height, plot, maxTime, maxY, xFor, yFor) : '';
-  const traces = SERIES.map(([key, , className]) =>
-    renderTrace(graphPoints, key, className, xFor, yFor)
-  ).join('');
-  const legend = detailed ? renderLegend(width) : '';
+  const xFor = (value: number) => plot.x + (value / model.maxTime) * plot.width;
+  const yFor = (value: number) => plot.y + (1 - clamp(value / model.maxY)) * plot.height;
+  const grid = detailed ? renderGrid(height, plot, model.maxTime, model.maxY, xFor, yFor) : '';
+  const markers = renderStepMarkers(model, plot, detailed, xFor);
+  const traces = model.series
+    .map((series) => renderTrace(series, xFor, yFor))
+    .join('');
+  const legend = detailed ? renderLegend(width, model.series) : '';
+  const missing = detailed ? renderMissingNotice(model, plot) : '';
 
-  return `<svg class="${className}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Shot graph">
+  return `<svg class="${className}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeAttr(ariaLabel)}">
     ${grid}
+    ${markers}
     ${traces}
     ${legend}
+    ${missing}
   </svg>`;
 }
 
-function buildPoints(measurements: ShotMeasurement[]): GraphPoint[] {
-  const firstTime = firstTimestamp(measurements);
-  return measurements.map((measurement, index) => {
-    const timestamp = timestampFor(measurement);
-    const fallbackTime = index * 0.5;
-    const t =
-      firstTime != null && timestamp != null
-        ? Math.max(0, (timestamp - firstTime) / 1000)
-        : fallbackTime;
-    const temperature = numeric(measurement.machine.groupTemperature) ?? numeric(measurement.machine.mixTemperature);
-    return {
-      t,
-      pressure: numeric(measurement.machine.pressure),
-      flow: numeric(measurement.machine.flow),
-      weight: scaleWeight(measurement),
-      temp: temperature == null ? null : temperature / 10
-    };
-  });
-}
-
-function firstTimestamp(measurements: ShotMeasurement[]): number | null {
-  for (const measurement of measurements) {
-    const timestamp = timestampFor(measurement);
-    if (timestamp != null) return timestamp;
-  }
-  return null;
-}
-
-function timestampFor(measurement: ShotMeasurement): number | null {
-  const value = measurement.machine.timestamp ?? measurement.scale?.timestamp;
-  const timestamp = value == null ? Number.NaN : Date.parse(value);
-  return Number.isFinite(timestamp) ? timestamp : null;
-}
-
-function scaleWeight(measurement: ShotMeasurement): number | null {
-  const weight = numeric(measurement.scale?.weight);
-  return weight == null ? null : weight / 5;
-}
-
 function renderTrace(
-  graphPoints: GraphPoint[],
-  key: keyof Omit<GraphPoint, 't'>,
-  className: string,
+  series: ShotGraphSeries,
   xFor: (value: number) => number,
   yFor: (value: number) => number
 ): string {
-  const points = graphPoints
-    .filter((point) => point[key] != null)
-    .map((point) => `${xFor(point.t).toFixed(1)},${yFor(point[key]!).toFixed(1)}`)
+  const strokeAttrs = traceStrokeAttrs(series);
+  if (series.samples.length === 1) {
+    const sample = series.samples[0]!;
+    return `<circle class="trace-point ${series.className}" cx="${xFor(sample.t).toFixed(1)}" cy="${yFor(sample.value).toFixed(1)}" r="2.4" ${strokeAttrs} fill="${series.color}" />`;
+  }
+
+  const points = series.samples
+    .map((sample) => `${xFor(sample.t).toFixed(1)},${yFor(sample.value).toFixed(1)}`)
     .join(' ');
-  return points ? `<polyline class="trace ${className}" points="${points}" />` : '';
+  return `<polyline class="trace ${series.className}" ${strokeAttrs} points="${points}" />`;
+}
+
+function traceStrokeAttrs(series: ShotGraphSeries): string {
+  const dash = series.dashArray ? ` stroke-dasharray="${series.dashArray}"` : '';
+  return `stroke="${series.color}"${dash}`;
+}
+
+function renderStepMarkers(
+  model: ShotGraphModel,
+  plot: PlotArea,
+  detailed: boolean,
+  xFor: (value: number) => number
+): string {
+  if (model.markers.length === 0) return '';
+  const labelLimit = 6;
+  return `<g class="chart-step-markers">
+    ${model.markers
+      .map((marker, index) => {
+        const x = xFor(marker.t);
+        const label =
+          detailed && index < labelLimit
+            ? `<text class="chart-axis-label" x="${(x + 4).toFixed(1)}" y="${(plot.y + 13 + (index % 2) * 14).toFixed(1)}">${escapeHtml(marker.label)}</text>`
+            : '';
+        return `<line class="chart-step-marker" x1="${x.toFixed(1)}" y1="${plot.y}" x2="${x.toFixed(1)}" y2="${plot.y + plot.height}" stroke="rgba(255,255,255,0.44)" stroke-width="${detailed ? 1.4 : 1}" stroke-dasharray="5 5" />
+          ${label}`;
+      })
+      .join('')}
+  </g>`;
 }
 
 function renderGrid(
   height: number,
-  plot: { x: number; y: number; width: number; height: number },
+  plot: PlotArea,
   maxTime: number,
   maxY: number,
   xFor: (value: number) => number,
@@ -125,16 +113,28 @@ function renderGrid(
   const xTicks = tickValues(maxTime, 5);
   const yTicks = tickValues(maxY, 5);
   const vertical = xTicks
-    .map((tick) => `<line class="chart-grid-line" x1="${xFor(tick).toFixed(1)}" y1="${plot.y}" x2="${xFor(tick).toFixed(1)}" y2="${plot.y + plot.height}" />`)
+    .map(
+      (tick) =>
+        `<line class="chart-grid-line" x1="${xFor(tick).toFixed(1)}" y1="${plot.y}" x2="${xFor(tick).toFixed(1)}" y2="${plot.y + plot.height}" />`
+    )
     .join('');
   const horizontal = yTicks
-    .map((tick) => `<line class="chart-grid-line" x1="${plot.x}" y1="${yFor(tick).toFixed(1)}" x2="${plot.x + plot.width}" y2="${yFor(tick).toFixed(1)}" />`)
+    .map(
+      (tick) =>
+        `<line class="chart-grid-line" x1="${plot.x}" y1="${yFor(tick).toFixed(1)}" x2="${plot.x + plot.width}" y2="${yFor(tick).toFixed(1)}" />`
+    )
     .join('');
   const xLabels = xTicks
-    .map((tick) => `<text class="chart-axis-label" x="${xFor(tick).toFixed(1)}" y="${height - 12}" text-anchor="middle">${formatTick(tick)}s</text>`)
+    .map(
+      (tick) =>
+        `<text class="chart-axis-label" x="${xFor(tick).toFixed(1)}" y="${height - 12}" text-anchor="middle">${formatTick(tick)}s</text>`
+    )
     .join('');
   const yLabels = yTicks
-    .map((tick) => `<text class="chart-axis-label" x="${plot.x - 10}" y="${(yFor(tick) + 4).toFixed(1)}" text-anchor="end">${formatTick(tick)}</text>`)
+    .map(
+      (tick) =>
+        `<text class="chart-axis-label" x="${plot.x - 10}" y="${(yFor(tick) + 4).toFixed(1)}" text-anchor="end">${formatTick(tick)}</text>`
+    )
     .join('');
 
   return `<g class="chart-grid">
@@ -146,16 +146,47 @@ function renderGrid(
   </g>`;
 }
 
-function renderLegend(width: number): string {
-  const itemWidth = 118;
-  const start = Math.max(48, width - itemWidth * SERIES.length - 12);
+function renderLegend(width: number, series: ShotGraphSeries[]): string {
+  const itemWidth = 108;
+  const columns = Math.max(1, Math.min(series.length, Math.floor((width - 24) / itemWidth)));
+  const start = Math.max(12, width - columns * itemWidth - 12);
+
   return `<g class="chart-legend">
-    ${SERIES.map(([, label, className], index) => {
-      const x = start + index * itemWidth;
-      return `<line class="legend-line ${className}" x1="${x}" y1="16" x2="${x + 24}" y2="16" />
-        <text class="legend-label" x="${x + 31}" y="20">${label}</text>`;
-    }).join('')}
+    ${series
+      .map((item, index) => {
+        const x = start + (index % columns) * itemWidth;
+        const y = 16 + Math.floor(index / columns) * 15;
+        const dash = item.dashArray ? ` stroke-dasharray="${item.dashArray}"` : '';
+        return `<line class="legend-line ${item.className}" x1="${x}" y1="${y}" x2="${x + 23}" y2="${y}" stroke="${item.color}"${dash} />
+        <text class="legend-label" x="${x + 29}" y="${y + 4}">${escapeHtml(item.shortLabel)}</text>`;
+      })
+      .join('')}
   </g>`;
+}
+
+function renderMissingNotice(model: ShotGraphModel, plot: PlotArea): string {
+  if (model.missingSeries.length === 0 || model.missingSeries.length === 8) return '';
+  const missing = model.missingSeries.map((series) => series.shortLabel.toLowerCase()).join(', ');
+  return `<text class="legend-label" x="${plot.x + 8}" y="${plot.y + plot.height - 9}" fill="rgba(255,255,255,0.5)">Missing: ${escapeHtml(missing)}</text>`;
+}
+
+function renderNoData(width: number, height: number, detailed: boolean): string {
+  if (!detailed) {
+    return `<line x1="16" y1="${height - 16}" x2="${width - 16}" y2="16" stroke="rgba(255,255,255,0.18)" stroke-width="2" />`;
+  }
+  return `<rect class="chart-plot" x="42" y="42" width="${width - 64}" height="${height - 80}" />
+    <text class="legend-label" x="${width / 2}" y="${height / 2}" text-anchor="middle">No chart data</text>`;
+}
+
+function graphAriaLabel(model: ShotGraphModel): string {
+  if (!model.hasData) return 'No graph data';
+  const shown = model.series.map((series) => series.label).join(', ');
+  const missing =
+    model.missingSeries.length > 0
+      ? `. Missing ${model.missingSeries.map((series) => series.label).join(', ')}`
+      : '';
+  const markers = model.markers.length > 0 ? `. ${model.markers.length} profile step markers` : '';
+  return `Shot graph showing ${shown}${missing}${markers}`;
 }
 
 function tickValues(max: number, count: number): number[] {
@@ -180,8 +211,17 @@ function formatTick(value: number): string {
   return Number.isInteger(value) ? value.toString() : value.toFixed(1);
 }
 
-function numeric(value: number | null | undefined): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function escapeAttr(value: string): string {
+  return escapeHtml(value);
 }
 
 function round(value: number, digits: number): number {
