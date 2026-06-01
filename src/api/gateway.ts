@@ -10,6 +10,7 @@ import type {
   Grinder,
   MachineState,
   PaginatedShots,
+  Profile,
   ProfileRecord,
   ShotRecord,
   Workflow
@@ -23,6 +24,7 @@ import {
   readGrinder,
   readGrinders,
   readPaginatedShots,
+  readProfile,
   readProfiles,
   readShotRecord,
   readWorkflow,
@@ -189,6 +191,18 @@ export const gateway = {
       '/api/v1/profiles?visibility=visible',
       readProfiles
     ),
+  createProfile: (body: { profile: Profile; parentId?: string }) =>
+    fetchJson<ProfileRecord>('profiles', '/api/v1/profiles', readProfile, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }),
+  updateProfile: (id: string, body: { profile: Profile }) =>
+    fetchJson<ProfileRecord>('profiles', `/api/v1/profiles/${encodeURIComponent(id)}`, readProfile, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }),
   shots: (query: URLSearchParams) =>
     fetchJson<PaginatedShots>('shots', `/api/v1/shots?${query.toString()}`, readPaginatedShots),
   shot: (id: string) =>

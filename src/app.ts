@@ -70,6 +70,23 @@ import {
 import { renderSettingsShell } from './components/SettingsShell';
 import { renderShotGraph } from './components/ShotGraph';
 import { renderProfilePreview } from './components/profilePreview';
+import {
+  addStep,
+  createProfileEditorState,
+  moveStep,
+  profileFromEditorState,
+  removeStep,
+  renderProfileEditor,
+  selectStep,
+  setProfileMeta,
+  setStepExit,
+  setStepField,
+  setStepPump,
+  setStepTransition,
+  type ProfileEditorState,
+  type ProfileMetaKey,
+  type StepFieldKey
+} from './components/profileEditor';
 import { LiveChart } from './components/LiveChart';
 import { chartModelFromShot } from './components/liveChartModel';
 import { LiveShotSession, simulateShotFrames, type LiveFrame } from './domain/liveShot';
@@ -90,6 +107,7 @@ type Modal =
   | 'batch-editor'
   | 'grinder-editor'
   | 'profile-picker'
+  | 'profile-editor'
   | 'machine-settings'
   | 'settings'
   | 'edit-number'
@@ -142,6 +160,8 @@ interface AppState {
   status: string;
   modal: Modal;
   editingBeanId: string | null;
+  profileEditor: ProfileEditorState | null;
+  editingProfileId: string | null;
   editDialog: InputDialogState | null;
   detailShotId: string | null;
   machine: MachineSnapshot | null;
@@ -185,6 +205,8 @@ export class BeanieApp {
     status: 'Starting',
     modal: null,
     editingBeanId: null,
+    profileEditor: null,
+    editingProfileId: null,
     editDialog: null,
     detailShotId: null,
     machine: null,
@@ -712,6 +734,8 @@ export class BeanieApp {
     const action = el.dataset.action;
     const id = el.dataset.id;
     const field = el.dataset.field;
+    const index = el.dataset.index;
+    const value = el.dataset.value;
 
     switch (action) {
       case 'select-bean':
@@ -827,7 +851,45 @@ export class BeanieApp {
         if (id) this.toggleFavoriteProfile(id);
         break;
       case 'close-modal':
-        this.setState({ modal: null, editingBeanId: null, editDialog: null, detailShotId: null });
+        this.setState({
+          modal: null,
+          editingBeanId: null,
+          profileEditor: null,
+          editingProfileId: null,
+          editDialog: null,
+          detailShotId: null
+        });
+        break;
+      case 'new-profile':
+        this.setState({
+          modal: 'profile-editor',
+          editingProfileId: null,
+          profileEditor: createProfileEditorState(null)
+        });
+        break;
+      case 'edit-profile':
+        if (id) this.openProfileEditor(id);
+        break;
+      case 'save-profile':
+        await this.submitProfileEditor();
+        break;
+      case 'pe-add-step':
+        this.editorDispatch(addStep);
+        break;
+      case 'pe-remove-step':
+        if (index != null) this.editorDispatch((pe) => removeStep(pe, Number(index)));
+        break;
+      case 'pe-move-step':
+        if (index != null) this.editorDispatch((pe) => moveStep(pe, Number(index), value === '1' ? 1 : -1));
+        break;
+      case 'pe-select-step':
+        if (index != null) this.editorDispatch((pe) => selectStep(pe, Number(index)));
+        break;
+      case 'pe-step-pump':
+        if (index != null) this.editorDispatch((pe) => setStepPump(pe, Number(index), value === 'flow' ? 'flow' : 'pressure'));
+        break;
+      case 'pe-step-transition':
+        if (index != null) this.editorDispatch((pe) => setStepTransition(pe, Number(index), value === 'smooth' ? 'smooth' : 'fast'));
         break;
       default:
         break;
@@ -844,6 +906,9 @@ export class BeanieApp {
     }
     if (target.dataset.action === 'profile-search') {
       this.setState({ profileSearch: target.value });
+    }
+    if (target.dataset.action?.startsWith('pe-')) {
+      this.applyEditorEvent(target);
     }
   }
 
@@ -865,6 +930,118 @@ export class BeanieApp {
     });
   }
 
+  private editorDispatch(fn: (pe: ProfileEditorState) => ProfileEditorState): void {
+    const pe = this.state.profileEditor;
+    if (!pe) return;
+    this.setState({ profileEditor: fn(pe) });
+  }
+
+  private openProfileEditor(id: string): void {
+    const record = this.state.profiles.find((profile) => profile.id === id);
+    if (!record) return;
+    this.setState({
+      modal: 'profile-editor',
+      editingProfileId: id,
+      profileEditor: createProfileEditorState(record.profile)
+    });
+  }
+
+  private applyEditorEvent(
+    target: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+  ): boolean {
+    const pe = this.state.profileEditor;
+    if (!pe) return false;
+    const action = target.dataset.action;
+    const key = target.dataset.key;
+    const index = Number(target.dataset.index ?? '-1');
+    if (action === 'pe-meta' && key) {
+      this.setState({ profileEditor: setProfileMeta(pe, key as ProfileMetaKey, target.value) });
+      return true;
+    }
+    if (action === 'pe-step-field' && key && index >= 0) {
+      this.setState({ profileEditor: setStepField(pe, index, key as StepFieldKey, target.value) });
+      return true;
+    }
+    if (action === 'pe-step-exit' && key && index >= 0) {
+      this.setState({ profileEditor: this.applyExitField(pe, index, key, target) });
+      return true;
+    }
+    return false;
+  }
+
+  private applyExitField(
+    pe: ProfileEditorState,
+    index: number,
+    key: string,
+    target: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+  ): ProfileEditorState {
+    if (key === 'enabled') {
+      return setStepExit(pe, index, (target as HTMLInputElement).checked ? {} : null);
+    }
+    if (key === 'type') {
+      return setStepExit(pe, index, { type: target.value === 'flow' ? 'flow' : 'pressure' });
+    }
+    if (key === 'condition') {
+      return setStepExit(pe, index, { condition: target.value === 'under' ? 'under' : 'over' });
+    }
+    if (key === 'value') {
+      return setStepExit(pe, index, { value: Number(target.value) || 0 });
+    }
+    return pe;
+  }
+
+  private async submitProfileEditor(): Promise<void> {
+    const pe = this.state.profileEditor;
+    if (!pe) return;
+    const profile = profileFromEditorState(pe);
+    const editingId = this.state.editingProfileId;
+    this.setState({ busy: true, status: 'Saving profile' });
+
+    if (this.state.demo) {
+      const record: ProfileRecord = { id: editingId ?? `demo-profile-${Date.now()}`, profile };
+      const profiles = editingId
+        ? this.state.profiles.map((item) => (item.id === editingId ? record : item))
+        : [record, ...this.state.profiles];
+      this.setState({
+        profiles,
+        modal: null,
+        profileEditor: null,
+        editingProfileId: null,
+        busy: false,
+        status: 'Profile saved (demo)'
+      });
+      this.pickProfile(record.id);
+      return;
+    }
+
+    try {
+      const saved = editingId
+        ? await gateway.updateProfile(editingId, { profile })
+        : await gateway.createProfile({ profile });
+      void beanieCache.invalidateProfileMutation(saved.id).catch(() => {});
+      let profiles = this.state.profiles;
+      try {
+        profiles = await gateway.profiles();
+      } catch {
+        profiles = this.state.profiles.some((item) => item.id === saved.id)
+          ? this.state.profiles.map((item) => (item.id === saved.id ? saved : item))
+          : [saved, ...this.state.profiles];
+      }
+      this.setState({
+        profiles,
+        modal: null,
+        profileEditor: null,
+        editingProfileId: null,
+        busy: false,
+        status: 'Profile saved'
+      });
+      this.pickProfile(saved.id);
+    } catch (error) {
+      console.error('[Beanie] Save profile failed', error);
+      this.setState({ busy: false, status: 'Save profile failed' });
+    }
+  }
+
   private toggleFavoriteProfile(id: string): void {
     const favorites = new Set(this.state.favoriteProfiles);
     if (favorites.has(id)) favorites.delete(id);
@@ -876,6 +1053,10 @@ export class BeanieApp {
 
   private async onChange(event: Event): Promise<void> {
     const target = event.target as HTMLInputElement | HTMLSelectElement;
+    if (target.dataset.action?.startsWith('pe-')) {
+      this.applyEditorEvent(target);
+      return;
+    }
     const field = target.dataset.field;
     if (!field) return;
 
@@ -1321,17 +1502,21 @@ export class BeanieApp {
     });
   }
 
-  private captureFocus(): { action: string; start: number | null } | null {
+  private captureFocus(): { selector: string; start: number | null } | null {
     const active = document.activeElement as HTMLInputElement | null;
     const action = active?.dataset?.action;
-    if (!action || !FOCUSABLE_SEARCH.has(action)) return null;
+    if (!action) return null;
+    if (!FOCUSABLE_SEARCH.has(action) && !action.startsWith('pe-')) return null;
+    const parts = [`[data-action="${action}"]`];
+    if (active?.dataset.index != null) parts.push(`[data-index="${active.dataset.index}"]`);
+    if (active?.dataset.key != null) parts.push(`[data-key="${active.dataset.key}"]`);
     const start = typeof active?.selectionStart === 'number' ? active.selectionStart : null;
-    return { action, start };
+    return { selector: parts.join(''), start };
   }
 
-  private restoreFocus(focus: { action: string; start: number | null } | null): void {
+  private restoreFocus(focus: { selector: string; start: number | null } | null): void {
     if (!focus) return;
-    const el = this.root.querySelector<HTMLInputElement>(`[data-action="${focus.action}"]`);
+    const el = this.root.querySelector<HTMLInputElement>(focus.selector);
     if (!el) return;
     el.focus();
     if (focus.start != null) {
@@ -1550,7 +1735,10 @@ export class BeanieApp {
         <div class="modal panel profile-picker" role="dialog" aria-modal="true" aria-labelledby="profile-picker-title">
           <div class="modal-head">
             <h2 id="profile-picker-title">Profiles</h2>
-            <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
+            <div class="modal-head-actions">
+              <button type="button" class="icon-button" data-action="new-profile" aria-label="New profile" title="New profile">${icon('plus')}</button>
+              <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
+            </div>
           </div>
           <label class="search">
             ${icon('search')}
@@ -1579,6 +1767,7 @@ export class BeanieApp {
           ${author ? `<span class="profile-row-author">${escapeHtml(author)}</span>` : ''}
         </button>
         ${renderProfilePreview(record.profile)}
+        <button type="button" class="profile-edit" data-action="edit-profile" data-id="${escapeAttr(record.id)}" aria-label="Edit ${escapeAttr(title)}" title="Edit profile">${icon('pencil')}</button>
       </div>
     `;
   }
@@ -1706,8 +1895,29 @@ export class BeanieApp {
     if (this.state.modal === 'batch-editor') return this.renderBatchEditor();
     if (this.state.modal === 'grinder-editor') return this.renderGrinderEditor();
     if (this.state.modal === 'profile-picker') return this.renderProfilePicker();
+    if (this.state.modal === 'profile-editor') return this.renderProfileEditorModal();
     if (this.state.modal === 'machine-settings') return this.renderMachineSettings();
     return '';
+  }
+
+  private renderProfileEditorModal(): string {
+    const pe = this.state.profileEditor;
+    if (!pe) return '';
+    return `
+      <div class="modal-backdrop">
+        <div class="modal panel profile-editor-modal" role="dialog" aria-modal="true" aria-labelledby="profile-editor-title">
+          <div class="modal-head">
+            <h2 id="profile-editor-title">${this.state.editingProfileId ? 'Edit Profile' : 'New Profile'}</h2>
+            <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
+          </div>
+          ${renderProfileEditor(pe)}
+          <div class="modal-actions">
+            <button type="button" class="command" data-action="close-modal">Cancel</button>
+            <button type="button" class="command primary" data-action="save-profile">${icon('save')}<span>Save profile</span></button>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   private renderMachineSettings(): string {

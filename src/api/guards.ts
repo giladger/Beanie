@@ -61,6 +61,10 @@ export function readProfiles(value: unknown): ProfileRecord[] {
   );
 }
 
+export function readProfile(value: unknown): ProfileRecord {
+  return checked('ProfileRecord', value, validateProfileRecord);
+}
+
 export function readWorkflow(value: unknown): Workflow {
   return checked('Workflow', value, validateWorkflow);
 }
