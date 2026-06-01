@@ -1571,9 +1571,15 @@ p {
 
 .detail-chart {
   min-height: 0;
+  height: clamp(260px, 48vh, 430px);
   border: 0;
   border-radius: var(--radius);
-  background: transparent;
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.detail-canvas {
+  width: 100%;
+  height: 100%;
 }
 
 .detail-notes {

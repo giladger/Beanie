@@ -68,6 +68,7 @@ import { renderSettingsShell } from './components/SettingsShell';
 import { renderShotGraph } from './components/ShotGraph';
 import { renderProfilePreview } from './components/profilePreview';
 import { LiveChart } from './components/LiveChart';
+import { chartModelFromShot } from './components/liveChartModel';
 import { LiveShotSession, simulateShotFrames, type LiveFrame } from './domain/liveShot';
 import { beanieCache } from './domain/cache';
 import {
@@ -1179,7 +1180,22 @@ export class BeanieApp {
     `;
     refreshIcons();
     this.bindLiveElements();
+    this.bindDetailChart();
     this.restoreFocus(focus);
+  }
+
+  private bindDetailChart(): void {
+    const canvas = this.root.querySelector<HTMLCanvasElement>('#detail-canvas');
+    if (!canvas) return;
+    const shot = this.state.shots.find((item) => item.id === this.state.detailShotId);
+    if (!shot) return;
+    const chart = new LiveChart(canvas, { detailed: true });
+    chart.setModel(chartModelFromShot(shot));
+    // Draw after layout so the canvas has its CSS box for DPR sizing.
+    window.requestAnimationFrame(() => {
+      chart.resize();
+      chart.draw();
+    });
   }
 
   private captureFocus(): { action: string; start: number | null } | null {
@@ -1693,7 +1709,7 @@ export class BeanieApp {
           </div>
           <div class="detail-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</div>
           <div class="detail-chart">
-            ${renderShotGraph(shot, { detailed: true })}
+            <canvas id="detail-canvas" class="live-canvas detail-canvas"></canvas>
           </div>
           <form class="detail-edit" data-form="edit-shot" data-id="${escapeAttr(shot.id)}">
             <label class="detail-field">

@@ -1,5 +1,6 @@
-import type { MachineSnapshot, ScaleSnapshot } from '../api/types';
+import type { MachineSnapshot, ScaleSnapshot, ShotRecord } from '../api/types';
 import type { ShotGraphSeriesKey } from './shotGraphModel';
+import { buildShotGraphModel } from './shotGraphModel';
 
 // Shared contract between the live-shot data layer (domain/liveShot.ts) and the
 // canvas renderer (components/LiveChart.ts). Mirrors ShotGraphModel but uses a
@@ -114,6 +115,27 @@ export const LIVE_SERIES: LiveSeriesDefinition[] = [
     value: (_machine, scale) => numeric(scale?.weightFlow)
   }
 ];
+
+// Adapts a stored shot into the canvas chart model so the historical detail
+// chart and the live chart share one renderer. Reuses buildShotGraphModel (the
+// tested SVG model) and maps its samples onto canvas points.
+export function chartModelFromShot(shot: ShotRecord | null): LiveChartModel {
+  const model = buildShotGraphModel(shot);
+  const series: LiveChartSeries[] = model.series.map((item) => ({
+    key: item.key,
+    label: item.label,
+    shortLabel: item.shortLabel,
+    color: item.color,
+    dashArray: item.dashArray,
+    points: item.samples.map((sample) => ({ t: sample.t, value: sample.value }))
+  }));
+  return {
+    series,
+    markers: model.markers.map((marker) => ({ t: marker.t, label: marker.label })),
+    maxTime: model.maxTime,
+    maxY: model.maxY
+  };
+}
 
 function numeric(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
