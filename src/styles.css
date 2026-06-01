@@ -429,6 +429,19 @@ p {
   color: var(--muted);
 }
 
+.chip.apply-pending {
+  color: var(--amber);
+}
+
+.chip.apply-applied {
+  color: var(--green);
+}
+
+.chip.apply-failed,
+.chip.apply-stale {
+  color: var(--red);
+}
+
 .switch {
   padding: 0 9px;
   background: rgba(91, 216, 200, 0.12);

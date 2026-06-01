@@ -18,14 +18,18 @@ import {
   buildWorkflowUpdate,
   emptyRecipe,
   formatGrams,
+  formatRatio,
   latestBatch,
   normalizeDraft,
   parseNumberInput,
   presetName,
+  profileBaseTemperature,
+  ratioFor,
   recipeFromShot,
   recipeFromWorkflow,
   selectInitialBean,
-  shotFilterForBean
+  shotFilterForBean,
+  yieldForRatio
 } from './domain/beanWorkflow';
 import { readLastBeanId, readPresets, writeLastBeanId, writePresets } from './domain/storage';
 import {
@@ -70,7 +74,8 @@ import {
 } from './domain/settings';
 
 type Modal = 'add-bean' | 'settings' | 'edit-number' | 'shot-detail' | null;
-type EditField = 'dose' | 'yield' | 'grinderSetting';
+type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
+type ApplyState = 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
 
 const initialSettingsPreferences = readSettingsPreferences();
 
@@ -99,6 +104,8 @@ interface AppState {
   machine: MachineSnapshot | null;
   scale: ScaleSnapshot | null;
   liveActive: boolean;
+  applyState: ApplyState;
+  appliedSignature: string | null;
 }
 
 interface LiveReadoutEls {
@@ -134,7 +141,9 @@ export class BeanieApp {
     detailShotId: null,
     machine: null,
     scale: null,
-    liveActive: false
+    liveActive: false,
+    applyState: 'idle',
+    appliedSignature: null
   };
 
   private renderTimer: number | null = null;
@@ -164,6 +173,7 @@ export class BeanieApp {
   }
 
   private async load(): Promise<void> {
+    const prevSignature = this.state.appliedSignature;
     this.setState({ loading: true, status: 'Loading Decent.app data' });
     try {
       const latestShotQuery = new URLSearchParams({ limit: '1', offset: '0', order: 'desc' });
@@ -191,6 +201,9 @@ export class BeanieApp {
           apply: this.state.autoLoad && !this.workflowMatchesBean(selected),
           preferWorkflow: true
         });
+      }
+      if (prevSignature != null && workflowSignature(workflow) !== prevSignature) {
+        this.setState({ applyState: 'stale', status: 'Workflow changed on the machine' });
       }
       this.connectMachineSocket();
       this.connectScaleSocket();
@@ -249,6 +262,8 @@ export class BeanieApp {
       presets,
       draft: normalizeDraft(draft, this.state.profiles, this.state.grinders),
       busy: false,
+      applyState: 'idle',
+      appliedSignature: workflowSignature(this.state.workflow),
       status: `${shots.length} shots loaded`
     });
 
@@ -294,14 +309,17 @@ export class BeanieApp {
 
     const draft = normalizeDraft(this.state.draft, this.state.profiles, this.state.grinders);
     const batch = this.selectedBatch();
-    const update = buildWorkflowUpdate(bean, batch, draft, draft.profile);
+    const update = buildWorkflowUpdate(bean, batch, draft, draft.profile, this.state.workflow);
+    const signature = draftSignature(draft);
 
-    this.setState({ busy: true, status: 'Applying workflow' });
+    this.setState({ busy: true, applyState: 'pending', status: 'Applying workflow' });
     if (this.state.demo) {
       this.setState({
-        workflow: { ...this.state.workflow, ...update },
+        workflow: update,
         draft,
         busy: false,
+        applyState: 'applied',
+        appliedSignature: signature,
         status: 'Workflow applied in demo'
       });
       return;
@@ -313,12 +331,19 @@ export class BeanieApp {
         workflow,
         draft,
         busy: false,
+        applyState: 'applied',
+        appliedSignature: signature,
         status: 'Workflow applied'
       });
     } catch (error) {
       console.error('[Beanie] Apply failed', error);
-      this.setState({ busy: false, status: 'Apply failed' });
+      this.setState({ busy: false, applyState: 'failed', status: 'Apply failed' });
     }
+  }
+
+  private isDirty(): boolean {
+    if (!this.selectedBean() || this.state.appliedSignature == null) return false;
+    return draftSignature(this.state.draft) !== this.state.appliedSignature;
   }
 
   private async savePreset(): Promise<void> {
@@ -731,6 +756,15 @@ export class BeanieApp {
       const current = parseNumberInput(draft.grinderSetting ?? '0') ?? 0;
       draft.grinderSetting = round(current + delta, 2).toString();
     }
+    if (field === 'ratio') {
+      const current = ratioFor(draft.dose, draft.yield) ?? 2;
+      const nextYield = yieldForRatio(draft.dose, round(current + delta, 2));
+      if (nextYield != null) draft.yield = nextYield;
+    }
+    if (field === 'temperature') {
+      const current = this.brewTempValue() ?? 93;
+      draft.brewTemp = round(current + delta, 1);
+    }
     this.setState({ draft, status: 'Draft changed' });
   }
 
@@ -741,15 +775,30 @@ export class BeanieApp {
         ? draft.grinderSetting ?? ''
         : field === 'dose'
           ? draft.dose?.toString() ?? ''
-          : draft.yield?.toString() ?? '';
-    const step = field === 'dose' ? 0.5 : field === 'yield' ? 1 : this.grinderStep();
+          : field === 'yield'
+            ? draft.yield?.toString() ?? ''
+            : field === 'ratio'
+              ? ratioFor(draft.dose, draft.yield)?.toFixed(2) ?? ''
+              : this.brewTempValue()?.toFixed(1) ?? '';
+    const step =
+      field === 'dose'
+        ? 0.5
+        : field === 'yield'
+          ? 1
+          : field === 'ratio'
+            ? 0.1
+            : field === 'temperature'
+              ? 0.5
+              : this.grinderStep();
+    const title =
+      field === 'grinderSetting' ? 'Grind' : field === 'temperature' ? 'Temp' : capitalize(field);
 
     this.setState({
       modal: 'edit-number',
       editDialog: createInputDialog({
         field,
         kind: inputDialogKindForField(field),
-        title: field === 'grinderSetting' ? 'Grind' : capitalize(field),
+        title,
         value,
         step,
         bigStep: field === 'grinderSetting' ? this.grinderBigStep() : step * 2,
@@ -817,6 +866,12 @@ export class BeanieApp {
     if (dialog.field === 'dose') draft.dose = parseNumberInput(value);
     if (dialog.field === 'yield') draft.yield = parseNumberInput(value);
     if (dialog.field === 'grinderSetting') draft.grinderSetting = value || null;
+    if (dialog.field === 'ratio') {
+      const ratio = parseNumberInput(value);
+      const nextYield = ratio == null ? null : yieldForRatio(draft.dose, ratio);
+      if (nextYield != null) draft.yield = nextYield;
+    }
+    if (dialog.field === 'temperature') draft.brewTemp = parseNumberInput(value);
     rememberInputDialogValue(dialog.kind, value);
     this.setState({ draft, modal: null, editDialog: null, status: 'Draft changed' });
   }
@@ -939,6 +994,7 @@ export class BeanieApp {
             <input type="checkbox" data-field="autoLoad" ${this.state.autoLoad ? 'checked' : ''} />
             <span>Auto-load</span>
           </label>
+          ${this.renderApplyStatus()}
           <span class="chip">${escapeHtml(draft.sourceLabel ?? 'No source')}</span>
           <span class="chip muted">${escapeHtml(batchSummary(batch))}</span>
         </div>
@@ -952,7 +1008,9 @@ export class BeanieApp {
       <section class="recipe-grid">
         ${this.controlNumber('Dose', 'dose', draft.dose, 0.5)}
         ${this.controlNumber('Yield', 'yield', draft.yield, 1)}
+        ${this.controlRatio()}
         ${this.controlGrind()}
+        ${this.controlTemp()}
         ${this.controlProfile()}
         <div class="quick-panel panel">
           <div class="quick-head">
@@ -1015,6 +1073,62 @@ export class BeanieApp {
         </select>
       </div>
     `;
+  }
+
+  private controlRatio(): string {
+    const draft = this.state.draft;
+    const ratio = ratioFor(draft.dose, draft.yield);
+    return `
+      <div class="control panel">
+        <label>Ratio</label>
+        <div class="stepper compact-stepper">
+          <button data-action="adjust" data-field="ratio" data-delta="-0.1" aria-label="Decrease ratio">${icon('minus')}</button>
+          <button class="value-button" data-action="edit-field" data-field="ratio">${escapeHtml(formatRatio(ratio))}</button>
+          <button data-action="adjust" data-field="ratio" data-delta="0.1" aria-label="Increase ratio">${icon('plus')}</button>
+        </div>
+      </div>
+    `;
+  }
+
+  private controlTemp(): string {
+    const value = this.brewTempValue();
+    const label = value == null ? '--' : `${value.toFixed(1)}`;
+    return `
+      <div class="control panel">
+        <label>Temp</label>
+        <div class="stepper compact-stepper">
+          <button data-action="adjust" data-field="temperature" data-delta="-0.5" aria-label="Decrease temperature">${icon('minus')}</button>
+          <button class="value-button" data-action="edit-field" data-field="temperature">${escapeHtml(label)}</button>
+          <button data-action="adjust" data-field="temperature" data-delta="0.5" aria-label="Increase temperature">${icon('plus')}</button>
+        </div>
+      </div>
+    `;
+  }
+
+  private brewTempValue(): number | null {
+    const draft = this.state.draft;
+    if (draft.brewTemp != null) return draft.brewTemp;
+    return profileBaseTemperature(draft.profile ?? null);
+  }
+
+  private renderApplyStatus(): string {
+    if (!this.selectedBean()) return '';
+    if (this.state.busy && this.state.applyState === 'pending') {
+      return '<span class="chip apply-pending">Applying…</span>';
+    }
+    if (this.state.applyState === 'failed') {
+      return '<span class="chip apply-failed">Apply failed</span>';
+    }
+    if (this.state.applyState === 'stale') {
+      return '<span class="chip apply-stale">Changed on machine · Sync to reload</span>';
+    }
+    if (this.isDirty()) {
+      return '<span class="chip apply-pending">Unsaved · tap Apply</span>';
+    }
+    if (this.state.applyState === 'applied') {
+      return '<span class="chip apply-applied">Applied</span>';
+    }
+    return '<span class="chip apply-applied">In sync</span>';
   }
 
   private renderHistory(): string {
@@ -1272,7 +1386,44 @@ function capitalize(value: string): string {
 }
 
 function isEditField(value: string | undefined): value is EditField {
-  return value === 'dose' || value === 'yield' || value === 'grinderSetting';
+  return (
+    value === 'dose' ||
+    value === 'yield' ||
+    value === 'ratio' ||
+    value === 'grinderSetting' ||
+    value === 'temperature'
+  );
+}
+
+function draftSignature(draft: RecipeDraft): string {
+  return signatureOf(
+    draft.profileTitle ?? null,
+    draft.dose ?? null,
+    draft.yield ?? null,
+    draft.grinderModel ?? null,
+    draft.grinderSetting ?? null
+  );
+}
+
+function workflowSignature(workflow: Workflow | null): string {
+  const ctx = workflow?.context;
+  return signatureOf(
+    workflow?.profile?.title ?? null,
+    typeof ctx?.targetDoseWeight === 'number' ? ctx.targetDoseWeight : null,
+    typeof ctx?.targetYield === 'number' ? ctx.targetYield : null,
+    ctx?.grinderModel ?? null,
+    ctx?.grinderSetting != null ? String(ctx.grinderSetting) : null
+  );
+}
+
+function signatureOf(
+  profileTitle: string | null,
+  dose: number | null,
+  yieldValue: number | null,
+  grinderModel: string | null,
+  grind: string | null
+): string {
+  return JSON.stringify([profileTitle, dose, yieldValue, grinderModel, grind]);
 }
 
 function isThemePreference(value: string | undefined): value is ThemePreference {

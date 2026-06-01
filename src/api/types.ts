@@ -184,6 +184,7 @@ export interface RecipeDraft {
   grinderId?: string | null;
   grinderModel?: string | null;
   grinderSetting?: string | null;
+  brewTemp?: number | null;
   sourceShotId?: string | null;
   sourceLabel?: string | null;
 }

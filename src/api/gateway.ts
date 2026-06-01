@@ -12,8 +12,7 @@ import type {
   PaginatedShots,
   ProfileRecord,
   ShotRecord,
-  Workflow,
-  WorkflowUpdate
+  Workflow
 } from './types';
 import {
   ApiValidationError,
@@ -137,7 +136,7 @@ async function fetchEmpty(
 
 export const gateway = {
   workflow: () => fetchJson<Workflow>('workflow', '/api/v1/workflow', readWorkflow),
-  updateWorkflow: (body: WorkflowUpdate) =>
+  updateWorkflow: (body: Workflow) =>
     fetchJson<Workflow>('workflow', '/api/v1/workflow', readWorkflow, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
