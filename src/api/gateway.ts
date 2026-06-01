@@ -168,6 +168,20 @@ export const gateway = {
     fetchJson<PaginatedShots>('shots', `/api/v1/shots?${query.toString()}`, readPaginatedShots),
   shot: (id: string) =>
     fetchJson<ShotRecord>('shot', `/api/v1/shots/${encodeURIComponent(id)}`, readShotRecord),
+  updateShot: (
+    id: string,
+    body: {
+      annotations?: { espressoNotes?: string | null; enjoyment?: number | null };
+      shotNotes?: string | null;
+    }
+  ) =>
+    fetchJson<ShotRecord>('shot', `/api/v1/shots/${encodeURIComponent(id)}`, readShotRecord, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }),
+  deleteShot: (id: string) =>
+    fetchEmpty('shot', `/api/v1/shots/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   requestState: (state: MachineState) =>
     fetchEmpty('machine', `/api/v1/machine/state/${encodeURIComponent(state)}`, {
       method: 'PUT'

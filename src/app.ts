@@ -388,6 +388,50 @@ export class BeanieApp {
     });
   }
 
+  private async saveShotAnnotations(
+    id: string,
+    notes: string,
+    enjoyment: number | null
+  ): Promise<void> {
+    this.setState({ busy: true, status: 'Saving shot' });
+    if (this.state.demo) {
+      this.setState({ shots: patchShotAnnotations(this.state.shots, id, notes, enjoyment) });
+      this.setState({ busy: false, status: 'Shot updated (demo)' });
+      return;
+    }
+    try {
+      const updated = await gateway.updateShot(id, {
+        annotations: { espressoNotes: notes || null, enjoyment }
+      });
+      const shots = this.state.shots.map((shot) => (shot.id === id ? updated : shot));
+      this.setState({ shots, busy: false, status: 'Shot updated' });
+    } catch (error) {
+      console.error('[Beanie] Shot update failed', error);
+      this.setState({ busy: false, status: 'Shot update failed' });
+    }
+  }
+
+  private async deleteShotRecord(id: string): Promise<void> {
+    if (!window.confirm('Delete this shot? This cannot be undone.')) return;
+    this.setState({ busy: true, status: 'Deleting shot' });
+    if (!this.state.demo) {
+      try {
+        await gateway.deleteShot(id);
+      } catch (error) {
+        console.error('[Beanie] Shot delete failed', error);
+        this.setState({ busy: false, status: 'Shot delete failed' });
+        return;
+      }
+    }
+    this.setState({
+      shots: this.state.shots.filter((shot) => shot.id !== id),
+      busy: false,
+      modal: null,
+      detailShotId: null,
+      status: this.state.demo ? 'Shot deleted (demo)' : 'Shot deleted'
+    });
+  }
+
   private async machineAction(state: MachineState): Promise<void> {
     this.setState({ busy: true, status: `Sending ${state}` });
     if (this.state.demo) {
@@ -627,6 +671,9 @@ export class BeanieApp {
       case 'load-shot':
         if (id) this.loadShotRecipe(id);
         break;
+      case 'delete-shot':
+        if (id) await this.deleteShotRecord(id);
+        break;
       case 'stop':
         await this.machineAction('idle');
         break;
@@ -713,6 +760,21 @@ export class BeanieApp {
 
   private async onSubmit(event: Event): Promise<void> {
     const form = event.target as HTMLFormElement;
+    if (form.dataset.form === 'edit-shot') {
+      event.preventDefault();
+      const id = form.dataset.id;
+      if (!id) return;
+      const data = new FormData(form);
+      const notes = String(data.get('notes') ?? '').trim();
+      const enjoymentRaw = String(data.get('enjoyment') ?? '').trim();
+      const enjoyment = enjoymentRaw === '' ? null : Number(enjoymentRaw);
+      await this.saveShotAnnotations(
+        id,
+        notes,
+        enjoyment != null && Number.isFinite(enjoyment) ? enjoyment : null
+      );
+      return;
+    }
     if (form.dataset.form !== 'add-bean') return;
     event.preventDefault();
     const data = new FormData(form);
@@ -1229,11 +1291,21 @@ export class BeanieApp {
           <div class="detail-chart">
             ${renderShotGraph(shot, { detailed: true })}
           </div>
-          ${notes ? `<p class="detail-notes">${escapeHtml(notes)}</p>` : ''}
-          <div class="detail-actions">
-            <button type="button" class="command" data-action="close-modal">Close</button>
-            <button type="button" class="command primary" data-action="load-shot" data-id="${escapeAttr(shot.id)}">${icon('sliders-horizontal')}<span>Load recipe</span></button>
-          </div>
+          <form class="detail-edit" data-form="edit-shot" data-id="${escapeAttr(shot.id)}">
+            <label class="detail-field">
+              <span>Notes</span>
+              <textarea name="notes" rows="2" placeholder="Tasting notes">${escapeHtml(notes)}</textarea>
+            </label>
+            <label class="detail-field detail-enjoyment-field">
+              <span>Enjoyment</span>
+              <input type="number" name="enjoyment" min="0" max="100" step="1" value="${escapeAttr(shot.annotations?.enjoyment != null ? String(shot.annotations.enjoyment) : '')}" />
+            </label>
+            <div class="detail-actions">
+              <button type="button" class="command danger" data-action="delete-shot" data-id="${escapeAttr(shot.id)}">${icon('trash-2')}<span>Delete</span></button>
+              <button type="button" class="command" data-action="load-shot" data-id="${escapeAttr(shot.id)}">${icon('sliders-horizontal')}<span>Load recipe</span></button>
+              <button type="submit" class="command primary">${icon('save')}<span>Save</span></button>
+            </div>
+          </form>
         </div>
       </div>
     `;
@@ -1354,6 +1426,19 @@ function enjoymentBadge(shot: ShotRecord, size: 'row' | 'detail' = 'row'): strin
   if (value == null) return '';
   const formatted = Number.isInteger(value) ? value.toString() : value.toFixed(1);
   return `<span class="enjoyment-badge ${size === 'detail' ? 'large' : ''}" aria-label="Enjoyment ${escapeAttr(formatted)}"><span>Enjoy</span><strong>${escapeHtml(formatted)}</strong></span>`;
+}
+
+function patchShotAnnotations(
+  shots: ShotRecord[],
+  id: string,
+  notes: string,
+  enjoyment: number | null
+): ShotRecord[] {
+  return shots.map((shot) =>
+    shot.id === id
+      ? { ...shot, annotations: { ...shot.annotations, espressoNotes: notes || null, enjoyment } }
+      : shot
+  );
 }
 
 function batchSummary(batch: BeanBatch | null): string {

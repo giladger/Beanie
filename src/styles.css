@@ -1422,9 +1422,47 @@ p {
   color: var(--muted);
 }
 
+.detail-edit {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.detail-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.detail-field > span {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.detail-field textarea,
+.detail-field input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  resize: vertical;
+}
+
+.detail-enjoyment-field input {
+  max-width: 140px;
+}
+
 .detail-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 8px;
 }
 
