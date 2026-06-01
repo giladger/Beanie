@@ -119,19 +119,28 @@ p {
 .top-stats {
   flex: 1 1 auto;
   min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(72px, 1fr));
-  gap: 1px;
+  display: flex;
+  align-items: center;
+  gap: 0;
   overflow: hidden;
-  border-radius: var(--radius);
-  background: var(--line);
 }
 
 .top-stat {
   min-width: 0;
   height: 38px;
-  padding: 5px 8px;
-  background: var(--panel-2);
+  display: grid;
+  align-content: center;
+  grid-template-columns: auto minmax(0, max-content);
+  gap: 6px;
+  padding: 0 14px;
+}
+
+.top-stat:first-child {
+  padding-left: 0;
+}
+
+.top-stat + .top-stat {
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .top-stat label {
@@ -143,16 +152,17 @@ p {
   font-size: 9px;
   font-weight: 900;
   text-transform: uppercase;
+  align-self: end;
 }
 
 .top-stat strong {
   display: block;
-  margin-top: 3px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1;
+  align-self: end;
 }
 
 .top-icons {
@@ -338,10 +348,11 @@ p {
 }
 
 .hero-side {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-  justify-items: stretch;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .chip,
@@ -352,9 +363,8 @@ p {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 0 8px;
+  padding: 0;
   border-radius: 999px;
-  background: var(--panel-3);
   color: var(--soft);
   font-size: 11px;
   font-weight: 900;
@@ -363,11 +373,26 @@ p {
   text-overflow: ellipsis;
 }
 
+.chip {
+  justify-content: flex-start;
+  color: var(--soft);
+}
+
+.chip::before {
+  content: "";
+  width: 1px;
+  height: 16px;
+  background: rgba(255, 255, 255, 0.16);
+  margin-right: 2px;
+}
+
 .chip.muted {
   color: var(--muted);
 }
 
 .switch {
+  padding: 0 9px;
+  background: rgba(91, 216, 200, 0.12);
   cursor: pointer;
 }
 
@@ -380,17 +405,22 @@ p {
 .recipe-grid {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: 8px;
+  gap: 0;
   min-width: 0;
   min-height: 0;
+  padding: 4px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .control,
 .select-control,
 .quick-panel,
 .command-panel {
-  padding: 9px;
-  background: var(--panel-2);
+  padding: 7px 9px;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .control {
@@ -399,6 +429,11 @@ p {
   display: grid;
   grid-template-rows: auto 1fr;
   gap: 4px;
+}
+
+.control + .control,
+.select-control {
+  border-left: 1px solid rgba(255, 255, 255, 0.09);
 }
 
 .grind-control {
@@ -440,6 +475,7 @@ p {
   color: var(--ink);
   font-size: 21px;
   font-weight: 900;
+  letter-spacing: 0;
 }
 
 .select-control select {
@@ -458,6 +494,7 @@ p {
   display: grid;
   grid-template-rows: auto 1fr;
   gap: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .quick-head {
@@ -490,9 +527,9 @@ p {
 .empty {
   min-height: 26px;
   padding: 4px 8px;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.075);
   color: var(--soft);
   font-size: 11px;
   font-weight: 900;
@@ -508,6 +545,7 @@ p {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .command {
@@ -537,8 +575,8 @@ p {
 .shot-list {
   display: grid;
   align-content: start;
-  gap: 7px;
-  padding: 7px;
+  gap: 0;
+  padding: 0 7px 7px;
 }
 
 .shot-card {
@@ -548,15 +586,16 @@ p {
   grid-template-columns: minmax(140px, 198px) minmax(108px, 142px) minmax(210px, 1fr);
   gap: 7px;
   align-items: stretch;
-  padding: 7px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.045);
+  padding: 8px 0;
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 0;
+  background: transparent;
 }
 
 .shot-card:focus-within,
 .shot-card:hover {
-  border-color: var(--line-strong);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .shot-load {
@@ -604,28 +643,29 @@ p {
 }
 
 .shot-stats {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-evenly;
+  gap: 10px;
   align-content: center;
 }
 
 .stat {
   min-width: 0;
-  min-height: 38px;
-  padding: 5px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: rgba(0, 0, 0, 0.12);
+  min-height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .stat strong {
   display: block;
-  margin-top: 4px;
+  margin-top: 3px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1;
 }
 
@@ -677,8 +717,8 @@ p {
 }
 
 .chart-plot {
-  fill: rgba(0, 0, 0, 0.12);
-  stroke: var(--line);
+  fill: rgba(0, 0, 0, 0.08);
+  stroke: rgba(255, 255, 255, 0.12);
 }
 
 .chart-grid-line {
@@ -783,14 +823,13 @@ p {
 }
 
 .detail-summary {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 7px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
 }
 
 .detail-summary .stat {
-  min-height: 44px;
-  background: var(--panel-2);
+  min-height: 38px;
 }
 
 .detail-profile,
@@ -809,9 +848,9 @@ p {
 
 .detail-chart {
   min-height: 0;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.035);
+  background: transparent;
 }
 
 .detail-notes {
@@ -925,7 +964,7 @@ p {
 
   .top-stats {
     flex: 1;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    flex-wrap: wrap;
   }
 
   .workbench {
