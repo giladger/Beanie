@@ -107,6 +107,8 @@ interface AppState {
   selectedBeanId: string | null;
   selectedBatchId: string | null;
   shots: ShotRecord[];
+  shotsTotal: number;
+  shotsLoadingMore: boolean;
   draft: RecipeDraft;
   presets: BeanPreset[];
   search: string;
@@ -148,6 +150,8 @@ export class BeanieApp {
     selectedBeanId: null,
     selectedBatchId: null,
     shots: [],
+    shotsTotal: 0,
+    shotsLoadingMore: false,
     draft: emptyRecipe(),
     presets: [],
     search: '',
@@ -272,7 +276,7 @@ export class BeanieApp {
       batches.find((batch) => batch.id === this.state.workflow?.context?.beanBatchId) ??
       latestBatch(batches);
 
-    const shots = await this.loadShots(bean);
+    const { records: shots, total: shotsTotal } = await this.loadFirstShots(bean);
     const presets = readPresets(bean.id);
     const workflowMatches = this.workflowMatchesBean(bean);
     const draft =
@@ -284,6 +288,8 @@ export class BeanieApp {
       batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
       selectedBatchId: selectedBatch?.id ?? null,
       shots,
+      shotsTotal,
+      shotsLoadingMore: false,
       presets,
       draft: normalizeDraft(draft, this.state.profiles, this.state.grinders),
       busy: false,
@@ -307,25 +313,64 @@ export class BeanieApp {
     }
   }
 
-  private async loadShots(bean: Bean): Promise<ShotRecord[]> {
-    if (this.state.demo) return demoShotsForBean(bean);
+  private readonly shotPageSize = 12;
+
+  private async loadFirstShots(bean: Bean): Promise<{ records: ShotRecord[]; total: number }> {
+    if (this.state.demo) {
+      const records = demoShotsForBean(bean);
+      return { records, total: records.length };
+    }
+    return this.fetchShotPage(bean, 0);
+  }
+
+  // Fetches one page of shots, caching the page + summaries and reading full
+  // records through the IndexedDB cache. Falls back to a cached page when the
+  // gateway is unreachable so history stays usable offline.
+  private async fetchShotPage(
+    bean: Bean,
+    offset: number
+  ): Promise<{ records: ShotRecord[]; total: number }> {
+    const query = shotFilterForBean(bean, null);
+    query.set('limit', String(this.shotPageSize));
+    query.set('offset', String(offset));
 
     try {
-      const page = await gateway.shots(shotFilterForBean(bean, null));
-      const visible = page.items.slice(0, 14);
-      return Promise.all(visible.map((shot) => this.loadFullShot(shot)));
+      const page = await gateway.shots(query);
+      void beanieCache.putShotPage(query, page);
+      void beanieCache.putShotSummaries(page.items);
+      const records = await Promise.all(page.items.map((shot) => this.loadFullShot(shot)));
+      return { records, total: page.total };
     } catch (error) {
       console.warn('[Beanie] Could not load shots', error);
-      return [];
+      const cached = await beanieCache.getShotPage(query).catch(() => null);
+      if (cached) {
+        const records = await Promise.all(cached.items.map((shot) => this.loadFullShot(shot)));
+        return { records, total: cached.total };
+      }
+      return { records: [], total: offset };
     }
   }
 
   private async loadFullShot(shot: ShotSummary): Promise<ShotRecord> {
+    const cached = await beanieCache.getShotRecord(shot.id).catch(() => null);
+    if (cached) return cached;
     try {
-      return await gateway.shot(shot.id);
+      const record = await gateway.shot(shot.id);
+      void beanieCache.putShotRecord(record);
+      return record;
     } catch {
       return { ...shot, measurements: [] };
     }
+  }
+
+  private async loadMoreShots(): Promise<void> {
+    const bean = this.selectedBean();
+    if (!bean || this.state.demo || this.state.shotsLoadingMore) return;
+    if (this.state.shots.length >= this.state.shotsTotal) return;
+    this.setState({ shotsLoadingMore: true, status: 'Loading more shots' });
+    const { records } = await this.fetchShotPage(bean, this.state.shots.length);
+    const shots = [...this.state.shots, ...records];
+    this.setState({ shots, shotsLoadingMore: false, status: `${shots.length} shots` });
   }
 
   private async applyDraft(): Promise<void> {
@@ -428,6 +473,7 @@ export class BeanieApp {
       const updated = await gateway.updateShot(id, {
         annotations: { espressoNotes: notes || null, enjoyment }
       });
+      void beanieCache.putShotRecord(updated);
       const shots = this.state.shots.map((shot) => (shot.id === id ? updated : shot));
       this.setState({ shots, busy: false, status: 'Shot updated' });
     } catch (error) {
@@ -442,6 +488,7 @@ export class BeanieApp {
     if (!this.state.demo) {
       try {
         await gateway.deleteShot(id);
+        void beanieCache.invalidateShotMutation(id).catch(() => {});
       } catch (error) {
         console.error('[Beanie] Shot delete failed', error);
         this.setState({ busy: false, status: 'Shot delete failed' });
@@ -609,7 +656,10 @@ export class BeanieApp {
     this.liveShot.reset();
     const bean = this.selectedBean();
     if (bean && !this.state.demo) {
-      void this.loadShots(bean).then((shots) => this.setState({ shots }));
+      void beanieCache.invalidateShotMutation().catch(() => {});
+      void this.loadFirstShots(bean).then(({ records, total }) =>
+        this.setState({ shots: records, shotsTotal: total })
+      );
     }
   }
 
@@ -707,6 +757,9 @@ export class BeanieApp {
         break;
       case 'refresh':
         await this.load();
+        break;
+      case 'load-more-shots':
+        await this.loadMoreShots();
         break;
       case 'simulate-shot':
         this.startSimulatedShot();
@@ -1523,12 +1576,29 @@ export class BeanieApp {
             <span class="eyebrow">History</span>
             <h2>Shots</h2>
           </div>
-          <span class="chip">${this.state.shots.length} shots</span>
+          <span class="chip">${this.historyCountLabel()}</span>
         </div>
         <div class="shot-list">
           ${this.state.shots.length === 0 ? '<p class="empty-history">No shots found for this bean.</p>' : this.state.shots.map((shot) => this.renderShotRow(shot)).join('')}
         </div>
+        ${this.renderLoadMore()}
       </section>
+    `;
+  }
+
+  private historyCountLabel(): string {
+    const loaded = this.state.shots.length;
+    if (this.state.shotsTotal > loaded) return `${loaded} of ${this.state.shotsTotal} shots`;
+    return `${loaded} shots`;
+  }
+
+  private renderLoadMore(): string {
+    if (this.state.demo || this.state.shots.length >= this.state.shotsTotal) return '';
+    const remaining = this.state.shotsTotal - this.state.shots.length;
+    return `
+      <button class="command load-more" data-action="load-more-shots" ${this.state.shotsLoadingMore ? 'disabled' : ''}>
+        ${this.state.shotsLoadingMore ? 'Loading…' : `Load ${remaining} more`}
+      </button>
     `;
   }
 

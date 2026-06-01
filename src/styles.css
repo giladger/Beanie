@@ -1582,6 +1582,11 @@ p {
   height: 100%;
 }
 
+.load-more {
+  width: 100%;
+  margin-top: 8px;
+}
+
 .detail-notes {
   color: var(--muted);
 }
