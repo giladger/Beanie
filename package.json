@@ -7,7 +7,7 @@
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo dev) vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "tsx src/test/beanWorkflow.test.ts",
+    "test": "tsx src/test/runAll.ts",
     "validate:manifest": "node scripts/validate-manifest.mjs",
     "release:zip": "rm -f beanie-v$npm_package_version.zip && npm run build && npm run validate:manifest && (cd dist && zip -r ../beanie-v$npm_package_version.zip .)",
     "seed:decent": "node scripts/seed-decent-db.mjs"

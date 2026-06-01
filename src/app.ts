@@ -12,7 +12,7 @@ import type {
   ShotSummary,
   Workflow
 } from './api/types';
-import { gateway, gatewayWsOrigin } from './api/gateway';
+import { gateway, gatewayHttpOrigin, gatewayWsOrigin } from './api/gateway';
 import {
   beanLabel,
   buildWorkflowUpdate,
@@ -27,14 +27,7 @@ import {
   selectInitialBean,
   shotFilterForBean
 } from './domain/beanWorkflow';
-import {
-  readAutoLoad,
-  readLastBeanId,
-  readPresets,
-  writeAutoLoad,
-  writeLastBeanId,
-  writePresets
-} from './domain/storage';
+import { readLastBeanId, readPresets, writeLastBeanId, writePresets } from './domain/storage';
 import {
   demoBatches,
   demoBeans,
@@ -45,17 +38,39 @@ import {
   demoWorkflow
 } from './mock/demo';
 import { icon, refreshIcons } from './components/icons';
+import {
+  backspaceInputDialogValue,
+  clearInputDialogValue,
+  createInputDialog,
+  grinderChoicesFromGrinders,
+  inputDialogCommitValue,
+  inputDialogKindForField,
+  nudgeInputDialogValue,
+  rememberInputDialogValue,
+  renderInputDialog,
+  selectInputDialogChoice,
+  setInputDialogValue,
+  type InputDialogState,
+  typeInputDialogKey
+} from './components/InputDialog';
+import { renderSettingsShell } from './components/SettingsShell';
 import { renderShotGraph } from './components/ShotGraph';
+import { beanieCache } from './domain/cache';
+import {
+  applySettingsPreferences,
+  buildSettingsShellModel,
+  readSettingsPreferences,
+  resetBeanieCache,
+  type SettingsPreferences,
+  type ThemePreference,
+  type UIScalePreference,
+  writeSettingsPreferences
+} from './domain/settings';
 
 type Modal = 'add-bean' | 'settings' | 'edit-number' | 'shot-detail' | null;
 type EditField = 'dose' | 'yield' | 'grinderSetting';
 
-interface EditDialog {
-  field: EditField;
-  title: string;
-  value: string;
-  step: number;
-}
+const initialSettingsPreferences = readSettingsPreferences();
 
 interface AppState {
   beans: Bean[];
@@ -70,12 +85,14 @@ interface AppState {
   presets: BeanPreset[];
   search: string;
   autoLoad: boolean;
+  settingsPreferences: SettingsPreferences;
+  settingsSearch: string;
   demo: boolean;
   loading: boolean;
   busy: boolean;
   status: string;
   modal: Modal;
-  editDialog: EditDialog | null;
+  editDialog: InputDialogState | null;
   detailShotId: string | null;
   machine: MachineSnapshot | null;
   scale: ScaleSnapshot | null;
@@ -94,7 +111,9 @@ export class BeanieApp {
     draft: emptyRecipe(),
     presets: [],
     search: '',
-    autoLoad: readAutoLoad(),
+    autoLoad: initialSettingsPreferences.autoLoad,
+    settingsPreferences: initialSettingsPreferences,
+    settingsSearch: '',
     demo: false,
     loading: true,
     busy: false,
@@ -115,6 +134,7 @@ export class BeanieApp {
   constructor(private readonly root: HTMLElement) {}
 
   start(): void {
+    applySettingsPreferences(this.state.settingsPreferences);
     this.root.addEventListener('click', (event) => void this.onClick(event));
     this.root.addEventListener('input', (event) => this.onInput(event));
     this.root.addEventListener('change', (event) => void this.onChange(event));
@@ -421,7 +441,13 @@ export class BeanieApp {
         this.backspaceDialogValue();
         break;
       case 'dialog-clear':
-        this.setDialogValue('');
+        this.clearDialogValue();
+        break;
+      case 'dialog-recent':
+        this.setDialogValue(el.dataset.value ?? '');
+        break;
+      case 'dialog-choice':
+        this.selectDialogChoice(id ?? null);
         break;
       case 'dialog-commit':
         this.commitEditDialog();
@@ -444,6 +470,19 @@ export class BeanieApp {
       case 'open-settings':
         this.setState({ modal: 'settings' });
         break;
+      case 'settings-theme':
+        if (isThemePreference(el.dataset.value)) {
+          this.updateSettingsPreferences({ theme: el.dataset.value });
+        }
+        break;
+      case 'settings-ui-scale':
+        if (isUIScalePreference(el.dataset.value)) {
+          this.updateSettingsPreferences({ uiScale: el.dataset.value });
+        }
+        break;
+      case 'settings-reset-cache':
+        await this.resetLocalCache();
+        break;
       case 'open-add-bean':
         this.setState({ modal: 'add-bean' });
         break;
@@ -460,6 +499,9 @@ export class BeanieApp {
     if (target.dataset.action === 'search') {
       this.setState({ search: target.value });
     }
+    if (target.dataset.action === 'settings-search') {
+      this.setState({ settingsSearch: target.value });
+    }
   }
 
   private async onChange(event: Event): Promise<void> {
@@ -469,8 +511,13 @@ export class BeanieApp {
 
     if (field === 'autoLoad') {
       const enabled = (target as HTMLInputElement).checked;
-      writeAutoLoad(enabled);
-      this.setState({ autoLoad: enabled });
+      this.updateSettingsPreferences({ autoLoad: enabled });
+      return;
+    }
+
+    if (field === 'visualizerUpload') {
+      const enabled = (target as HTMLInputElement).checked;
+      this.updateSettingsPreferences({ visualizerUpload: enabled });
       return;
     }
 
@@ -548,62 +595,82 @@ export class BeanieApp {
         : field === 'dose'
           ? draft.dose?.toString() ?? ''
           : draft.yield?.toString() ?? '';
+    const step = field === 'dose' ? 0.5 : field === 'yield' ? 1 : this.grinderStep();
 
     this.setState({
       modal: 'edit-number',
-      editDialog: {
+      editDialog: createInputDialog({
         field,
+        kind: inputDialogKindForField(field),
         title: field === 'grinderSetting' ? 'Grind' : capitalize(field),
         value,
-        step: field === 'dose' ? 0.5 : field === 'yield' ? 1 : this.grinderStep()
-      }
+        step,
+        bigStep: field === 'grinderSetting' ? this.grinderBigStep() : step * 2,
+        choiceTitle: field === 'grinderSetting' ? 'Grinder' : undefined,
+        choices: field === 'grinderSetting' ? grinderChoicesFromGrinders(this.state.grinders) : [],
+        selectedChoiceId: field === 'grinderSetting' ? this.grinderIdForDraft() : null
+      })
     });
   }
 
   private adjustDialogValue(delta: number): void {
     const dialog = this.state.editDialog;
     if (!dialog) return;
-    const current = parseNumberInput(dialog.value) ?? 0;
-    const digits = dialog.field === 'grinderSetting' ? 2 : 1;
-    this.setDialogValue(round(current + delta, digits).toString());
+    this.setState({ editDialog: nudgeInputDialogValue(dialog, delta) });
   }
 
   private typeDialogKey(key: string): void {
     const dialog = this.state.editDialog;
     if (!dialog) return;
-    if (key === '.' && dialog.value.includes('.')) return;
-    if (key !== '.' && !/^\d$/.test(key)) return;
-
-    const current = dialog.value;
-    const next =
-      current === '0' && key !== '.'
-        ? key
-        : current.length >= 7
-          ? current
-          : `${current}${key}`;
-    this.setDialogValue(next);
+    this.setState({ editDialog: typeInputDialogKey(dialog, key) });
   }
 
   private backspaceDialogValue(): void {
     const dialog = this.state.editDialog;
     if (!dialog) return;
-    this.setDialogValue(dialog.value.slice(0, -1));
+    this.setState({ editDialog: backspaceInputDialogValue(dialog) });
+  }
+
+  private clearDialogValue(): void {
+    const dialog = this.state.editDialog;
+    if (!dialog) return;
+    this.setState({ editDialog: clearInputDialogValue(dialog) });
   }
 
   private setDialogValue(value: string): void {
     const dialog = this.state.editDialog;
     if (!dialog) return;
-    this.setState({ editDialog: { ...dialog, value } });
+    this.setState({ editDialog: setInputDialogValue(dialog, value) });
+  }
+
+  private selectDialogChoice(choiceId: string | null): void {
+    const dialog = this.state.editDialog;
+    if (!dialog) return;
+
+    const draft = { ...this.state.draft };
+    if (dialog.field === 'grinderSetting') {
+      const grinder = this.state.grinders.find((item) => item.id === choiceId);
+      draft.grinderId = grinder?.id ?? null;
+      draft.grinderModel = grinder?.model ?? null;
+    }
+
+    this.setState({
+      draft,
+      editDialog: selectInputDialogChoice(dialog, choiceId),
+      status: 'Draft changed'
+    });
   }
 
   private commitEditDialog(): void {
     const dialog = this.state.editDialog;
     if (!dialog) return;
 
+    const value = inputDialogCommitValue(dialog);
     const draft = { ...this.state.draft };
-    if (dialog.field === 'dose') draft.dose = parseNumberInput(dialog.value);
-    if (dialog.field === 'yield') draft.yield = parseNumberInput(dialog.value);
-    if (dialog.field === 'grinderSetting') draft.grinderSetting = dialog.value.trim() || null;
+    if (dialog.field === 'dose') draft.dose = parseNumberInput(value);
+    if (dialog.field === 'yield') draft.yield = parseNumberInput(value);
+    if (dialog.field === 'grinderSetting') draft.grinderSetting = value || null;
+    rememberInputDialogValue(dialog.kind, value);
     this.setState({ draft, modal: null, editDialog: null, status: 'Draft changed' });
   }
 
@@ -821,24 +888,7 @@ export class BeanieApp {
     if (this.state.modal === 'edit-number') return this.renderEditDialog();
     if (this.state.modal === 'shot-detail') return this.renderShotDetail();
     if (this.state.modal === 'settings') {
-      return `
-        <div class="modal-backdrop">
-          <div class="modal panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-            <div class="modal-head">
-              <h2 id="settings-title">Settings</h2>
-              <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
-            </div>
-            <label class="settings-row">
-              <span>Auto-load bean recipe</span>
-              <input type="checkbox" data-field="autoLoad" ${this.state.autoLoad ? 'checked' : ''} />
-            </label>
-            <div class="modal-actions">
-              <button type="button" class="command" data-action="refresh">${icon('refresh-cw')}<span>Sync</span></button>
-              <button type="button" class="command primary" data-action="close-modal">Done</button>
-            </div>
-          </div>
-        </div>
-      `;
+      return renderSettingsShell(this.settingsShellModel());
     }
     if (this.state.modal !== 'add-bean') return '';
     return `
@@ -905,42 +955,20 @@ export class BeanieApp {
   private renderEditDialog(): string {
     const dialog = this.state.editDialog;
     if (!dialog) return '';
-    const selectedId = this.grinderIdForDraft();
-    const step = dialog.step.toString();
-    return `
-      <div class="modal-backdrop">
-        <div class="number-modal panel" role="dialog" aria-modal="true" aria-labelledby="edit-number-title">
-          <div class="modal-head">
-            <h2 id="edit-number-title">${escapeHtml(dialog.title)}</h2>
-            <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
-          </div>
-          <div class="number-display">${escapeHtml(dialog.value || '--')}</div>
-          ${dialog.field === 'grinderSetting' ? `
-            <label class="dialog-select">
-              <span>Grinder</span>
-              <select data-field="grinderId">
-                <option value="">No grinder</option>
-                ${this.state.grinders.map((grinder) => `
-                  <option value="${escapeAttr(grinder.id)}" ${grinder.id === selectedId ? 'selected' : ''}>${escapeHtml(grinder.model)}</option>
-                `).join('')}
-              </select>
-            </label>
-          ` : ''}
-          <div class="dialog-nudges">
-            <button data-action="dialog-adjust" data-delta="${-dialog.step}">-${escapeHtml(step)}</button>
-            <button data-action="dialog-adjust" data-delta="${dialog.step}">+${escapeHtml(step)}</button>
-          </div>
-          <div class="keypad" aria-label="Numeric keypad">
-            ${['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0'].map((key) => `
-              <button data-action="dialog-key" data-key="${key}">${key}</button>
-            `).join('')}
-            <button data-action="dialog-backspace">${icon('delete')}</button>
-            <button class="muted-key" data-action="dialog-clear">Clear</button>
-            <button class="commit-key" data-action="dialog-commit">Done</button>
-          </div>
-        </div>
-      </div>
-    `;
+    return renderInputDialog(dialog);
+  }
+
+  private settingsShellModel() {
+    return buildSettingsShellModel({
+      query: this.state.settingsSearch,
+      preferences: { ...this.state.settingsPreferences, autoLoad: this.state.autoLoad },
+      demo: this.state.demo,
+      loading: this.state.loading,
+      status: this.state.status,
+      gatewayHost: gatewayHttpOrigin() || location.origin,
+      machine: this.state.machine,
+      scale: this.state.scale
+    });
   }
 
   private selectedBean(): Bean | null {
@@ -980,6 +1008,31 @@ export class BeanieApp {
   private grinderStep(): number {
     const grinder = this.state.grinders.find((item) => item.id === this.grinderIdForDraft());
     return grinder?.settingSmallStep ?? 0.1;
+  }
+
+  private grinderBigStep(): number {
+    const grinder = this.state.grinders.find((item) => item.id === this.grinderIdForDraft());
+    return grinder?.settingBigStep ?? 1;
+  }
+
+  private updateSettingsPreferences(next: Partial<SettingsPreferences>): void {
+    const settingsPreferences = { ...this.state.settingsPreferences, ...next };
+    writeSettingsPreferences(settingsPreferences);
+    applySettingsPreferences(settingsPreferences);
+    this.setState({
+      settingsPreferences,
+      autoLoad: settingsPreferences.autoLoad,
+      status: 'Settings changed'
+    });
+  }
+
+  private async resetLocalCache(): Promise<void> {
+    const cleared = resetBeanieCache();
+    await beanieCache.clear();
+    this.setState({
+      presets: [],
+      status: cleared === 0 ? 'Cache reset' : `Reset ${cleared} local item${cleared === 1 ? '' : 's'}`
+    });
   }
 
   private setState(next: Partial<AppState>): void {
@@ -1042,6 +1095,14 @@ function capitalize(value: string): string {
 
 function isEditField(value: string | undefined): value is EditField {
   return value === 'dose' || value === 'yield' || value === 'grinderSetting';
+}
+
+function isThemePreference(value: string | undefined): value is ThemePreference {
+  return value === 'system' || value === 'dark' || value === 'light';
+}
+
+function isUIScalePreference(value: string | undefined): value is UIScalePreference {
+  return value === 'compact' || value === 'standard' || value === 'large';
 }
 
 function escapeHtml(value: string): string {

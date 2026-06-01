@@ -16,7 +16,45 @@
   --amber: #ffc260;
   --radius: 8px;
   --topbar: 54px;
+  --ui-scale: 1;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f6f7;
+  --panel: #ffffff;
+  --panel-2: #eef2f4;
+  --panel-3: #dce4e7;
+  --ink: #12191e;
+  --soft: #2c3a42;
+  --muted: #64727a;
+  --line: rgba(10, 20, 26, 0.14);
+  --line-strong: rgba(10, 20, 26, 0.24);
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] {
+    color-scheme: light;
+    --bg: #f4f6f7;
+    --panel: #ffffff;
+    --panel-2: #eef2f4;
+    --panel-3: #dce4e7;
+    --ink: #12191e;
+    --soft: #2c3a42;
+    --muted: #64727a;
+    --line: rgba(10, 20, 26, 0.14);
+    --line-strong: rgba(10, 20, 26, 0.24);
+  }
+}
+
+:root[data-ui-scale="compact"] {
+  --ui-scale: 0.94;
+}
+
+:root[data-ui-scale="large"] {
+  --ui-scale: 1.08;
+  --topbar: 58px;
 }
 
 * {
@@ -33,6 +71,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--ink);
+  font-size: calc(16px * var(--ui-scale));
   letter-spacing: 0;
   overflow: hidden;
 }
@@ -869,6 +908,375 @@ p {
   accent-color: var(--teal);
 }
 
+.settings-shell {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 14px;
+}
+
+.settings-shell-head {
+  align-items: start;
+}
+
+.settings-search {
+  height: 36px;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.settings-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.settings-shell-content {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+}
+
+.settings-section {
+  display: grid;
+  gap: 0;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-section h3 {
+  margin: 0;
+  padding: 0 0 5px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.settings-section-rows {
+  display: grid;
+}
+
+.settings-line {
+  min-height: 46px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+:root[data-theme="light"] .settings-line {
+  border-top-color: rgba(10, 20, 26, 0.08);
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] .settings-line {
+    border-top-color: rgba(10, 20, 26, 0.08);
+  }
+}
+
+.settings-section-rows .settings-line:first-child {
+  border-top: 0;
+}
+
+.settings-line div {
+  min-width: 0;
+}
+
+.settings-line span,
+.settings-line small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-line span {
+  color: var(--soft);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.settings-line small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.settings-line strong {
+  min-width: 88px;
+  color: var(--soft);
+  font-size: 13px;
+  text-align: right;
+}
+
+.settings-line strong.good {
+  color: var(--green);
+}
+
+.settings-line strong.warn {
+  color: var(--amber);
+}
+
+.settings-line strong.muted {
+  color: var(--muted);
+}
+
+.settings-segmented {
+  min-width: 0;
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.settings-segmented button {
+  min-width: 68px;
+  min-height: 32px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.settings-segmented button:first-child {
+  border-left: 0;
+}
+
+.settings-segmented button.active {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.settings-toggle {
+  width: 48px;
+  height: 28px;
+  position: relative;
+  display: inline-block;
+}
+
+.settings-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.settings-toggle span {
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+}
+
+.settings-toggle span::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 140ms ease, background 140ms ease;
+}
+
+.settings-toggle input:checked + span::after {
+  transform: translateX(20px);
+  background: var(--teal);
+}
+
+.settings-shell-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.settings-empty {
+  padding: 18px 0;
+  text-align: center;
+}
+
+.input-dialog {
+  width: min(680px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.input-dialog-head {
+  align-items: start;
+}
+
+.input-dialog-body {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 10px;
+}
+
+.input-dialog-main {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.input-dialog-display {
+  min-height: 74px;
+  display: grid;
+  place-items: center;
+  gap: 5px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.input-dialog-display strong {
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 38px;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.input-dialog-display strong span {
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.input-dialog-display small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.input-dialog-nudges {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.input-dialog-nudges button,
+.input-dialog-recents button,
+.input-dialog-choices button,
+.input-dialog-keypad button {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.input-dialog-nudges button {
+  min-height: 34px;
+  font-size: 12px;
+}
+
+.input-dialog-recents,
+.input-dialog-choices {
+  display: grid;
+  gap: 6px;
+}
+
+.input-dialog-recents > span,
+.input-dialog-choices > span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.input-dialog-recents > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.input-dialog-recents button {
+  min-height: 30px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.input-dialog-choices {
+  max-height: 178px;
+  overflow: auto;
+}
+
+.input-dialog-choices button {
+  min-height: 36px;
+  display: grid;
+  justify-items: start;
+  gap: 2px;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.input-dialog-choices button.active {
+  border-color: rgba(91, 216, 200, 0.55);
+  background: rgba(91, 216, 200, 0.12);
+}
+
+.input-dialog-choices strong,
+.input-dialog-choices small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.input-dialog-choices small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.input-dialog-keypad {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.input-dialog-keypad button {
+  min-height: 48px;
+  font-size: 17px;
+}
+
+.input-dialog-keypad .commit-key {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--bg);
+}
+
 .shot-detail-modal {
   width: min(1100px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);
@@ -1085,6 +1493,39 @@ p {
     width: min(680px, calc(100vw - 20px));
     max-height: calc(100vh - 20px);
     padding: 10px;
+  }
+
+  .settings-shell,
+  .input-dialog {
+    width: min(680px, calc(100vw - 20px));
+    max-height: calc(100vh - 20px);
+    padding: 10px;
+  }
+
+  .settings-line {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+    gap: 7px;
+  }
+
+  .settings-line strong {
+    text-align: left;
+  }
+
+  .settings-segmented {
+    width: 100%;
+  }
+
+  .settings-segmented button {
+    flex: 1 1 0;
+  }
+
+  .input-dialog-body {
+    grid-template-columns: 1fr;
+  }
+
+  .input-dialog-keypad button {
+    min-height: 44px;
   }
 
   .detail-summary {
