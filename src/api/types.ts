@@ -195,3 +195,105 @@ export interface BeanPreset {
   recipe: RecipeDraft;
 }
 
+export type ApiRuntimeMode = 'real' | 'demo';
+
+export type ApiRuntimeStatus =
+  | 'connected'
+  | 'demo'
+  | 'gateway-unavailable'
+  | 'partial-failure';
+
+export type ApiDataSource = 'gateway' | 'demo';
+
+export type ApiResourceName =
+  | 'workflow'
+  | 'beans'
+  | 'batches'
+  | 'grinders'
+  | 'profiles'
+  | 'shots'
+  | 'shot'
+  | 'machine'
+  | 'scale';
+
+export type ApiIssueKind = 'network' | 'http' | 'malformed' | 'unknown';
+
+export interface ApiIssue {
+  kind: ApiIssueKind;
+  message: string;
+  resource?: ApiResourceName;
+  method?: string;
+  path?: string;
+  statusCode?: number;
+  details?: string[];
+}
+
+export interface ApiResourceSuccess<T> {
+  resource: ApiResourceName;
+  status: 'loaded';
+  source: ApiDataSource;
+  data: T;
+  receivedAt: string;
+}
+
+export interface ApiResourceFailure {
+  resource: ApiResourceName;
+  status: 'failed';
+  source: 'gateway';
+  issue: ApiIssue;
+  receivedAt: string;
+}
+
+export type ApiResource<T> = ApiResourceSuccess<T> | ApiResourceFailure;
+
+export interface ApiDemoFallback {
+  fromStatus: Exclude<ApiRuntimeStatus, 'connected' | 'demo'>;
+  reason: string;
+  issues: ApiIssue[];
+}
+
+export interface GatewayStartupResources {
+  workflow: ApiResource<Workflow>;
+  beans: ApiResource<Bean[]>;
+  grinders: ApiResource<Grinder[]>;
+  profiles: ApiResource<ProfileRecord[]>;
+  shots: ApiResource<PaginatedShots>;
+}
+
+export interface GatewayStartupSnapshot {
+  mode: 'real';
+  status: Exclude<ApiRuntimeStatus, 'demo'>;
+  source: 'gateway';
+  origin: string;
+  fallbackToDemo: null;
+  resources: GatewayStartupResources;
+  issues: ApiIssue[];
+  data: {
+    workflow?: Workflow;
+    beans?: Bean[];
+    grinders?: Grinder[];
+    profiles?: ProfileRecord[];
+    latestShots?: PaginatedShots;
+  };
+}
+
+export interface DemoStartupSnapshot {
+  mode: 'demo';
+  status: 'demo';
+  source: 'demo';
+  origin: null;
+  fallbackToDemo: ApiDemoFallback | null;
+  resources: Partial<GatewayStartupResources>;
+  issues: ApiIssue[];
+  data: {
+    workflow: Workflow;
+    beans: Bean[];
+    batchesByBean?: Record<string, BeanBatch[]>;
+    grinders: Grinder[];
+    profiles: ProfileRecord[];
+    latestShots?: PaginatedShots;
+    shots?: ShotRecord[];
+  };
+}
+
+export type ApiStartupSnapshot = GatewayStartupSnapshot | DemoStartupSnapshot;

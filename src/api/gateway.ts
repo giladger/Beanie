@@ -1,6 +1,12 @@
 import type {
+  ApiDemoFallback,
+  ApiIssue,
+  ApiResource,
+  ApiResourceName,
   Bean,
   BeanBatch,
+  DemoStartupSnapshot,
+  GatewayStartupSnapshot,
   Grinder,
   MachineState,
   PaginatedShots,
@@ -9,6 +15,18 @@ import type {
   Workflow,
   WorkflowUpdate
 } from './types';
+import {
+  ApiValidationError,
+  readBatches,
+  readBean,
+  readBeans,
+  readGrinders,
+  readPaginatedShots,
+  readProfiles,
+  readShotRecord,
+  readWorkflow,
+  type ApiResponseGuard
+} from './guards';
 
 function resolveGatewayOrigin(): string {
   const override = window.BEANIE_GATEWAY;
@@ -29,45 +47,311 @@ export function gatewayWsOrigin(): string {
   return location.origin.replace(/^http/, 'ws');
 }
 
-async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${gatewayHttpOrigin()}${path}`, init);
-  if (!res.ok) throw new Error(`${init?.method ?? 'GET'} ${path} returned ${res.status}`);
-  return res.json() as Promise<T>;
+export class GatewayRequestError extends Error {
+  constructor(
+    readonly issue: ApiIssue,
+    readonly cause?: unknown
+  ) {
+    super(issue.message);
+    this.name = 'GatewayRequestError';
+  }
 }
 
-async function fetchEmpty(path: string, init?: RequestInit): Promise<void> {
-  const res = await fetch(`${gatewayHttpOrigin()}${path}`, init);
-  if (!res.ok) throw new Error(`${init?.method ?? 'GET'} ${path} returned ${res.status}`);
+async function fetchJson<T>(
+  resource: ApiResourceName,
+  path: string,
+  guard: ApiResponseGuard<T>,
+  init?: RequestInit
+): Promise<T> {
+  const method = init?.method ?? 'GET';
+  let res: Response;
+  try {
+    res = await fetch(`${gatewayHttpOrigin()}${path}`, init);
+  } catch (cause) {
+    throw requestError(resource, path, method, 'network', `Could not reach ${path}`, cause);
+  }
+
+  if (!res.ok) {
+    throw requestError(
+      resource,
+      path,
+      method,
+      'http',
+      `${method} ${path} returned ${res.status}`,
+      undefined,
+      res.status
+    );
+  }
+
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch (cause) {
+    throw requestError(resource, path, method, 'malformed', `${method} ${path} returned invalid JSON`, cause);
+  }
+
+  try {
+    return guard(body);
+  } catch (cause) {
+    if (cause instanceof ApiValidationError) {
+      throw requestError(
+        resource,
+        path,
+        method,
+        'malformed',
+        `${method} ${path} returned a malformed ${cause.label} response`,
+        cause,
+        undefined,
+        cause.issues.map((issue) => `${issue.path}: ${issue.message}`)
+      );
+    }
+    throw cause;
+  }
+}
+
+async function fetchEmpty(
+  resource: ApiResourceName,
+  path: string,
+  init?: RequestInit
+): Promise<void> {
+  const method = init?.method ?? 'GET';
+  let res: Response;
+  try {
+    res = await fetch(`${gatewayHttpOrigin()}${path}`, init);
+  } catch (cause) {
+    throw requestError(resource, path, method, 'network', `Could not reach ${path}`, cause);
+  }
+
+  if (!res.ok) {
+    throw requestError(
+      resource,
+      path,
+      method,
+      'http',
+      `${method} ${path} returned ${res.status}`,
+      undefined,
+      res.status
+    );
+  }
 }
 
 export const gateway = {
-  workflow: () => fetchJson<Workflow>('/api/v1/workflow'),
+  workflow: () => fetchJson<Workflow>('workflow', '/api/v1/workflow', readWorkflow),
   updateWorkflow: (body: WorkflowUpdate) =>
-    fetchJson<Workflow>('/api/v1/workflow', {
+    fetchJson<Workflow>('workflow', '/api/v1/workflow', readWorkflow, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     }),
 
-  beans: () => fetchJson<Bean[]>('/api/v1/beans?includeArchived=false'),
+  beans: () => fetchJson<Bean[]>('beans', '/api/v1/beans?includeArchived=false', readBeans),
   createBean: (bean: Pick<Bean, 'roaster' | 'name'>) =>
-    fetchJson<Bean>('/api/v1/beans', {
+    fetchJson<Bean>('beans', '/api/v1/beans', readBean, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(bean)
     }),
   batches: (beanId: string) =>
     fetchJson<BeanBatch[]>(
-      `/api/v1/beans/${encodeURIComponent(beanId)}/batches?includeArchived=false`
+      'batches',
+      `/api/v1/beans/${encodeURIComponent(beanId)}/batches?includeArchived=false`,
+      readBatches
     ),
-  grinders: () => fetchJson<Grinder[]>('/api/v1/grinders?includeArchived=false'),
-  profiles: () => fetchJson<ProfileRecord[]>('/api/v1/profiles?visibility=visible'),
+  grinders: () =>
+    fetchJson<Grinder[]>('grinders', '/api/v1/grinders?includeArchived=false', readGrinders),
+  profiles: () =>
+    fetchJson<ProfileRecord[]>(
+      'profiles',
+      '/api/v1/profiles?visibility=visible',
+      readProfiles
+    ),
   shots: (query: URLSearchParams) =>
-    fetchJson<PaginatedShots>(`/api/v1/shots?${query.toString()}`),
-  shot: (id: string) => fetchJson<ShotRecord>(`/api/v1/shots/${encodeURIComponent(id)}`),
+    fetchJson<PaginatedShots>('shots', `/api/v1/shots?${query.toString()}`, readPaginatedShots),
+  shot: (id: string) =>
+    fetchJson<ShotRecord>('shot', `/api/v1/shots/${encodeURIComponent(id)}`, readShotRecord),
   requestState: (state: MachineState) =>
-    fetchEmpty(`/api/v1/machine/state/${encodeURIComponent(state)}`, {
+    fetchEmpty('machine', `/api/v1/machine/state/${encodeURIComponent(state)}`, {
       method: 'PUT'
     }),
-  tareScale: () => fetchEmpty('/api/v1/scale/tare', { method: 'PUT' })
+  tareScale: () => fetchEmpty('scale', '/api/v1/scale/tare', { method: 'PUT' })
 };
+
+export type GatewayStartupClient = Pick<
+  typeof gateway,
+  'workflow' | 'beans' | 'grinders' | 'profiles' | 'shots'
+>;
+
+export interface GatewayStartupOptions {
+  client?: GatewayStartupClient;
+  latestShotQuery?: URLSearchParams;
+  origin?: string;
+}
+
+export interface DemoStartupInput {
+  workflow: Workflow;
+  beans: Bean[];
+  batchesByBean?: Record<string, BeanBatch[]>;
+  grinders: Grinder[];
+  profiles: ProfileRecord[];
+  latestShots?: PaginatedShots;
+  shots?: ShotRecord[];
+  fallbackToDemo?: ApiDemoFallback | null;
+}
+
+export async function loadGatewayStartup(
+  options: GatewayStartupOptions = {}
+): Promise<GatewayStartupSnapshot> {
+  const client = options.client ?? gateway;
+  const latestShotQuery =
+    options.latestShotQuery ?? new URLSearchParams({ limit: '1', offset: '0', order: 'desc' });
+
+  const [workflow, beans, grinders, profiles, shots] = await Promise.all([
+    loadGatewayResource('workflow', () => client.workflow()),
+    loadGatewayResource('beans', () => client.beans()),
+    loadGatewayResource('grinders', () => client.grinders()),
+    loadGatewayResource('profiles', () => client.profiles()),
+    loadGatewayResource('shots', () => client.shots(latestShotQuery))
+  ]);
+
+  const resources = { workflow, beans, grinders, profiles, shots };
+  const settled = Object.values(resources);
+  const issues = settled.flatMap((resource) =>
+    resource.status === 'failed' ? [resource.issue] : []
+  );
+  const loadedCount = settled.length - issues.length;
+  const status =
+    issues.length === 0
+      ? 'connected'
+      : loadedCount === 0
+        ? 'gateway-unavailable'
+        : 'partial-failure';
+  const data: GatewayStartupSnapshot['data'] = {};
+
+  if (workflow.status === 'loaded') data.workflow = workflow.data;
+  if (beans.status === 'loaded') data.beans = beans.data;
+  if (grinders.status === 'loaded') data.grinders = grinders.data;
+  if (profiles.status === 'loaded') data.profiles = profiles.data;
+  if (shots.status === 'loaded') data.latestShots = shots.data;
+
+  return {
+    mode: 'real',
+    status,
+    source: 'gateway',
+    origin: options.origin ?? gatewayHttpOrigin(),
+    fallbackToDemo: null,
+    resources,
+    issues,
+    data
+  };
+}
+
+export async function loadGatewayResource<T>(
+  resource: ApiResourceName,
+  request: () => Promise<T>
+): Promise<ApiResource<T>> {
+  try {
+    return loadedResource(resource, 'gateway', await request());
+  } catch (error) {
+    return {
+      resource,
+      status: 'failed',
+      source: 'gateway',
+      issue: issueFromError(resource, error),
+      receivedAt: new Date().toISOString()
+    };
+  }
+}
+
+export function createDemoStartupSnapshot(input: DemoStartupInput): DemoStartupSnapshot {
+  const resources: DemoStartupSnapshot['resources'] = {
+    workflow: loadedResource('workflow', 'demo', input.workflow),
+    beans: loadedResource('beans', 'demo', input.beans),
+    grinders: loadedResource('grinders', 'demo', input.grinders),
+    profiles: loadedResource('profiles', 'demo', input.profiles)
+  };
+
+  if (input.latestShots) {
+    resources.shots = loadedResource('shots', 'demo', input.latestShots);
+  }
+
+  return {
+    mode: 'demo',
+    status: 'demo',
+    source: 'demo',
+    origin: null,
+    fallbackToDemo: input.fallbackToDemo ?? null,
+    resources,
+    issues: input.fallbackToDemo?.issues ?? [],
+    data: {
+      workflow: input.workflow,
+      beans: input.beans,
+      batchesByBean: input.batchesByBean,
+      grinders: input.grinders,
+      profiles: input.profiles,
+      latestShots: input.latestShots,
+      shots: input.shots
+    }
+  };
+}
+
+export function fallbackFromGatewaySnapshot(
+  snapshot: GatewayStartupSnapshot,
+  reason = 'Gateway startup did not fully load'
+): ApiDemoFallback | null {
+  if (snapshot.status === 'connected') return null;
+  return {
+    fromStatus: snapshot.status,
+    reason,
+    issues: snapshot.issues
+  };
+}
+
+export function issueFromError(resource: ApiResourceName, error: unknown): ApiIssue {
+  if (error instanceof GatewayRequestError) {
+    return { ...error.issue, resource: error.issue.resource ?? resource };
+  }
+
+  return {
+    resource,
+    kind: 'unknown',
+    message: error instanceof Error ? error.message : String(error)
+  };
+}
+
+function loadedResource<T>(
+  resource: ApiResourceName,
+  source: 'gateway' | 'demo',
+  data: T
+): ApiResource<T> {
+  return {
+    resource,
+    status: 'loaded',
+    source,
+    data,
+    receivedAt: new Date().toISOString()
+  };
+}
+
+function requestError(
+  resource: ApiResourceName,
+  path: string,
+  method: string,
+  kind: ApiIssue['kind'],
+  message: string,
+  cause?: unknown,
+  statusCode?: number,
+  details?: string[]
+): GatewayRequestError {
+  return new GatewayRequestError(
+    {
+      resource,
+      method,
+      path,
+      kind,
+      message,
+      statusCode,
+      details
+    },
+    cause
+  );
+}
