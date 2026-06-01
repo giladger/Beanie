@@ -116,15 +116,35 @@ export interface WorkflowContext {
   finalBeverageType?: string | null;
 }
 
+export interface SteamSettings {
+  targetTemperature?: number;
+  duration?: number;
+  flow?: number;
+  stopAtTemperature?: number;
+}
+
+export interface HotWaterData {
+  targetTemperature?: number;
+  duration?: number;
+  volume?: number;
+  flow?: number;
+}
+
+export interface RinseData {
+  targetTemperature?: number;
+  duration?: number;
+  flow?: number;
+}
+
 export interface Workflow {
   id?: string;
   name?: string;
   description?: string;
   profile?: Profile | null;
   context?: WorkflowContext | null;
-  steamSettings?: Record<string, unknown>;
-  hotWaterData?: Record<string, unknown>;
-  rinseData?: Record<string, unknown>;
+  steamSettings?: SteamSettings;
+  hotWaterData?: HotWaterData;
+  rinseData?: RinseData;
 }
 
 export interface WorkflowUpdate {

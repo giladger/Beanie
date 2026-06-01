@@ -1587,6 +1587,24 @@ p {
   margin-top: 8px;
 }
 
+.machine-group {
+  margin: 0;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: grid;
+  gap: 10px;
+}
+
+.machine-group legend {
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
 .detail-notes {
   color: var(--muted);
 }

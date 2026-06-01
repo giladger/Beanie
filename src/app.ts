@@ -3,13 +3,16 @@ import type {
   BeanBatch,
   BeanPreset,
   Grinder,
+  HotWaterData,
   MachineSnapshot,
   MachineState,
   ProfileRecord,
   RecipeDraft,
+  RinseData,
   ScaleSnapshot,
   ShotRecord,
   ShotSummary,
+  SteamSettings,
   Workflow
 } from './api/types';
 import { gateway, gatewayHttpOrigin, gatewayWsOrigin } from './api/gateway';
@@ -87,6 +90,7 @@ type Modal =
   | 'batch-editor'
   | 'grinder-editor'
   | 'profile-picker'
+  | 'machine-settings'
   | 'settings'
   | 'edit-number'
   | 'shot-detail'
@@ -97,6 +101,21 @@ type ApplyState = 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
 const initialSettingsPreferences = readSettingsPreferences();
 
 const FOCUSABLE_SEARCH = new Set(['search', 'profile-search', 'settings-search']);
+
+// Mirror ReaPrime's SteamSettings / HotWaterData / RinseData defaults.
+const DEFAULT_STEAM: SteamSettings = {
+  targetTemperature: 150,
+  duration: 50,
+  flow: 0.8,
+  stopAtTemperature: 0
+};
+const DEFAULT_HOT_WATER: HotWaterData = {
+  targetTemperature: 75,
+  duration: 30,
+  volume: 50,
+  flow: 10
+};
+const DEFAULT_RINSE: RinseData = { targetTemperature: 90, duration: 10, flow: 6 };
 
 interface AppState {
   beans: Bean[];
@@ -798,6 +817,9 @@ export class BeanieApp {
       case 'open-profile-picker':
         this.setState({ modal: 'profile-picker', profileSearch: '' });
         break;
+      case 'open-machine-settings':
+        this.setState({ modal: 'machine-settings' });
+        break;
       case 'pick-profile':
         if (id) this.pickProfile(id);
         break;
@@ -922,6 +944,54 @@ export class BeanieApp {
     if (form.dataset.form === 'grinder-editor') {
       event.preventDefault();
       await this.submitGrinderEditor(form);
+      return;
+    }
+    if (form.dataset.form === 'machine-settings') {
+      event.preventDefault();
+      await this.submitMachineSettings(form);
+    }
+  }
+
+  private async submitMachineSettings(form: HTMLFormElement): Promise<void> {
+    const data = new FormData(form);
+    const steamSettings: SteamSettings = {
+      ...DEFAULT_STEAM,
+      ...this.state.workflow?.steamSettings,
+      duration: numberOrNullInput(data.get('steamDuration')) ?? DEFAULT_STEAM.duration,
+      targetTemperature: numberOrNullInput(data.get('steamTemp')) ?? DEFAULT_STEAM.targetTemperature
+    };
+    const hotWaterData: HotWaterData = {
+      ...DEFAULT_HOT_WATER,
+      ...this.state.workflow?.hotWaterData,
+      flow: numberOrNullInput(data.get('waterFlow')) ?? DEFAULT_HOT_WATER.flow,
+      duration: numberOrNullInput(data.get('waterDuration')) ?? DEFAULT_HOT_WATER.duration,
+      targetTemperature: numberOrNullInput(data.get('waterTemp')) ?? DEFAULT_HOT_WATER.targetTemperature,
+      volume: numberOrNullInput(data.get('waterVolume')) ?? DEFAULT_HOT_WATER.volume
+    };
+    const rinseData: RinseData = {
+      ...DEFAULT_RINSE,
+      ...this.state.workflow?.rinseData,
+      flow: numberOrNullInput(data.get('flushFlow')) ?? DEFAULT_RINSE.flow,
+      duration: numberOrNullInput(data.get('flushDuration')) ?? DEFAULT_RINSE.duration
+    };
+    const workflow: Workflow = {
+      ...(this.state.workflow ?? {}),
+      steamSettings,
+      hotWaterData,
+      rinseData
+    };
+
+    this.setState({ busy: true, status: 'Saving machine settings' });
+    if (this.state.demo) {
+      this.setState({ workflow, modal: null, busy: false, status: 'Machine settings saved (demo)' });
+      return;
+    }
+    try {
+      const saved = await gateway.updateWorkflow(workflow);
+      this.setState({ workflow: saved, modal: null, busy: false, status: 'Machine settings saved' });
+    } catch (error) {
+      console.error('[Beanie] Save machine settings failed', error);
+      this.setState({ busy: false, status: 'Save machine settings failed' });
     }
   }
 
@@ -1311,6 +1381,7 @@ export class BeanieApp {
           </div>
           <div class="top-icons" role="toolbar" aria-label="Skin actions">
             ${this.state.demo ? `<button class="icon-tool" data-action="simulate-shot" aria-label="Simulate shot" title="Simulate shot">${icon('play')}</button>` : ''}
+            <button class="icon-tool" data-action="open-machine-settings" aria-label="Steam, water and flush" title="Steam, water and flush">${icon('droplets')}</button>
             <button class="icon-tool" data-action="open-settings" aria-label="Settings" title="Settings">${icon('settings')}</button>
             <button class="icon-tool" data-action="sleep" aria-label="Sleep" title="Sleep">${icon('power')}</button>
           </div>
@@ -1635,7 +1706,54 @@ export class BeanieApp {
     if (this.state.modal === 'batch-editor') return this.renderBatchEditor();
     if (this.state.modal === 'grinder-editor') return this.renderGrinderEditor();
     if (this.state.modal === 'profile-picker') return this.renderProfilePicker();
+    if (this.state.modal === 'machine-settings') return this.renderMachineSettings();
     return '';
+  }
+
+  private renderMachineSettings(): string {
+    const steam = { ...DEFAULT_STEAM, ...this.state.workflow?.steamSettings };
+    const water = { ...DEFAULT_HOT_WATER, ...this.state.workflow?.hotWaterData };
+    const flush = { ...DEFAULT_RINSE, ...this.state.workflow?.rinseData };
+    const num = (value?: number) => (value == null ? '' : String(value));
+    return `
+      <div class="modal-backdrop">
+        <form class="modal panel machine-settings" data-form="machine-settings" role="dialog" aria-modal="true" aria-labelledby="machine-settings-title">
+          <div class="modal-head">
+            <h2 id="machine-settings-title">Steam · Water · Flush</h2>
+            <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
+          </div>
+          <fieldset class="machine-group">
+            <legend>Steam</legend>
+            <div class="field-row">
+              <label>Time (s)<input type="number" name="steamDuration" min="0" step="1" value="${num(steam.duration)}" /></label>
+              <label>Temp (C)<input type="number" name="steamTemp" min="0" step="1" value="${num(steam.targetTemperature)}" /></label>
+            </div>
+          </fieldset>
+          <fieldset class="machine-group">
+            <legend>Hot water</legend>
+            <div class="field-row">
+              <label>Flow (ml/s)<input type="number" name="waterFlow" min="0" step="0.1" value="${num(water.flow)}" /></label>
+              <label>Duration (s)<input type="number" name="waterDuration" min="0" step="1" value="${num(water.duration)}" /></label>
+            </div>
+            <div class="field-row">
+              <label>Temp (C)<input type="number" name="waterTemp" min="0" step="1" value="${num(water.targetTemperature)}" /></label>
+              <label>Volume (ml)<input type="number" name="waterVolume" min="0" step="1" value="${num(water.volume)}" /></label>
+            </div>
+          </fieldset>
+          <fieldset class="machine-group">
+            <legend>Flush</legend>
+            <div class="field-row">
+              <label>Flow (ml/s)<input type="number" name="flushFlow" min="0" step="0.1" value="${num(flush.flow)}" /></label>
+              <label>Duration (s)<input type="number" name="flushDuration" min="0" step="1" value="${num(flush.duration)}" /></label>
+            </div>
+          </fieldset>
+          <div class="modal-actions">
+            <button type="button" class="command" data-action="close-modal">Cancel</button>
+            <button class="command primary" type="submit">${icon('save')}<span>Save</span></button>
+          </div>
+        </form>
+      </div>
+    `;
   }
 
   private renderBeanEditor(): string {
