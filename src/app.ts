@@ -792,6 +792,10 @@ export class BeanieApp {
       case 'sleep':
         await this.machineAction('sleeping');
         break;
+      case 'wake':
+        this.setState({ asleep: false });
+        await this.machineAction('idle');
+        break;
       case 'refresh':
         await this.load();
         break;
@@ -1698,6 +1702,15 @@ export class BeanieApp {
         /* not a text input */
       }
     }
+  }
+
+  private renderSleepOverlay(): string {
+    if (!this.state.asleep) return '';
+    return `
+      <div class="sleep-overlay" data-action="wake" role="button" tabindex="0" aria-label="Tap to wake">
+        <span class="sleep-hint">Tap to wake</span>
+      </div>
+    `;
   }
 
   private renderLivePanel(): string {
