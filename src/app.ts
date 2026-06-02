@@ -848,7 +848,7 @@ export class BeanieApp {
         this.setState({ view: 'batch-editor' });
         break;
       case 'open-add-grinder':
-        this.setState({ view: 'grinder-editor' });
+        this.setState({ view: 'grinder-editor', modal: null, editDialog: null });
         break;
       case 'open-profile-picker':
         this.setState({ view: 'profiles', profileSearch: '', profilePage: 0 });
