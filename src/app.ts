@@ -1993,21 +1993,12 @@ export class BeanieApp {
   private renderHistory(): string {
     return `
       <section class="history-panel panel">
-        <div class="history-head">
-          <span class="chip">${this.historyCountLabel()}</span>
-        </div>
         <div class="shot-list">
           ${this.state.shots.length === 0 ? '<p class="empty-history">No shots found for this bean.</p>' : this.state.shots.map((shot) => this.renderShotRow(shot)).join('')}
         </div>
         ${this.renderLoadMore()}
       </section>
     `;
-  }
-
-  private historyCountLabel(): string {
-    const loaded = this.state.shots.length;
-    if (this.state.shotsTotal > loaded) return `${loaded} of ${this.state.shotsTotal} shots`;
-    return `${loaded} shots`;
   }
 
   private renderLoadMore(): string {

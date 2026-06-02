@@ -612,23 +612,15 @@ p {
 
 .history-panel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
-}
-
-.history-head {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 9px 11px 0;
 }
 
 .shot-list {
   display: grid;
   align-content: start;
   gap: 0;
-  padding: 0 7px 7px;
+  padding: 7px;
 }
 
 .shot-card {
