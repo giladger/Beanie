@@ -172,6 +172,7 @@ interface AppState {
   machine: MachineSnapshot | null;
   scale: ScaleSnapshot | null;
   liveActive: boolean;
+  asleep: boolean;
   applyState: ApplyState;
   appliedSignature: string | null;
 }
@@ -220,6 +221,7 @@ export class BeanieApp {
     machine: null,
     scale: null,
     liveActive: false,
+    asleep: false,
     applyState: 'idle',
     appliedSignature: null
   };
@@ -611,9 +613,15 @@ export class BeanieApp {
       this.scheduleLiveDraw();
       return;
     }
-    // Idle telemetry: patch the top-bar readouts by reference. Never re-render
-    // the whole app for a streaming snapshot — that would reset scroll position
-    // of the bean list / history / pages on every frame.
+    // A sleep/wake transition flips the screensaver — re-render for that. Any
+    // other idle telemetry only patches the top-bar readouts by reference, so a
+    // streaming snapshot never re-renders the whole app (which would reset
+    // scroll position of the bean list / history / pages).
+    const sleeping = this.state.machine?.state?.state === 'sleeping';
+    if (sleeping !== this.state.asleep) {
+      this.setState({ asleep: sleeping });
+      return;
+    }
     this.updateTopbarStats();
   }
 
@@ -1576,6 +1584,7 @@ export class BeanieApp {
         ${isPage ? this.renderPage() : this.renderWorkbench(bean)}
         ${this.renderLivePanel()}
         ${this.renderModal()}
+        ${this.renderSleepOverlay()}
       </div>
     `;
     refreshIcons();
