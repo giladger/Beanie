@@ -7,121 +7,59 @@ import {
   profileFromEditorState,
   removeStep,
   renderProfileEditor,
+  setEditorMode,
   setSimpleProfileField,
+  setSimpleProfileType,
   setStepField,
   setStepPump,
   PROFILE_BEVERAGE_TYPES
 } from '../components/profileEditor';
-import {
-  addProfileStep,
-  deleteProfileStep,
-  duplicateProfileStep,
-  moveProfileStep,
-  normalizeProfileForEditing,
-  serializeProfileEditor,
-  updateProfileMetadata,
-  updateProfileStepField,
-  validateProfileEditor
-} from '../domain/profileEditor';
 
-run('domain normalizes canonical and Tcl-derived metadata and steps', () => {
-  const state = normalizeProfileForEditing(tclDerivedProfile());
+run('reads de1app Tcl-derived metadata, steps, and flat exit conditions', () => {
+  const state = createProfileEditorState(tclDerivedProfile());
 
-  equal(state.metadata.title, 'Blooming Allonge');
-  equal(state.metadata.notes, 'keep the aliases alive');
-  equal(state.metadata.targetWeight, 135);
-  equal(state.metadata.tankTemperature, 0);
+  // Metadata aliases: profile_title / profile_notes / final_desired_* / tank_desired_*
+  equal(state.title, 'Blooming Allonge');
+  equal(state.notes, 'keep the aliases alive');
+  equal(state.targetWeight, 135);
+  equal(state.tankTemperature, 0);
+
+  // Steps read from `advanced_shot` when canonical `steps` is absent
   equal(state.steps.length, 2);
   equal(state.steps[0].name, 'fast pre');
-  equal(state.steps[0].durationSeconds, 3);
-  equal(state.steps[0].exit?.enabled, true);
-  equal(state.steps[0].exit?.type, 'pressure_over');
+  equal(state.steps[0].seconds, 3);
+
+  // Flat exit_if / exit_type / exit_pressure_over folded into the nested model
+  equal(state.steps[0].exit?.type, 'pressure');
+  equal(state.steps[0].exit?.condition, 'over');
+  equal(state.steps[0].exit?.value, 3.5);
+
+  // Genuinely-unknown step keys are preserved
   equal(state.steps[0].extra.popup, '$weight');
+  equal(state.steps[1].extra.legacy_flag, 'preserve-me');
 });
 
-run('domain preserves unknown profile and step fields through a round-trip', () => {
-  const state = normalizeProfileForEditing(tclDerivedProfile());
-  const profile = serializeProfileEditor(state) as Record<string, unknown>;
-  const steps = profile.advanced_shot as Record<string, unknown>[];
+run('serializes Tcl-derived input to canonical reaprime v2 output', () => {
+  const state = createProfileEditorState(tclDerivedProfile());
+  const profile = profileFromEditorState(state) as Record<string, unknown>;
+  const steps = profile.steps as Record<string, unknown>[];
 
-  equal(profile.profile_editor, 'demo');
-  equal(profile.read_only, 1);
-  equal(profile.profile_title, 'Blooming Allonge');
+  // Canonical shape: `steps`, not `advanced_shot`; nested `exit`, not flat keys
+  equal(Array.isArray(profile.steps), true);
+  equal('advanced_shot' in profile, false);
+  equal('profile_title' in profile, false);
   equal(profile.title, 'Blooming Allonge');
+  deepKeysEqual(steps[0].exit as Record<string, unknown>, {
+    type: 'pressure',
+    condition: 'over',
+    value: 3.5
+  });
+  equal('exit_if' in steps[0], false);
   equal(steps[0].popup, '$weight');
-  equal(steps[0].exit_if, 1);
-  equal(steps[1].legacy_flag, 'preserve-me');
-});
 
-run('domain updates metadata without dropping Tcl aliases', () => {
-  const state = updateProfileMetadata(normalizeProfileForEditing(tclDerivedProfile()), 'title', 'Edited');
-  const profile = serializeProfileEditor(state) as Record<string, unknown>;
-
-  equal(profile.title, 'Edited');
-  equal(profile.profile_title, 'Edited');
+  // Unknown top-level keys still survive the round-trip
+  equal(profile.read_only, 1);
   equal(profile.profile_editor, 'demo');
-});
-
-run('domain adds, duplicates, deletes, and moves ordered steps', () => {
-  const original = normalizeProfileForEditing(tclDerivedProfile());
-  const added = addProfileStep(original, { name: 'Finish', pressure: 5 });
-  equal(added.steps.length, 3);
-  equal(added.steps[2].name, 'Finish');
-
-  const duplicated = duplicateProfileStep(added, 0);
-  equal(duplicated.steps.length, 4);
-  equal(duplicated.steps[1].name, 'fast pre');
-
-  const deleted = deleteProfileStep(duplicated, 2);
-  equal(deleted.steps.length, 3);
-  equal(deleted.steps[2].name, 'Finish');
-
-  const moved = moveProfileStep(deleted, 2, 0);
-  equal(moved.steps[0].name, 'Finish');
-  equal(moved.steps[1].name, 'fast pre');
-});
-
-run('domain updates known and unknown step fields and serializes duration alias', () => {
-  const state = normalizeProfileForEditing({
-    title: 'Duration aliases',
-    steps: [{ name: 'Soak', duration: 12, mystery: 'stay' }]
-  });
-
-  const updated = updateProfileStepField(
-    updateProfileStepField(
-      updateProfileStepField(state, 0, 'durationSeconds', '16.5'),
-      0,
-      'temperature',
-      '94'
-    ),
-    0,
-    'custom_limiter',
-    7
-  );
-  const profile = serializeProfileEditor(updated);
-  const step = (profile.steps as Record<string, unknown>[])[0]!;
-
-  equal(step.duration, 16.5);
-  equal(step.temperature, 94);
-  equal(step.mystery, 'stay');
-  equal(step.custom_limiter, 7);
-});
-
-run('domain validation flags unsafe values but allows real low/zero Decent values', () => {
-  const validRealProfile = normalizeProfileForEditing({
-    steps: [{ name: 'Pause', pressure: 0, flow: 0, temperature: 0, seconds: 0 }]
-  });
-  equal(validateProfileEditor(validRealProfile).length, 0);
-
-  const unsafe = normalizeProfileForEditing({
-    steps: [{ name: '', pressure: 18, flow: -2, temperature: 130, seconds: -1, sensor: 'tea' }]
-  });
-  const issues = validateProfileEditor(unsafe);
-  equal(issues.some((issue) => issue.path.endsWith('.pressure')), true);
-  equal(issues.some((issue) => issue.path.endsWith('.flow')), true);
-  equal(issues.some((issue) => issue.path.endsWith('.temperature')), true);
-  equal(issues.some((issue) => issue.path.endsWith('.durationSeconds')), true);
-  equal(issues.some((issue) => issue.path.endsWith('.sensor')), true);
 });
 
 run('creates editor state from an existing profile preserving metadata and steps', () => {
@@ -262,19 +200,32 @@ run('updates pressure editor scalar fields without dropping profile steps', () =
   equal(next.dirty, true);
 });
 
-run('updates multi-step preinfusion time as the displayed total', () => {
-  const profile = pressureProfile();
-  profile.steps = [
-    { ...profile.steps![0]!, seconds: 2 },
-    { ...profile.steps![0]!, name: 'preinfuse bloom', seconds: 18 },
-    profile.steps![1]!,
-    profile.steps![2]!
-  ];
-  const state = createProfileEditorState(profile);
-  const next = setSimpleProfileField(state, 'pre_time', '21');
+run('opens a canonical simple profile in basic mode, advanced otherwise', () => {
+  equal(createProfileEditorState(pressureProfile()).editorMode, 'basic');
+  // sampleProfile is a 2-step advanced profile — not basic-editable
+  equal(createProfileEditorState(sampleProfile()).editorMode, 'advanced');
+});
 
-  equal(Number(((next.steps[0]?.seconds ?? 0) + (next.steps[1]?.seconds ?? 0)).toFixed(1)), 21);
-  equal(next.steps.length, 4);
+run('basic mode is refused for steps that fail the guard', () => {
+  const advanced = createProfileEditorState(sampleProfile());
+  equal(setEditorMode(advanced, 'basic').editorMode, 'advanced'); // refused, stays advanced
+  // a basic profile can always drop to advanced
+  equal(setEditorMode(createProfileEditorState(pressureProfile()), 'advanced').editorMode, 'advanced');
+});
+
+run('switching simple type recompiles the knobs as flow', () => {
+  const next = setSimpleProfileType(createProfileEditorState(pressureProfile()), 'flow');
+  equal(next.type, 'flow');
+  equal(next.editorMode, 'basic');
+  equal(next.steps[1]!.pump, 'flow');
+  equal(next.steps[2]!.pump, 'flow');
+});
+
+run('basic editor renders the mode and kind toggles', () => {
+  const html = renderProfileEditor(createProfileEditorState(pressureProfile()));
+  includes(html, 'data-action="pe-set-mode"');
+  includes(html, 'data-action="pe-set-simple-type"');
+  includes(html, '>Advanced<');
 });
 
 function sampleProfile(): Profile {
@@ -343,7 +294,9 @@ function pressureProfile(): Profile {
         pressure: 6,
         flow: 0,
         temperature: 90,
-        seconds: 18
+        transition: 'smooth',
+        seconds: 18,
+        limiter: { value: 8, range: 0.6 }
       }
     ]
   } as Profile;
@@ -407,5 +360,11 @@ function equal<T>(actual: T, expected: T): void {
 function includes(value: string, expected: string): void {
   if (!value.includes(expected)) {
     throw new Error(`Expected output to include ${expected}`);
+  }
+}
+
+function deepKeysEqual(actual: Record<string, unknown>, expected: Record<string, unknown>): void {
+  for (const [key, value] of Object.entries(expected)) {
+    equal(actual?.[key], value);
   }
 }

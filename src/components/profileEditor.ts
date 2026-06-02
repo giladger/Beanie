@@ -1,5 +1,15 @@
 import type { Profile } from '../api/types';
+import {
+  canEditAsBasic,
+  compileSimpleToSteps,
+  defaultSimpleKnobs,
+  parseStepsToSimple,
+  type SimpleKnobs,
+  type SimpleType
+} from '../domain/simpleProfile';
 import { icon } from './icons';
+
+export type EditorMode = 'basic' | 'advanced';
 
 export type StepSensor = 'coffee' | 'water';
 export type StepPump = 'pressure' | 'flow';
@@ -48,6 +58,8 @@ export interface ProfileEditorState {
   version: string;
   steps: EditorStep[];
   selectedStep: number;
+  /** Which editor surface is shown. Derived from `canEditAsBasic` on load; the user can toggle. */
+  editorMode: EditorMode;
   dirty: boolean;
   extra: Record<string, unknown>;
 }
@@ -96,6 +108,51 @@ const META_NUMBER_KEYS: ProfileMetaKey[] = [
 
 export const PROFILE_TYPES = ['advanced', 'pressure', 'flow'] as const;
 
+/**
+ * Canonical field ranges, mirrored from de1app `machine.tcl` / `vars.tcl` so the
+ * editor's limits match the Decent tablet exactly. Single source of truth for
+ * min/max/step/default/unit — later phases (sliders, validation, the simple↔
+ * advanced compiler) read from here instead of scattering magic numbers.
+ */
+export interface FieldSpec {
+  min: number;
+  max: number;
+  step: number;
+  default: number;
+  unit: string;
+}
+
+export const FIELD_SPECS = {
+  // Advanced step fields (settings_2c)
+  stepTemperature: { min: -30, max: 105, step: 0.5, default: 90, unit: '°C' },
+  stepPressure: { min: 0, max: 11, step: 0.1, default: 9, unit: 'bar' },
+  stepFlow: { min: 0, max: 8, step: 0.1, default: 6, unit: 'ml/s' },
+  stepSeconds: { min: 0, max: 127, step: 0.2, default: 30, unit: 's' },
+  stepVolume: { min: 0, max: 2000, step: 1, default: 0, unit: 'ml' },
+  stepWeight: { min: 0, max: 2000, step: 0.1, default: 0, unit: 'g' },
+  exitPressure: { min: 0, max: 11, step: 0.1, default: 4, unit: 'bar' },
+  exitFlow: { min: 0, max: 6, step: 0.1, default: 6, unit: 'ml/s' },
+  limiterValue: { min: 0, max: 11, step: 0.1, default: 0, unit: '' },
+  limiterRange: { min: 0.1, max: 8, step: 0.1, default: 0.6, unit: '' },
+  // Simple editors (settings_2a / settings_2b)
+  preinfusionTime: { min: 0, max: 60, step: 1, default: 20, unit: 's' },
+  preinfusionFlow: { min: 1, max: 8, step: 0.1, default: 4, unit: 'ml/s' },
+  preinfusionStopPressure: { min: 1, max: 12, step: 0.1, default: 4, unit: 'bar' },
+  espressoPressure: { min: 1, max: 12, step: 0.1, default: 8.6, unit: 'bar' },
+  pressureEnd: { min: 1, max: 12, step: 0.1, default: 6, unit: 'bar' },
+  holdTime: { min: 0, max: 60, step: 1, default: 4, unit: 's' },
+  declineTime: { min: 0, max: 60, step: 1, default: 30, unit: 's' },
+  maximumPressure: { min: 0, max: 12, step: 0.1, default: 0, unit: 'bar' },
+  maximumFlow: { min: 0, max: 8, step: 0.1, default: 0, unit: 'ml/s' },
+  // Limits tab (settings_2c2)
+  tankTemperature: { min: 0, max: 45, step: 1, default: 0, unit: '°C' },
+  targetWeight: { min: 0, max: 2000, step: 0.1, default: 36, unit: 'g' },
+  targetVolume: { min: 0, max: 2000, step: 1, default: 36, unit: 'ml' },
+  targetVolumeCountStart: { min: 0, max: 10, step: 1, default: 0, unit: '' }
+} as const satisfies Record<string, FieldSpec>;
+
+export type FieldSpecKey = keyof typeof FIELD_SPECS;
+
 const TOP_LEVEL_PROFILE_KEYS = new Set([
   'title',
   'author',
@@ -142,29 +199,51 @@ export function createProfileEditorState(profile: Profile | null): ProfileEditor
       version: '2',
       steps: [defaultStep()],
       selectedStep: 0,
+      editorMode: 'advanced',
       dirty: false,
       extra: {}
     };
   }
 
-  const steps = Array.isArray(profile.steps) ? profile.steps.map(readStep) : [];
+  const record = profile as Record<string, unknown>;
+  // Read canonical reaprime `steps` first, falling back to the de1app Tcl
+  // `advanced_shot` list so imported tablet profiles load correctly.
+  const rawSteps = Array.isArray(profile.steps)
+    ? profile.steps
+    : Array.isArray(record.advanced_shot)
+      ? (record.advanced_shot as unknown[])
+      : [];
+  const steps = rawSteps.map(readStep);
   const extra = extraTopLevelFields(profile);
   const inferredType = inferProfileTypeFromSteps(steps);
   const type = profile.type ?? typeFromLegacy(profile.legacy_profile_type) ?? inferredType;
+  const finalSteps = steps.length > 0 ? steps : [defaultStep()];
   return {
-    title: profile.title ?? '',
+    title: stringValue(profile.title) ?? stringValue(record.profile_title) ?? '',
     author: profile.author ?? '',
-    notes: profile.notes ?? '',
+    notes: stringValue(profile.notes) ?? stringValue(record.profile_notes) ?? '',
     beverageType: profile.beverage_type ?? 'espresso',
     type,
     legacyProfileType: profile.legacy_profile_type ?? legacyFromType(type),
-    tankTemperature: numeric(profile.tank_temperature),
-    targetWeight: numeric(profile.target_weight),
-    targetVolume: numeric(profile.target_volume),
-    targetVolumeCountStart: numeric(profile.target_volume_count_start),
+    tankTemperature: aliasNumber(record, ['tank_temperature', 'tank_desired_water_temperature']),
+    targetWeight: aliasNumber(record, [
+      'target_weight',
+      'final_desired_shot_weight_advanced',
+      'final_desired_shot_weight'
+    ]),
+    targetVolume: aliasNumber(record, [
+      'target_volume',
+      'final_desired_shot_volume_advanced',
+      'final_desired_shot_volume'
+    ]),
+    targetVolumeCountStart: aliasNumber(record, [
+      'target_volume_count_start',
+      'final_desired_shot_volume_advanced_count_start'
+    ]),
     version: profile.version ?? '2',
-    steps: steps.length > 0 ? steps : [defaultStep()],
+    steps: finalSteps,
     selectedStep: 0,
+    editorMode: canEditAsBasic(finalSteps) ? 'basic' : 'advanced',
     dirty: false,
     extra
   };
@@ -188,6 +267,14 @@ export function setProfileMeta(
     return { ...state, ...next, dirty: true };
   }
 
+  // Choosing a simple type compiles that template (preserving knobs where the
+  // current steps already parse) and switches to the basic editor; "advanced"
+  // keeps the steps and switches to the advanced editor.
+  if (key === 'type') {
+    if (value === 'pressure' || value === 'flow') return setSimpleProfileType(state, value);
+    return { ...state, type: 'advanced', legacyProfileType: 'settings_2c', editorMode: 'advanced', dirty: true };
+  }
+
   const next: Partial<ProfileEditorState> =
     key === 'title'
       ? { title: value }
@@ -197,9 +284,7 @@ export function setProfileMeta(
           ? { notes: value }
           : key === 'beverage_type'
             ? { beverageType: value }
-            : key === 'type'
-              ? { type: value, legacyProfileType: legacyFromType(value) }
-              : { legacyProfileType: value, type: typeFromLegacy(value) };
+            : { legacyProfileType: value, type: typeFromLegacy(value) };
   return { ...state, ...next, dirty: true };
 }
 
@@ -281,74 +366,52 @@ export type SimpleProfileField =
   | 'decline_target'
   | 'stop_volume';
 
+type NumericKnobKey = Exclude<keyof SimpleKnobs, 'preName' | 'mainName' | 'declineName'>;
+
+const SIMPLE_FIELD_TO_KNOB: Record<Exclude<SimpleProfileField, 'stop_volume'>, NumericKnobKey> = {
+  temperature: 'temperature',
+  pre_time: 'preTime',
+  pre_flow: 'preFlow',
+  pre_pressure: 'prePressure',
+  main_time: 'mainTime',
+  main_target: 'mainTarget',
+  limit: 'limit',
+  decline_time: 'declineTime',
+  decline_target: 'declineTarget'
+};
+
+function simpleStateType(state: ProfileEditorState): SimpleType {
+  return parseStepsToSimple(state.steps)?.type ?? (state.type === 'flow' ? 'flow' : 'pressure');
+}
+
+function simpleKnobsOf(state: ProfileEditorState): { type: SimpleType; knobs: SimpleKnobs } {
+  const parsed = parseStepsToSimple(state.steps);
+  if (parsed) return parsed;
+  const type = simpleStateType(state);
+  return { type, knobs: defaultSimpleKnobs(type) };
+}
+
+// Simple edits never poke at individual steps. They read the current knobs out
+// of the steps, change one, and recompile — so the steps stay canonical and the
+// basic⇄advanced guard keeps holding (see domain/simpleProfile.ts).
 export function setSimpleProfileField(
   state: ProfileEditorState,
   key: SimpleProfileField,
   value: string
 ): ProfileEditorState {
-  const parsed = parseNumber(value) ?? 0;
-  const model = simpleProfileModel(state);
-  const steps = state.steps.map((step) => ({
-    ...step,
-    exit: step.exit ? { ...step.exit } : null,
-    limiter: step.limiter ? { ...step.limiter } : null,
-    extra: { ...step.extra }
-  }));
-  const update = (index: number | null, fn: (step: EditorStep) => EditorStep) => {
-    if (index == null || !steps[index]) return;
-    steps[index] = fn(steps[index]!);
-  };
-  const setDurationTotal = (indices: number[], total: number) => {
-    const liveIndices = indices.filter((index) => steps[index]);
-    if (liveIndices.length === 0) return;
-    const current = sumSteps(steps, liveIndices, 0);
-    if (current <= 0) {
-      update(liveIndices.at(-1) ?? null, (step) => ({ ...step, seconds: total }));
-      return;
-    }
-    let remaining = total;
-    liveIndices.forEach((index, position) => {
-      const seconds = position === liveIndices.length - 1
-        ? remaining
-        : Number((((steps[index]?.seconds ?? 0) / current) * total).toFixed(1));
-      remaining = Number((remaining - seconds).toFixed(1));
-      update(index, (step) => ({ ...step, seconds: Math.max(0, seconds) }));
-    });
-  };
-  switch (key) {
-    case 'temperature':
-      return { ...state, steps: steps.map((step) => ({ ...step, temperature: parsed })), dirty: true };
-    case 'pre_time':
-      setDurationTotal(model.preIndices.length ? model.preIndices : [model.preIndex ?? -1], parsed);
-      break;
-    case 'pre_flow':
-      model.preIndices.forEach((index) => update(index, (step) => ({ ...step, flow: parsed })));
-      break;
-    case 'pre_pressure':
-      model.preIndices.forEach((index) => update(index, (step) => ({
-        ...step,
-        exit: { type: 'pressure', condition: 'over', value: parsed }
-      })));
-      break;
-    case 'main_time':
-      update(model.mainIndex, (step) => ({ ...step, seconds: parsed }));
-      break;
-    case 'main_target':
-      update(model.mainIndex, (step) => state.type === 'flow' ? { ...step, flow: parsed } : { ...step, pressure: parsed });
-      break;
-    case 'limit':
-      update(model.mainIndex, (step) => setStepLimiterValue(step, parsed));
-      break;
-    case 'decline_time':
-      update(model.declineIndex, (step) => ({ ...step, seconds: parsed }));
-      break;
-    case 'decline_target':
-      update(model.declineIndex, (step) => state.type === 'flow' ? { ...step, flow: parsed } : { ...step, pressure: parsed });
-      break;
-    case 'stop_volume':
-      return { ...state, targetVolume: parsed, dirty: true };
+  const parsedValue = parseNumber(value) ?? 0;
+  if (key === 'stop_volume') {
+    return { ...state, targetVolume: parsedValue, dirty: true };
   }
-  return { ...state, steps, dirty: true };
+  const { type, knobs } = simpleKnobsOf(state);
+  const nextKnobs: SimpleKnobs = { ...knobs, [SIMPLE_FIELD_TO_KNOB[key]]: parsedValue };
+  return {
+    ...state,
+    type,
+    legacyProfileType: legacyFromType(type),
+    steps: compileSimpleToSteps(nextKnobs, type),
+    dirty: true
+  };
 }
 
 export function nudgeSimpleProfileField(
@@ -356,28 +419,29 @@ export function nudgeSimpleProfileField(
   key: SimpleProfileField,
   delta: number
 ): ProfileEditorState {
-  const model = simpleProfileModel(state);
   const current =
-    key === 'temperature'
-      ? model.temperature
-      : key === 'pre_time'
-        ? model.preTime
-        : key === 'pre_flow'
-          ? model.preFlow
-          : key === 'pre_pressure'
-            ? model.prePressure
-            : key === 'main_time'
-              ? model.mainTime
-              : key === 'main_target'
-                ? model.mainTarget
-                : key === 'limit'
-                  ? model.limit
-                  : key === 'decline_time'
-                    ? model.declineTime
-                    : key === 'decline_target'
-                      ? model.declineTarget
-                      : model.stopVolume;
+    key === 'stop_volume' ? (state.targetVolume ?? 0) : simpleKnobsOf(state).knobs[SIMPLE_FIELD_TO_KNOB[key]];
   return setSimpleProfileField(state, key, String(clampNumber(current + delta)));
+}
+
+/** Switch the editor surface. Basic is refused unless the steps pass the guard. */
+export function setEditorMode(state: ProfileEditorState, mode: EditorMode): ProfileEditorState {
+  if (mode === 'basic' && !canEditAsBasic(state.steps)) return state;
+  return { ...state, editorMode: mode };
+}
+
+/** Set the simple profile kind (pressure/flow), recompiling the current knobs. */
+export function setSimpleProfileType(state: ProfileEditorState, type: SimpleType): ProfileEditorState {
+  const { knobs } = simpleKnobsOf(state);
+  return {
+    ...state,
+    type,
+    legacyProfileType: legacyFromType(type),
+    steps: compileSimpleToSteps(knobs, type),
+    selectedStep: 0,
+    editorMode: 'basic',
+    dirty: true
+  };
 }
 
 export function setStepPump(state: ProfileEditorState, index: number, pump: StepPump): ProfileEditorState {
@@ -486,9 +550,10 @@ export function profileFromEditorState(state: ProfileEditorState): Profile {
 }
 
 export function renderProfileEditor(state: ProfileEditorState): string {
-  if (state.type === 'pressure' || state.type === 'flow') return renderSimpleProfileEditor(state);
+  if (state.editorMode === 'basic') return renderSimpleProfileEditor(state);
   return `
     <div class="profile-editor">
+      ${renderEditorModeBar(state)}
       ${renderMeta(state)}
       <div class="pe-main-grid">
         <section class="pe-left-rail">
@@ -501,13 +566,47 @@ export function renderProfileEditor(state: ProfileEditorState): string {
   `;
 }
 
+function renderEditorModeBar(state: ProfileEditorState): string {
+  const canBasic = canEditAsBasic(state.steps);
+  const basicAttrs = canBasic
+    ? ''
+    : 'disabled title="These steps are too detailed for the basic editor — edit them in Advanced."';
+  return `
+    <div class="pe-mode-bar" role="group" aria-label="Editor mode">
+      <button type="button" class="pe-mode-btn ${state.editorMode === 'basic' ? 'active' : ''}" data-action="pe-set-mode" data-value="basic" ${basicAttrs}>Basic</button>
+      <button type="button" class="pe-mode-btn ${state.editorMode === 'advanced' ? 'active' : ''}" data-action="pe-set-mode" data-value="advanced">Advanced</button>
+    </div>
+  `;
+}
+
+function renderSimpleTypeToggle(type: SimpleType): string {
+  return `
+    <div class="pe-kind-bar" role="group" aria-label="Profile kind">
+      <button type="button" class="pe-kind-btn ${type === 'pressure' ? 'active' : ''}" data-action="pe-set-simple-type" data-value="pressure">Pressure</button>
+      <button type="button" class="pe-kind-btn ${type === 'flow' ? 'active' : ''}" data-action="pe-set-simple-type" data-value="flow">Flow</button>
+    </div>
+  `;
+}
+
 function renderSimpleProfileEditor(state: ProfileEditorState): string {
-  const model = simpleProfileModel(state);
-  const isFlow = state.type === 'flow';
-  const modeLabel = state.type === 'flow' ? 'Flow' : 'Pressure';
-  const mainUnit = state.type === 'flow' ? 'ml/s' : 'bar';
-  const limitLabel = state.type === 'flow' ? 'Limit pressure' : 'Limit flow';
-  const limitUnit = state.type === 'flow' ? 'bar' : 'ml/s';
+  const { type, knobs } = simpleKnobsOf(state);
+  const model = {
+    temperature: knobs.temperature,
+    preTime: knobs.preTime,
+    preFlow: knobs.preFlow,
+    prePressure: knobs.prePressure,
+    mainTime: knobs.mainTime,
+    mainTarget: knobs.mainTarget,
+    limit: knobs.limit,
+    declineTime: knobs.declineTime,
+    declineTarget: knobs.declineTarget,
+    stopVolume: state.targetVolume ?? 0
+  };
+  const isFlow = type === 'flow';
+  const modeLabel = isFlow ? 'Flow' : 'Pressure';
+  const mainUnit = isFlow ? 'ml/s' : 'bar';
+  const limitLabel = isFlow ? 'Limit pressure' : 'Limit flow';
+  const limitUnit = isFlow ? 'bar' : 'ml/s';
   return `
     <div class="profile-editor pe-de1 ${isFlow ? 'flow' : 'pressure'}">
       <header class="pe-de1-tabs">
@@ -519,6 +618,11 @@ function renderSimpleProfileEditor(state: ProfileEditorState): string {
         <button type="button" class="pe-de1-tab" data-action="go-view" data-value="machine">Machine</button>
         <button type="button" class="pe-de1-tab" data-action="go-view" data-value="settings">App</button>
       </header>
+
+      <div class="pe-de1-toolbar">
+        ${renderEditorModeBar(state)}
+        ${renderSimpleTypeToggle(type)}
+      </div>
 
       <div class="pe-de1-graph">
         ${renderDe1ExplanationChart(state)}
@@ -1027,67 +1131,6 @@ function selectedStepBand(
   return '';
 }
 
-interface SimpleProfileModel {
-  preIndices: number[];
-  preIndex: number | null;
-  mainIndex: number | null;
-  declineIndex: number | null;
-  temperature: number;
-  preTime: number;
-  preFlow: number;
-  prePressure: number;
-  mainTime: number;
-  mainTarget: number;
-  limit: number;
-  declineTime: number;
-  declineTarget: number;
-  stopVolume: number;
-}
-
-function simpleProfileModel(state: ProfileEditorState): SimpleProfileModel {
-  const steps = state.steps;
-  const firstMainIndex = state.type === 'flow'
-    ? steps.findIndex((step) => step.pump === 'flow')
-    : steps.findIndex((step) => step.pump === 'pressure');
-  const mainIndex = firstMainIndex >= 0 ? firstMainIndex : (steps.length ? 0 : null);
-  const preIndices = state.type === 'pressure'
-    ? steps
-        .map((step, index) => ({ step, index }))
-        .filter(({ step, index }) => index < (mainIndex ?? 0) && step.pump === 'flow')
-        .map(({ index }) => index)
-    : steps
-        .map((step, index) => ({ step, index }))
-        .filter(({ step, index }) => index <= (mainIndex ?? 0) && step.pump === 'flow' && step.exit?.type === 'pressure')
-        .map(({ index }) => index);
-  const preIndex = preIndices[0] ?? mainIndex;
-  const declineIndex = steps.length ? steps.length - 1 : null;
-  const preStep = preIndex == null ? null : steps[preIndex] ?? null;
-  const mainStep = mainIndex == null ? null : steps[mainIndex] ?? null;
-  const declineStep = declineIndex == null ? null : steps[declineIndex] ?? null;
-  const targetKey = state.type === 'flow' ? 'flow' : 'pressure';
-  return {
-    preIndices,
-    preIndex,
-    mainIndex,
-    declineIndex,
-    temperature: steps[0]?.temperature ?? state.tankTemperature ?? 90,
-    preTime: sumSteps(steps, preIndices, preStep?.seconds ?? 0),
-    preFlow: preStep?.flow ?? 0,
-    prePressure: preStep?.exit?.type === 'pressure' ? preStep.exit.value : 0,
-    mainTime: mainStep?.seconds ?? 0,
-    mainTarget: targetKey === 'flow' ? (mainStep?.flow ?? 0) : (mainStep?.pressure ?? 0),
-    limit: mainStep?.limiter?.value ?? 0,
-    declineTime: declineStep?.seconds ?? 0,
-    declineTarget: targetKey === 'flow' ? (declineStep?.flow ?? 0) : (declineStep?.pressure ?? 0),
-    stopVolume: state.targetVolume ?? declineStep?.volume ?? 0
-  };
-}
-
-function sumSteps(steps: EditorStep[], indices: number[], fallback: number): number {
-  if (!indices.length) return fallback;
-  return Number(indices.reduce((sum, index) => sum + (steps[index]?.seconds ?? 0), 0).toFixed(1));
-}
-
 function inferProfileTypeFromSteps(steps: EditorStep[]): string {
   if (!steps.length) return 'advanced';
   const hasPressure = steps.some((step) => step.pump === 'pressure' || step.pressure > 0);
@@ -1118,12 +1161,25 @@ function defaultStep(): EditorStep {
   };
 }
 
+// de1app flat per-step keys that `readStep` folds into nested `exit`/`limiter`.
+// Consumed here so they don't survive into the canonical reaprime output.
+const TCL_STEP_FLAT_KEYS = new Set([
+  'exit_if',
+  'exit_type',
+  'exit_pressure_over',
+  'exit_pressure_under',
+  'exit_flow_over',
+  'exit_flow_under',
+  'max_flow_or_pressure',
+  'max_flow_or_pressure_range'
+]);
+
 function readStep(raw: unknown): EditorStep {
   const record = objectRecord(raw) ?? {};
   const base = defaultStep();
   const extra: Record<string, unknown> = {};
   for (const key of Object.keys(record)) {
-    if (!KNOWN_STEP_KEYS.has(key)) extra[key] = record[key];
+    if (!KNOWN_STEP_KEYS.has(key) && !TCL_STEP_FLAT_KEYS.has(key)) extra[key] = record[key];
   }
   return {
     name: stringValue(record.name) ?? base.name,
@@ -1136,30 +1192,56 @@ function readStep(raw: unknown): EditorStep {
     seconds: numeric(record.seconds) ?? base.seconds,
     volume: numeric(record.volume) ?? 0,
     weight: numeric(record.weight) ?? 0,
-    exit: readExit(record.exit),
-    limiter: readLimiter(record.limiter),
+    exit: readExit(record),
+    limiter: readLimiter(record),
     extra
   };
 }
 
-function readExit(raw: unknown): StepExit | null {
-  const record = objectRecord(raw);
-  if (!record) return null;
-  const value = numeric(record.value);
+// Accepts a step record and reads the nested `exit` object (reaprime v2) or,
+// failing that, the de1app flat `exit_if`/`exit_type`/`exit_*` keys.
+function readExit(record: Record<string, unknown>): StepExit | null {
+  const nested = objectRecord(record.exit);
+  if (nested) {
+    const value = numeric(nested.value);
+    if (value == null) return null;
+    return {
+      type: nested.type === 'flow' ? 'flow' : 'pressure',
+      condition: nested.condition === 'under' ? 'under' : 'over',
+      value
+    };
+  }
+  if (!isTruthyFlag(record.exit_if)) return null;
+  const exitType = stringValue(record.exit_type);
+  if (!exitType) return null;
+  const type: StepExitType = exitType.startsWith('flow') ? 'flow' : 'pressure';
+  const condition: StepExitCondition = exitType.endsWith('under') ? 'under' : 'over';
+  const value = numeric(record[`exit_${type}_${condition}`]);
   if (value == null) return null;
+  return { type, condition, value };
+}
+
+// Reads nested `limiter` (reaprime v2) or de1app flat `max_flow_or_pressure`.
+function readLimiter(record: Record<string, unknown>): StepLimiter | null {
+  const nested = objectRecord(record.limiter);
+  if (nested) {
+    const value = numeric(nested.value);
+    if (value == null) return null;
+    return { value, range: numeric(nested.range) ?? FIELD_SPECS.limiterRange.default };
+  }
+  const flat = numeric(record.max_flow_or_pressure);
+  if (flat == null || flat <= 0) return null;
   return {
-    type: record.type === 'flow' ? 'flow' : 'pressure',
-    condition: record.condition === 'under' ? 'under' : 'over',
-    value
+    value: flat,
+    range: numeric(record.max_flow_or_pressure_range) ?? FIELD_SPECS.limiterRange.default
   };
 }
 
-function readLimiter(raw: unknown): StepLimiter | null {
-  const record = objectRecord(raw);
-  if (!record) return null;
-  const value = numeric(record.value);
-  if (value == null) return null;
-  return { value, range: numeric(record.range) ?? 0.6 };
+function isTruthyFlag(value: unknown): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') return value === '1' || value.toLowerCase() === 'true';
+  return false;
 }
 
 function writeStep(step: EditorStep): Record<string, unknown> {
@@ -1209,12 +1291,35 @@ function setStepLimiterRange(step: EditorStep, range: number): EditorStep {
   return { ...step, limiter: { ...step.limiter, range } };
 }
 
+// de1app Tcl aliases that `createProfileEditorState` reads into typed fields.
+// Excluded from `extra` so they don't leak back into the canonical reaprime
+// output alongside their normalized counterparts.
+const CONSUMED_ALIAS_KEYS = new Set([
+  'advanced_shot',
+  'profile_title',
+  'profile_notes',
+  'tank_desired_water_temperature',
+  'final_desired_shot_weight_advanced',
+  'final_desired_shot_weight',
+  'final_desired_shot_volume_advanced',
+  'final_desired_shot_volume',
+  'final_desired_shot_volume_advanced_count_start'
+]);
+
 function extraTopLevelFields(profile: Profile): Record<string, unknown> {
   const extra: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(profile)) {
-    if (!TOP_LEVEL_PROFILE_KEYS.has(key)) extra[key] = value;
+    if (!TOP_LEVEL_PROFILE_KEYS.has(key) && !CONSUMED_ALIAS_KEYS.has(key)) extra[key] = value;
   }
   return extra;
+}
+
+function aliasNumber(record: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = numeric(record[key]);
+    if (value != null) return value;
+  }
+  return null;
 }
 
 function typeFromLegacy(value: string | undefined): string | undefined {

@@ -3,6 +3,7 @@ import './liveChart.test';
 import './liveShot.test';
 import './profilePreview.test';
 import './profileEditor.test';
+import './simpleProfile.test';
 import './beanWorkflow.test';
 import './cache.test';
 import './gateway.test';

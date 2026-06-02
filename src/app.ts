@@ -76,8 +76,10 @@ import {
   removeStep,
   renderProfileEditor,
   selectStep,
+  setEditorMode,
   setProfileMeta,
   setSimpleProfileField,
+  setSimpleProfileType,
   setStepExit,
   setStepField,
   setStepPump,
@@ -498,56 +500,18 @@ export class BeanieApp {
     this.setState({
       draft: normalizeDraft(recipeFromShot(shot), this.state.profiles, this.state.grinders),
       view: 'workbench',
-      detailShotId: null,
+      detailShotId: shotId,
       status: 'Shot recipe loaded'
     });
     this.scheduleApply();
   }
 
-  private async saveShotAnnotations(
-    id: string,
-    notes: string,
-    enjoyment: number | null
-  ): Promise<void> {
-    this.setState({ busy: true, status: 'Saving shot' });
-    if (this.state.demo) {
-      this.setState({ shots: patchShotAnnotations(this.state.shots, id, notes, enjoyment) });
-      this.setState({ busy: false, status: 'Shot updated (demo)' });
+  private selectHistoryShot(shotId: string): void {
+    if (this.selectedHistoryShot()?.id === shotId) {
+      this.loadShotRecipe(shotId);
       return;
     }
-    try {
-      const updated = await gateway.updateShot(id, {
-        annotations: { espressoNotes: notes || null, enjoyment }
-      });
-      void beanieCache.putShotRecord(updated);
-      const shots = this.state.shots.map((shot) => (shot.id === id ? updated : shot));
-      this.setState({ shots, busy: false, status: 'Shot updated' });
-    } catch (error) {
-      console.error('[Beanie] Shot update failed', error);
-      this.setState({ busy: false, status: 'Shot update failed' });
-    }
-  }
-
-  private async deleteShotRecord(id: string): Promise<void> {
-    if (!window.confirm('Delete this shot? This cannot be undone.')) return;
-    this.setState({ busy: true, status: 'Deleting shot' });
-    if (!this.state.demo) {
-      try {
-        await gateway.deleteShot(id);
-        void beanieCache.invalidateShotMutation(id).catch(() => {});
-      } catch (error) {
-        console.error('[Beanie] Shot delete failed', error);
-        this.setState({ busy: false, status: 'Shot delete failed' });
-        return;
-      }
-    }
-    this.setState({
-      shots: this.state.shots.filter((shot) => shot.id !== id),
-      busy: false,
-      view: 'workbench',
-      detailShotId: null,
-      status: this.state.demo ? 'Shot deleted (demo)' : 'Shot deleted'
-    });
+    this.setState({ detailShotId: shotId, status: 'Shot selected' });
   }
 
   private async machineAction(state: MachineState): Promise<void> {
@@ -802,13 +766,7 @@ export class BeanieApp {
         if (value) this.goView(value as View);
         break;
       case 'select-history-shot':
-        if (id) this.setState({ detailShotId: id });
-        break;
-      case 'load-shot':
-        if (id) this.loadShotRecipe(id);
-        break;
-      case 'delete-shot':
-        if (id) await this.deleteShotRecord(id);
+        if (id) this.selectHistoryShot(id);
         break;
       case 'stop':
         await this.machineAction('idle');
@@ -964,6 +922,12 @@ export class BeanieApp {
             nudgeSimpleProfileField(pe, el.dataset.key as SimpleProfileField, Number(el.dataset.delta ?? '0'))
           );
         }
+        break;
+      case 'pe-set-mode':
+        this.editorDispatch((pe) => setEditorMode(pe, value === 'basic' ? 'basic' : 'advanced'));
+        break;
+      case 'pe-set-simple-type':
+        this.editorDispatch((pe) => setSimpleProfileType(pe, value === 'flow' ? 'flow' : 'pressure'));
         break;
       case 'pe-step-exit-nudge':
         if (index != null) {
@@ -1239,21 +1203,6 @@ export class BeanieApp {
 
   private async onSubmit(event: Event): Promise<void> {
     const form = event.target as HTMLFormElement;
-    if (form.dataset.form === 'edit-shot') {
-      event.preventDefault();
-      const id = form.dataset.id;
-      if (!id) return;
-      const data = new FormData(form);
-      const notes = String(data.get('notes') ?? '').trim();
-      const enjoymentRaw = String(data.get('enjoyment') ?? '').trim();
-      const enjoyment = enjoymentRaw === '' ? null : Number(enjoymentRaw);
-      await this.saveShotAnnotations(
-        id,
-        notes,
-        enjoyment != null && Number.isFinite(enjoyment) ? enjoyment : null
-      );
-      return;
-    }
     if (form.dataset.form === 'bean-editor') {
       event.preventDefault();
       await this.submitBeanEditor(form);
@@ -1894,12 +1843,16 @@ export class BeanieApp {
                 : ''
             }
           </div>
-          <p>${escapeHtml(bean?.notes ?? bean?.processing ?? 'Select a bean to load the last dial-in.')}</p>
         </div>
         <div class="hero-side">
-          ${this.renderApplyStatus()}
-          <span class="chip">${escapeHtml(draft.sourceLabel ?? 'No source')}</span>
-          ${this.renderBatchControl(bean)}
+          <button type="button" class="hero-profile-button" data-action="open-profile-picker">
+            <span class="eyebrow">Profile</span>
+            <strong>${escapeHtml(draft.profileTitle ?? 'No profile')}</strong>
+            ${icon('sliders-horizontal')}
+          </button>
+          <div class="hero-context">
+            ${this.renderBatchControl(bean)}
+          </div>
         </div>
       </section>
     `;
@@ -1914,7 +1867,6 @@ export class BeanieApp {
         ${this.controlRatio()}
         ${this.controlGrind()}
         ${this.controlTemp()}
-        ${this.controlProfile()}
       </section>
     `;
   }
@@ -1943,19 +1895,6 @@ export class BeanieApp {
           <button class="value-button" data-action="edit-field" data-field="grinderSetting">${escapeHtml(draft.grinderSetting ?? '--')}</button>
           <button data-action="adjust" data-field="grinderSetting" data-delta="${step}" aria-label="Increase grind">${icon('plus')}</button>
         </div>
-      </div>
-    `;
-  }
-
-  private controlProfile(): string {
-    const title = this.state.draft.profileTitle ?? 'No profile';
-    return `
-      <div class="select-control panel profile-control">
-        <label>Profile</label>
-        <button type="button" class="profile-button" data-action="open-profile-picker">
-          <span>${escapeHtml(title)}</span>
-          ${icon('sliders-horizontal')}
-        </button>
       </div>
     `;
   }
@@ -2118,26 +2057,6 @@ export class BeanieApp {
     return profileBaseTemperature(draft.profile ?? null);
   }
 
-  private renderApplyStatus(): string {
-    if (!this.selectedBean()) return '';
-    // Driven by the apply lifecycle, not by the keypress — so the chip stays
-    // quiet during the debounce window and only shows "Applying…" once the
-    // debounced PUT actually fires.
-    if (this.state.applyState === 'pending') {
-      return '<span class="chip apply-pending">Applying…</span>';
-    }
-    if (this.state.applyState === 'failed') {
-      return '<span class="chip apply-failed">Apply failed</span>';
-    }
-    if (this.state.applyState === 'stale') {
-      return '<span class="chip apply-stale">Changed on machine · Sync to reload</span>';
-    }
-    if (this.state.applyState === 'applied') {
-      return '<span class="chip apply-applied">Applied</span>';
-    }
-    return '<span class="chip apply-applied">In sync</span>';
-  }
-
   private renderHistory(): string {
     const shots = this.state.shots;
     const selected = this.selectedHistoryShot();
@@ -2183,7 +2102,7 @@ export class BeanieApp {
         <span class="shot-item-info">
           <span class="shot-item-time">${escapeHtml(time)}</span>
           <span class="shot-item-recipe">${formatGrams(recipe.dose)} → ${formatGrams(recipe.yield)}</span>
-          ${duration ? `<span class="shot-item-dur">${escapeHtml(duration)}</span>` : ''}
+          <span class="shot-item-dur">${duration ? escapeHtml(duration) : ''}</span>
           ${enjoymentBadge(shot)}
         </span>
         <span class="shot-item-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
@@ -2199,28 +2118,22 @@ export class BeanieApp {
       ? shot.timestamp
       : date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     const duration = shotDurationLabel(shot);
-    const enjoyment = shot.annotations?.enjoyment != null ? String(shot.annotations.enjoyment) : '';
     return `
       <div class="pane-head">
         <span class="pane-time">${escapeHtml(title)}</span>
         <span class="pane-stat">${formatGrams(recipe.dose)} → ${formatGrams(recipe.yield)}</span>
         <span class="pane-stat">grind ${escapeHtml(recipe.grinderSetting ?? '--')}</span>
-        ${duration ? `<span class="pane-stat">${escapeHtml(duration)}</span>` : ''}
+        <span class="pane-stat">${duration ? escapeHtml(duration) : ''}</span>
         <span class="pane-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
         ${enjoymentBadge(shot, 'detail')}
       </div>
       <div class="detail-chart">
         <canvas id="detail-canvas" class="live-canvas detail-canvas"></canvas>
       </div>
-      <form class="detail-edit" data-form="edit-shot" data-id="${escapeAttr(shot.id)}">
-        <textarea name="notes" rows="2" placeholder="Tasting notes">${escapeHtml(notes)}</textarea>
-        <div class="detail-actions">
-          <label class="enjoy-inline"><span>Enjoy</span><input type="number" name="enjoyment" min="0" max="100" step="1" value="${escapeAttr(enjoyment)}" /></label>
-          <button type="button" class="command danger" data-action="delete-shot" data-id="${escapeAttr(shot.id)}">${icon('trash-2')}<span>Delete</span></button>
-          <button type="button" class="command" data-action="load-shot" data-id="${escapeAttr(shot.id)}">${icon('sliders-horizontal')}<span>Load recipe</span></button>
-          <button type="submit" class="command primary">${icon('save')}<span>Save</span></button>
-        </div>
-      </form>
+      <section class="detail-notes-panel" aria-label="Tasting notes">
+        <span class="eyebrow">Tasting notes</span>
+        <p>${escapeHtml(notes || 'No tasting notes')}</p>
+      </section>
     `;
   }
 
@@ -2510,19 +2423,6 @@ function enjoymentBadge(shot: ShotRecord, size: 'row' | 'detail' = 'row'): strin
   if (value == null) return '';
   const formatted = Number.isInteger(value) ? value.toString() : value.toFixed(1);
   return `<span class="enjoyment-badge ${size === 'detail' ? 'large' : ''}" aria-label="Enjoyment ${escapeAttr(formatted)}"><span>Enjoy</span><strong>${escapeHtml(formatted)}</strong></span>`;
-}
-
-function patchShotAnnotations(
-  shots: ShotRecord[],
-  id: string,
-  notes: string,
-  enjoyment: number | null
-): ShotRecord[] {
-  return shots.map((shot) =>
-    shot.id === id
-      ? { ...shot, annotations: { ...shot.annotations, espressoNotes: notes || null, enjoyment } }
-      : shot
-  );
 }
 
 function batchOptionLabel(batch: BeanBatch): string {
