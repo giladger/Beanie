@@ -428,12 +428,14 @@ export class BeanieApp {
     const update = buildWorkflowUpdate(bean, batch, draft, draft.profile, this.state.workflow);
     const signature = draftSignature(draft);
 
-    this.setState({ busy: true, applyState: 'pending', status: 'Applying workflow' });
+    this.setState({ applyState: 'pending', status: 'Applying workflow' });
     if (this.state.demo) {
+      // Do not write `draft` back: the user may have edited again during the
+      // (debounced) apply, and clobbering it with this snapshot would revert
+      // those taps. appliedSignature reflects what was sent; if the live draft
+      // now differs it stays dirty and the pending debounce re-applies.
       this.setState({
         workflow: update,
-        draft,
-        busy: false,
         applyState: 'applied',
         appliedSignature: signature,
         status: 'Workflow applied in demo'
@@ -445,15 +447,13 @@ export class BeanieApp {
       const workflow = await gateway.updateWorkflow(update);
       this.setState({
         workflow,
-        draft,
-        busy: false,
         applyState: 'applied',
         appliedSignature: signature,
         status: 'Workflow applied'
       });
     } catch (error) {
       console.error('[Beanie] Apply failed', error);
-      this.setState({ busy: false, applyState: 'failed', status: 'Apply failed' });
+      this.setState({ applyState: 'failed', status: 'Apply failed' });
     }
   }
 
