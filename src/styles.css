@@ -816,6 +816,25 @@ p {
   font-size: 24px;
 }
 
+.sleep-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  background: #000;
+  border: 0;
+  cursor: pointer;
+}
+
+.sleep-hint {
+  color: rgba(255, 255, 255, 0.16);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .live-panel {
   position: fixed;
   inset: 0;
