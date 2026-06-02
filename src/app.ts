@@ -2081,8 +2081,9 @@ export class BeanieApp {
           <span class="shot-item-time">${escapeHtml(time)}</span>
           <span class="shot-item-recipe">${formatGrams(recipe.dose)} → ${formatGrams(recipe.yield)}</span>
           ${duration ? `<span class="shot-item-dur">${escapeHtml(duration)}</span>` : ''}
+          ${enjoymentBadge(shot)}
         </span>
-        ${enjoymentBadge(shot)}
+        <span class="shot-item-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
       </button>
     `;
   }
@@ -2094,33 +2095,24 @@ export class BeanieApp {
     const title = Number.isNaN(date.valueOf())
       ? shot.timestamp
       : date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const duration = shotDurationLabel(shot);
+    const enjoyment = shot.annotations?.enjoyment != null ? String(shot.annotations.enjoyment) : '';
     return `
       <div class="pane-head">
-        <div>
-          <span class="eyebrow">Shot</span>
-          <h2>${escapeHtml(title)}</h2>
-        </div>
+        <span class="pane-time">${escapeHtml(title)}</span>
+        <span class="pane-stat">${formatGrams(recipe.dose)} → ${formatGrams(recipe.yield)}</span>
+        <span class="pane-stat">grind ${escapeHtml(recipe.grinderSetting ?? '--')}</span>
+        ${duration ? `<span class="pane-stat">${escapeHtml(duration)}</span>` : ''}
+        <span class="pane-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
         ${enjoymentBadge(shot, 'detail')}
       </div>
-      <div class="detail-summary">
-        ${stat('Dose', formatGrams(recipe.dose))}
-        ${stat('Yield', formatGrams(recipe.yield))}
-        ${stat('Grind', recipe.grinderSetting ?? '--')}
-      </div>
-      <div class="detail-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</div>
       <div class="detail-chart">
         <canvas id="detail-canvas" class="live-canvas detail-canvas"></canvas>
       </div>
       <form class="detail-edit" data-form="edit-shot" data-id="${escapeAttr(shot.id)}">
-        <label class="detail-field">
-          <span>Notes</span>
-          <textarea name="notes" rows="2" placeholder="Tasting notes">${escapeHtml(notes)}</textarea>
-        </label>
-        <label class="detail-field detail-enjoyment-field">
-          <span>Enjoyment</span>
-          <input type="number" name="enjoyment" min="0" max="100" step="1" value="${escapeAttr(shot.annotations?.enjoyment != null ? String(shot.annotations.enjoyment) : '')}" />
-        </label>
+        <textarea name="notes" rows="2" placeholder="Tasting notes">${escapeHtml(notes)}</textarea>
         <div class="detail-actions">
+          <label class="enjoy-inline"><span>Enjoy</span><input type="number" name="enjoyment" min="0" max="100" step="1" value="${escapeAttr(enjoyment)}" /></label>
           <button type="button" class="command danger" data-action="delete-shot" data-id="${escapeAttr(shot.id)}">${icon('trash-2')}<span>Delete</span></button>
           <button type="button" class="command" data-action="load-shot" data-id="${escapeAttr(shot.id)}">${icon('sliders-horizontal')}<span>Load recipe</span></button>
           <button type="submit" class="command primary">${icon('save')}<span>Save</span></button>
@@ -2155,6 +2147,13 @@ export class BeanieApp {
   private renderProfileEditorPage(): string {
     const pe = this.state.profileEditor;
     if (!pe) return this.pageHeader('Profile');
+    if (pe.type === 'pressure' || pe.type === 'flow') {
+      return `
+        <main class="page-body profile-editor-page de1-profile-page">
+          ${renderProfileEditor(pe)}
+        </main>
+      `;
+    }
     const actions = `<button type="button" class="command primary" data-action="save-profile">${icon('save')}<span>Save</span></button>`;
     return `
       ${this.pageHeader(this.state.editingProfileId ? 'Edit Profile' : 'New Profile', 'profiles', actions)}
@@ -2386,9 +2385,6 @@ function liveReadout(label: string, id: string, value: string, unit = ''): strin
   return `<div class="live-readout"><label>${escapeHtml(label)}</label><strong id="${id}">${escapeHtml(value)}</strong>${suffix}</div>`;
 }
 
-function stat(label: string, value: string): string {
-  return `<div class="stat"><label>${escapeHtml(label)}</label><strong>${escapeHtml(value)}</strong></div>`;
-}
 
 function shotDurationLabel(shot: ShotRecord): string | null {
   const all = shot.measurements;

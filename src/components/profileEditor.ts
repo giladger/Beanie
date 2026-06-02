@@ -486,122 +486,121 @@ export function renderProfileEditor(state: ProfileEditorState): string {
 
 function renderSimpleProfileEditor(state: ProfileEditorState): string {
   const model = simpleProfileModel(state);
+  const isFlow = state.type === 'flow';
   const modeLabel = state.type === 'flow' ? 'Flow' : 'Pressure';
   const mainUnit = state.type === 'flow' ? 'ml/s' : 'bar';
   const limitLabel = state.type === 'flow' ? 'Limit pressure' : 'Limit flow';
   const limitUnit = state.type === 'flow' ? 'bar' : 'ml/s';
   return `
-    <div class="profile-editor pe-simple-editor">
-      <nav class="pe-de1-tabs" aria-label="Profile editor tabs">
-        <span>Presets</span>
-        <strong>${escapeHtml(modeLabel)}</strong>
-        <span>Machine</span>
-        <span>App</span>
-      </nav>
-      <section class="pe-simple-head">
-        ${renderDe1ExplanationChart(state)}
-        ${renderTemperatureRail(model.temperature)}
+    <div class="profile-editor pe-de1-exact">
+      <section class="pe-de1-device ${isFlow ? 'flow' : 'pressure'}" aria-label="${escapeAttr(modeLabel)} profile editor">
+        <div class="pe-de1-tab-label presets">PRESETS</div>
+        <div class="pe-de1-tab-label profile">
+          <strong>${escapeHtml(modeLabel.toUpperCase())}</strong>
+          <span>${escapeHtml(state.title)}</span>
+        </div>
+        <div class="pe-de1-tab-label machine">MACHINE</div>
+        <div class="pe-de1-tab-label app">APP</div>
+
+        <div class="pe-de1-graph">
+          ${renderDe1ExplanationChart(state)}
+        </div>
+        ${renderDe1Temperature(model.temperature)}
+
+        <h2 class="pe-de1-stage-title stage-1">1: preinfuse</h2>
+        ${renderDe1HSlider('pre_time', model.preTime, 'seconds', 0, 60, 1, 23.5, 425, 300, 'stage-1', 'time')}
+        ${isFlow
+          ? renderDe1VSlider('pre_flow', model.preFlow, 'mL/s', 0, 12, 0.1, 335, 425, 235, 'stage-1', 'flow')
+          : renderDe1VSlider('pre_pressure', model.prePressure, 'bar', 0, 12, 0.1, 335, 425, 235, 'stage-1', '< pressure')}
+        ${isFlow
+          ? renderDe1HSlider('pre_pressure', model.prePressure, 'bar', 0, 12, 0.1, 23.5, 557.5, 300, 'stage-1', '< pressure')
+          : renderDe1HSlider('pre_flow', model.preFlow, 'mL/s', 0, 12, 0.1, 23.5, 587.5, 300, 'stage-1', 'flow')}
+
+        <h2 class="pe-de1-stage-title stage-2">${isFlow ? '2: hold' : '2: rise and hold'}</h2>
+        ${renderDe1HSlider('main_time', model.mainTime, 'seconds', 0, 60, 1, 446, 425, 300, 'stage-2', 'time')}
+        ${renderDe1VSlider('main_target', model.mainTarget, mainUnit, 0, 12, 0.1, 758, 425, 235, 'stage-2', modeLabel.toLowerCase())}
+        ${renderDe1HSlider('limit', model.limit, limitUnit, 0, 12, 0.1, 446, 587.5, 273, 'stage-2', limitLabel, true)}
+
+        <h2 class="pe-de1-stage-title stage-3">3: decline</h2>
+        ${renderDe1HSlider('decline_time', model.declineTime, 'seconds', 0, 60, 1, 865, 425, 302.5, 'stage-3', 'time')}
+        ${renderDe1VSlider('decline_target', model.declineTarget, mainUnit, 0, 12, 0.1, 1180, 425, 235, 'stage-3', `${modeLabel.toLowerCase()} end`)}
+        <h2 class="pe-de1-stage-title stage-4">4: stop at pour:</h2>
+        ${renderDe1HSlider('stop_volume', model.stopVolume, 'mL', 0, 100, 1, 865, 587.5, 273, 'stage-3', 'volume')}
+
+        <button type="button" class="pe-de1-bottom cancel" data-action="go-view" data-value="profiles">Cancel</button>
+        <button type="button" class="pe-de1-bottom ok" data-action="save-profile">Ok</button>
       </section>
-      <section class="pe-simple-stages">
-        <article class="pe-stage-card stage-1">
-          <h2>1: preinfuse</h2>
-          ${renderSimpleHorizontal('pre_time', model.preTime, 'seconds', 0, 60, 1, 'time')}
-          ${renderSimpleHorizontal('pre_flow', model.preFlow, 'mL/s', 0, 12, 0.1, 'flow')}
-          ${renderSimpleVertical('pre_pressure', model.prePressure, 'bar', 0, 12, 0.1, 'gauge', '< pressure')}
-        </article>
-        <article class="pe-stage-card stage-2">
-          <h2>2: rise and hold</h2>
-          ${renderSimpleHorizontal('main_time', model.mainTime, 'seconds', 0, 60, 1, 'time')}
-          ${renderSimpleVertical('main_target', model.mainTarget, mainUnit, 0, 12, 0.1, state.type === 'flow' ? 'droplets' : 'gauge', modeLabel.toLowerCase())}
-          ${renderSimpleHorizontal('limit', model.limit, limitUnit, 0, 12, 0.1, limitLabel)}
-        </article>
-        <article class="pe-stage-card stage-3">
-          <h2>3: decline</h2>
-          ${renderSimpleHorizontal('decline_time', model.declineTime, 'seconds', 0, 60, 1, 'time')}
-          ${renderSimpleVertical('decline_target', model.declineTarget, mainUnit, 0, 12, 0.1, state.type === 'flow' ? 'droplets' : 'gauge', `${modeLabel.toLowerCase()} end`)}
-        </article>
-        <article class="pe-stage-card stage-4">
-          <h2>4: stop at pour</h2>
-          ${renderSimpleHorizontal('stop_volume', model.stopVolume, 'ml', 0, 200, 1, 'volume')}
-        </article>
-      </section>
-      ${renderSimpleMeta(state)}
     </div>
   `;
 }
 
-function renderSimpleMeta(state: ProfileEditorState): string {
-  return `
-    <section class="pe-simple-meta">
-      <label class="pe-field pe-title-field">
-        <span>Preset name</span>
-        <input type="text" data-action="pe-meta" data-key="title" value="${escapeAttr(state.title)}" />
-      </label>
-      <label class="pe-field">
-        <span>Author</span>
-        <input type="text" data-action="pe-meta" data-key="author" value="${escapeAttr(state.author)}" />
-      </label>
-      <label class="pe-field pe-notes-field">
-        <span>Description</span>
-        <input type="text" data-action="pe-meta" data-key="notes" value="${escapeAttr(state.notes)}" />
-      </label>
-    </section>
-  `;
-}
-
-function renderSimpleHorizontal(
+function renderDe1HSlider(
   key: SimpleProfileField,
   value: number,
   unit: string,
   min: number,
   max: number,
   step: number,
-  label: string
+  x: number,
+  y: number,
+  width: number,
+  stage: string,
+  label: string,
+  offWhenZero = false
 ): string {
+  const fill = rangeFill(value, min, max);
   return `
-    <div class="pe-simple-control horizontal">
+    <label class="pe-de1-slider horizontal ${stage} ${label.startsWith('Limit') ? 'with-caption' : ''}" style="--x:${x}; --y:${y}; --w:${width}; --fill:${fill}%;">
       <span>${escapeHtml(label)}</span>
       <input type="range" min="${min}" max="${max}" step="${step}" value="${escapeAttr(formatNumber(value))}" data-action="pe-simple-field" data-key="${key}" aria-label="${escapeAttr(label)}" />
-      <button type="button" data-action="pe-simple-nudge" data-key="${key}" data-delta="${step}">${icon('plus')}</button>
-      <button type="button" data-action="pe-simple-nudge" data-key="${key}" data-delta="${-step}">${icon('minus')}</button>
-      <strong>${escapeHtml(formatNumber(value))} ${escapeHtml(unit)}</strong>
-    </div>
+      <strong>${escapeHtml(formatDe1Value(value, unit, offWhenZero))}</strong>
+    </label>
   `;
 }
 
-function renderSimpleVertical(
+function renderDe1VSlider(
   key: SimpleProfileField,
   value: number,
   unit: string,
   min: number,
   max: number,
   step: number,
-  iconName: string,
+  x: number,
+  y: number,
+  height: number,
+  stage: string,
   label: string
 ): string {
+  const fill = rangeFill(value, min, max);
   return `
-    <div class="pe-simple-control vertical">
-      <button type="button" data-action="pe-simple-nudge" data-key="${key}" data-delta="${step}">${icon('plus')}</button>
+    <label class="pe-de1-slider vertical ${stage}" style="--x:${x}; --y:${y}; --h:${height}; --fill:${fill}%;">
       <input type="range" min="${min}" max="${max}" step="${step}" value="${escapeAttr(formatNumber(value))}" data-action="pe-simple-field" data-key="${key}" aria-label="${escapeAttr(label)}" />
-      <button type="button" class="pe-simple-center" data-action="pe-simple-nudge" data-key="${key}" data-delta="0">${icon(iconName)}</button>
-      <button type="button" data-action="pe-simple-nudge" data-key="${key}" data-delta="${-step}">${icon('minus')}</button>
-      <strong>${escapeHtml(formatNumber(value))} ${escapeHtml(unit)}</strong>
-    </div>
+      <strong>${escapeHtml(formatDe1Value(value, unit, false, label.startsWith('<')))}</strong>
+    </label>
   `;
 }
 
-function renderTemperatureRail(value: number): string {
+function renderDe1Temperature(value: number): string {
   return `
-    <aside class="pe-temperature-rail" aria-label="Temperature">
-      <button type="button" data-action="pe-simple-nudge" data-key="temperature" data-delta="0.5">${icon('plus')}</button>
-      <div class="pe-thermometer">
-        <input type="range" min="1" max="105" step="0.5" value="${escapeAttr(formatNumber(value))}" data-action="pe-simple-field" data-key="temperature" aria-label="temperature" />
-        <span></span>
-      </div>
-      <button type="button" data-action="pe-simple-nudge" data-key="temperature" data-delta="-0.5">${icon('minus')}</button>
+    <aside class="pe-de1-temperature" aria-label="Temperature">
+      <button type="button" class="temp-plus" data-action="pe-simple-nudge" data-key="temperature" data-delta="0.5" aria-label="Increase temperature"></button>
+      <input type="range" min="1" max="105" step="0.5" value="${escapeAttr(formatNumber(value))}" data-action="pe-simple-field" data-key="temperature" aria-label="temperature" />
+      <button type="button" class="temp-mid" data-action="pe-simple-nudge" data-key="temperature" data-delta="0" aria-label="Temperature steps"></button>
+      <button type="button" class="temp-minus" data-action="pe-simple-nudge" data-key="temperature" data-delta="-0.5" aria-label="Decrease temperature"></button>
       <strong>${escapeHtml(formatNumber(value))}°C</strong>
     </aside>
   `;
+}
+
+function formatDe1Value(value: number, unit: string, offWhenZero = false, lessThan = false): string {
+  if (offWhenZero && value <= 0) return 'off';
+  const prefix = lessThan ? '< ' : '';
+  return `${prefix}${formatNumber(value)} ${unit}`;
+}
+
+function rangeFill(value: number, min: number, max: number): string {
+  if (max <= min) return '0';
+  return (clamp01((value - min) / (max - min)) * 100).toFixed(2);
 }
 
 function renderMeta(state: ProfileEditorState): string {
@@ -860,9 +859,9 @@ function renderProfileChart(state: ProfileEditorState): string {
 }
 
 function renderDe1ExplanationChart(state: ProfileEditorState): string {
-  const width = 1180;
-  const height = 330;
-  const plot = { x: 82, y: 34, w: 990, h: 230 };
+  const width = 1188;
+  const height = 250;
+  const plot = { x: 58, y: 18, w: 1082, h: 190 };
   const maxValue = state.type === 'flow' ? 8 : 12;
   const totalSeconds = Math.max(1, state.steps.reduce((sum, step) => sum + Math.max(0, step.seconds || 0), 0));
   const pick = state.type === 'flow' ? (step: EditorStep) => step.flow : (step: EditorStep) => step.pressure;
@@ -891,9 +890,6 @@ function renderDe1ExplanationChart(state: ProfileEditorState): string {
         ${seriesPoints(state, pick, totalSeconds, plot, maxValue).map((point) => `
           <circle class="pe-de1-node" cx="${point.x}" cy="${point.y}" r="6"></circle>
         `).join('')}
-        <text x="${plot.x}" y="${height - 34}" class="pe-chart-label">pressure</text>
-        <text x="${plot.x + 134}" y="${height - 34}" class="pe-chart-label flow">flow</text>
-        <text x="${plot.x + 242}" y="${height - 34}" class="pe-chart-label temp">temp /10</text>
       </svg>
     </section>
   `;
