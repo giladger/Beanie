@@ -227,10 +227,13 @@ while the guard holds).
   (commit `d8fe19b`).
 
 ### Phase 4 — limits parity ✅ *(done)*
-- Tank temperature, preinfusion-ends-after (`target_volume_count_start`),
-  stop-at-volume, stop-at-weight live in the metadata row; per-step limiter
-  **range** surfaced as a card when a step has a limiter (commit `d8fe19b`).
-  (Kept beanie-styled in the meta row rather than a separate `settings_2c2` tab.)
+- Dedicated **Steps / Limits sub-tabs** in the advanced editor (commit `6061005`,
+  de1app `settings_2c2`). The Limits panel holds tank temperature,
+  preinfusion-ends-after (`target_volume_count_start`), stop-at-volume,
+  stop-at-weight, plus a global **Limiter range** applied to every limited step.
+- Per-step limiter **range** also editable as a card on the step itself when a
+  limiter is set (commit `d8fe19b`). Identity row keeps name/author/type/
+  beverage/notes.
 
 ### Phase 5 — live explanation chart parity ✅ *(done, `f61a6ae`)*
 - Pure, tested `profileChartModel.ts`: fast = vertical jump + hold, smooth =
