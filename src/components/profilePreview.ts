@@ -12,8 +12,17 @@ export interface ProfileStepTarget {
 type PreviewMode = 'pressure' | 'flow' | 'advanced';
 
 export function profileStepTargets(profile: Profile | null | undefined): ProfileStepTarget[] {
-  if (!profile || !Array.isArray(profile.steps)) return [];
-  return profile.steps.map((step) => ({
+  if (!profile) return [];
+  const steps = profileSteps(profile);
+  const mode = explicitPreviewMode(profile) ?? inferPreviewModeFromSteps(steps);
+  if (mode === 'pressure' && hasScalarPressureProfile(profile)) return scalarPressureTargets(profile);
+  if (mode === 'flow' && hasScalarFlowProfile(profile)) return scalarFlowTargets(profile);
+
+  if (!steps.length) return [];
+  if (mode === 'pressure') return pressureTargetsFromSteps(steps);
+  if (mode === 'flow') return flowTargetsFromSteps(steps);
+
+  return steps.map((step) => ({
     pressure: stepNumber(step, 'pressure'),
     flow: stepNumber(step, 'flow'),
     temperature: stepNumber(step, 'temperature'),
@@ -37,8 +46,14 @@ export function renderProfilePreview(profile: Profile | null | undefined): strin
   }
 
   const totalSeconds = Math.max(1, targets.reduce((sum, target) => sum + target.seconds, 0));
-  const pressurePath = mode !== 'flow' ? previewPath(targets, (t) => t.pressure, totalSeconds, plot, yMax) : '';
-  const flowPath = mode !== 'pressure' ? previewPath(targets, (t) => t.flow, totalSeconds, plot, yMax) : '';
+  const pressurePath =
+    mode !== 'flow'
+      ? previewPath(targets, (t) => (mode === 'advanced' && t.pump === 'flow' ? null : t.pressure), totalSeconds, plot, yMax)
+      : '';
+  const flowPath =
+    mode !== 'pressure'
+      ? previewPath(targets, (t) => (mode === 'advanced' && t.pump === 'pressure' ? null : t.flow), totalSeconds, plot, yMax)
+      : '';
   const temperaturePath = previewPath(
     targets,
     (t) => (t.temperature == null ? null : t.temperature / 10),
@@ -75,13 +90,16 @@ function previewPath(
   plot: { x: number; y: number; w: number; h: number },
   yMax: number
 ): string {
-  const points: Array<{ x: number; y: number }> = [];
+  const segments: Array<Array<{ x: number; y: number }>> = [];
+  let points: Array<{ x: number; y: number }> = [];
   let elapsed = 0;
   let previousValue: number | null = null;
   for (let i = 0; i < targets.length; i += 1) {
     const target = targets[i]!;
     const value = pick(target);
     if (value == null) {
+      if (points.length > 0) segments.push(points);
+      points = [];
       elapsed += target.seconds;
       previousValue = null;
       continue;
@@ -94,7 +112,8 @@ function previewPath(
     points.push({ x: plot.x + (elapsed / totalSeconds) * plot.w, y: yFor(value, plot, yMax) });
     previousValue = value;
   }
-  return smoothPath(points);
+  if (points.length > 0) segments.push(points);
+  return segments.map(smoothPath).join('');
 }
 
 function smoothPath(points: Array<{ x: number; y: number }>): string {
@@ -117,7 +136,12 @@ function smoothPath(points: Array<{ x: number; y: number }>): string {
 function stepNumber(step: unknown, key: string): number | null {
   if (step == null || typeof step !== 'object') return null;
   const value = (step as Record<string, unknown>)[key];
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }
 
 function stepString(step: unknown, key: string): string | null {
@@ -126,20 +150,200 @@ function stepString(step: unknown, key: string): string | null {
   return typeof value === 'string' && value.trim() !== '' ? value : null;
 }
 
+function profileSteps(profile: Profile): unknown[] {
+  if (Array.isArray(profile.steps)) return profile.steps;
+  const advancedShot = profileValue(profile, 'advanced_shot');
+  return Array.isArray(advancedShot) ? advancedShot : [];
+}
+
+function pressureTargetsFromSteps(steps: unknown[]): ProfileStepTarget[] {
+  const targets: ProfileStepTarget[] = [];
+  let insertedPreinfusionStart = false;
+  for (const step of steps) {
+    const pressure = stepNumber(step, 'pressure') ?? stepExitNumber(step, 'pressure');
+    if (pressure == null) continue;
+    const pump = stepString(step, 'pump');
+    const temperature = stepNumber(step, 'temperature');
+    if (!insertedPreinfusionStart && pump === 'flow') {
+      targets.push(target({ pressure: 0.1, temperature, seconds: 0.01 }));
+      insertedPreinfusionStart = true;
+    }
+    targets.push(target({
+      pressure,
+      temperature,
+      pump: 'pressure',
+      transition: null,
+      seconds: Math.max(0.01, stepNumber(step, 'seconds') ?? 1)
+    }));
+  }
+  return targets;
+}
+
+function flowTargetsFromSteps(steps: unknown[]): ProfileStepTarget[] {
+  return steps
+    .map((step) => target({
+      flow: stepNumber(step, 'flow'),
+      temperature: stepNumber(step, 'temperature'),
+      pump: 'flow',
+      transition: null,
+      seconds: Math.max(0.01, stepNumber(step, 'seconds') ?? 1)
+    }))
+    .filter((step) => step.flow != null);
+}
+
+function scalarPressureTargets(profile: Profile): ProfileStepTarget[] {
+  const preinfusionTime = Math.max(0, profileNumber(profile, 'preinfusion_time') ?? 0);
+  const preinfusionPressure = profileNumber(profile, 'preinfusion_stop_pressure') ?? 0.5;
+  let espressoPressure = profileNumber(profile, 'espresso_pressure') ?? 0;
+  let pressureEnd = profileNumber(profile, 'pressure_end') ?? 0;
+  const holdTime = Math.max(0, profileNumber(profile, 'espresso_hold_time') ?? 0);
+  const declineTime = Math.max(0, profileNumber(profile, 'espresso_decline_time') ?? 0);
+
+  if (espressoPressure === 0) espressoPressure = 0.05;
+  if (pressureEnd === 0) pressureEnd = 0.05;
+
+  let rampTime = 0.01 + Math.abs(espressoPressure - preinfusionPressure) * 0.5;
+  let pressureHoldTime = holdTime;
+  if (rampTime > pressureHoldTime) espressoPressure = pressureHoldTime * 2;
+  pressureHoldTime = Math.max(0, pressureHoldTime - rampTime);
+
+  const targets: ProfileStepTarget[] = [];
+  if (preinfusionTime > 0) {
+    targets.push(target({ pressure: 0.1, temperature: profileTemperature(profile, 0), seconds: 0.01 }));
+    targets.push(target({ pressure: preinfusionPressure, temperature: profileTemperature(profile, 1), seconds: preinfusionTime }));
+  } else {
+    targets.push(target({ pressure: 0, temperature: profileTemperature(profile, 0), seconds: 0.01 }));
+  }
+  targets.push(target({ pressure: espressoPressure, temperature: profileTemperature(profile, 2), seconds: rampTime }));
+  if (pressureHoldTime > 0) {
+    targets.push(target({ pressure: espressoPressure, temperature: profileTemperature(profile, 2), seconds: pressureHoldTime }));
+  }
+  if (declineTime > 0) {
+    targets.push(target({ pressure: pressureEnd, temperature: profileTemperature(profile, 3), seconds: declineTime }));
+  }
+  return targets;
+}
+
+function scalarFlowTargets(profile: Profile): ProfileStepTarget[] {
+  const preinfusionTime = Math.max(0, profileNumber(profile, 'preinfusion_time') ?? 0);
+  const preinfusionFlow = profileNumber(profile, 'preinfusion_flow_rate') ?? 0;
+  const holdTime = Math.max(0, profileNumber(profile, 'espresso_hold_time') ?? 0);
+  const declineTime = Math.max(0, profileNumber(profile, 'espresso_decline_time') ?? 0);
+  let flowHold = profileNumber(profile, 'flow_profile_hold') ?? 0;
+  let flowDecline = profileNumber(profile, 'flow_profile_decline') ?? 0;
+
+  if (flowHold === 0) flowHold = 0.05;
+  if (flowDecline === 0) flowDecline = 0.05;
+
+  const targets: ProfileStepTarget[] = [];
+  if (preinfusionTime > 0) {
+    targets.push(target({ flow: 0, temperature: profileTemperature(profile, 0), seconds: Math.max(0.01, preinfusionFlow / 4) }));
+    targets.push(target({ flow: preinfusionFlow, temperature: profileTemperature(profile, 1), seconds: preinfusionTime }));
+  } else {
+    targets.push(target({ flow: 0, temperature: profileTemperature(profile, 0), seconds: Math.max(0.01, flowHold / 4) }));
+  }
+  if (holdTime > 0) {
+    targets.push(target({ flow: flowHold, temperature: profileTemperature(profile, 2), seconds: 3 }));
+    targets.push(target({ flow: flowHold, temperature: profileTemperature(profile, 2), seconds: holdTime }));
+  }
+  if (declineTime > 0) {
+    targets.push(target({ flow: flowDecline, temperature: profileTemperature(profile, 3), seconds: declineTime }));
+  }
+  return targets;
+}
+
+function target(values: Partial<ProfileStepTarget>): ProfileStepTarget {
+  return {
+    pressure: values.pressure ?? null,
+    flow: values.flow ?? null,
+    temperature: values.temperature ?? null,
+    pump: values.pump ?? null,
+    transition: values.transition ?? null,
+    seconds: Math.max(0.01, values.seconds ?? 1)
+  };
+}
+
+function profileTemperature(profile: Profile, index: 0 | 1 | 2 | 3): number | null {
+  return profileNumber(profile, `espresso_temperature_${index}`) ?? profileNumber(profile, 'espresso_temperature') ?? profileNumber(profile, 'tank_temperature');
+}
+
 function firstNumber(values: Array<number | null>): number | null {
   return values.find((value): value is number => value != null) ?? null;
 }
 
 function previewMode(profile: Profile | null | undefined, targets: ProfileStepTarget[]): PreviewMode {
-  const type = profile?.type ?? profile?.legacy_profile_type ?? '';
-  if (type === 'pressure' || type === 'settings_2a') return 'pressure';
-  if (type === 'flow' || type === 'settings_2b') return 'flow';
-  if (type === 'advanced' || type === 'settings_2c' || type === 'settings_2c2') return 'advanced';
+  const explicit = explicitPreviewMode(profile);
+  if (explicit) return explicit;
   const hasPressure = targets.some((target) => target.pressure != null || target.pump === 'pressure');
   const hasFlow = targets.some((target) => target.flow != null || target.pump === 'flow');
   if (hasPressure && !hasFlow) return 'pressure';
   if (hasFlow && !hasPressure) return 'flow';
   return 'advanced';
+}
+
+function inferPreviewModeFromSteps(steps: unknown[]): PreviewMode | null {
+  if (steps.length === 0) return null;
+  const firstPressureIndex = steps.findIndex((step) => stepString(step, 'pump') === 'pressure' || stepNumber(step, 'pressure') != null);
+  const hasPressure = firstPressureIndex >= 0;
+  const hasFlow = steps.some((step) => stepString(step, 'pump') === 'flow' || stepNumber(step, 'flow') != null);
+  if (hasFlow && !hasPressure) return 'flow';
+  if (hasPressure && !hasFlow) return 'pressure';
+  if (hasPressure && hasFlow) {
+    const hasFlowAfterPressure = steps.some((step, index) => index > firstPressureIndex && (stepString(step, 'pump') === 'flow' || stepNumber(step, 'flow') != null));
+    if (!hasFlowAfterPressure) return 'pressure';
+  }
+  return null;
+}
+
+function explicitPreviewMode(profile: Profile | null | undefined): PreviewMode | null {
+  const type = (
+    profileString(profile, 'settings_profile_type') ??
+    profileString(profile, 'profile_type') ??
+    profileString(profile, 'legacy_profile_type') ??
+    profileString(profile, 'type') ??
+    ''
+  ).toLowerCase();
+  if (['pressure', 'settings_2a', 'settings_profile_pressure'].includes(type)) return 'pressure';
+  if (['flow', 'settings_2b', 'settings_profile_flow'].includes(type)) return 'flow';
+  if (['advanced', 'settings_2c', 'settings_2c2', 'settings_profile_advanced'].includes(type)) return 'advanced';
+  return null;
+}
+
+function hasScalarPressureProfile(profile: Profile): boolean {
+  return profileNumber(profile, 'espresso_pressure') != null || profileNumber(profile, 'pressure_end') != null;
+}
+
+function hasScalarFlowProfile(profile: Profile): boolean {
+  return profileNumber(profile, 'flow_profile_hold') != null || profileNumber(profile, 'flow_profile_decline') != null;
+}
+
+function profileString(profile: Profile | null | undefined, key: string): string | null {
+  if (!profile) return null;
+  const value = profileValue(profile, key);
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
+}
+
+function profileNumber(profile: Profile | null | undefined, key: string): number | null {
+  if (!profile) return null;
+  const value = profileValue(profile, key);
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function profileValue(profile: Profile, key: string): unknown {
+  return (profile as Record<string, unknown>)[key];
+}
+
+function stepExitNumber(step: unknown, type: string): number | null {
+  if (step == null || typeof step !== 'object') return null;
+  const exit = (step as Record<string, unknown>).exit;
+  if (exit == null || typeof exit !== 'object') return null;
+  const record = exit as Record<string, unknown>;
+  return record.type === type ? stepNumber(exit, 'value') : null;
 }
 
 function temperatureGauge(value: number | null, gauge: { x: number; y: number; h: number }): string {

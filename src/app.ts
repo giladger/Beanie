@@ -457,11 +457,6 @@ export class BeanieApp {
     }
   }
 
-  private isDirty(): boolean {
-    if (!this.selectedBean() || this.state.appliedSignature == null) return false;
-    return draftSignature(this.state.draft) !== this.state.appliedSignature;
-  }
-
   // Debounced auto-apply: any dial-in edit pushes the draft to the workflow
   // 200ms after the last change, so there is no manual Apply button.
   private scheduleApply(): void {
@@ -1977,7 +1972,10 @@ export class BeanieApp {
 
   private renderApplyStatus(): string {
     if (!this.selectedBean()) return '';
-    if (this.state.busy && this.state.applyState === 'pending') {
+    // Driven by the apply lifecycle, not by the keypress — so the chip stays
+    // quiet during the debounce window and only shows "Applying…" once the
+    // debounced PUT actually fires.
+    if (this.state.applyState === 'pending') {
       return '<span class="chip apply-pending">Applying…</span>';
     }
     if (this.state.applyState === 'failed') {
@@ -1985,9 +1983,6 @@ export class BeanieApp {
     }
     if (this.state.applyState === 'stale') {
       return '<span class="chip apply-stale">Changed on machine · Sync to reload</span>';
-    }
-    if (this.isDirty()) {
-      return '<span class="chip apply-pending">Saving…</span>';
     }
     if (this.state.applyState === 'applied') {
       return '<span class="chip apply-applied">Applied</span>';
