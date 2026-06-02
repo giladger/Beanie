@@ -120,6 +120,9 @@ const initialSettingsPreferences = readSettingsPreferences();
 
 const FOCUSABLE_SEARCH = new Set(['search', 'profile-search', 'settings-search']);
 
+// Scrollable containers whose scroll position must survive a re-render.
+const SCROLL_SELECTORS = ['.bean-list', '.shot-list', '.page-body'];
+
 // Mirror ReaPrime's SteamSettings / HotWaterData / RinseData defaults.
 const DEFAULT_STEAM: SteamSettings = {
   targetTemperature: 150,
@@ -222,7 +225,6 @@ export class BeanieApp {
     appliedSignature: null
   };
 
-  private renderTimer: number | null = null;
   private machineRetryTimer: number | null = null;
   private scaleRetryTimer: number | null = null;
   private machineSocket: WebSocket | null = null;
@@ -635,8 +637,24 @@ export class BeanieApp {
       this.scheduleLiveDraw();
       return;
     }
-    // Idle telemetry: keep the top bar fresh on the existing debounced path.
-    this.scheduleRender();
+    // Idle telemetry: patch the top-bar readouts by reference. Never re-render
+    // the whole app for a streaming snapshot — that would reset scroll position
+    // of the bean list / history / pages on every frame.
+    this.updateTopbarStats();
+  }
+
+  private updateTopbarStats(): void {
+    const machine = this.state.machine;
+    const scale = this.state.scale;
+    const ready = machine?.state?.state ?? (this.state.loading ? 'loading' : 'idle');
+    const set = (id: string, value: string) => {
+      const el = this.root.querySelector<HTMLElement>(`#${id}`);
+      if (el) el.textContent = value;
+    };
+    set('stat-machine', capitalize(ready));
+    set('stat-group', temp(machine?.groupTemperature));
+    set('stat-steam', temp(machine?.steamTemperature));
+    set('stat-scale', scale?.status === 'disconnected' ? 'offline' : `${formatNumber(scale?.weight, 1)} g`);
   }
 
   // Coalesce many incoming frames into at most one canvas draw per animation
@@ -1492,6 +1510,7 @@ export class BeanieApp {
   private render(): void {
     const bean = this.selectedBean();
     const focus = this.captureFocus();
+    const scroll = this.captureScroll();
     const isPage = this.state.view !== 'workbench';
     this.root.innerHTML = `
       <div class="app-shell ${isPage ? 'app-shell-page' : ''}">
@@ -1504,6 +1523,26 @@ export class BeanieApp {
     this.bindLiveElements();
     this.bindDetailChart();
     this.restoreFocus(focus);
+    this.restoreScroll(scroll);
+  }
+
+  // Re-rendering replaces innerHTML, which resets the scroll position of every
+  // scrollable container. Capture and restore it synchronously (before paint)
+  // so a re-render never visibly jumps the list/page back to the top.
+  private captureScroll(): Record<string, number> {
+    const map: Record<string, number> = {};
+    for (const selector of SCROLL_SELECTORS) {
+      const el = this.root.querySelector<HTMLElement>(selector);
+      if (el && el.scrollTop > 0) map[selector] = el.scrollTop;
+    }
+    return map;
+  }
+
+  private restoreScroll(map: Record<string, number>): void {
+    for (const selector of Object.keys(map)) {
+      const el = this.root.querySelector<HTMLElement>(selector);
+      if (el) el.scrollTop = map[selector]!;
+    }
   }
 
   private renderWorkbench(bean: Bean | null): string {
@@ -1626,10 +1665,10 @@ export class BeanieApp {
       <header class="topbar">
         <div class="top-inline">
           <div class="top-stats" aria-label="Machine metrics">
-            ${topStat('Machine', capitalize(ready))}
-            ${topStat('Group', temp(machine?.groupTemperature))}
-            ${topStat('Steam', temp(machine?.steamTemperature))}
-            ${topStat('Scale', scale?.status === 'disconnected' ? 'offline' : `${formatNumber(scale?.weight, 1)} g`)}
+            ${topStat('Machine', capitalize(ready), 'stat-machine')}
+            ${topStat('Group', temp(machine?.groupTemperature), 'stat-group')}
+            ${topStat('Steam', temp(machine?.steamTemperature), 'stat-steam')}
+            ${topStat('Scale', scale?.status === 'disconnected' ? 'offline' : `${formatNumber(scale?.weight, 1)} g`, 'stat-scale')}
           </div>
           <div class="top-icons" role="toolbar" aria-label="Skin actions">
             ${this.state.demo ? `<button class="icon-tool" data-action="simulate-shot" aria-label="Simulate shot" title="Simulate shot">${icon('play')}</button>` : ''}
@@ -2236,17 +2275,11 @@ export class BeanieApp {
     this.render();
   }
 
-  private scheduleRender(): void {
-    if (this.renderTimer != null) return;
-    this.renderTimer = window.setTimeout(() => {
-      this.renderTimer = null;
-      this.render();
-    }, 250);
-  }
 }
 
-function topStat(label: string, value: string): string {
-  return `<div class="top-stat"><label>${escapeHtml(label)}</label><strong>${escapeHtml(value)}</strong></div>`;
+function topStat(label: string, value: string, id?: string): string {
+  const idAttr = id ? ` id="${id}"` : '';
+  return `<div class="top-stat"><label>${escapeHtml(label)}</label><strong${idAttr}>${escapeHtml(value)}</strong></div>`;
 }
 
 function liveReadout(label: string, id: string, value: string, unit = ''): string {
