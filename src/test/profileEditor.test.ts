@@ -2,6 +2,7 @@ import type { Profile } from '../api/types';
 import {
   addStep,
   createProfileEditorState,
+  duplicateStep,
   moveStep,
   profileFromEditorState,
   removeStep,
@@ -10,6 +11,117 @@ import {
   setStepPump,
   PROFILE_BEVERAGE_TYPES
 } from '../components/profileEditor';
+import {
+  addProfileStep,
+  deleteProfileStep,
+  duplicateProfileStep,
+  moveProfileStep,
+  normalizeProfileForEditing,
+  serializeProfileEditor,
+  updateProfileMetadata,
+  updateProfileStepField,
+  validateProfileEditor
+} from '../domain/profileEditor';
+
+run('domain normalizes canonical and Tcl-derived metadata and steps', () => {
+  const state = normalizeProfileForEditing(tclDerivedProfile());
+
+  equal(state.metadata.title, 'Blooming Allonge');
+  equal(state.metadata.notes, 'keep the aliases alive');
+  equal(state.metadata.targetWeight, 135);
+  equal(state.metadata.tankTemperature, 0);
+  equal(state.steps.length, 2);
+  equal(state.steps[0].name, 'fast pre');
+  equal(state.steps[0].durationSeconds, 3);
+  equal(state.steps[0].exit?.enabled, true);
+  equal(state.steps[0].exit?.type, 'pressure_over');
+  equal(state.steps[0].extra.popup, '$weight');
+});
+
+run('domain preserves unknown profile and step fields through a round-trip', () => {
+  const state = normalizeProfileForEditing(tclDerivedProfile());
+  const profile = serializeProfileEditor(state) as Record<string, unknown>;
+  const steps = profile.advanced_shot as Record<string, unknown>[];
+
+  equal(profile.profile_editor, 'demo');
+  equal(profile.read_only, 1);
+  equal(profile.profile_title, 'Blooming Allonge');
+  equal(profile.title, 'Blooming Allonge');
+  equal(steps[0].popup, '$weight');
+  equal(steps[0].exit_if, 1);
+  equal(steps[1].legacy_flag, 'preserve-me');
+});
+
+run('domain updates metadata without dropping Tcl aliases', () => {
+  const state = updateProfileMetadata(normalizeProfileForEditing(tclDerivedProfile()), 'title', 'Edited');
+  const profile = serializeProfileEditor(state) as Record<string, unknown>;
+
+  equal(profile.title, 'Edited');
+  equal(profile.profile_title, 'Edited');
+  equal(profile.profile_editor, 'demo');
+});
+
+run('domain adds, duplicates, deletes, and moves ordered steps', () => {
+  const original = normalizeProfileForEditing(tclDerivedProfile());
+  const added = addProfileStep(original, { name: 'Finish', pressure: 5 });
+  equal(added.steps.length, 3);
+  equal(added.steps[2].name, 'Finish');
+
+  const duplicated = duplicateProfileStep(added, 0);
+  equal(duplicated.steps.length, 4);
+  equal(duplicated.steps[1].name, 'fast pre');
+
+  const deleted = deleteProfileStep(duplicated, 2);
+  equal(deleted.steps.length, 3);
+  equal(deleted.steps[2].name, 'Finish');
+
+  const moved = moveProfileStep(deleted, 2, 0);
+  equal(moved.steps[0].name, 'Finish');
+  equal(moved.steps[1].name, 'fast pre');
+});
+
+run('domain updates known and unknown step fields and serializes duration alias', () => {
+  const state = normalizeProfileForEditing({
+    title: 'Duration aliases',
+    steps: [{ name: 'Soak', duration: 12, mystery: 'stay' }]
+  });
+
+  const updated = updateProfileStepField(
+    updateProfileStepField(
+      updateProfileStepField(state, 0, 'durationSeconds', '16.5'),
+      0,
+      'temperature',
+      '94'
+    ),
+    0,
+    'custom_limiter',
+    7
+  );
+  const profile = serializeProfileEditor(updated);
+  const step = (profile.steps as Record<string, unknown>[])[0]!;
+
+  equal(step.duration, 16.5);
+  equal(step.temperature, 94);
+  equal(step.mystery, 'stay');
+  equal(step.custom_limiter, 7);
+});
+
+run('domain validation flags unsafe values but allows real low/zero Decent values', () => {
+  const validRealProfile = normalizeProfileForEditing({
+    steps: [{ name: 'Pause', pressure: 0, flow: 0, temperature: 0, seconds: 0 }]
+  });
+  equal(validateProfileEditor(validRealProfile).length, 0);
+
+  const unsafe = normalizeProfileForEditing({
+    steps: [{ name: '', pressure: 18, flow: -2, temperature: 130, seconds: -1, sensor: 'tea' }]
+  });
+  const issues = validateProfileEditor(unsafe);
+  equal(issues.some((issue) => issue.path.endsWith('.pressure')), true);
+  equal(issues.some((issue) => issue.path.endsWith('.flow')), true);
+  equal(issues.some((issue) => issue.path.endsWith('.temperature')), true);
+  equal(issues.some((issue) => issue.path.endsWith('.durationSeconds')), true);
+  equal(issues.some((issue) => issue.path.endsWith('.sensor')), true);
+});
 
 run('creates editor state from an existing profile preserving metadata and steps', () => {
   const state = createProfileEditorState(sampleProfile());
@@ -17,11 +129,16 @@ run('creates editor state from an existing profile preserving metadata and steps
   equal(state.title, 'Sample');
   equal(state.author, 'Tester');
   equal(state.beverageType, 'espresso');
+  equal(state.type, 'advanced');
+  equal(state.legacyProfileType, 'settings_2c');
   equal(state.tankTemperature, 90);
   equal(state.targetWeight, 36);
+  equal(state.targetVolumeCountStart, 1);
   equal(state.steps.length, 2);
   equal(state.steps[0].name, 'Preinfusion');
   equal(state.steps[0].pump, 'flow');
+  equal(state.steps[0].weight, 5);
+  equal(state.steps[0].limiter?.value, 8);
   equal(state.steps[1].pump, 'pressure');
   equal(state.steps[1].pressure, 9);
   equal(state.dirty, false);
@@ -62,6 +179,16 @@ run('addStep appends and selects the new step', () => {
   equal(next.selectedStep, 1);
 });
 
+run('duplicateStep copies a step and selects the copy', () => {
+  const state = createProfileEditorState(sampleProfile());
+  const next = duplicateStep(state, 0);
+
+  equal(next.steps.length, 3);
+  equal(next.selectedStep, 1);
+  equal(next.steps[1].name, 'Preinfusion copy');
+  equal(next.steps[1].limiter?.value, 8);
+});
+
 run('removeStep keeps at least one step and respects bounds', () => {
   const one = createProfileEditorState(null);
   equal(removeStep(one, 0).steps.length, 1);
@@ -84,11 +211,15 @@ run('moveStep reorders within bounds only', () => {
 
 run('unknown step keys survive a round-trip through profileFromEditorState', () => {
   const state = createProfileEditorState(sampleProfile());
-  const profile = profileFromEditorState(state);
+  const profile = profileFromEditorState(state) as Profile & Record<string, unknown>;
   const steps = profile.steps as Record<string, unknown>[];
 
   equal(steps[0].weird_custom_key, 'keepme');
+  equal(profile.custom_profile_flag, 'round-trip');
+  equal(profile.target_volume_count_start, 1);
   equal(steps[0].pump, 'flow');
+  equal(steps[0].weight, 5);
+  equal((steps[0].limiter as Record<string, unknown>).value, 8);
   equal(steps[1].pressure, 9);
   equal('exit' in steps[1], false);
 });
@@ -108,8 +239,12 @@ function sampleProfile(): Profile {
     title: 'Sample',
     author: 'Tester',
     beverage_type: 'espresso',
+    type: 'advanced',
+    legacy_profile_type: 'settings_2c',
     tank_temperature: 90,
     target_weight: 36,
+    target_volume_count_start: 1,
+    custom_profile_flag: 'round-trip',
     version: '2',
     steps: [
       {
@@ -118,6 +253,8 @@ function sampleProfile(): Profile {
         flow: 4,
         temperature: 92,
         seconds: 10,
+        weight: 5,
+        limiter: { value: 8, range: 0.6 },
         weird_custom_key: 'keepme'
       },
       {
@@ -128,7 +265,46 @@ function sampleProfile(): Profile {
         seconds: 25
       }
     ]
-  };
+  } as Profile;
+}
+
+function tclDerivedProfile(): Profile {
+  return {
+    profile_title: 'Blooming Allonge',
+    profile_notes: 'keep the aliases alive',
+    final_desired_shot_weight_advanced: 135,
+    tank_desired_water_temperature: 0,
+    profile_editor: 'demo',
+    read_only: 1,
+    advanced_shot: [
+      {
+        name: 'fast pre',
+        flow: 4.5,
+        pressure: 3.5,
+        temperature: 95,
+        seconds: 3,
+        sensor: 'coffee',
+        pump: 'flow',
+        transition: 'fast',
+        exit_if: 1,
+        exit_type: 'pressure_over',
+        exit_pressure_over: 3.5,
+        exit_flow_over: 6,
+        popup: '$weight'
+      },
+      {
+        name: 'bloom',
+        flow: 0,
+        pressure: 0,
+        temperature: 93,
+        seconds: 30,
+        sensor: 'coffee',
+        pump: 'flow',
+        transition: 'fast',
+        legacy_flag: 'preserve-me'
+      }
+    ]
+  } as Profile;
 }
 
 function run(name: string, fn: () => void): void {

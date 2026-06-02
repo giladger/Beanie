@@ -90,10 +90,16 @@ export interface Profile {
   author?: string;
   notes?: string;
   beverage_type?: string;
+  type?: string;
+  legacy_profile_type?: string;
   target_weight?: number;
   target_volume?: number;
+  target_volume_count_start?: number;
   tank_temperature?: number;
   steps?: unknown[];
+  lang?: string;
+  hidden?: boolean | number;
+  reference_file?: string;
   version?: string;
 }
 

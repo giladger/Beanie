@@ -27,6 +27,7 @@ export interface EditorStep {
   transition: StepTransition;
   seconds: number;
   volume: number;
+  weight: number;
   exit: StepExit | null;
   limiter: StepLimiter | null;
   extra: Record<string, unknown>;
@@ -37,13 +38,17 @@ export interface ProfileEditorState {
   author: string;
   notes: string;
   beverageType: string;
+  type: string;
+  legacyProfileType: string;
   tankTemperature: number | null;
   targetWeight: number | null;
   targetVolume: number | null;
+  targetVolumeCountStart: number | null;
   version: string;
   steps: EditorStep[];
   selectedStep: number;
   dirty: boolean;
+  extra: Record<string, unknown>;
 }
 
 export type ProfileMetaKey =
@@ -51,11 +56,24 @@ export type ProfileMetaKey =
   | 'author'
   | 'notes'
   | 'beverage_type'
+  | 'type'
+  | 'legacy_profile_type'
   | 'tank_temperature'
   | 'target_weight'
-  | 'target_volume';
+  | 'target_volume'
+  | 'target_volume_count_start';
 
-export type StepFieldKey = 'name' | 'temperature' | 'sensor' | 'pressure' | 'flow' | 'seconds' | 'volume';
+export type StepFieldKey =
+  | 'name'
+  | 'temperature'
+  | 'sensor'
+  | 'pressure'
+  | 'flow'
+  | 'seconds'
+  | 'volume'
+  | 'weight'
+  | 'limiter_value'
+  | 'limiter_range';
 
 export const PROFILE_BEVERAGE_TYPES = [
   'espresso',
@@ -67,7 +85,29 @@ export const PROFILE_BEVERAGE_TYPES = [
   'manual'
 ] as const;
 
-const META_NUMBER_KEYS: ProfileMetaKey[] = ['tank_temperature', 'target_weight', 'target_volume'];
+const META_NUMBER_KEYS: ProfileMetaKey[] = [
+  'tank_temperature',
+  'target_weight',
+  'target_volume',
+  'target_volume_count_start'
+];
+
+export const PROFILE_TYPES = ['advanced', 'pressure', 'flow'] as const;
+
+const TOP_LEVEL_PROFILE_KEYS = new Set([
+  'title',
+  'author',
+  'notes',
+  'beverage_type',
+  'type',
+  'legacy_profile_type',
+  'tank_temperature',
+  'target_weight',
+  'target_volume',
+  'target_volume_count_start',
+  'version',
+  'steps'
+]);
 
 const KNOWN_STEP_KEYS = new Set([
   'name',
@@ -79,6 +119,7 @@ const KNOWN_STEP_KEYS = new Set([
   'transition',
   'seconds',
   'volume',
+  'weight',
   'exit',
   'limiter'
 ]);
@@ -90,29 +131,38 @@ export function createProfileEditorState(profile: Profile | null): ProfileEditor
       author: '',
       notes: '',
       beverageType: 'espresso',
+      type: 'advanced',
+      legacyProfileType: 'settings_2c',
       tankTemperature: null,
       targetWeight: null,
       targetVolume: null,
+      targetVolumeCountStart: null,
       version: '2',
       steps: [defaultStep()],
       selectedStep: 0,
-      dirty: false
+      dirty: false,
+      extra: {}
     };
   }
 
   const steps = Array.isArray(profile.steps) ? profile.steps.map(readStep) : [];
+  const extra = extraTopLevelFields(profile);
   return {
     title: profile.title ?? '',
     author: profile.author ?? '',
     notes: profile.notes ?? '',
     beverageType: profile.beverage_type ?? 'espresso',
+    type: profile.type ?? typeFromLegacy(profile.legacy_profile_type),
+    legacyProfileType: profile.legacy_profile_type ?? legacyFromType(profile.type),
     tankTemperature: numeric(profile.tank_temperature),
     targetWeight: numeric(profile.target_weight),
     targetVolume: numeric(profile.target_volume),
+    targetVolumeCountStart: numeric(profile.target_volume_count_start),
     version: profile.version ?? '2',
     steps: steps.length > 0 ? steps : [defaultStep()],
     selectedStep: 0,
-    dirty: false
+    dirty: false,
+    extra
   };
 }
 
@@ -128,7 +178,9 @@ export function setProfileMeta(
         ? { tankTemperature: parsed }
         : key === 'target_weight'
           ? { targetWeight: parsed }
-          : { targetVolume: parsed };
+          : key === 'target_volume'
+            ? { targetVolume: parsed }
+            : { targetVolumeCountStart: parsed };
     return { ...state, ...next, dirty: true };
   }
 
@@ -139,7 +191,11 @@ export function setProfileMeta(
         ? { author: value }
         : key === 'notes'
           ? { notes: value }
-          : { beverageType: value };
+          : key === 'beverage_type'
+            ? { beverageType: value }
+            : key === 'type'
+              ? { type: value, legacyProfileType: legacyFromType(value) }
+              : { legacyProfileType: value, type: typeFromLegacy(value) };
   return { ...state, ...next, dirty: true };
 }
 
@@ -165,6 +221,12 @@ export function setStepField(
         return { ...step, seconds: parseNumber(value) ?? 0 };
       case 'volume':
         return { ...step, volume: parseNumber(value) ?? 0 };
+      case 'weight':
+        return { ...step, weight: parseNumber(value) ?? 0 };
+      case 'limiter_value':
+        return setStepLimiterValue(step, parseNumber(value) ?? 0);
+      case 'limiter_range':
+        return setStepLimiterRange(step, parseNumber(value) ?? 0);
       default:
         return step;
     }
@@ -202,6 +264,20 @@ export function setStepExit(
   });
 }
 
+export function duplicateStep(state: ProfileEditorState, index: number): ProfileEditorState {
+  if (index < 0 || index >= state.steps.length) return state;
+  const original = state.steps[index]!;
+  const copy: EditorStep = {
+    ...original,
+    name: `${original.name || `Step ${index + 1}`} copy`,
+    exit: original.exit ? { ...original.exit } : null,
+    limiter: original.limiter ? { ...original.limiter } : null,
+    extra: { ...original.extra }
+  };
+  const steps = [...state.steps.slice(0, index + 1), copy, ...state.steps.slice(index + 1)];
+  return { ...state, steps, selectedStep: index + 1, dirty: true };
+}
+
 export function addStep(state: ProfileEditorState): ProfileEditorState {
   const steps = [...state.steps, defaultStep()];
   return { ...state, steps, selectedStep: steps.length - 1, dirty: true };
@@ -234,6 +310,7 @@ export function selectStep(state: ProfileEditorState, index: number): ProfileEdi
 
 export function profileFromEditorState(state: ProfileEditorState): Profile {
   const profile: Profile = {
+    ...state.extra,
     version: state.version,
     steps: state.steps.map(writeStep)
   };
@@ -241,9 +318,12 @@ export function profileFromEditorState(state: ProfileEditorState): Profile {
   if (state.author) profile.author = state.author;
   if (state.notes) profile.notes = state.notes;
   if (state.beverageType) profile.beverage_type = state.beverageType;
+  if (state.type) profile.type = state.type;
+  if (state.legacyProfileType) profile.legacy_profile_type = state.legacyProfileType;
   if (state.tankTemperature != null) profile.tank_temperature = state.tankTemperature;
   if (state.targetWeight != null) profile.target_weight = state.targetWeight;
   if (state.targetVolume != null) profile.target_volume = state.targetVolume;
+  if (state.targetVolumeCountStart != null) profile.target_volume_count_start = state.targetVolumeCountStart;
   return profile;
 }
 
@@ -435,6 +515,7 @@ function defaultStep(): EditorStep {
     transition: 'fast',
     seconds: 30,
     volume: 0,
+    weight: 0,
     exit: null,
     limiter: null,
     extra: {}
@@ -458,6 +539,7 @@ function readStep(raw: unknown): EditorStep {
     transition: record.transition === 'smooth' ? 'smooth' : 'fast',
     seconds: numeric(record.seconds) ?? base.seconds,
     volume: numeric(record.volume) ?? 0,
+    weight: numeric(record.weight) ?? 0,
     exit: readExit(record.exit),
     limiter: readLimiter(record.limiter),
     extra
@@ -495,7 +577,8 @@ function writeStep(step: EditorStep): Record<string, unknown> {
     flow: step.flow,
     transition: step.transition,
     seconds: step.seconds,
-    volume: step.volume
+    volume: step.volume,
+    weight: step.weight
   };
   if (step.exit) out.exit = { type: step.exit.type, condition: step.exit.condition, value: step.exit.value };
   else delete out.exit;
@@ -512,6 +595,42 @@ function updateStep(
   if (index < 0 || index >= state.steps.length) return state;
   const steps = state.steps.map((step, i) => (i === index ? fn(step) : step));
   return { ...state, steps, dirty: true };
+}
+
+function setStepLimiterValue(step: EditorStep, value: number): EditorStep {
+  if (value <= 0) return { ...step, limiter: null };
+  return {
+    ...step,
+    limiter: {
+      value,
+      range: step.limiter?.range ?? 0.6
+    }
+  };
+}
+
+function setStepLimiterRange(step: EditorStep, range: number): EditorStep {
+  if (!step.limiter) return step;
+  return { ...step, limiter: { ...step.limiter, range } };
+}
+
+function extraTopLevelFields(profile: Profile): Record<string, unknown> {
+  const extra: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(profile)) {
+    if (!TOP_LEVEL_PROFILE_KEYS.has(key)) extra[key] = value;
+  }
+  return extra;
+}
+
+function typeFromLegacy(value: string | undefined): string {
+  if (value === 'settings_2a') return 'pressure';
+  if (value === 'settings_2b') return 'flow';
+  return 'advanced';
+}
+
+function legacyFromType(value: string | undefined): string {
+  if (value === 'pressure') return 'settings_2a';
+  if (value === 'flow') return 'settings_2b';
+  return 'settings_2c';
 }
 
 function objectRecord(value: unknown): Record<string, unknown> | null {
