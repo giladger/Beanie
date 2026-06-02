@@ -66,7 +66,7 @@ const SERIES_DEFINITIONS: ShotGraphSeriesDefinition[] = [
     label: 'Pressure',
     shortLabel: 'Pressure',
     className: 'trace-pressure',
-    color: '#d85f5f',
+    color: '#50c17b',
     value: (measurement) => machineNumber(measurement, 'pressure'),
     timestamp: machineTimestamp
   },
@@ -75,7 +75,7 @@ const SERIES_DEFINITIONS: ShotGraphSeriesDefinition[] = [
     label: 'Flow',
     shortLabel: 'Flow',
     className: 'trace-flow',
-    color: '#4f8bd9',
+    color: '#7ca8ff',
     value: (measurement) => machineNumber(measurement, 'flow'),
     timestamp: machineTimestamp
   },
@@ -84,7 +84,7 @@ const SERIES_DEFINITIONS: ShotGraphSeriesDefinition[] = [
     label: 'Target pressure',
     shortLabel: 'Target P',
     className: 'trace-target-pressure',
-    color: '#efaaa1',
+    color: '#7fcf9f',
     dashArray: '6 5',
     value: (measurement) => machineNumber(measurement, 'targetPressure'),
     timestamp: machineTimestamp
@@ -94,7 +94,7 @@ const SERIES_DEFINITIONS: ShotGraphSeriesDefinition[] = [
     label: 'Target flow',
     shortLabel: 'Target F',
     className: 'trace-target-flow',
-    color: '#9fc0ee',
+    color: '#a9c6ff',
     dashArray: '6 5',
     value: (measurement) => machineNumber(measurement, 'targetFlow'),
     timestamp: machineTimestamp
@@ -104,7 +104,7 @@ const SERIES_DEFINITIONS: ShotGraphSeriesDefinition[] = [
     label: 'Group temp /10',
     shortLabel: 'Temp',
     className: 'trace-temp',
-    color: '#d8a63f',
+    color: '#ff5a67',
     value: (measurement) =>
       machineNumber(measurement, 'groupTemperature') ?? machineNumber(measurement, 'mixTemperature'),
     timestamp: machineTimestamp,
@@ -115,7 +115,7 @@ const SERIES_DEFINITIONS: ShotGraphSeriesDefinition[] = [
     label: 'Target temp /10',
     shortLabel: 'Target temp',
     className: 'trace-target-temp',
-    color: '#eacb75',
+    color: '#ff97a0',
     dashArray: '6 5',
     value: (measurement) =>
       machineNumber(measurement, 'targetGroupTemperature') ??
@@ -128,7 +128,7 @@ const SERIES_DEFINITIONS: ShotGraphSeriesDefinition[] = [
     label: 'Weight /5',
     shortLabel: 'Weight',
     className: 'trace-weight',
-    color: '#5fa66f',
+    color: '#ffc260',
     value: (measurement) => scaleNumber(measurement, 'weight'),
     timestamp: scaleTimestamp,
     scale: (value) => value / 5
@@ -138,7 +138,7 @@ const SERIES_DEFINITIONS: ShotGraphSeriesDefinition[] = [
     label: 'Weight flow',
     shortLabel: 'Weight flow',
     className: 'trace-weight-flow',
-    color: '#69c7b8',
+    color: '#5bd8c8',
     value: (measurement) => scaleNumber(measurement, 'weightFlow'),
     timestamp: scaleTimestamp
   }

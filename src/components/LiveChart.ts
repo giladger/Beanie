@@ -249,10 +249,13 @@ export class LiveChart {
     const points = series.points;
     if (points.length === 0) return;
     const ctx = this.ctx;
+    // Decent app look: thick green/blue/red curves; thinner dashed target lines.
+    const dashed = series.dashArray != null;
     ctx.strokeStyle = series.color;
-    ctx.lineWidth = 1.6;
+    ctx.lineWidth = dashed ? 1.5 : 2.6;
     ctx.lineJoin = 'round';
-    ctx.setLineDash(series.dashArray ? parseDashArray(series.dashArray) : []);
+    ctx.lineCap = 'round';
+    ctx.setLineDash(dashed ? parseDashArray(series.dashArray!) : []);
 
     if (points.length === 1) {
       const point = points[0]!;
@@ -266,13 +269,25 @@ export class LiveChart {
       return;
     }
 
+    const xy = points.map((point) => ({
+      x: projectX(point.t, maxTime, plot),
+      y: projectY(point.value, maxY, plot)
+    }));
+
     ctx.beginPath();
-    for (let i = 0; i < points.length; i += 1) {
-      const point = points[i]!;
-      const x = projectX(point.t, maxTime, plot);
-      const y = projectY(point.value, maxY, plot);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+    ctx.moveTo(xy[0]!.x, xy[0]!.y);
+    if (xy.length === 2) {
+      ctx.lineTo(xy[1]!.x, xy[1]!.y);
+    } else {
+      // Quadratic smoothing through midpoints, matching the Decent graph's
+      // smooth curves rather than jagged polylines.
+      let i = 1;
+      for (; i < xy.length - 1; i += 1) {
+        const xc = (xy[i]!.x + xy[i + 1]!.x) / 2;
+        const yc = (xy[i]!.y + xy[i + 1]!.y) / 2;
+        ctx.quadraticCurveTo(xy[i]!.x, xy[i]!.y, xc, yc);
+      }
+      ctx.quadraticCurveTo(xy[i]!.x, xy[i]!.y, xy[i]!.x, xy[i]!.y);
     }
     ctx.stroke();
     ctx.setLineDash([]);

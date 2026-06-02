@@ -55,21 +55,21 @@ export const LIVE_SERIES: LiveSeriesDefinition[] = [
     key: 'pressure',
     label: 'Pressure',
     shortLabel: 'Pressure',
-    color: '#d85f5f',
+    color: '#50c17b',
     value: (machine) => numeric(machine?.pressure)
   },
   {
     key: 'flow',
     label: 'Flow',
     shortLabel: 'Flow',
-    color: '#4f8bd9',
+    color: '#7ca8ff',
     value: (machine) => numeric(machine?.flow)
   },
   {
     key: 'targetPressure',
     label: 'Target pressure',
     shortLabel: 'Target P',
-    color: '#efaaa1',
+    color: '#7fcf9f',
     dashArray: '6 5',
     value: (machine) => numeric(machine?.targetPressure)
   },
@@ -77,7 +77,7 @@ export const LIVE_SERIES: LiveSeriesDefinition[] = [
     key: 'targetFlow',
     label: 'Target flow',
     shortLabel: 'Target F',
-    color: '#9fc0ee',
+    color: '#a9c6ff',
     dashArray: '6 5',
     value: (machine) => numeric(machine?.targetFlow)
   },
@@ -85,7 +85,7 @@ export const LIVE_SERIES: LiveSeriesDefinition[] = [
     key: 'groupTemperature',
     label: 'Group temp /10',
     shortLabel: 'Temp',
-    color: '#d8a63f',
+    color: '#ff5a67',
     value: (machine) => numeric(machine?.groupTemperature) ?? numeric(machine?.mixTemperature),
     scale: (value) => value / 10
   },
@@ -93,7 +93,7 @@ export const LIVE_SERIES: LiveSeriesDefinition[] = [
     key: 'targetTemperature',
     label: 'Target temp /10',
     shortLabel: 'Target temp',
-    color: '#eacb75',
+    color: '#ff97a0',
     dashArray: '6 5',
     value: (machine) =>
       numeric(machine?.targetGroupTemperature) ?? numeric(machine?.targetMixTemperature),
@@ -103,7 +103,7 @@ export const LIVE_SERIES: LiveSeriesDefinition[] = [
     key: 'weight',
     label: 'Weight /5',
     shortLabel: 'Weight',
-    color: '#5fa66f',
+    color: '#ffc260',
     value: (_machine, scale) => numeric(scale?.weight),
     scale: (value) => value / 5
   },
@@ -111,7 +111,7 @@ export const LIVE_SERIES: LiveSeriesDefinition[] = [
     key: 'weightFlow',
     label: 'Weight flow',
     shortLabel: 'Weight flow',
-    color: '#69c7b8',
+    color: '#5bd8c8',
     value: (_machine, scale) => numeric(scale?.weightFlow)
   }
 ];
@@ -133,7 +133,9 @@ export function chartModelFromShot(shot: ShotRecord | null): LiveChartModel {
     series,
     markers: model.markers.map((marker) => ({ t: marker.t, label: marker.label })),
     maxTime: model.maxTime,
-    maxY: model.maxY
+    // Fixed 0-12 bar pressure axis, like the Decent app's espresso graph. Flow,
+    // weight/5 and temp/10 all fall under 12, so they share the scale cleanly.
+    maxY: 12
   };
 }
 

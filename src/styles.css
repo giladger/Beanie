@@ -3151,7 +3151,8 @@ p {
   height: 100%;
   border: 0;
   border-radius: var(--radius);
-  background: rgba(0, 0, 0, 0.16);
+  /* Decent-app espresso graph panel tone */
+  background: #272d32;
 }
 
 .detail-canvas {
