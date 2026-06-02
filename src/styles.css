@@ -1137,7 +1137,8 @@ p {
 .profile-preview-pane {
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(220px, 1fr) auto auto auto;
+  grid-template-rows: auto auto auto auto auto;
+  align-content: start;
   gap: 10px;
   padding: 12px;
   border-radius: 8px;
@@ -1159,9 +1160,9 @@ p {
 }
 
 .profile-preview-large {
-  min-height: 0;
+  height: clamp(235px, 26vw, 330px);
   display: grid;
-  place-items: stretch;
+  place-items: center;
   padding: 8px;
   border-radius: 6px;
   background: color-mix(in srgb, var(--panel-2) 78%, white);
@@ -1171,7 +1172,7 @@ p {
 .profile-preview-large .profile-preview {
   width: 100%;
   height: 100%;
-  min-height: 220px;
+  min-height: 0;
   background: transparent;
 }
 
@@ -1281,6 +1282,7 @@ p {
 
 .profile-preview-actions {
   display: flex;
+  align-items: center;
   justify-content: end;
   gap: 8px;
 }
