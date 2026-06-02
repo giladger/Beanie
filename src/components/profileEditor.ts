@@ -461,7 +461,8 @@ export function setAllLimiterRanges(state: ProfileEditorState, range: number): P
 }
 
 export function currentLimiterRange(state: ProfileEditorState): number {
-  return state.steps.find((step) => step.limiter)?.limiter?.range ?? FIELD_SPECS.limiterRange.default;
+  return state.steps.find((step) => step.limiter && step.limiter.value > 0)?.limiter?.range
+    ?? FIELD_SPECS.limiterRange.default;
 }
 
 /** Set the simple profile kind (pressure/flow), recompiling the current knobs. */
@@ -629,179 +630,86 @@ function renderSimpleTypeToggle(type: SimpleType): string {
 
 function renderSimpleProfileEditor(state: ProfileEditorState): string {
   const { type, knobs } = simpleKnobsOf(state);
-  const model = {
-    temperature: knobs.temperature,
-    preTime: knobs.preTime,
-    preFlow: knobs.preFlow,
-    prePressure: knobs.prePressure,
-    mainTime: knobs.mainTime,
-    mainTarget: knobs.mainTarget,
-    limit: knobs.limit,
-    declineTime: knobs.declineTime,
-    declineTarget: knobs.declineTarget,
-    stopVolume: state.targetVolume ?? 0
-  };
   const isFlow = type === 'flow';
-  const modeLabel = isFlow ? 'Flow' : 'Pressure';
   const mainUnit = isFlow ? 'ml/s' : 'bar';
-  const limitLabel = isFlow ? 'Limit pressure' : 'Limit flow';
+  const mainMax = isFlow ? 8 : 12;
+  const mainLabel = isFlow ? 'flow' : 'pressure';
+  const mainIcon = isFlow ? 'droplets' : 'gauge';
+  const mainTone = isFlow ? 'blue' : 'purple';
   const limitUnit = isFlow ? 'bar' : 'ml/s';
+  const limitMax = isFlow ? 12 : 8;
+  const limitLabel = isFlow ? 'pressure limit' : 'flow limit';
+  const stopVolume = state.targetVolume ?? 0;
   return `
-    <div class="profile-editor pe-de1 ${isFlow ? 'flow' : 'pressure'}">
-      <header class="pe-de1-tabs">
-        <button type="button" class="pe-de1-tab" data-action="go-view" data-value="profiles">Presets</button>
-        <div class="pe-de1-tab active">
-          <strong>${escapeHtml(modeLabel.toUpperCase())}</strong>
-          <span>${escapeHtml(state.title || 'New profile')}</span>
+    <div class="profile-editor">
+      ${renderEditorModeBar(state)}
+      ${renderIdentityMeta(state)}
+      <div class="pe-kind-row">${renderSimpleTypeToggle(type)}</div>
+      <div class="pe-simple-chart">${renderDe1ExplanationChart(state)}</div>
+      <div class="pe-ctl-group">
+        <span class="pe-ctl-group-title">1 · Preinfuse</span>
+        <div class="pe-ctl-grid">
+          ${renderSimpleControl('pre_time', 'time', knobs.preTime, 's', 0, 60, 1, 'timer', 'stage')}
+          ${renderSimpleControl('pre_flow', 'flow', knobs.preFlow, 'ml/s', 0, 8, 0.1, 'droplets', 'blue')}
+          ${renderSimpleControl('pre_pressure', isFlow ? 'stop at pressure' : 'until pressure', knobs.prePressure, 'bar', 0, 12, 0.1, 'gauge', 'purple')}
         </div>
-        <button type="button" class="pe-de1-tab" data-action="go-view" data-value="machine">Machine</button>
-        <button type="button" class="pe-de1-tab" data-action="go-view" data-value="settings">App</button>
-      </header>
-
-      <div class="pe-de1-toolbar">
-        ${renderEditorModeBar(state)}
-        ${renderSimpleTypeToggle(type)}
       </div>
-
-      <div class="pe-de1-graph">
-        ${renderDe1ExplanationChart(state)}
+      <div class="pe-ctl-group">
+        <span class="pe-ctl-group-title">2 · ${isFlow ? 'Hold' : 'Rise &amp; hold'}</span>
+        <div class="pe-ctl-grid">
+          ${renderSimpleControl('main_time', 'time', knobs.mainTime, 's', 0, 60, 1, 'timer', 'stage')}
+          ${renderSimpleControl('main_target', mainLabel, knobs.mainTarget, mainUnit, 0, mainMax, 0.1, mainIcon, mainTone)}
+          ${renderSimpleControl('limit', limitLabel, knobs.limit, limitUnit, 0, limitMax, 0.1, 'sliders-horizontal', 'amber', true)}
+        </div>
       </div>
-
-      <div class="pe-de1-stage-grid">
-        <section class="pe-de1-stage stage-1">
-          <h3>1: preinfuse</h3>
-          <div class="pe-de1-stage-rows">
-            ${renderDe1HSlider('pre_time', model.preTime, 'seconds', 0, 60, 1, 'stage-1', 'time')}
-            ${renderDe1HSlider('pre_flow', model.preFlow, 'mL/s', 0, 12, 0.1, 'stage-1', 'flow')}
-          </div>
-          ${renderDe1VSlider('pre_pressure', model.prePressure, 'bar', 0, 12, 0.1, 'stage-1', isFlow ? 'stop pressure' : '< pressure')}
-        </section>
-
-        <section class="pe-de1-stage stage-2">
-          <h3>${isFlow ? '2: hold' : '2: rise and hold'}</h3>
-          <div class="pe-de1-stage-rows">
-            ${renderDe1HSlider('main_time', model.mainTime, 'seconds', 0, 60, 1, 'stage-2', 'time')}
-            ${renderDe1HSlider('limit', model.limit, limitUnit, 0, 12, 0.1, 'stage-2', limitLabel, true)}
-          </div>
-          ${renderDe1VSlider('main_target', model.mainTarget, mainUnit, 0, 12, 0.1, 'stage-2', modeLabel.toLowerCase())}
-        </section>
-
-        <section class="pe-de1-stage stage-3">
-          <h3>3: decline</h3>
-          <div class="pe-de1-stage-rows">
-            ${renderDe1HSlider('decline_time', model.declineTime, 'seconds', 0, 60, 1, 'stage-3', 'time')}
-          </div>
-          ${renderDe1VSlider('decline_target', model.declineTarget, mainUnit, 0, 12, 0.1, 'stage-3', `${modeLabel.toLowerCase()} end`)}
-        </section>
-
-        <section class="pe-de1-stage stage-4">
-          <h3>4: stop at pour</h3>
-          <div class="pe-de1-stage-rows">
-            ${renderDe1HSlider('stop_volume', model.stopVolume, 'mL', 0, 100, 1, 'stage-4', 'volume')}
-          </div>
-        </section>
-
-        <section class="pe-de1-stage temp">
-          <h3>Temperature</h3>
-          ${renderDe1Temperature(model.temperature)}
-        </section>
+      <div class="pe-ctl-group">
+        <span class="pe-ctl-group-title">3 · Decline</span>
+        <div class="pe-ctl-grid">
+          ${renderSimpleControl('decline_time', 'time', knobs.declineTime, 's', 0, 60, 1, 'timer', 'stage')}
+          ${renderSimpleControl('decline_target', `${mainLabel} end`, knobs.declineTarget, mainUnit, 0, mainMax, 0.1, mainIcon, mainTone)}
+        </div>
       </div>
-
-      <footer class="pe-de1-footer">
-        <button type="button" class="command" data-action="go-view" data-value="profiles">Cancel</button>
-        <button type="button" class="command primary" data-action="save-profile">${icon('save')}<span>OK</span></button>
-      </footer>
+      <div class="pe-ctl-group">
+        <span class="pe-ctl-group-title">4 · Finish</span>
+        <div class="pe-ctl-grid">
+          ${renderSimpleControl('stop_volume', 'stop at volume', stopVolume, 'ml', 0, 100, 1, 'beaker', 'blue', true)}
+          ${renderSimpleControl('temperature', 'temperature', knobs.temperature, '°C', 1, 105, 0.5, 'thermometer', 'red')}
+        </div>
+      </div>
     </div>
   `;
 }
 
-function renderDe1HSlider(
+// A simple-editor control card — the same .pe-ctl card the advanced editor uses,
+// wired to the scalar pe-simple-field / pe-simple-nudge actions (no per-step index).
+function renderSimpleControl(
   key: SimpleProfileField,
+  label: string,
   value: number,
   unit: string,
   min: number,
   max: number,
   step: number,
-  stage: string,
-  label: string,
+  iconName: string,
+  tone: string,
   offWhenZero = false
 ): string {
-  const fill = rangeFill(value, min, max);
+  const formatted = formatNumber(value);
+  const display = offWhenZero && value <= 0
+    ? '<span class="pe-ctl-off">off</span>'
+    : `${escapeHtml(formatted)}${unit ? `<em>${escapeHtml(unit)}</em>` : ''}`;
   return `
-    <label class="pe-de1-slider horizontal ${stage}" style="--fill:${fill}%;">
-      <span class="pe-de1-cap">${escapeHtml(label)}</span>
-      <input type="range" min="${min}" max="${max}" step="${step}" value="${escapeAttr(formatNumber(value))}" data-action="pe-simple-field" data-key="${key}" aria-label="${escapeAttr(label)}" />
-      ${renderDe1ValueButton(key, value, unit, min, max, step, label, formatDe1Value(value, unit, offWhenZero))}
-    </label>
-  `;
-}
-
-function renderDe1VSlider(
-  key: SimpleProfileField,
-  value: number,
-  unit: string,
-  min: number,
-  max: number,
-  step: number,
-  stage: string,
-  label: string
-): string {
-  const fill = rangeFill(value, min, max);
-  return `
-    <label class="pe-de1-slider vertical ${stage}" style="--fill:${fill}%;">
-      <span class="pe-de1-cap">${escapeHtml(label)}</span>
-      <input type="range" min="${min}" max="${max}" step="${step}" value="${escapeAttr(formatNumber(value))}" data-action="pe-simple-field" data-key="${key}" aria-label="${escapeAttr(label)}" />
-      ${renderDe1ValueButton(key, value, unit, min, max, step, label, formatDe1Value(value, unit, false, label.startsWith('<')))}
-    </label>
-  `;
-}
-
-function renderDe1Temperature(value: number): string {
-  return `
-    <div class="pe-de1-temp" aria-label="Temperature">
-      <button type="button" class="pe-de1-temp-btn" data-action="pe-simple-nudge" data-key="temperature" data-delta="0.5" aria-label="Increase temperature">${icon('plus')}</button>
-      <input type="range" min="1" max="105" step="0.5" value="${escapeAttr(formatNumber(value))}" data-action="pe-simple-field" data-key="temperature" aria-label="temperature" />
-      <button type="button" class="pe-de1-temp-btn" data-action="pe-simple-nudge" data-key="temperature" data-delta="-0.5" aria-label="Decrease temperature">${icon('minus')}</button>
-      ${renderDe1ValueButton('temperature', value, '°C', 1, 105, 0.5, 'Temperature', `${formatNumber(value)}°C`)}
+    <div class="pe-ctl ${escapeAttr(tone)}">
+      <button type="button" class="pe-ctl-face" tabindex="-1" aria-label="${escapeAttr(label)}">${icon(iconName)}</button>
+      <span class="pe-ctl-label">${escapeHtml(label)}</span>
+      <strong class="pe-ctl-value">${display}</strong>
+      <div class="pe-ctl-adjust">
+        <button type="button" class="pe-ctl-step" data-action="pe-simple-nudge" data-key="${key}" data-delta="${-step}" aria-label="decrease ${escapeAttr(label)}">${icon('minus')}</button>
+        <input class="pe-ctl-range" type="range" min="${min}" max="${max}" step="${step}" data-action="pe-simple-field" data-key="${key}" value="${escapeAttr(formatted)}" aria-label="${escapeAttr(label)}" />
+        <button type="button" class="pe-ctl-step" data-action="pe-simple-nudge" data-key="${key}" data-delta="${step}" aria-label="increase ${escapeAttr(label)}">${icon('plus')}</button>
+      </div>
     </div>
   `;
-}
-
-function renderDe1ValueButton(
-  key: SimpleProfileField,
-  value: number,
-  unit: string,
-  min: number,
-  max: number,
-  step: number,
-  title: string,
-  label: string
-): string {
-  return `
-    <button
-      type="button"
-      class="pe-de1-value"
-      data-action="pe-simple-edit"
-      data-key="${key}"
-      data-value="${escapeAttr(formatNumber(value))}"
-      data-title="${escapeAttr(title)}"
-      data-unit="${escapeAttr(unit)}"
-      data-min="${min}"
-      data-max="${max}"
-      data-step="${step}"
-    >${escapeHtml(label)}</button>
-  `;
-}
-
-function formatDe1Value(value: number, unit: string, offWhenZero = false, lessThan = false): string {
-  if (offWhenZero && value <= 0) return 'off';
-  const prefix = lessThan ? '< ' : '';
-  return `${prefix}${formatNumber(value)} ${unit}`;
-}
-
-function rangeFill(value: number, min: number, max: number): string {
-  if (max <= min) return '0';
-  return (clamp01((value - min) / (max - min)) * 100).toFixed(2);
 }
 
 function renderIdentityMeta(state: ProfileEditorState): string {
@@ -846,7 +754,7 @@ function renderAdvancedTabs(state: ProfileEditorState): string {
 }
 
 function renderLimitsPanel(state: ProfileEditorState): string {
-  const hasLimiter = state.steps.some((step) => step.limiter);
+  const hasLimiter = state.steps.some((step) => step.limiter && step.limiter.value > 0);
   const range = currentLimiterRange(state);
   const field = (label: string, key: ProfileMetaKey, value: number | null, step: string, max: number) => `
     <label class="pe-limit-field">
@@ -935,7 +843,7 @@ function renderStepDetail(state: ProfileEditorState): string {
           ${renderToggleTile(index, 'sensor', 'sensor', step.sensor, step.sensor === 'water' ? 'droplets' : 'coffee')}
           ${renderGoalControl(index, 'flow', isFlow ? 'flow' : 'flow limit', isFlow ? step.flow : (step.limiter?.value ?? 0), 'ml/s', 0, 12, isFlow)}
           ${renderGoalControl(index, 'pressure', isFlow ? 'pressure limit' : 'pressure', isFlow ? (step.limiter?.value ?? 0) : step.pressure, 'bar', 0, 12, !isFlow)}
-          ${step.limiter
+          ${step.limiter && step.limiter.value > 0
             ? renderVerticalControl(index, 'limiter_range', 'limit range', step.limiter.range, '', FIELD_SPECS.limiterRange.min, FIELD_SPECS.limiterRange.max, FIELD_SPECS.limiterRange.step, 'sliders-horizontal', 'stage')
             : ''}
           ${renderToggleTile(index, 'transition', 'transition', step.transition, step.transition === 'smooth' ? 'waves' : 'move-right')}

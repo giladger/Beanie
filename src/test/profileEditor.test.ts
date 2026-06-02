@@ -183,19 +183,18 @@ run('renderProfileEditor includes metadata inputs and an add-step action', () =>
   includes(html, PROFILE_BEVERAGE_TYPES[0]);
 });
 
-run('renders de1-style pressure editor for normalized pressure profiles', () => {
+run('renders the basic pressure editor for normalized pressure profiles', () => {
   const state = createProfileEditorState(pressureProfile());
   const html = renderProfileEditor(state);
 
   equal(state.type, 'pressure');
   equal(state.legacyProfileType, 'settings_2a');
-  includes(html, 'pe-de1 pressure');
-  includes(html, 'PRESSURE');
-  includes(html, '1: preinfuse');
-  includes(html, '2: rise and hold');
-  includes(html, '4: stop at pour');
+  equal(state.editorMode, 'basic');
+  includes(html, '1 · Preinfuse');
+  includes(html, 'Rise &amp; hold');
+  includes(html, '4 · Finish');
   includes(html, 'data-action="pe-simple-field"');
-  includes(html, 'data-action="pe-simple-edit"');
+  includes(html, 'data-action="pe-set-simple-type"');
 });
 
 run('updates pressure editor scalar fields without dropping profile steps', () => {

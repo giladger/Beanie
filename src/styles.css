@@ -3732,3 +3732,30 @@ p {
   font-size: 12px;
   color: var(--muted, #8a8f98);
 }
+
+.pe-limits {
+  max-width: 760px;
+}
+
+/* Basic editor: kind toggle row + chart sizing */
+.pe-kind-row {
+  margin: 14px 16px 0;
+}
+
+.pe-simple-chart {
+  margin: 14px 16px 0;
+}
+
+.pe-simple-chart .pe-de1-chart-panel {
+  margin: 0;
+}
+
+.pe-simple-chart .pe-de1-chart {
+  width: 100%;
+  height: auto;
+  max-height: 200px;
+}
+
+.profile-editor .pe-ctl-group {
+  margin: 16px;
+}

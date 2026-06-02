@@ -2207,13 +2207,7 @@ export class BeanieApp {
   private renderProfileEditorPage(): string {
     const pe = this.state.profileEditor;
     if (!pe) return this.pageHeader('Profile');
-    if (pe.type === 'pressure' || pe.type === 'flow') {
-      return `
-        <main class="page-body profile-editor-page de1-profile-page">
-          ${renderProfileEditor(pe)}
-        </main>
-      `;
-    }
+    // Basic and advanced editors share the same dark page chrome (Back / Save).
     const actions = `<button type="button" class="command primary" data-action="save-profile">${icon('save')}<span>Save</span></button>`;
     return `
       ${this.pageHeader(this.state.editingProfileId ? 'Edit Profile' : 'New Profile', 'profiles', actions)}
