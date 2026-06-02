@@ -2067,12 +2067,20 @@ export class BeanieApp {
     const date = new Date(shot.timestamp);
     const time = Number.isNaN(date.valueOf())
       ? shot.timestamp
-      : date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      : date.toLocaleString([], {
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false
+        });
+    const duration = shotDurationLabel(shot);
     return `
       <button class="shot-item ${active ? 'active' : ''}" data-action="select-history-shot" data-id="${escapeAttr(shot.id)}">
-        <span class="shot-item-main">
+        <span class="shot-item-info">
           <span class="shot-item-time">${escapeHtml(time)}</span>
           <span class="shot-item-recipe">${formatGrams(recipe.dose)} → ${formatGrams(recipe.yield)}</span>
+          ${duration ? `<span class="shot-item-dur">${escapeHtml(duration)}</span>` : ''}
         </span>
         ${enjoymentBadge(shot)}
       </button>
@@ -2380,6 +2388,22 @@ function liveReadout(label: string, id: string, value: string, unit = ''): strin
 
 function stat(label: string, value: string): string {
   return `<div class="stat"><label>${escapeHtml(label)}</label><strong>${escapeHtml(value)}</strong></div>`;
+}
+
+function shotDurationLabel(shot: ShotRecord): string | null {
+  const all = shot.measurements;
+  if (!Array.isArray(all) || all.length < 2) return null;
+  // Mirror the chart's window: prefer the espresso pour (preinfusion/pouring)
+  // span when substates are present, else the full measurement span.
+  const pour = all.filter((m) => {
+    const sub = (m.machine as { state?: { substate?: string } } | undefined)?.state?.substate;
+    return sub === 'preinfusion' || sub === 'pouring';
+  });
+  const series = pour.length > 1 ? pour : all;
+  const first = Date.parse(series[0]!.machine.timestamp);
+  const last = Date.parse(series[series.length - 1]!.machine.timestamp);
+  if (!Number.isFinite(first) || !Number.isFinite(last) || last <= first) return null;
+  return `${Math.round((last - first) / 1000)}s`;
 }
 
 function enjoymentBadge(shot: ShotRecord, size: 'row' | 'detail' = 'row'): string {

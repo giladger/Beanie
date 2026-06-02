@@ -617,7 +617,7 @@ p {
 
 .history-split {
   display: grid;
-  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  grid-template-columns: minmax(230px, 300px) minmax(0, 1fr);
   min-height: 0;
   height: 100%;
 }
@@ -653,24 +653,41 @@ p {
   box-shadow: inset 3px 0 0 var(--teal);
 }
 
-.shot-item-main {
+.shot-item-info {
   min-width: 0;
-  display: grid;
-  gap: 1px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  overflow: hidden;
 }
 
 .shot-item-time {
-  font-size: 10px;
-  font-weight: 900;
-  text-transform: uppercase;
+  flex: none;
+  font-size: 11px;
+  font-weight: 800;
   color: var(--muted);
+  white-space: nowrap;
 }
 
 .shot-item-recipe {
+  flex: none;
   font-size: 13px;
   font-weight: 800;
   color: var(--ink);
   white-space: nowrap;
+}
+
+.shot-item-dur {
+  flex: none;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.shot-item .enjoyment-badge {
+  flex: none;
+  margin-left: auto;
 }
 
 .shot-detail-pane {
