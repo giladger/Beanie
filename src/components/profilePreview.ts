@@ -45,14 +45,12 @@ export function renderProfilePreview(profile: Profile | null | undefined): strin
   }
 
   const totalSeconds = Math.max(1, targets.reduce((sum, target) => sum + target.seconds, 0));
+  // Continuous traces (no per-pump gaps) so mixed advanced profiles don't render
+  // as disconnected fragments / isolated spikes; missing values read as 0.
   const pressurePath =
-    mode !== 'flow'
-      ? previewPath(targets, (t) => (mode === 'advanced' && t.pump === 'flow' ? null : t.pressure), totalSeconds, plot, yMax)
-      : '';
+    mode !== 'flow' ? previewPath(targets, (t) => t.pressure ?? 0, totalSeconds, plot, yMax) : '';
   const flowPath =
-    mode !== 'pressure'
-      ? previewPath(targets, (t) => (mode === 'advanced' && t.pump === 'pressure' ? null : t.flow), totalSeconds, plot, yMax)
-      : '';
+    mode !== 'pressure' ? previewPath(targets, (t) => t.flow ?? 0, totalSeconds, plot, yMax) : '';
   const displayTemperature = firstNumber(targets.map((target) => target.temperature));
   const gauge = temperatureGauge(displayTemperature, { x: 640, y: 40, h: 176 });
 
