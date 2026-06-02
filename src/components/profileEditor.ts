@@ -298,11 +298,28 @@ export function setSimpleProfileField(
     if (index == null || !steps[index]) return;
     steps[index] = fn(steps[index]!);
   };
+  const setDurationTotal = (indices: number[], total: number) => {
+    const liveIndices = indices.filter((index) => steps[index]);
+    if (liveIndices.length === 0) return;
+    const current = sumSteps(steps, liveIndices, 0);
+    if (current <= 0) {
+      update(liveIndices.at(-1) ?? null, (step) => ({ ...step, seconds: total }));
+      return;
+    }
+    let remaining = total;
+    liveIndices.forEach((index, position) => {
+      const seconds = position === liveIndices.length - 1
+        ? remaining
+        : Number((((steps[index]?.seconds ?? 0) / current) * total).toFixed(1));
+      remaining = Number((remaining - seconds).toFixed(1));
+      update(index, (step) => ({ ...step, seconds: Math.max(0, seconds) }));
+    });
+  };
   switch (key) {
     case 'temperature':
       return { ...state, steps: steps.map((step) => ({ ...step, temperature: parsed })), dirty: true };
     case 'pre_time':
-      update(model.preIndices.at(-1) ?? model.preIndex, (step) => ({ ...step, seconds: parsed }));
+      setDurationTotal(model.preIndices.length ? model.preIndices : [model.preIndex ?? -1], parsed);
       break;
     case 'pre_flow':
       model.preIndices.forEach((index) => update(index, (step) => ({ ...step, flow: parsed })));

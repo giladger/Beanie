@@ -251,6 +251,7 @@ run('renders de1-style pressure editor for normalized pressure profiles', () => 
   includes(html, '2: rise and hold');
   includes(html, '4: stop at pour');
   includes(html, 'data-action="pe-simple-field"');
+  includes(html, 'data-action="pe-simple-edit"');
 });
 
 run('updates pressure editor scalar fields without dropping profile steps', () => {
@@ -260,6 +261,21 @@ run('updates pressure editor scalar fields without dropping profile steps', () =
   equal(next.steps.length, 3);
   equal(next.steps[0].exit?.value, 4.5);
   equal(next.dirty, true);
+});
+
+run('updates multi-step preinfusion time as the displayed total', () => {
+  const profile = pressureProfile();
+  profile.steps = [
+    { ...profile.steps![0]!, seconds: 2 },
+    { ...profile.steps![0]!, name: 'preinfuse bloom', seconds: 18 },
+    profile.steps![1]!,
+    profile.steps![2]!
+  ];
+  const state = createProfileEditorState(profile);
+  const next = setSimpleProfileField(state, 'pre_time', '21');
+
+  equal(Number(((next.steps[0]?.seconds ?? 0) + (next.steps[1]?.seconds ?? 0)).toFixed(1)), 21);
+  equal(next.steps.length, 4);
 });
 
 function sampleProfile(): Profile {

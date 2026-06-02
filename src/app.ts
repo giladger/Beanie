@@ -168,6 +168,7 @@ interface AppState {
   profileEditor: ProfileEditorState | null;
   editingProfileId: string | null;
   editDialog: InputDialogState | null;
+  profileDialogKey: SimpleProfileField | null;
   detailShotId: string | null;
   machine: MachineSnapshot | null;
   scale: ScaleSnapshot | null;
@@ -217,6 +218,7 @@ export class BeanieApp {
     profileEditor: null,
     editingProfileId: null,
     editDialog: null,
+    profileDialogKey: null,
     detailShotId: null,
     machine: null,
     scale: null,
@@ -240,16 +242,35 @@ export class BeanieApp {
   private liveDirty = false;
   private simTimer: number | null = null;
 
+  private readonly handleClick = (event: Event) => void this.onClick(event);
+  private readonly handleInput = (event: Event) => this.onInput(event);
+  private readonly handleChange = (event: Event) => void this.onChange(event);
+  private readonly handleSubmit = (event: Event) => void this.onSubmit(event);
+
   constructor(private readonly root: HTMLElement) {}
 
   start(): void {
     applySettingsPreferences(this.state.settingsPreferences);
-    this.root.addEventListener('click', (event) => void this.onClick(event));
-    this.root.addEventListener('input', (event) => this.onInput(event));
-    this.root.addEventListener('change', (event) => void this.onChange(event));
-    this.root.addEventListener('submit', (event) => void this.onSubmit(event));
+    this.root.addEventListener('click', this.handleClick);
+    this.root.addEventListener('input', this.handleInput);
+    this.root.addEventListener('change', this.handleChange);
+    this.root.addEventListener('submit', this.handleSubmit);
     this.render();
     void this.load();
+  }
+
+  dispose(): void {
+    this.root.removeEventListener('click', this.handleClick);
+    this.root.removeEventListener('input', this.handleInput);
+    this.root.removeEventListener('change', this.handleChange);
+    this.root.removeEventListener('submit', this.handleSubmit);
+    if (this.applyTimer != null) window.clearTimeout(this.applyTimer);
+    if (this.machineRetryTimer != null) window.clearTimeout(this.machineRetryTimer);
+    if (this.scaleRetryTimer != null) window.clearTimeout(this.scaleRetryTimer);
+    if (this.simTimer != null) window.clearTimeout(this.simTimer);
+    if (this.liveRaf != null) window.cancelAnimationFrame(this.liveRaf);
+    this.machineSocket?.close();
+    this.scaleSocket?.close();
   }
 
   private async load(): Promise<void> {
@@ -774,6 +795,9 @@ export class BeanieApp {
       case 'dialog-commit':
         this.commitEditDialog();
         break;
+      case 'pe-simple-edit':
+        if (el.dataset.key) this.openProfileNumberDialog(el.dataset.key as SimpleProfileField, el);
+        break;
       case 'go-view':
         if (value) this.goView(value as View);
         break;
@@ -863,19 +887,25 @@ export class BeanieApp {
         if (id) this.toggleFavoriteProfile(id);
         break;
       case 'close-modal':
+        if (this.state.profileDialogKey) {
+          this.setState({ modal: null, editDialog: null, profileDialogKey: null });
+          break;
+        }
         this.setState({
           modal: null,
           editingBeanId: null,
           profileEditor: null,
           editingProfileId: null,
-          editDialog: null
+          editDialog: null,
+          profileDialogKey: null
         });
         break;
       case 'new-profile':
         this.setState({
           view: 'profile-editor',
           editingProfileId: null,
-          profileEditor: createProfileEditorState(null)
+          profileEditor: createProfileEditorState(null),
+          profileDialogKey: null
         });
         break;
       case 'edit-profile':
@@ -1027,7 +1057,8 @@ export class BeanieApp {
       view,
       editingBeanId: null,
       profileEditor: null,
-      editingProfileId: null
+      editingProfileId: null,
+      profileDialogKey: null
     });
   }
 
@@ -1043,7 +1074,8 @@ export class BeanieApp {
     this.setState({
       view: 'profile-editor',
       editingProfileId: id,
-      profileEditor: createProfileEditorState(record.profile)
+      profileEditor: createProfileEditorState(record.profile),
+      profileDialogKey: null
     });
   }
 
@@ -1495,6 +1527,7 @@ export class BeanieApp {
 
     this.setState({
       modal: 'edit-number',
+      profileDialogKey: null,
       editDialog: createInputDialog({
         field,
         kind: inputDialogKindForField(field),
@@ -1505,6 +1538,35 @@ export class BeanieApp {
         choiceTitle: field === 'grinderSetting' ? 'Grinder' : undefined,
         choices: field === 'grinderSetting' ? grinderChoicesFromGrinders(this.state.grinders) : [],
         selectedChoiceId: field === 'grinderSetting' ? this.grinderIdForDraft() : null
+      })
+    });
+  }
+
+  private openProfileNumberDialog(key: SimpleProfileField, el: HTMLElement): void {
+    const value = el.dataset.value ?? '0';
+    const title = el.dataset.title ?? 'Value';
+    const unit = el.dataset.unit ?? '';
+    const min = Number(el.dataset.min ?? '0');
+    const max = Number(el.dataset.max ?? '100');
+    const step = Number(el.dataset.step ?? '1');
+    const digits = step < 1 ? 1 : 0;
+
+    this.setState({
+      modal: 'edit-number',
+      profileDialogKey: key,
+      editDialog: createInputDialog({
+        field: 'temperature',
+        kind: key === 'temperature' ? 'temperature' : 'grind',
+        title,
+        value,
+        unit,
+        min,
+        max,
+        step,
+        bigStep: step < 1 ? 1 : Math.max(5, step * 5),
+        digits,
+        helper: `Input value between ${min} and ${max}`,
+        maxLength: 6
       })
     });
   }
@@ -1542,6 +1604,10 @@ export class BeanieApp {
   private selectDialogChoice(choiceId: string | null): void {
     const dialog = this.state.editDialog;
     if (!dialog) return;
+    if (this.state.profileDialogKey) {
+      this.setState({ editDialog: selectInputDialogChoice(dialog, choiceId) });
+      return;
+    }
 
     const draft = { ...this.state.draft };
     if (dialog.field === 'grinderSetting') {
@@ -1563,6 +1629,21 @@ export class BeanieApp {
     if (!dialog) return;
 
     const value = inputDialogCommitValue(dialog);
+    const profileKey = this.state.profileDialogKey;
+    if (profileKey) {
+      rememberInputDialogValue(dialog.kind, value);
+      this.setState({
+        profileEditor: this.state.profileEditor
+          ? setSimpleProfileField(this.state.profileEditor, profileKey, value)
+          : null,
+        modal: null,
+        editDialog: null,
+        profileDialogKey: null,
+        status: 'Profile changed'
+      });
+      return;
+    }
+
     const draft = { ...this.state.draft };
     if (dialog.field === 'dose') draft.dose = parseNumberInput(value);
     if (dialog.field === 'yield') draft.yield = parseNumberInput(value);
