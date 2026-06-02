@@ -977,7 +977,7 @@ export class BeanieApp {
       this.setState({ profileSearch: target.value, profilePage: 0, profileFocusId: null });
     }
     if (target.dataset.action?.startsWith('pe-')) {
-      this.applyEditorEvent(target);
+      this.applyEditorEvent(target, false);
     }
   }
 
@@ -1043,31 +1043,49 @@ export class BeanieApp {
     });
   }
 
+  // `commit` is false for `input` events, true for `change`. A range slider
+  // fires `input` continuously while dragging; re-rendering on each one replaces
+  // the slider element and kills the drag. So for an in-progress range drag we
+  // update state silently and patch the on-screen value, then do the single full
+  // re-render on `change` (pointer release).
   private applyEditorEvent(
-    target: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+    target: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement,
+    commit = true
   ): boolean {
     const pe = this.state.profileEditor;
     if (!pe) return false;
     const action = target.dataset.action;
     const key = target.dataset.key;
     const index = Number(target.dataset.index ?? '-1');
+    let next: ProfileEditorState | null = null;
     if (action === 'pe-meta' && key) {
-      this.setState({ profileEditor: setProfileMeta(pe, key as ProfileMetaKey, target.value) });
+      next = setProfileMeta(pe, key as ProfileMetaKey, target.value);
+    } else if (action === 'pe-simple-field' && key) {
+      next = setSimpleProfileField(pe, key as SimpleProfileField, target.value);
+    } else if (action === 'pe-step-field' && key && index >= 0) {
+      next = setStepField(pe, index, key as StepFieldKey, target.value);
+    } else if (action === 'pe-step-exit' && key && index >= 0) {
+      next = this.applyExitField(pe, index, key, target);
+    }
+    if (next === null) return false;
+
+    const isRangeDrag = !commit && target instanceof HTMLInputElement && target.type === 'range';
+    if (isRangeDrag) {
+      this.state = { ...this.state, profileEditor: next };
+      this.patchLiveValue(target);
       return true;
     }
-    if (action === 'pe-simple-field' && key) {
-      this.setState({ profileEditor: setSimpleProfileField(pe, key as SimpleProfileField, target.value) });
-      return true;
-    }
-    if (action === 'pe-step-field' && key && index >= 0) {
-      this.setState({ profileEditor: setStepField(pe, index, key as StepFieldKey, target.value) });
-      return true;
-    }
-    if (action === 'pe-step-exit' && key && index >= 0) {
-      this.setState({ profileEditor: this.applyExitField(pe, index, key, target) });
-      return true;
-    }
-    return false;
+    this.setState({ profileEditor: next });
+    return true;
+  }
+
+  // Live-update the value readout beside a slider mid-drag, without a re-render.
+  private patchLiveValue(range: HTMLInputElement): void {
+    const value = range.closest('.pe-ctl')?.querySelector<HTMLElement>('.pe-ctl-value');
+    if (!value) return;
+    const unit = value.querySelector('em');
+    value.textContent = range.value;
+    if (unit) value.appendChild(unit);
   }
 
   private applyExitField(
@@ -1716,6 +1734,9 @@ export class BeanieApp {
     const parts = [`[data-action="${action}"]`];
     if (active?.dataset.index != null) parts.push(`[data-index="${active.dataset.index}"]`);
     if (active?.dataset.key != null) parts.push(`[data-key="${active.dataset.key}"]`);
+    // The four exit sliders share action/index/key — disambiguate by type+condition.
+    if (active?.dataset.type != null) parts.push(`[data-type="${active.dataset.type}"]`);
+    if (active?.dataset.condition != null) parts.push(`[data-condition="${active.dataset.condition}"]`);
     const start = typeof active?.selectionStart === 'number' ? active.selectionStart : null;
     return { selector: parts.join(''), start };
   }
