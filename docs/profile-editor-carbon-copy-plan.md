@@ -217,40 +217,44 @@ in `components/profileEditor.ts` with the engine; drive editor open-logic and th
 Basic/Advanced toggle from `canEditAsBasic` (Advanced always available; Basic only
 while the guard holds).
 
-### Phase 3 — advanced step editor parity
-- Full per-step controls matching de1app: name, message, temperature, sensor
-  toggle, pump toggle (pressure-goal vs flow-goal), value, transition, seconds,
-  volume, weight, **four exit conditions** (single active persists), per-step
-  limiter (value + range).
-- Step list semantics: add = insert-after-current copying settings; delete (min
-  1); reorder; **cap at 20**.
-- Fix the exit model so only one exit condition is active and it serializes to
-  the single nested `exit`.
+### Phase 3 — advanced step editor parity ✅ *(done)*
+- Per-step controls all present: name, message, temperature, sensor toggle, pump
+  toggle (pressure-goal vs flow-goal), value, transition, seconds, volume,
+  weight, four exit conditions, per-step limiter value **and range**. Exit model
+  is single-active and serializes to the one nested `exit`.
+- Step controls **redesigned** as compact cards (commit `d5ba483`); add =
+  insert-after-current copying settings; delete (min 1); reorder; **capped at 20**
+  (commit `d8fe19b`).
 
-### Phase 4 — limits tab (`settings_2c2`) parity
+### Phase 4 — limits parity ✅ *(done)*
 - Tank temperature, preinfusion-ends-after (`target_volume_count_start`),
-  stop-at-volume, stop-at-weight, global flow/pressure limiter ranges, applied
-  across steps that have limiters.
+  stop-at-volume, stop-at-weight live in the metadata row; per-step limiter
+  **range** surfaced as a card when a step has a limiter (commit `d8fe19b`).
+  (Kept beanie-styled in the meta row rather than a separate `settings_2c2` tab.)
 
-### Phase 5 — live explanation chart parity
-- Faithful interpolation: fast = vertical jump, smooth = linear ramp; pressure +
-  flow + temperature traces; correct axes/ticks; selected-step highlight.
-- Extract a pure chart model (testable) from the SVG renderer.
+### Phase 5 — live explanation chart parity ✅ *(done, `f61a6ae`)*
+- Pure, tested `profileChartModel.ts`: fast = vertical jump + hold, smooth =
+  linear ramp; pressure/flow/temperature traces (temp starts at first target);
+  selected-step highlight from per-step spans. Both charts use it.
 
-### Phase 6 — rendering robustness (the "feels broken" fix)
-- Stop full-innerHTML re-render of the editor surface on every keystroke/drag.
-  Either scope updates to the changed control, or preserve focus + slider drag +
-  scroll across re-render. This is what makes it feel non-functional today.
+### Phase 6 — rendering robustness ✅ *(done, `776dfa4`)*
+- Range-slider `input` now updates state silently and patches the readout in
+  place (keeping the dragged element alive); the single full re-render is
+  deferred to `change`. Exit sliders disambiguated in `captureFocus` by
+  type+condition. Scroll/focus restore already existed.
 
-### Phase 7 — save / clone / metadata semantics
-- read-only clone-on-save via reaprime versioning (`createProfile` with
-  `parentId` when editing a bundled default); title/author/notes/beverage.
-- Surface validation before save (reuse the ported range checks).
+### Phase 7 — save / clone / validation ✅ *(done, `ec06556`)*
+- Editing a reaprime default (`isDefault`) saves a child clone via
+  `createProfile({ parentId })`; normal profiles update in place. Pre-save
+  validation blocks an empty name / no steps with a status message.
 
-### Phase 8 — tests & verification
-- Round-trip fixtures from `reaprime/assets/defaultProfiles/` (advanced + simple).
-- Compiler tests, chart-model tests, focus-preservation check.
-- Manual verify in the Vite preview against a running reaprime.
+### Phase 8 — tests & verification 🟡 *(ongoing)*
+- Done: simple↔advanced compiler round-trips + guard rejection set
+  (`simpleProfile.test.ts`), chart-model interpolation (`profileChartModel.test.ts`),
+  Tcl-input/serialization and 20-step cap (`profileEditor.test.ts`); 86 tests
+  green, `tsc` clean; each phase manually verified in the Vite preview.
+- Remaining: a focus-preservation regression test; verification against a live
+  reaprime (so far demo-data only).
 
 ---
 
