@@ -69,7 +69,9 @@ import { renderProfilePreview } from './components/profilePreview';
 import {
   addStep,
   createProfileEditorState,
+  duplicateStep,
   moveStep,
+  nudgeStepField,
   profileFromEditorState,
   removeStep,
   renderProfileEditor,
@@ -871,6 +873,9 @@ export class BeanieApp {
       case 'pe-add-step':
         this.editorDispatch(addStep);
         break;
+      case 'pe-duplicate-step':
+        if (index != null) this.editorDispatch((pe) => duplicateStep(pe, Number(index)));
+        break;
       case 'pe-remove-step':
         if (index != null) this.editorDispatch((pe) => removeStep(pe, Number(index)));
         break;
@@ -885,6 +890,27 @@ export class BeanieApp {
         break;
       case 'pe-step-transition':
         if (index != null) this.editorDispatch((pe) => setStepTransition(pe, Number(index), value === 'smooth' ? 'smooth' : 'fast'));
+        break;
+      case 'pe-step-nudge':
+        if (index != null && el.dataset.key) {
+          this.editorDispatch((pe) =>
+            nudgeStepField(pe, Number(index), el.dataset.key as StepFieldKey, Number(el.dataset.delta ?? '0'))
+          );
+        }
+        break;
+      case 'pe-step-exit-preset':
+        if (index != null) {
+          this.editorDispatch((pe) =>
+            setStepExit(pe, Number(index), {
+              type: el.dataset.type === 'flow' ? 'flow' : 'pressure',
+              condition: el.dataset.condition === 'under' ? 'under' : 'over',
+              value: Number(el.dataset.value ?? '0') || 0
+            })
+          );
+        }
+        break;
+      case 'pe-step-exit-clear':
+        if (index != null) this.editorDispatch((pe) => setStepExit(pe, Number(index), null));
         break;
       default:
         break;

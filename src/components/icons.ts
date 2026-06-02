@@ -1,7 +1,10 @@
 import {
   Archive,
+  ArrowDown,
+  ArrowUp,
   ChevronLeft,
   Coffee,
+  Copy,
   Delete,
   Droplets,
   History,
@@ -25,8 +28,11 @@ export function refreshIcons(): void {
   createIcons({
     icons: {
       Archive,
+      ArrowDown,
+      ArrowUp,
       ChevronLeft,
       Coffee,
+      Copy,
       Delete,
       Droplets,
       History,

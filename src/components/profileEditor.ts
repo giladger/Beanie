@@ -1,4 +1,5 @@
 import type { Profile } from '../api/types';
+import { icon } from './icons';
 
 export type StepSensor = 'coffee' | 'water';
 export type StepPump = 'pressure' | 'flow';
@@ -233,6 +234,36 @@ export function setStepField(
   });
 }
 
+export function nudgeStepField(
+  state: ProfileEditorState,
+  index: number,
+  key: StepFieldKey,
+  delta: number
+): ProfileEditorState {
+  const step = state.steps[index];
+  if (!step) return state;
+  const current =
+    key === 'temperature'
+      ? step.temperature
+      : key === 'pressure'
+        ? step.pressure
+        : key === 'flow'
+          ? step.flow
+          : key === 'seconds'
+            ? step.seconds
+            : key === 'volume'
+              ? step.volume
+              : key === 'weight'
+                ? step.weight
+                : key === 'limiter_value'
+                  ? (step.limiter?.value ?? 0)
+                  : key === 'limiter_range'
+                    ? (step.limiter?.range ?? 0.6)
+                    : null;
+  if (current == null) return state;
+  return setStepField(state, index, key, String(clampNumber(current + delta)));
+}
+
 export function setStepPump(state: ProfileEditorState, index: number, pump: StepPump): ProfileEditorState {
   return updateStep(state, index, (step) => ({ ...step, pump }));
 }
@@ -329,10 +360,15 @@ export function profileFromEditorState(state: ProfileEditorState): Profile {
 
 export function renderProfileEditor(state: ProfileEditorState): string {
   return `
-    <div class="profile-editor">
+    <div class="profile-editor de1-profile-editor">
       ${renderMeta(state)}
-      ${renderStepList(state)}
-      ${renderStepDetail(state)}
+      <div class="pe-main-grid">
+        ${renderStepList(state)}
+        <section class="pe-workspace">
+          ${renderProfileChart(state)}
+          ${renderStepDetail(state)}
+        </section>
+      </div>
     </div>
   `;
 }
@@ -340,9 +376,8 @@ export function renderProfileEditor(state: ProfileEditorState): string {
 function renderMeta(state: ProfileEditorState): string {
   return `
     <section class="pe-meta">
-      <h2>Profile</h2>
-      <label class="pe-field">
-        <span>Title</span>
+      <label class="pe-field pe-title-field">
+        <span>Preset name</span>
         <input type="text" data-action="pe-meta" data-key="title" value="${escapeAttr(state.title)}" />
       </label>
       <label class="pe-field">
@@ -350,28 +385,40 @@ function renderMeta(state: ProfileEditorState): string {
         <input type="text" data-action="pe-meta" data-key="author" value="${escapeAttr(state.author)}" />
       </label>
       <label class="pe-field">
-        <span>Beverage type</span>
-        <select data-action="pe-meta" data-key="beverage_type">
-          ${PROFILE_BEVERAGE_TYPES.map((type) => `
-            <option value="${escapeAttr(type)}" ${type === state.beverageType ? 'selected' : ''}>${escapeHtml(type)}</option>
+        <span>Type</span>
+        <select data-action="pe-meta" data-key="type">
+          ${PROFILE_TYPES.map((type) => `
+            <option value="${escapeAttr(type)}" ${type === state.type ? 'selected' : ''}>${escapeHtml(displayType(type))}</option>
           `).join('')}
         </select>
       </label>
       <label class="pe-field">
-        <span>Tank temperature (°C)</span>
+        <span>Beverage</span>
+        <select data-action="pe-meta" data-key="beverage_type">
+          ${PROFILE_BEVERAGE_TYPES.map((type) => `
+            <option value="${escapeAttr(type)}" ${type === state.beverageType ? 'selected' : ''}>${escapeHtml(displayType(type))}</option>
+          `).join('')}
+        </select>
+      </label>
+      <label class="pe-field">
+        <span>Tank °C</span>
         <input type="number" step="0.1" data-action="pe-meta" data-key="tank_temperature" value="${escapeAttr(numberText(state.tankTemperature))}" />
       </label>
       <label class="pe-field">
-        <span>Target weight (g)</span>
+        <span>Stop g</span>
         <input type="number" step="0.1" data-action="pe-meta" data-key="target_weight" value="${escapeAttr(numberText(state.targetWeight))}" />
       </label>
       <label class="pe-field">
-        <span>Target volume (ml)</span>
+        <span>Stop ml</span>
         <input type="number" step="1" data-action="pe-meta" data-key="target_volume" value="${escapeAttr(numberText(state.targetVolume))}" />
       </label>
       <label class="pe-field">
+        <span>Count start</span>
+        <input type="number" step="1" data-action="pe-meta" data-key="target_volume_count_start" value="${escapeAttr(numberText(state.targetVolumeCountStart))}" />
+      </label>
+      <label class="pe-field pe-notes-field">
         <span>Notes</span>
-        <textarea data-action="pe-meta" data-key="notes" rows="3">${escapeHtml(state.notes)}</textarea>
+        <input type="text" data-action="pe-meta" data-key="notes" value="${escapeAttr(state.notes)}" />
       </label>
     </section>
   `;
@@ -382,7 +429,7 @@ function renderStepList(state: ProfileEditorState): string {
     <section class="pe-steps">
       <div class="pe-steps-head">
         <h2>Steps</h2>
-        <button type="button" data-action="pe-add-step">Add step</button>
+        <button type="button" data-action="pe-add-step" title="Add step">${icon('plus')}</button>
       </div>
       <ol class="pe-step-list">
         ${state.steps.map((step, index) => renderStepRow(state, step, index)).join('')}
@@ -395,18 +442,21 @@ function renderStepRow(state: ProfileEditorState, step: EditorStep, index: numbe
   const target = step.pump === 'flow'
     ? `${formatNumber(step.flow)} ml/s`
     : `${formatNumber(step.pressure)} bar`;
+  const limiter = step.limiter?.value ? `limit ${formatNumber(step.limiter.value)}` : 'no limit';
   return `
     <li class="pe-step-row ${index === state.selectedStep ? 'active' : ''}">
       <button type="button" class="pe-step-select" data-action="pe-select-step" data-index="${index}">
-        <strong>${escapeHtml(step.name || `Step ${index + 1}`)}</strong>
-        <span>${escapeHtml(step.pump)} ${escapeHtml(target)}</span>
-        <span>${escapeHtml(formatNumber(step.temperature))} °C</span>
-        <span>${escapeHtml(formatNumber(step.seconds))} s</span>
+        <span class="pe-step-number">${index + 1}</span>
+        <span class="pe-step-copy">
+          <strong>${escapeHtml(step.name || `Step ${index + 1}`)}</strong>
+          <small>${escapeHtml(step.pump)} ${escapeHtml(target)} · ${escapeHtml(formatNumber(step.temperature))} °C · ${escapeHtml(limiter)}</small>
+        </span>
       </button>
       <span class="pe-step-actions">
-        <button type="button" data-action="pe-move-step" data-index="${index}" data-value="-1" aria-label="Move up">↑</button>
-        <button type="button" data-action="pe-move-step" data-index="${index}" data-value="1" aria-label="Move down">↓</button>
-        <button type="button" data-action="pe-remove-step" data-index="${index}" aria-label="Remove step">✕</button>
+        <button type="button" data-action="pe-duplicate-step" data-index="${index}" aria-label="Duplicate step" title="Duplicate">${icon('copy')}</button>
+        <button type="button" data-action="pe-move-step" data-index="${index}" data-value="-1" aria-label="Move up" title="Move up">${icon('arrow-up')}</button>
+        <button type="button" data-action="pe-move-step" data-index="${index}" data-value="1" aria-label="Move down" title="Move down">${icon('arrow-down')}</button>
+        <button type="button" data-action="pe-remove-step" data-index="${index}" aria-label="Remove step" title="Remove">${icon('x')}</button>
       </span>
     </li>
   `;
@@ -419,49 +469,28 @@ function renderStepDetail(state: ProfileEditorState): string {
   const isFlow = step.pump === 'flow';
   return `
     <section class="pe-step-detail" data-index="${index}">
-      <h2>Edit step ${index + 1}</h2>
-      <label class="pe-field">
-        <span>Name</span>
-        <input type="text" data-action="pe-step-field" data-index="${index}" data-key="name" value="${escapeAttr(step.name)}" />
-      </label>
-      <div class="pe-field-group">
+      <div class="pe-step-detail-head">
         <label class="pe-field">
-          <span>Temperature (°C)</span>
-          <input type="number" step="0.1" data-action="pe-step-field" data-index="${index}" data-key="temperature" value="${escapeAttr(formatNumber(step.temperature))}" />
+          <span>Step ${index + 1}</span>
+          <input type="text" data-action="pe-step-field" data-index="${index}" data-key="name" value="${escapeAttr(step.name)}" />
         </label>
-        <label class="pe-field">
-          <span>Sensor</span>
-          <select data-action="pe-step-field" data-index="${index}" data-key="sensor">
-            <option value="coffee" ${step.sensor === 'coffee' ? 'selected' : ''}>Coffee</option>
-            <option value="water" ${step.sensor === 'water' ? 'selected' : ''}>Water</option>
-          </select>
-        </label>
-      </div>
-      <div class="pe-field-group">
         <span class="pe-toggle" role="group" aria-label="Pump target">
           <button type="button" class="${!isFlow ? 'active' : ''}" data-action="pe-step-pump" data-index="${index}" data-value="pressure">Pressure</button>
           <button type="button" class="${isFlow ? 'active' : ''}" data-action="pe-step-pump" data-index="${index}" data-value="flow">Flow</button>
         </span>
-        <label class="pe-field">
-          <span>${isFlow ? 'Flow (ml/s)' : 'Pressure (bar)'}</span>
-          <input type="number" step="0.1" data-action="pe-step-field" data-index="${index}" data-key="${isFlow ? 'flow' : 'pressure'}" value="${escapeAttr(formatNumber(isFlow ? step.flow : step.pressure))}" />
-        </label>
       </div>
-      <div class="pe-field-group">
-        <span class="pe-toggle" role="group" aria-label="Transition">
-          <button type="button" class="${step.transition === 'fast' ? 'active' : ''}" data-action="pe-step-transition" data-index="${index}" data-value="fast">Fast</button>
-          <button type="button" class="${step.transition === 'smooth' ? 'active' : ''}" data-action="pe-step-transition" data-index="${index}" data-value="smooth">Smooth</button>
-        </span>
+      <div class="pe-control-grid">
+        ${renderValueControl(index, 'temperature', 'Temp', step.temperature, '°C', 0.5)}
+        ${renderSensorControl(index, step.sensor)}
+        ${renderPumpValueControl(index, 'flow', isFlow ? 'Flow goal' : 'Flow limit', isFlow ? step.flow : (step.limiter?.value ?? 0), 'ml/s', 0.1)}
+        ${renderPumpValueControl(index, 'pressure', isFlow ? 'Pressure limit' : 'Pressure goal', isFlow ? (step.limiter?.value ?? 0) : step.pressure, 'bar', 0.1)}
+        ${renderTransitionControl(index, step.transition)}
+        ${renderValueControl(index, 'limiter_range', 'Limit range', step.limiter?.range ?? 0.6, '', 0.1)}
       </div>
-      <div class="pe-field-group">
-        <label class="pe-field">
-          <span>Max seconds</span>
-          <input type="number" step="1" data-action="pe-step-field" data-index="${index}" data-key="seconds" value="${escapeAttr(formatNumber(step.seconds))}" />
-        </label>
-        <label class="pe-field">
-          <span>Volume limit (ml, 0 = none)</span>
-          <input type="number" step="1" data-action="pe-step-field" data-index="${index}" data-key="volume" value="${escapeAttr(formatNumber(step.volume))}" />
-        </label>
+      <div class="pe-stop-grid">
+        ${renderValueControl(index, 'seconds', 'Max time', step.seconds, 's', 1)}
+        ${renderValueControl(index, 'volume', 'Max volume', step.volume, 'ml', 1)}
+        ${renderValueControl(index, 'weight', 'Max weight', step.weight, 'g', 0.1)}
       </div>
       ${renderExit(step, index)}
     </section>
@@ -471,37 +500,153 @@ function renderStepDetail(state: ProfileEditorState): string {
 function renderExit(step: EditorStep, index: number): string {
   const enabled = step.exit !== null;
   const exit = step.exit ?? { type: 'pressure' as StepExitType, condition: 'over' as StepExitCondition, value: 0 };
+  const exits: Array<{ type: StepExitType; condition: StepExitCondition; label: string; unit: string }> = [
+    { type: 'pressure', condition: 'over', label: 'Pressure over', unit: 'bar' },
+    { type: 'pressure', condition: 'under', label: 'Pressure under', unit: 'bar' },
+    { type: 'flow', condition: 'over', label: 'Flow over', unit: 'ml/s' },
+    { type: 'flow', condition: 'under', label: 'Flow under', unit: 'ml/s' }
+  ];
   return `
-    <fieldset class="pe-step-exit">
-      <legend>Exit condition</legend>
-      <label class="pe-checkbox">
-        <input type="checkbox" data-action="pe-step-exit" data-index="${index}" data-key="enabled" ${enabled ? 'checked' : ''} />
-        <span>Exit early</span>
+    <section class="pe-exit-grid" aria-label="Exit condition">
+      ${exits.map((option) => {
+        const active = enabled && exit.type === option.type && exit.condition === option.condition;
+        const value = active ? exit.value : 0;
+        return `
+          <button type="button" class="pe-exit-card ${active ? 'active' : ''}" data-action="pe-step-exit-preset" data-index="${index}" data-type="${option.type}" data-condition="${option.condition}" data-value="${escapeAttr(formatNumber(value || defaultExitValue(option.type, option.condition)))}">
+            <span>${escapeHtml(option.label)}</span>
+            <strong>${active ? `${escapeHtml(formatNumber(value))} ${escapeHtml(option.unit)}` : '-'}</strong>
+          </button>
+        `;
+      }).join('')}
+      <label class="pe-exit-value">
+        <span>Exit value</span>
+        <input type="number" step="0.1" data-action="pe-step-exit" data-index="${index}" data-key="value" value="${escapeAttr(enabled ? formatNumber(exit.value) : '')}" placeholder="off" />
       </label>
-      ${enabled ? `
-        <div class="pe-field-group">
-          <label class="pe-field">
-            <span>Type</span>
-            <select data-action="pe-step-exit" data-index="${index}" data-key="type">
-              <option value="pressure" ${exit.type === 'pressure' ? 'selected' : ''}>Pressure</option>
-              <option value="flow" ${exit.type === 'flow' ? 'selected' : ''}>Flow</option>
-            </select>
-          </label>
-          <label class="pe-field">
-            <span>Condition</span>
-            <select data-action="pe-step-exit" data-index="${index}" data-key="condition">
-              <option value="over" ${exit.condition === 'over' ? 'selected' : ''}>Over</option>
-              <option value="under" ${exit.condition === 'under' ? 'selected' : ''}>Under</option>
-            </select>
-          </label>
-          <label class="pe-field">
-            <span>Value</span>
-            <input type="number" step="0.1" data-action="pe-step-exit" data-index="${index}" data-key="value" value="${escapeAttr(formatNumber(exit.value))}" />
-          </label>
-        </div>
-      ` : ''}
-    </fieldset>
+      <button type="button" class="pe-exit-clear" data-action="pe-step-exit-clear" data-index="${index}">Off</button>
+    </section>
   `;
+}
+
+function renderValueControl(
+  index: number,
+  key: StepFieldKey,
+  label: string,
+  value: number,
+  unit: string,
+  delta: number
+): string {
+  return `
+    <div class="pe-value-control">
+      <span>${escapeHtml(label)}</span>
+      <button type="button" data-action="pe-step-nudge" data-index="${index}" data-key="${key}" data-delta="${-delta}" aria-label="Decrease ${escapeAttr(label)}">${icon('minus')}</button>
+      <input type="number" step="${escapeAttr(String(delta))}" data-action="pe-step-field" data-index="${index}" data-key="${key}" value="${escapeAttr(formatNumber(value))}" aria-label="${escapeAttr(label)}" />
+      <em>${escapeHtml(unit)}</em>
+      <button type="button" data-action="pe-step-nudge" data-index="${index}" data-key="${key}" data-delta="${delta}" aria-label="Increase ${escapeAttr(label)}">${icon('plus')}</button>
+    </div>
+  `;
+}
+
+function renderPumpValueControl(
+  index: number,
+  pumpKey: StepPump,
+  label: string,
+  value: number,
+  unit: string,
+  delta: number
+): string {
+  const field: StepFieldKey = label.includes('limit') ? 'limiter_value' : pumpKey;
+  return renderValueControl(index, field, label, value, unit, delta);
+}
+
+function renderSensorControl(index: number, sensor: StepSensor): string {
+  return `
+    <div class="pe-choice-control">
+      <span>Sensor</span>
+      <select data-action="pe-step-field" data-index="${index}" data-key="sensor">
+        <option value="coffee" ${sensor === 'coffee' ? 'selected' : ''}>Coffee</option>
+        <option value="water" ${sensor === 'water' ? 'selected' : ''}>Water</option>
+      </select>
+    </div>
+  `;
+}
+
+function renderTransitionControl(index: number, transition: StepTransition): string {
+  return `
+    <div class="pe-choice-control">
+      <span>Transition</span>
+      <span class="pe-toggle" role="group" aria-label="Transition">
+        <button type="button" class="${transition === 'fast' ? 'active' : ''}" data-action="pe-step-transition" data-index="${index}" data-value="fast">Fast</button>
+        <button type="button" class="${transition === 'smooth' ? 'active' : ''}" data-action="pe-step-transition" data-index="${index}" data-value="smooth">Smooth</button>
+      </span>
+    </div>
+  `;
+}
+
+function renderProfileChart(state: ProfileEditorState): string {
+  const width = 900;
+  const height = 210;
+  const plot = { x: 42, y: 16, w: 820, h: 156 };
+  const totalSeconds = Math.max(1, state.steps.reduce((sum, step) => sum + Math.max(0, step.seconds || 0), 0));
+  const pressure = steppedSeries(state, (step) => step.pressure, totalSeconds, plot, 12);
+  const flow = steppedSeries(state, (step) => step.flow, totalSeconds, plot, 10);
+  const temp = steppedSeries(state, (step) => step.temperature, totalSeconds, plot, 105);
+  const selected = selectedStepBand(state, totalSeconds, plot);
+  return `
+    <section class="pe-chart-panel" aria-label="Profile preview">
+      <svg class="pe-profile-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Pressure, flow, and temperature profile">
+        <rect class="pe-chart-bg" x="${plot.x}" y="${plot.y}" width="${plot.w}" height="${plot.h}" rx="4"></rect>
+        ${[0, 0.25, 0.5, 0.75, 1].map((tick) => `
+          <line class="pe-chart-grid" x1="${plot.x}" x2="${plot.x + plot.w}" y1="${plot.y + plot.h * tick}" y2="${plot.y + plot.h * tick}"></line>
+        `).join('')}
+        ${selected}
+        <path class="pe-chart-pressure" d="${pressure}" fill="none"></path>
+        <path class="pe-chart-flow" d="${flow}" fill="none"></path>
+        <path class="pe-chart-temp" d="${temp}" fill="none"></path>
+        <text x="${plot.x}" y="${height - 16}" class="pe-chart-label">pressure</text>
+        <text x="${plot.x + 108}" y="${height - 16}" class="pe-chart-label flow">flow</text>
+        <text x="${plot.x + 178}" y="${height - 16}" class="pe-chart-label temp">temperature</text>
+      </svg>
+    </section>
+  `;
+}
+
+function steppedSeries(
+  state: ProfileEditorState,
+  pick: (step: EditorStep) => number,
+  totalSeconds: number,
+  plot: { x: number; y: number; w: number; h: number },
+  maxValue: number
+): string {
+  let elapsed = 0;
+  let path = '';
+  state.steps.forEach((step, index) => {
+    const duration = Math.max(1, step.seconds || 1);
+    const x0 = plot.x + (elapsed / totalSeconds) * plot.w;
+    elapsed += duration;
+    const x1 = plot.x + (elapsed / totalSeconds) * plot.w;
+    const y = plot.y + plot.h - clamp01(pick(step) / maxValue) * plot.h;
+    path += `${index === 0 ? 'M' : 'L'}${x0.toFixed(1)} ${y.toFixed(1)}L${x1.toFixed(1)} ${y.toFixed(1)}`;
+  });
+  return path;
+}
+
+function selectedStepBand(
+  state: ProfileEditorState,
+  totalSeconds: number,
+  plot: { x: number; y: number; w: number; h: number }
+): string {
+  let elapsed = 0;
+  for (let i = 0; i < state.steps.length; i += 1) {
+    const step = state.steps[i]!;
+    const duration = Math.max(1, step.seconds || 1);
+    if (i === state.selectedStep) {
+      const x = plot.x + (elapsed / totalSeconds) * plot.w;
+      const width = Math.max(4, (duration / totalSeconds) * plot.w);
+      return `<rect class="pe-chart-selected" x="${x.toFixed(1)}" y="${plot.y}" width="${width.toFixed(1)}" height="${plot.h}"></rect>`;
+    }
+    elapsed += duration;
+  }
+  return '';
 }
 
 function defaultStep(): EditorStep {
@@ -656,12 +801,29 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+function clampNumber(value: number): number {
+  return Math.max(0, Number(value.toFixed(2)));
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
 function numberText(value: number | null): string {
   return value == null ? '' : formatNumber(value);
 }
 
 function formatNumber(value: number): string {
   return value.toString();
+}
+
+function displayType(value: string): string {
+  return value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function defaultExitValue(type: StepExitType, condition: StepExitCondition): number {
+  if (type === 'pressure') return condition === 'over' ? 11 : 0;
+  return condition === 'over' ? 6 : 0;
 }
 
 function escapeHtml(value: string): string {
