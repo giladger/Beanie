@@ -619,7 +619,7 @@ p {
 .history-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
   padding: 9px 11px 0;
 }
