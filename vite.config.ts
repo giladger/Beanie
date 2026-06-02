@@ -9,6 +9,7 @@ const gatewayHost = env.GATEWAY_HOST ?? 'localhost:8080';
 const gitCommit = env.GIT_COMMIT ?? 'dev';
 
 export default defineConfig({
+  base: './',
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
     __GIT_COMMIT__: JSON.stringify(gitCommit),

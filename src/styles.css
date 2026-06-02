@@ -1408,7 +1408,7 @@ p {
   width: 1280px;
   height: 800px;
   overflow: hidden;
-  background: #d3d6e4 url("/de1app/settings_2a2.png") center / 100% 100% no-repeat;
+  background: #d3d6e4 url("./assets/de1app/settings_2a2.png") center / 100% 100% no-repeat;
   --plate-w: 1280;
   --plate-h: 800;
   --de1-blue: #4e85f4;
@@ -1419,7 +1419,7 @@ p {
 }
 
 .pe-de1-device.flow {
-  background-image: url("/de1app/settings_2b2.png");
+  background-image: url("./assets/de1app/settings_2b2.png");
 }
 
 .pe-de1-tab-label {
