@@ -223,6 +223,7 @@ export class BeanieApp {
     appliedSignature: null
   };
 
+  private applyTimer: number | null = null;
   private machineRetryTimer: number | null = null;
   private scaleRetryTimer: number | null = null;
   private machineSocket: WebSocket | null = null;
@@ -461,11 +462,15 @@ export class BeanieApp {
     return draftSignature(this.state.draft) !== this.state.appliedSignature;
   }
 
-  private resetFromLastShot(): void {
-    this.setState({
-      draft: normalizeDraft(recipeFromShot(this.state.shots[0] ?? null), this.state.profiles, this.state.grinders),
-      status: 'Reset to latest shot'
-    });
+  // Debounced auto-apply: any dial-in edit pushes the draft to the workflow
+  // 200ms after the last change, so there is no manual Apply button.
+  private scheduleApply(): void {
+    if (!this.selectedBean()) return;
+    if (this.applyTimer != null) window.clearTimeout(this.applyTimer);
+    this.applyTimer = window.setTimeout(() => {
+      this.applyTimer = null;
+      void this.applyDraft();
+    }, 200);
   }
 
   private loadShotRecipe(shotId: string): void {
@@ -477,6 +482,7 @@ export class BeanieApp {
       detailShotId: null,
       status: 'Shot recipe loaded'
     });
+    this.scheduleApply();
   }
 
   private async saveShotAnnotations(
@@ -740,15 +746,6 @@ export class BeanieApp {
       case 'adjust':
         if (field) this.adjustField(field, Number(el.dataset.delta ?? '0'));
         break;
-      case 'apply':
-        await this.applyDraft();
-        break;
-      case 'clear':
-        this.setState({ draft: emptyRecipe(), status: 'Draft cleared' });
-        break;
-      case 'reset':
-        this.resetFromLastShot();
-        break;
       case 'edit-field':
         if (isEditField(field)) this.openEditDialog(field);
         break;
@@ -959,6 +956,7 @@ export class BeanieApp {
       profileSearch: '',
       status: 'Profile selected'
     });
+    this.scheduleApply();
   }
 
   private focusProfile(id: string): void {
@@ -1150,6 +1148,7 @@ export class BeanieApp {
       draft.grinderModel = grinder?.model ?? null;
     }
     this.setState({ draft, status: 'Draft changed' });
+    this.scheduleApply();
   }
 
   private async onSubmit(event: Event): Promise<void> {
@@ -1376,6 +1375,7 @@ export class BeanieApp {
         busy: false,
         status
       });
+      this.scheduleApply();
     };
 
     if (this.state.demo) {
@@ -1411,6 +1411,7 @@ export class BeanieApp {
       draft.brewTemp = round(current + delta, 1);
     }
     this.setState({ draft, status: 'Draft changed' });
+    this.scheduleApply();
   }
 
   private openEditDialog(field: EditField): void {
@@ -1500,6 +1501,7 @@ export class BeanieApp {
       editDialog: selectInputDialogChoice(dialog, choiceId),
       status: 'Draft changed'
     });
+    this.scheduleApply();
   }
 
   private commitEditDialog(): void {
@@ -1519,6 +1521,7 @@ export class BeanieApp {
     if (dialog.field === 'temperature') draft.brewTemp = parseNumberInput(value);
     rememberInputDialogValue(dialog.kind, value);
     this.setState({ draft, modal: null, editDialog: null, status: 'Draft changed' });
+    this.scheduleApply();
   }
 
   private render(): void {
@@ -1566,7 +1569,7 @@ export class BeanieApp {
         ${this.renderBeanRail()}
         <section class="surface">
           ${this.renderHero(bean)}
-          ${this.renderRecipeEditor(bean)}
+          ${this.renderRecipeEditor()}
           ${this.renderHistory()}
         </section>
       </main>
@@ -1759,7 +1762,7 @@ export class BeanieApp {
     `;
   }
 
-  private renderRecipeEditor(bean: Bean | null): string {
+  private renderRecipeEditor(): string {
     const draft = this.state.draft;
     return `
       <section class="recipe-grid">
@@ -1769,11 +1772,6 @@ export class BeanieApp {
         ${this.controlGrind()}
         ${this.controlTemp()}
         ${this.controlProfile()}
-        <div class="command-panel panel">
-          <button class="command primary" data-action="apply" ${bean ? '' : 'disabled'}>${icon('sliders-horizontal')}<span>Apply</span></button>
-          <button class="command" data-action="reset">${icon('rotate-ccw')}<span>Latest</span></button>
-          <button class="command danger" data-action="clear">${icon('trash-2')}<span>Clear</span></button>
-        </div>
       </section>
     `;
   }
@@ -1989,7 +1987,7 @@ export class BeanieApp {
       return '<span class="chip apply-stale">Changed on machine · Sync to reload</span>';
     }
     if (this.isDirty()) {
-      return '<span class="chip apply-pending">Unsaved · tap Apply</span>';
+      return '<span class="chip apply-pending">Saving…</span>';
     }
     if (this.state.applyState === 'applied') {
       return '<span class="chip apply-applied">Applied</span>';
