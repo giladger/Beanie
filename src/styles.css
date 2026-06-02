@@ -3662,3 +3662,73 @@ p {
 .profile-editor > .pe-mode-bar {
   margin: 12px 16px 0;
 }
+
+/* Steps / Limits sub-tabs in the advanced editor */
+.pe-subtabs {
+  display: flex;
+  gap: 4px;
+  margin: 14px 16px 0;
+}
+
+.pe-subtab {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted, #8a8f98);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  padding: 8px 16px;
+  border-radius: 8px 8px 0 0;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+
+.pe-subtab.active {
+  color: var(--ink, #fff);
+  border-bottom-color: var(--accent, #3b82f6);
+}
+
+/* Limits panel */
+.pe-limits {
+  padding: 16px;
+}
+
+.pe-limits-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.pe-limit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pe-limit-field > span {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted, #8a8f98);
+}
+
+.pe-limit-field input {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line, rgba(127, 127, 127, 0.3));
+  background: var(--panel-2, #161922);
+  color: var(--ink, #fff);
+  font: inherit;
+}
+
+.pe-limit-field.disabled {
+  opacity: 0.5;
+}
+
+.pe-limits-hint {
+  margin: 14px 2px 0;
+  font-size: 12px;
+  color: var(--muted, #8a8f98);
+}

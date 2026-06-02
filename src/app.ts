@@ -76,6 +76,8 @@ import {
   removeStep,
   renderProfileEditor,
   selectStep,
+  setAdvancedTab,
+  setAllLimiterRanges,
   setEditorMode,
   setProfileMeta,
   setSimpleProfileField,
@@ -929,6 +931,9 @@ export class BeanieApp {
       case 'pe-set-simple-type':
         this.editorDispatch((pe) => setSimpleProfileType(pe, value === 'flow' ? 'flow' : 'pressure'));
         break;
+      case 'pe-advanced-tab':
+        this.editorDispatch((pe) => setAdvancedTab(pe, value === 'limits' ? 'limits' : 'steps'));
+        break;
       case 'pe-step-exit-nudge':
         if (index != null) {
           this.editorDispatch((pe) => {
@@ -1066,6 +1071,8 @@ export class BeanieApp {
       next = setStepField(pe, index, key as StepFieldKey, target.value);
     } else if (action === 'pe-step-exit' && key && index >= 0) {
       next = this.applyExitField(pe, index, key, target);
+    } else if (action === 'pe-limiter-range') {
+      next = setAllLimiterRanges(pe, Number(target.value) || 0);
     }
     if (next === null) return false;
 

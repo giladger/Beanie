@@ -11,6 +11,7 @@ import { buildProfileChartModel, type ChartPoint, type ProfileChartModel } from 
 import { icon } from './icons';
 
 export type EditorMode = 'basic' | 'advanced';
+export type AdvancedTab = 'steps' | 'limits';
 
 interface ChartPlot {
   x: number;
@@ -68,6 +69,8 @@ export interface ProfileEditorState {
   selectedStep: number;
   /** Which editor surface is shown. Derived from `canEditAsBasic` on load; the user can toggle. */
   editorMode: EditorMode;
+  /** Sub-tab within the advanced editor (de1app settings_2c / settings_2c2). */
+  advancedTab: AdvancedTab;
   dirty: boolean;
   extra: Record<string, unknown>;
 }
@@ -211,6 +214,7 @@ export function createProfileEditorState(profile: Profile | null): ProfileEditor
       steps: [defaultStep()],
       selectedStep: 0,
       editorMode: 'advanced',
+      advancedTab: 'steps',
       dirty: false,
       extra: {}
     };
@@ -255,6 +259,7 @@ export function createProfileEditorState(profile: Profile | null): ProfileEditor
     steps: finalSteps,
     selectedStep: 0,
     editorMode: canEditAsBasic(finalSteps) ? 'basic' : 'advanced',
+    advancedTab: 'steps',
     dirty: false,
     extra
   };
@@ -441,6 +446,24 @@ export function setEditorMode(state: ProfileEditorState, mode: EditorMode): Prof
   return { ...state, editorMode: mode };
 }
 
+/** Switch the Steps/Limits sub-tab in the advanced editor. */
+export function setAdvancedTab(state: ProfileEditorState, tab: AdvancedTab): ProfileEditorState {
+  return { ...state, advancedTab: tab };
+}
+
+/** de1app keeps one global limiter range; apply it to every step that has a limiter. */
+export function setAllLimiterRanges(state: ProfileEditorState, range: number): ProfileEditorState {
+  const clamped = Math.max(FIELD_SPECS.limiterRange.min, range);
+  const steps = state.steps.map((step) =>
+    step.limiter ? { ...step, limiter: { ...step.limiter, range: clamped } } : step
+  );
+  return { ...state, steps, dirty: true };
+}
+
+export function currentLimiterRange(state: ProfileEditorState): number {
+  return state.steps.find((step) => step.limiter)?.limiter?.range ?? FIELD_SPECS.limiterRange.default;
+}
+
 /** Set the simple profile kind (pressure/flow), recompiling the current knobs. */
 export function setSimpleProfileType(state: ProfileEditorState, type: SimpleType): ProfileEditorState {
   const { knobs } = simpleKnobsOf(state);
@@ -567,14 +590,17 @@ export function renderProfileEditor(state: ProfileEditorState): string {
   return `
     <div class="profile-editor">
       ${renderEditorModeBar(state)}
-      ${renderMeta(state)}
-      <div class="pe-main-grid">
-        <section class="pe-left-rail">
-          ${renderStepList(state)}
-          ${renderProfileChart(state)}
-        </section>
-        ${renderStepDetail(state)}
-      </div>
+      ${renderIdentityMeta(state)}
+      ${renderAdvancedTabs(state)}
+      ${state.advancedTab === 'limits'
+        ? renderLimitsPanel(state)
+        : `<div class="pe-main-grid">
+            <section class="pe-left-rail">
+              ${renderStepList(state)}
+              ${renderProfileChart(state)}
+            </section>
+            ${renderStepDetail(state)}
+          </div>`}
     </div>
   `;
 }
@@ -778,7 +804,7 @@ function rangeFill(value: number, min: number, max: number): string {
   return (clamp01((value - min) / (max - min)) * 100).toFixed(2);
 }
 
-function renderMeta(state: ProfileEditorState): string {
+function renderIdentityMeta(state: ProfileEditorState): string {
   return `
     <section class="pe-meta">
       <label class="pe-field pe-title-field">
@@ -805,26 +831,43 @@ function renderMeta(state: ProfileEditorState): string {
           `).join('')}
         </select>
       </label>
-      <label class="pe-field">
-        <span>Tank °C</span>
-        <input type="number" step="0.1" data-action="pe-meta" data-key="tank_temperature" value="${escapeAttr(numberText(state.tankTemperature))}" />
-      </label>
-      <label class="pe-field">
-        <span>Stop g</span>
-        <input type="number" step="0.1" data-action="pe-meta" data-key="target_weight" value="${escapeAttr(numberText(state.targetWeight))}" />
-      </label>
-      <label class="pe-field">
-        <span>Stop ml</span>
-        <input type="number" step="1" data-action="pe-meta" data-key="target_volume" value="${escapeAttr(numberText(state.targetVolume))}" />
-      </label>
-      <label class="pe-field">
-        <span>Count start</span>
-        <input type="number" step="1" data-action="pe-meta" data-key="target_volume_count_start" value="${escapeAttr(numberText(state.targetVolumeCountStart))}" />
-      </label>
       <label class="pe-field pe-notes-field">
         <span>Notes</span>
         <input type="text" data-action="pe-meta" data-key="notes" value="${escapeAttr(state.notes)}" />
       </label>
+    </section>
+  `;
+}
+
+function renderAdvancedTabs(state: ProfileEditorState): string {
+  const tab = (id: AdvancedTab, label: string) =>
+    `<button type="button" class="pe-subtab ${state.advancedTab === id ? 'active' : ''}" data-action="pe-advanced-tab" data-value="${id}">${label}</button>`;
+  return `<div class="pe-subtabs" role="group" aria-label="Advanced editor section">${tab('steps', 'Steps')}${tab('limits', 'Limits')}</div>`;
+}
+
+function renderLimitsPanel(state: ProfileEditorState): string {
+  const hasLimiter = state.steps.some((step) => step.limiter);
+  const range = currentLimiterRange(state);
+  const field = (label: string, key: ProfileMetaKey, value: number | null, step: string, max: number) => `
+    <label class="pe-limit-field">
+      <span>${escapeHtml(label)}</span>
+      <input type="number" step="${step}" min="0" max="${max}" data-action="pe-meta" data-key="${key}" value="${escapeAttr(numberText(value))}" />
+    </label>`;
+  return `
+    <section class="pe-limits" aria-label="Profile limits">
+      <div class="pe-limits-grid">
+        ${field('Tank temperature °C', 'tank_temperature', state.tankTemperature, '1', FIELD_SPECS.tankTemperature.max)}
+        ${field('Stop at weight (g)', 'target_weight', state.targetWeight, '0.1', FIELD_SPECS.targetWeight.max)}
+        ${field('Stop at volume (ml)', 'target_volume', state.targetVolume, '1', FIELD_SPECS.targetVolume.max)}
+        ${field('Preinfusion ends after step', 'target_volume_count_start', state.targetVolumeCountStart, '1', FIELD_SPECS.targetVolumeCountStart.max)}
+        <label class="pe-limit-field ${hasLimiter ? '' : 'disabled'}">
+          <span>Limiter range</span>
+          <input type="number" step="${FIELD_SPECS.limiterRange.step}" min="${FIELD_SPECS.limiterRange.min}" max="${FIELD_SPECS.limiterRange.max}" data-action="pe-limiter-range" value="${escapeAttr(formatNumber(range))}" ${hasLimiter ? '' : 'disabled'} />
+        </label>
+      </div>
+      <p class="pe-limits-hint">${hasLimiter
+        ? 'Limiter range applies to every step that has a flow or pressure limit.'
+        : 'No step has a limit set, so the limiter range is inactive.'}</p>
     </section>
   `;
 }
