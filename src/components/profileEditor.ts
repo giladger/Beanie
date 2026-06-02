@@ -700,10 +700,9 @@ function renderSimpleControl(
     <div class="pe-ctl ${escapeAttr(tone)}">
       <button type="button" class="pe-ctl-face" tabindex="-1" aria-label="${escapeAttr(label)}">${icon(iconName)}</button>
       <span class="pe-ctl-label">${escapeHtml(label)}</span>
-      <strong class="pe-ctl-value">${display}</strong>
-      <div class="pe-ctl-adjust">
+      <div class="pe-ctl-stepper">
         <button type="button" class="pe-ctl-step" data-action="pe-simple-nudge" data-key="${key}" data-delta="${-step}" aria-label="decrease ${escapeAttr(label)}">${icon('minus')}</button>
-        <input class="pe-ctl-range" type="range" min="${min}" max="${max}" step="${step}" data-action="pe-simple-field" data-key="${key}" value="${escapeAttr(formatted)}" aria-label="${escapeAttr(label)}" />
+        <button type="button" class="pe-ctl-value" data-action="pe-edit-value" data-target="simple-field" data-key="${key}" data-min="${min}" data-max="${max}" data-step="${step}" data-value="${escapeAttr(formatted)}" data-title="${escapeAttr(label)}" data-unit="${escapeAttr(unit)}" aria-label="edit ${escapeAttr(label)}">${display}</button>
         <button type="button" class="pe-ctl-step" data-action="pe-simple-nudge" data-key="${key}" data-delta="${step}" aria-label="increase ${escapeAttr(label)}">${icon('plus')}</button>
       </div>
     </div>
@@ -907,10 +906,9 @@ function renderVerticalControl(
     <div class="pe-ctl ${escapeAttr(tone)} ${centerAction?.active ? 'active' : ''}">
       <button type="button" class="pe-ctl-face" ${faceAttrs} aria-label="${escapeAttr(label)}">${icon(iconName)}</button>
       <span class="pe-ctl-label">${escapeHtml(label)}</span>
-      <strong class="pe-ctl-value">${escapeHtml(formatted)}${unit ? `<em>${escapeHtml(unit)}</em>` : ''}</strong>
-      <div class="pe-ctl-adjust">
+      <div class="pe-ctl-stepper">
         <button type="button" class="pe-ctl-step" data-action="pe-step-nudge" data-index="${index}" data-key="${key}" data-delta="${-step}" aria-label="decrease ${escapeAttr(label)}">${icon('minus')}</button>
-        <input class="pe-ctl-range" type="range" min="${min}" max="${max}" step="${step}" data-action="pe-step-field" data-index="${index}" data-key="${key}" value="${escapeAttr(formatted)}" aria-label="${escapeAttr(label)}" />
+        <button type="button" class="pe-ctl-value" data-action="pe-edit-value" data-target="step-field" data-index="${index}" data-key="${key}" data-min="${min}" data-max="${max}" data-step="${step}" data-value="${escapeAttr(formatted)}" data-title="${escapeAttr(label)}" data-unit="${escapeAttr(unit)}" aria-label="edit ${escapeAttr(label)}">${escapeHtml(formatted)}${unit ? `<em>${escapeHtml(unit)}</em>` : ''}</button>
         <button type="button" class="pe-ctl-step" data-action="pe-step-nudge" data-index="${index}" data-key="${key}" data-delta="${step}" aria-label="increase ${escapeAttr(label)}">${icon('plus')}</button>
       </div>
     </div>
@@ -952,10 +950,9 @@ function renderExitSlider(
     <div class="pe-ctl exit ${active ? 'active' : ''}">
       <button type="button" class="pe-ctl-face" data-action="pe-step-exit-preset" data-index="${index}" data-type="${type}" data-condition="${condition}" data-value="${escapeAttr(formatNumber(value || defaultExitValue(type, condition)))}" aria-label="${escapeAttr(label)}">${icon(iconName)}</button>
       <span class="pe-ctl-label">${escapeHtml(type)} <em>${escapeHtml(condition)}</em></span>
-      <strong class="pe-ctl-value">${active ? `${escapeHtml(formatNumber(value))}<em>${escapeHtml(unit)}</em>` : '<span class="pe-ctl-off">off</span>'}</strong>
-      <div class="pe-ctl-adjust">
+      <div class="pe-ctl-stepper">
         <button type="button" class="pe-ctl-step" data-action="pe-step-exit-nudge" data-index="${index}" data-type="${type}" data-condition="${condition}" data-delta="-0.1" aria-label="decrease ${escapeAttr(label)}">${icon('minus')}</button>
-        <input class="pe-ctl-range" type="range" min="0" max="${max}" step="0.1" data-action="pe-step-exit" data-index="${index}" data-key="value" data-type="${type}" data-condition="${condition}" value="${escapeAttr(formatNumber(value))}" aria-label="${escapeAttr(label)}" />
+        <button type="button" class="pe-ctl-value" data-action="pe-edit-value" data-target="exit" data-index="${index}" data-type="${type}" data-condition="${condition}" data-min="0" data-max="${max}" data-step="0.1" data-value="${escapeAttr(formatNumber(value))}" data-title="${escapeAttr(label)}" data-unit="${escapeAttr(unit)}" aria-label="edit ${escapeAttr(label)}">${active ? `${escapeHtml(formatNumber(value))}<em>${escapeHtml(unit)}</em>` : '<span class="pe-ctl-off">off</span>'}</button>
         <button type="button" class="pe-ctl-step" data-action="pe-step-exit-nudge" data-index="${index}" data-type="${type}" data-condition="${condition}" data-delta="0.1" aria-label="increase ${escapeAttr(label)}">${icon('plus')}</button>
       </div>
     </div>

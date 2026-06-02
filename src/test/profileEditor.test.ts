@@ -194,7 +194,8 @@ run('renders the basic pressure editor for normalized pressure profiles', () => 
   includes(html, '1 · Preinfuse');
   includes(html, 'Rise &amp; hold');
   includes(html, '4 · Finish');
-  includes(html, 'data-action="pe-simple-field"');
+  includes(html, 'data-action="pe-edit-value"');
+  includes(html, 'data-action="pe-simple-nudge"');
   includes(html, 'data-action="pe-set-simple-type"');
 });
 

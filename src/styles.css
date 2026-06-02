@@ -2440,11 +2440,27 @@ p {
   color: var(--soft);
 }
 
+/* Value is now a tap target that opens the numpad dialog */
 .pe-ctl-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  appearance: none;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   color: var(--ink);
+  font: inherit;
   font-size: 15px;
   font-weight: 800;
   line-height: 1;
+  padding: 7px 4px;
+  cursor: pointer;
+}
+
+.pe-ctl-value:hover,
+.pe-ctl-value:focus-visible {
+  background: color-mix(in srgb, var(--soft) 14%, transparent);
+  outline: none;
 }
 
 .pe-ctl-value em {
@@ -2460,10 +2476,10 @@ p {
   font-weight: 700;
 }
 
-.pe-ctl-adjust {
+.pe-ctl-stepper {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   width: 100%;
   margin-top: 1px;
 }
@@ -2472,8 +2488,8 @@ p {
   flex: 0 0 auto;
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   border: 1px solid var(--line);
   border-radius: 50%;
@@ -2483,16 +2499,8 @@ p {
 }
 
 .pe-ctl-step .icon {
-  width: 13px;
-  height: 13px;
-}
-
-.pe-ctl-range {
-  flex: 1 1 auto;
-  min-width: 0;
-  height: 4px;
-  accent-color: var(--teal);
-  cursor: pointer;
+  width: 14px;
+  height: 14px;
 }
 
 .pe-ctl.red .pe-ctl-range { accent-color: var(--red); }

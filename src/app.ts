@@ -142,6 +142,15 @@ const DEFAULT_HOT_WATER: HotWaterData = {
 };
 const DEFAULT_RINSE: RinseData = { targetTemperature: 90, duration: 10, flow: 6 };
 
+// Which editor field a tap-to-edit numpad dialog is bound to.
+interface ProfileEditTarget {
+  target: 'step-field' | 'simple-field' | 'exit';
+  key?: string;
+  index?: number;
+  type?: 'pressure' | 'flow';
+  condition?: 'over' | 'under';
+}
+
 interface AppState {
   beans: Bean[];
   batchesByBean: Record<string, BeanBatch[]>;
@@ -173,7 +182,7 @@ interface AppState {
   profileEditor: ProfileEditorState | null;
   editingProfileId: string | null;
   editDialog: InputDialogState | null;
-  profileDialogKey: SimpleProfileField | null;
+  profileEdit: ProfileEditTarget | null;
   detailShotId: string | null;
   machine: MachineSnapshot | null;
   scale: ScaleSnapshot | null;
@@ -223,7 +232,7 @@ export class BeanieApp {
     profileEditor: null,
     editingProfileId: null,
     editDialog: null,
-    profileDialogKey: null,
+    profileEdit: null,
     detailShotId: null,
     machine: null,
     scale: null,
@@ -762,8 +771,8 @@ export class BeanieApp {
       case 'dialog-commit':
         this.commitEditDialog();
         break;
-      case 'pe-simple-edit':
-        if (el.dataset.key) this.openProfileNumberDialog(el.dataset.key as SimpleProfileField, el);
+      case 'pe-edit-value':
+        this.openProfileValueDialog(el);
         break;
       case 'go-view':
         if (value) this.goView(value as View);
@@ -848,8 +857,8 @@ export class BeanieApp {
         if (id) this.toggleFavoriteProfile(id);
         break;
       case 'close-modal':
-        if (this.state.profileDialogKey) {
-          this.setState({ modal: null, editDialog: null, profileDialogKey: null });
+        if (this.state.profileEdit) {
+          this.setState({ modal: null, editDialog: null, profileEdit: null });
           break;
         }
         this.setState({
@@ -858,7 +867,7 @@ export class BeanieApp {
           profileEditor: null,
           editingProfileId: null,
           editDialog: null,
-          profileDialogKey: null
+          profileEdit: null
         });
         break;
       case 'new-profile':
@@ -866,7 +875,7 @@ export class BeanieApp {
           view: 'profile-editor',
           editingProfileId: null,
           profileEditor: createProfileEditorState(null),
-          profileDialogKey: null
+          profileEdit: null
         });
         break;
       case 'edit-profile':
@@ -1028,7 +1037,7 @@ export class BeanieApp {
       editingBeanId: null,
       profileEditor: null,
       editingProfileId: null,
-      profileDialogKey: null
+      profileEdit: null
     });
   }
 
@@ -1045,7 +1054,7 @@ export class BeanieApp {
       view: 'profile-editor',
       editingProfileId: id,
       profileEditor: createProfileEditorState(record.profile),
-      profileDialogKey: null
+      profileEdit: null
     });
   }
 
@@ -1518,7 +1527,7 @@ export class BeanieApp {
 
     this.setState({
       modal: 'edit-number',
-      profileDialogKey: null,
+      profileEdit: null,
       editDialog: createInputDialog({
         field,
         kind: inputDialogKindForField(field),
@@ -1533,7 +1542,10 @@ export class BeanieApp {
     });
   }
 
-  private openProfileNumberDialog(key: SimpleProfileField, el: HTMLElement): void {
+  // Tap a control's value → numpad dialog bound to that editor field.
+  private openProfileValueDialog(el: HTMLElement): void {
+    const target = el.dataset.target;
+    if (!target) return;
     const value = el.dataset.value ?? '0';
     const title = el.dataset.title ?? 'Value';
     const unit = el.dataset.unit ?? '';
@@ -1544,10 +1556,16 @@ export class BeanieApp {
 
     this.setState({
       modal: 'edit-number',
-      profileDialogKey: key,
+      profileEdit: {
+        target: target as ProfileEditTarget['target'],
+        key: el.dataset.key,
+        index: el.dataset.index != null ? Number(el.dataset.index) : undefined,
+        type: el.dataset.type === 'flow' ? 'flow' : el.dataset.type === 'pressure' ? 'pressure' : undefined,
+        condition: el.dataset.condition === 'under' ? 'under' : el.dataset.condition === 'over' ? 'over' : undefined
+      },
       editDialog: createInputDialog({
         field: 'temperature',
-        kind: key === 'temperature' ? 'temperature' : 'grind',
+        kind: 'grind',
         title,
         value,
         unit,
@@ -1556,8 +1574,9 @@ export class BeanieApp {
         step,
         bigStep: step < 1 ? 1 : Math.max(5, step * 5),
         digits,
-        helper: `Input value between ${min} and ${max}`,
-        maxLength: 6
+        helper: `Between ${min} and ${max}`,
+        maxLength: 6,
+        recentValues: []
       })
     });
   }
@@ -1595,7 +1614,7 @@ export class BeanieApp {
   private selectDialogChoice(choiceId: string | null): void {
     const dialog = this.state.editDialog;
     if (!dialog) return;
-    if (this.state.profileDialogKey) {
+    if (this.state.profileEdit) {
       this.setState({ editDialog: selectInputDialogChoice(dialog, choiceId) });
       return;
     }
@@ -1615,21 +1634,32 @@ export class BeanieApp {
     this.scheduleApply();
   }
 
+  private applyProfileEdit(pe: ProfileEditorState, edit: ProfileEditTarget, value: string): ProfileEditorState {
+    if (edit.target === 'step-field' && edit.key != null && edit.index != null) {
+      return setStepField(pe, edit.index, edit.key as StepFieldKey, value);
+    }
+    if (edit.target === 'simple-field' && edit.key != null) {
+      return setSimpleProfileField(pe, edit.key as SimpleProfileField, value);
+    }
+    if (edit.target === 'exit' && edit.index != null) {
+      return setStepExit(pe, edit.index, { type: edit.type, condition: edit.condition, value: Number(value) || 0 });
+    }
+    return pe;
+  }
+
   private commitEditDialog(): void {
     const dialog = this.state.editDialog;
     if (!dialog) return;
 
     const value = inputDialogCommitValue(dialog);
-    const profileKey = this.state.profileDialogKey;
-    if (profileKey) {
-      rememberInputDialogValue(dialog.kind, value);
+    const edit = this.state.profileEdit;
+    if (edit) {
+      const pe = this.state.profileEditor;
       this.setState({
-        profileEditor: this.state.profileEditor
-          ? setSimpleProfileField(this.state.profileEditor, profileKey, value)
-          : null,
+        profileEditor: pe ? this.applyProfileEdit(pe, edit, value) : null,
         modal: null,
         editDialog: null,
-        profileDialogKey: null,
+        profileEdit: null,
         status: 'Profile changed'
       });
       return;
