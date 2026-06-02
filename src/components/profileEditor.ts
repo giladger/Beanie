@@ -590,7 +590,6 @@ export function renderProfileEditor(state: ProfileEditorState): string {
   if (state.editorMode === 'basic') return renderSimpleProfileEditor(state);
   return `
     <div class="profile-editor">
-      ${renderEditorModeBar(state)}
       ${renderIdentityMeta(state)}
       ${renderAdvancedTabs(state)}
       ${state.advancedTab === 'limits'
@@ -606,7 +605,7 @@ export function renderProfileEditor(state: ProfileEditorState): string {
   `;
 }
 
-function renderEditorModeBar(state: ProfileEditorState): string {
+export function renderEditorModeBar(state: ProfileEditorState): string {
   const canBasic = canEditAsBasic(state.steps);
   const basicAttrs = canBasic
     ? ''
@@ -642,7 +641,6 @@ function renderSimpleProfileEditor(state: ProfileEditorState): string {
   const stopVolume = state.targetVolume ?? 0;
   return `
     <div class="profile-editor">
-      ${renderEditorModeBar(state)}
       ${renderIdentityMeta(state)}
       <div class="pe-kind-row">${renderSimpleTypeToggle(type)}</div>
       <div class="pe-simple-chart">${renderDe1ExplanationChart(state)}</div>

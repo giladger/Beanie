@@ -74,6 +74,7 @@ import {
   nudgeStepField,
   profileFromEditorState,
   removeStep,
+  renderEditorModeBar,
   renderProfileEditor,
   selectStep,
   setAdvancedTab,
@@ -2207,10 +2208,16 @@ export class BeanieApp {
   private renderProfileEditorPage(): string {
     const pe = this.state.profileEditor;
     if (!pe) return this.pageHeader('Profile');
-    // Basic and advanced editors share the same dark page chrome (Back / Save).
-    const actions = `<button type="button" class="command primary" data-action="save-profile">${icon('save')}<span>Save</span></button>`;
+    // One compact header row — Back · Basic/Advanced toggle · Save — no title
+    // (tablet real estate). Basic and advanced share the same dark chrome.
     return `
-      ${this.pageHeader(this.state.editingProfileId ? 'Edit Profile' : 'New Profile', 'profiles', actions)}
+      <header class="page-head pe-editor-head">
+        <button class="page-back" type="button" data-action="go-view" data-value="profiles" aria-label="Back">${icon('chevron-left')}<span>Back</span></button>
+        ${renderEditorModeBar(pe)}
+        <div class="page-head-actions">
+          <button type="button" class="command primary" data-action="save-profile">${icon('save')}<span>Save</span></button>
+        </div>
+      </header>
       <main class="page-body profile-editor-page">
         ${renderProfileEditor(pe)}
       </main>

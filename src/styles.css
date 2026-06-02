@@ -3631,9 +3631,16 @@ p {
 .pe-mode-bar,
 .pe-kind-bar {
   display: inline-flex;
+  flex: 0 0 auto;
+  width: auto;
   border-radius: 999px;
   overflow: hidden;
   border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
+}
+
+/* Compact editor header: Back · mode toggle · Save on one row, Save pinned right */
+.pe-editor-head .page-head-actions {
+  margin-left: auto;
 }
 
 .pe-mode-btn,

@@ -6,6 +6,7 @@ import {
   moveStep,
   profileFromEditorState,
   removeStep,
+  renderEditorModeBar,
   renderProfileEditor,
   setEditorMode,
   setSimpleProfileField,
@@ -227,11 +228,13 @@ run('switching simple type recompiles the knobs as flow', () => {
   equal(next.steps[2]!.pump, 'flow');
 });
 
-run('basic editor renders the mode and kind toggles', () => {
-  const html = renderProfileEditor(createProfileEditorState(pressureProfile()));
-  includes(html, 'data-action="pe-set-mode"');
-  includes(html, 'data-action="pe-set-simple-type"');
-  includes(html, '>Advanced<');
+run('mode bar carries the Basic/Advanced toggle; body carries the kind toggle', () => {
+  const state = createProfileEditorState(pressureProfile());
+  const bar = renderEditorModeBar(state);
+  includes(bar, 'data-action="pe-set-mode"');
+  includes(bar, '>Advanced<');
+  const body = renderProfileEditor(state);
+  includes(body, 'data-action="pe-set-simple-type"');
 });
 
 function sampleProfile(): Profile {
