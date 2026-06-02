@@ -244,8 +244,7 @@ run('renders de1-style pressure editor for normalized pressure profiles', () => 
 
   equal(state.type, 'pressure');
   equal(state.legacyProfileType, 'settings_2a');
-  includes(html, 'pe-de1-exact');
-  includes(html, 'pe-de1-device pressure');
+  includes(html, 'pe-de1 pressure');
   includes(html, 'PRESSURE');
   includes(html, '1: preinfuse');
   includes(html, '2: rise and hold');
