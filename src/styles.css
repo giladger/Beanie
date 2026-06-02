@@ -3652,8 +3652,8 @@ p {
   padding: 0 18px;
   border: 0;
   border-radius: 999px;
-  background: var(--accent, #3b82f6);
-  color: #fff;
+  background: var(--teal);
+  color: #071015;
   font: inherit;
   font-weight: 800;
   cursor: pointer;
@@ -3683,8 +3683,8 @@ p {
 
 .pe-mode-btn.active,
 .pe-kind-btn.active {
-  background: var(--accent, #3b82f6);
-  color: #fff;
+  background: var(--teal);
+  color: #071015;
 }
 
 .pe-mode-btn:disabled {
@@ -3719,7 +3719,7 @@ p {
 
 .pe-subtab.active {
   color: var(--ink, #fff);
-  border-bottom-color: var(--accent, #3b82f6);
+  border-bottom-color: var(--teal);
 }
 
 /* Limits panel */
