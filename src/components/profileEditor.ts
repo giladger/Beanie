@@ -598,8 +598,8 @@ function renderProfileChart(state: ProfileEditorState): string {
   const plot = { x: 18, y: 18, w: 324, h: 150 };
   const totalSeconds = Math.max(1, state.steps.reduce((sum, step) => sum + Math.max(0, step.seconds || 0), 0));
   const pressure = steppedSeries(state, (step) => step.pressure, totalSeconds, plot, 12);
-  const flow = steppedSeries(state, (step) => step.flow, totalSeconds, plot, 10);
-  const temp = steppedSeries(state, (step) => step.temperature, totalSeconds, plot, 105);
+  const flow = steppedSeries(state, (step) => step.flow, totalSeconds, plot, 12);
+  const temp = steppedSeries(state, (step) => step.temperature / 10, totalSeconds, plot, 12);
   const selected = selectedStepBand(state, totalSeconds, plot);
   return `
     <section class="pe-chart-panel" aria-label="Profile preview">

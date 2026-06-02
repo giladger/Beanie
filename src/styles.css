@@ -1175,6 +1175,55 @@ p {
   background: transparent;
 }
 
+.profile-preview-plot {
+  fill: rgba(0, 0, 0, 0.08);
+  stroke: var(--line);
+}
+
+.profile-preview-grid {
+  stroke: rgba(255, 255, 255, 0.1);
+  stroke-width: 1;
+}
+
+.profile-preview-axis,
+.profile-preview-label {
+  fill: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.profile-preview-label.pressure {
+  fill: var(--green);
+}
+
+.profile-preview-label.flow {
+  fill: var(--blue);
+}
+
+.profile-preview-label.temp {
+  fill: var(--red);
+}
+
+.profile-preview-pressure,
+.profile-preview-flow,
+.profile-preview-temp {
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.profile-preview-pressure {
+  stroke: var(--green);
+}
+
+.profile-preview-flow {
+  stroke: var(--blue);
+}
+
+.profile-preview-temp {
+  stroke: var(--red);
+}
+
 .profile-preview-facts {
   margin: 0;
   display: grid;
