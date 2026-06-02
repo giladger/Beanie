@@ -1113,16 +1113,32 @@ export class BeanieApp {
     return pe;
   }
 
+  private validateProfileEditor(pe: ProfileEditorState): string | null {
+    if (!pe.title.trim()) return 'Add a preset name before saving';
+    if (pe.steps.length === 0) return 'Profile needs at least one step';
+    return null;
+  }
+
   private async submitProfileEditor(): Promise<void> {
     const pe = this.state.profileEditor;
     if (!pe) return;
+    const problem = this.validateProfileEditor(pe);
+    if (problem) {
+      this.setState({ status: problem });
+      return;
+    }
     const profile = profileFromEditorState(pe);
     const editingId = this.state.editingProfileId;
-    this.setState({ busy: true, status: 'Saving profile' });
+    // reaprime protects bundled defaults — edits to them are saved as a child
+    // clone (createProfile with parentId), never an in-place update.
+    const editingRecord = editingId ? this.state.profiles.find((item) => item.id === editingId) : undefined;
+    const cloneOfDefault = Boolean(editingId) && editingRecord?.isDefault === true;
+    const update = Boolean(editingId) && !cloneOfDefault;
+    this.setState({ busy: true, status: cloneOfDefault ? 'Saving a copy' : 'Saving profile' });
 
     if (this.state.demo) {
-      const record: ProfileRecord = { id: editingId ?? `demo-profile-${Date.now()}`, profile };
-      const profiles = editingId
+      const record: ProfileRecord = { id: update ? editingId! : `demo-profile-${Date.now()}`, profile };
+      const profiles = update
         ? this.state.profiles.map((item) => (item.id === editingId ? record : item))
         : [record, ...this.state.profiles];
       this.setState({
@@ -1131,16 +1147,16 @@ export class BeanieApp {
         profileEditor: null,
         editingProfileId: null,
         busy: false,
-        status: 'Profile saved (demo)'
+        status: cloneOfDefault ? 'Saved a copy (demo)' : 'Profile saved (demo)'
       });
       this.pickProfile(record.id);
       return;
     }
 
     try {
-      const saved = editingId
-        ? await gateway.updateProfile(editingId, { profile })
-        : await gateway.createProfile({ profile });
+      const saved = update
+        ? await gateway.updateProfile(editingId!, { profile })
+        : await gateway.createProfile({ profile, parentId: editingId ?? undefined });
       void beanieCache.invalidateProfileMutation(saved.id).catch(() => {});
       let profiles = this.state.profiles;
       try {
@@ -1156,7 +1172,7 @@ export class BeanieApp {
         profileEditor: null,
         editingProfileId: null,
         busy: false,
-        status: 'Profile saved'
+        status: cloneOfDefault ? 'Saved a copy' : 'Profile saved'
       });
       this.pickProfile(saved.id);
     } catch (error) {
