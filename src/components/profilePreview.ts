@@ -158,15 +158,31 @@ function profileSteps(profile: Profile): unknown[] {
 
 function pressureTargetsFromSteps(steps: unknown[]): ProfileStepTarget[] {
   const targets: ProfileStepTarget[] = [];
-  let insertedPreinfusionStart = false;
-  for (const step of steps) {
+  let index = 0;
+  let preinfusionSeconds = 0;
+  let preinfusionPressure: number | null = null;
+  let preinfusionStartTemperature: number | null = null;
+  let preinfusionEndTemperature: number | null = null;
+  while (index < steps.length && stepString(steps[index], 'pump') === 'flow' && stepExitNumber(steps[index], 'pressure') != null) {
+    const step = steps[index];
+    preinfusionSeconds += Math.max(0.01, stepNumber(step, 'seconds') ?? 1);
+    preinfusionPressure = stepExitNumber(step, 'pressure');
+    preinfusionStartTemperature ??= stepNumber(step, 'temperature');
+    preinfusionEndTemperature = stepNumber(step, 'temperature');
+    index += 1;
+  }
+  if (preinfusionPressure != null) {
+    targets.push(target({ pressure: 0.1, temperature: preinfusionStartTemperature, seconds: 0.01 }));
+    targets.push(target({ pressure: preinfusionPressure, temperature: preinfusionEndTemperature, seconds: preinfusionSeconds }));
+  }
+
+  for (; index < steps.length; index += 1) {
+    const step = steps[index];
     const pressure = stepNumber(step, 'pressure') ?? stepExitNumber(step, 'pressure');
     if (pressure == null) continue;
-    const pump = stepString(step, 'pump');
     const temperature = stepNumber(step, 'temperature');
-    if (!insertedPreinfusionStart && pump === 'flow') {
+    if (targets.length === 0 && stepString(step, 'pump') === 'flow') {
       targets.push(target({ pressure: 0.1, temperature, seconds: 0.01 }));
-      insertedPreinfusionStart = true;
     }
     targets.push(target({
       pressure,

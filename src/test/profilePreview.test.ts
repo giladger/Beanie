@@ -107,7 +107,7 @@ run('infers normalized pressure presets from flow preinfusion followed by pressu
   const targets = profileStepTargets(profile);
   equal(targets[0]!.pressure, 0.1);
   equal(targets[1]!.pressure, 4);
-  equal(targets[3]!.pressure, 8.6);
+  equal(targets[2]!.pressure, 8.6);
 
   const svg = renderProfilePreview(profile);
   includes(svg, 'pressure (bar)');
