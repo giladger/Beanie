@@ -1514,7 +1514,7 @@ p {
 }
 
 .pe-de1-graph .pe-de1-stage-line {
-  stroke-width: 14;
+  stroke-width: 25px;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -1540,7 +1540,7 @@ p {
 .pe-de1-graph .pe-de1-node {
   fill: #888888;
   stroke: #ffffff;
-  stroke-width: 2;
+  stroke-width: 1;
 }
 
 .pe-de1-stage-title {

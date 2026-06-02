@@ -904,7 +904,7 @@ function renderProfileChart(state: ProfileEditorState): string {
 function renderDe1ExplanationChart(state: ProfileEditorState): string {
   const width = 1188;
   const height = 250;
-  const plot = { x: 58, y: 18, w: 1082, h: 190 };
+  const plot = { x: 32, y: 10, w: 1136, h: 228 };
   const maxValue = state.type === 'flow' ? 8 : 12;
   const totalSeconds = Math.max(1, state.steps.reduce((sum, step) => sum + Math.max(0, step.seconds || 0), 0));
   const pick = state.type === 'flow' ? (step: EditorStep) => step.flow : (step: EditorStep) => step.pressure;
