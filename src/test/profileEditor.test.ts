@@ -7,6 +7,7 @@ import {
   profileFromEditorState,
   removeStep,
   renderProfileEditor,
+  setSimpleProfileField,
   setStepField,
   setStepPump,
   PROFILE_BEVERAGE_TYPES
@@ -237,6 +238,28 @@ run('renderProfileEditor includes metadata inputs and an add-step action', () =>
   includes(html, PROFILE_BEVERAGE_TYPES[0]);
 });
 
+run('renders de1-style pressure editor for normalized pressure profiles', () => {
+  const state = createProfileEditorState(pressureProfile());
+  const html = renderProfileEditor(state);
+
+  equal(state.type, 'pressure');
+  equal(state.legacyProfileType, 'settings_2a');
+  includes(html, 'pe-de1-tabs');
+  includes(html, '1: preinfuse');
+  includes(html, '2: rise and hold');
+  includes(html, '4: stop at pour');
+  includes(html, 'data-action="pe-simple-field"');
+});
+
+run('updates pressure editor scalar fields without dropping profile steps', () => {
+  const state = createProfileEditorState(pressureProfile());
+  const next = setSimpleProfileField(state, 'pre_pressure', '4.5');
+
+  equal(next.steps.length, 3);
+  equal(next.steps[0].exit?.value, 4.5);
+  equal(next.dirty, true);
+});
+
 function sampleProfile(): Profile {
   return {
     title: 'Sample',
@@ -266,6 +289,44 @@ function sampleProfile(): Profile {
         pressure: 9,
         temperature: 93,
         seconds: 25
+      }
+    ]
+  } as Profile;
+}
+
+function pressureProfile(): Profile {
+  return {
+    title: 'Default',
+    author: 'Decent',
+    beverage_type: 'espresso',
+    tank_temperature: 90,
+    target_volume: 36,
+    steps: [
+      {
+        name: 'preinfuse',
+        pump: 'flow',
+        flow: 4,
+        pressure: 0,
+        temperature: 90,
+        seconds: 5,
+        exit: { type: 'pressure', condition: 'over', value: 4 }
+      },
+      {
+        name: 'rise and hold',
+        pump: 'pressure',
+        pressure: 9,
+        flow: 0,
+        temperature: 90,
+        seconds: 10,
+        limiter: { value: 8, range: 0.6 }
+      },
+      {
+        name: 'decline',
+        pump: 'pressure',
+        pressure: 6,
+        flow: 0,
+        temperature: 90,
+        seconds: 18
       }
     ]
   } as Profile;

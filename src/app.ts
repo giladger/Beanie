@@ -64,25 +64,27 @@ import {
   typeInputDialogKey
 } from './components/InputDialog';
 import { renderSettingsShell } from './components/SettingsShell';
-import { renderShotGraph } from './components/ShotGraph';
 import { renderProfilePreview } from './components/profilePreview';
 import {
   addStep,
   createProfileEditorState,
   duplicateStep,
   moveStep,
+  nudgeSimpleProfileField,
   nudgeStepField,
   profileFromEditorState,
   removeStep,
   renderProfileEditor,
   selectStep,
   setProfileMeta,
+  setSimpleProfileField,
   setStepExit,
   setStepField,
   setStepPump,
   setStepTransition,
   type ProfileEditorState,
   type ProfileMetaKey,
+  type SimpleProfileField,
   type StepFieldKey
 } from './components/profileEditor';
 import { LiveChart } from './components/LiveChart';
@@ -111,8 +113,7 @@ type View =
   | 'profile-editor'
   | 'bean-editor'
   | 'batch-editor'
-  | 'grinder-editor'
-  | 'shot-detail';
+  | 'grinder-editor';
 
 const initialSettingsPreferences = readSettingsPreferences();
 
@@ -768,8 +769,8 @@ export class BeanieApp {
       case 'go-view':
         if (value) this.goView(value as View);
         break;
-      case 'open-shot':
-        if (id) this.setState({ view: 'shot-detail', detailShotId: id });
+      case 'select-history-shot':
+        if (id) this.setState({ detailShotId: id });
         break;
       case 'load-shot':
         if (id) this.loadShotRecipe(id);
@@ -855,8 +856,7 @@ export class BeanieApp {
           editingBeanId: null,
           profileEditor: null,
           editingProfileId: null,
-          editDialog: null,
-          detailShotId: null
+          editDialog: null
         });
         break;
       case 'new-profile':
@@ -913,6 +913,13 @@ export class BeanieApp {
         if (index != null && el.dataset.key) {
           this.editorDispatch((pe) =>
             nudgeStepField(pe, Number(index), el.dataset.key as StepFieldKey, Number(el.dataset.delta ?? '0'))
+          );
+        }
+        break;
+      case 'pe-simple-nudge':
+        if (el.dataset.key) {
+          this.editorDispatch((pe) =>
+            nudgeSimpleProfileField(pe, el.dataset.key as SimpleProfileField, Number(el.dataset.delta ?? '0'))
           );
         }
         break;
@@ -1008,8 +1015,7 @@ export class BeanieApp {
       view,
       editingBeanId: null,
       profileEditor: null,
-      editingProfileId: null,
-      detailShotId: null
+      editingProfileId: null
     });
   }
 
@@ -1039,6 +1045,10 @@ export class BeanieApp {
     const index = Number(target.dataset.index ?? '-1');
     if (action === 'pe-meta' && key) {
       this.setState({ profileEditor: setProfileMeta(pe, key as ProfileMetaKey, target.value) });
+      return true;
+    }
+    if (action === 'pe-simple-field' && key) {
+      this.setState({ profileEditor: setSimpleProfileField(pe, key as SimpleProfileField, target.value) });
       return true;
     }
     if (action === 'pe-step-field' && key && index >= 0) {
@@ -1624,8 +1634,6 @@ export class BeanieApp {
         return this.renderBatchEditorPage();
       case 'grinder-editor':
         return this.renderGrinderEditorPage();
-      case 'shot-detail':
-        return this.renderShotDetailPage();
       default:
         return '';
     }
@@ -1646,7 +1654,7 @@ export class BeanieApp {
   private bindDetailChart(): void {
     const canvas = this.root.querySelector<HTMLCanvasElement>('#detail-canvas');
     if (!canvas) return;
-    const shot = this.state.shots.find((item) => item.id === this.state.detailShotId);
+    const shot = this.selectedHistoryShot();
     if (!shot) return;
     const chart = new LiveChart(canvas, { detailed: true });
     chart.setModel(chartModelFromShot(shot));
@@ -2028,13 +2036,88 @@ export class BeanieApp {
   }
 
   private renderHistory(): string {
+    const shots = this.state.shots;
+    const selected = this.selectedHistoryShot();
     return `
       <section class="history-panel panel">
-        <div class="shot-list">
-          ${this.state.shots.length === 0 ? '<p class="empty-history">No shots found for this bean.</p>' : this.state.shots.map((shot) => this.renderShotRow(shot)).join('')}
+        <div class="history-split">
+          <div class="shot-list">
+            ${
+              shots.length === 0
+                ? '<p class="empty-history">No shots found for this bean.</p>'
+                : shots.map((shot) => this.renderShotListItem(shot, shot.id === selected?.id)).join('')
+            }
+            ${this.renderLoadMore()}
+          </div>
+          <div class="shot-detail-pane">
+            ${selected ? this.renderShotDetailPane(selected) : '<p class="empty-history">Select a shot to inspect.</p>'}
+          </div>
         </div>
-        ${this.renderLoadMore()}
       </section>
+    `;
+  }
+
+  private selectedHistoryShot(): ShotRecord | null {
+    const shots = this.state.shots;
+    return shots.find((shot) => shot.id === this.state.detailShotId) ?? shots[0] ?? null;
+  }
+
+  private renderShotListItem(shot: ShotRecord, active: boolean): string {
+    const recipe = recipeFromShot(shot);
+    const date = new Date(shot.timestamp);
+    const time = Number.isNaN(date.valueOf())
+      ? shot.timestamp
+      : date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return `
+      <button class="shot-item ${active ? 'active' : ''}" data-action="select-history-shot" data-id="${escapeAttr(shot.id)}">
+        <span class="shot-item-main">
+          <span class="shot-item-time">${escapeHtml(time)}</span>
+          <span class="shot-item-recipe">${formatGrams(recipe.dose)} → ${formatGrams(recipe.yield)}</span>
+        </span>
+        ${enjoymentBadge(shot)}
+      </button>
+    `;
+  }
+
+  private renderShotDetailPane(shot: ShotRecord): string {
+    const recipe = recipeFromShot(shot);
+    const date = new Date(shot.timestamp);
+    const notes = shot.annotations?.espressoNotes ?? shot.shotNotes ?? '';
+    const title = Number.isNaN(date.valueOf())
+      ? shot.timestamp
+      : date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return `
+      <div class="pane-head">
+        <div>
+          <span class="eyebrow">Shot</span>
+          <h2>${escapeHtml(title)}</h2>
+        </div>
+        ${enjoymentBadge(shot, 'detail')}
+      </div>
+      <div class="detail-summary">
+        ${stat('Dose', formatGrams(recipe.dose))}
+        ${stat('Yield', formatGrams(recipe.yield))}
+        ${stat('Grind', recipe.grinderSetting ?? '--')}
+      </div>
+      <div class="detail-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</div>
+      <div class="detail-chart">
+        <canvas id="detail-canvas" class="live-canvas detail-canvas"></canvas>
+      </div>
+      <form class="detail-edit" data-form="edit-shot" data-id="${escapeAttr(shot.id)}">
+        <label class="detail-field">
+          <span>Notes</span>
+          <textarea name="notes" rows="2" placeholder="Tasting notes">${escapeHtml(notes)}</textarea>
+        </label>
+        <label class="detail-field detail-enjoyment-field">
+          <span>Enjoyment</span>
+          <input type="number" name="enjoyment" min="0" max="100" step="1" value="${escapeAttr(shot.annotations?.enjoyment != null ? String(shot.annotations.enjoyment) : '')}" />
+        </label>
+        <div class="detail-actions">
+          <button type="button" class="command danger" data-action="delete-shot" data-id="${escapeAttr(shot.id)}">${icon('trash-2')}<span>Delete</span></button>
+          <button type="button" class="command" data-action="load-shot" data-id="${escapeAttr(shot.id)}">${icon('sliders-horizontal')}<span>Load recipe</span></button>
+          <button type="submit" class="command primary">${icon('save')}<span>Save</span></button>
+        </div>
+      </form>
     `;
   }
 
@@ -2048,28 +2131,6 @@ export class BeanieApp {
     `;
   }
 
-  private renderShotRow(shot: ShotRecord): string {
-    const recipe = recipeFromShot(shot);
-    const date = new Date(shot.timestamp);
-    const notes = shot.annotations?.espressoNotes ?? shot.shotNotes ?? '';
-    const detail = [recipe.profileTitle ?? 'No profile', notes].filter(Boolean).join(' · ');
-    return `
-      <article class="shot-card">
-        <button class="shot-load" data-action="open-shot" data-id="${escapeAttr(shot.id)}">
-          <small>${Number.isNaN(date.valueOf()) ? escapeHtml(shot.timestamp) : escapeHtml(date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</small>
-          <div class="shot-title-line">
-            <b>${formatGrams(recipe.dose)} -> ${formatGrams(recipe.yield)}</b>
-            ${enjoymentBadge(shot)}
-          </div>
-          <span>${escapeHtml(detail)}</span>
-        </button>
-        <div class="shot-dial">
-          ${stat('Grind', recipe.grinderSetting ?? '--')}
-        </div>
-        ${renderShotGraph(shot)}
-      </article>
-    `;
-  }
 
   private renderModal(): string {
     if (this.state.modal === 'edit-number') return this.renderEditDialog();
@@ -2215,48 +2276,6 @@ export class BeanieApp {
         </select>
         <button class="icon-button" data-action="open-add-batch" aria-label="Add batch" title="Add batch">${icon('plus')}</button>
       </div>
-    `;
-  }
-
-  private renderShotDetailPage(): string {
-    const shot = this.state.shots.find((item) => item.id === this.state.detailShotId);
-    if (!shot) return this.pageHeader('Shot');
-
-    const recipe = recipeFromShot(shot);
-    const date = new Date(shot.timestamp);
-    const notes = shot.annotations?.espressoNotes ?? shot.shotNotes ?? '';
-    const title = Number.isNaN(date.valueOf())
-      ? shot.timestamp
-      : date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-
-    return `
-      ${this.pageHeader(title, 'workbench', enjoymentBadge(shot, 'detail'))}
-      <main class="page-body shot-detail-page">
-        <div class="detail-summary">
-          ${stat('Dose', formatGrams(recipe.dose))}
-          ${stat('Yield', formatGrams(recipe.yield))}
-          ${stat('Grind', recipe.grinderSetting ?? '--')}
-        </div>
-        <div class="detail-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</div>
-        <div class="detail-chart">
-          <canvas id="detail-canvas" class="live-canvas detail-canvas"></canvas>
-        </div>
-        <form class="detail-edit" data-form="edit-shot" data-id="${escapeAttr(shot.id)}">
-          <label class="detail-field">
-            <span>Notes</span>
-            <textarea name="notes" rows="2" placeholder="Tasting notes">${escapeHtml(notes)}</textarea>
-          </label>
-          <label class="detail-field detail-enjoyment-field">
-            <span>Enjoyment</span>
-            <input type="number" name="enjoyment" min="0" max="100" step="1" value="${escapeAttr(shot.annotations?.enjoyment != null ? String(shot.annotations.enjoyment) : '')}" />
-          </label>
-          <div class="detail-actions">
-            <button type="button" class="command danger" data-action="delete-shot" data-id="${escapeAttr(shot.id)}">${icon('trash-2')}<span>Delete</span></button>
-            <button type="button" class="command" data-action="load-shot" data-id="${escapeAttr(shot.id)}">${icon('sliders-horizontal')}<span>Load recipe</span></button>
-            <button type="submit" class="command primary">${icon('save')}<span>Save</span></button>
-          </div>
-        </form>
-      </main>
     `;
   }
 
