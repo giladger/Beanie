@@ -172,11 +172,14 @@ run('setStepPump switches the controlled target', () => {
   equal(state.steps[0].pump, 'pressure');
 });
 
-run('addStep appends and selects the new step', () => {
-  const state = createProfileEditorState(null);
+run('addStep inserts a copy after the selected step', () => {
+  const state = createProfileEditorState(sampleProfile());
   const next = addStep(state);
-  equal(next.steps.length, 2);
+
+  equal(next.steps.length, 3);
   equal(next.selectedStep, 1);
+  equal(next.steps[1].name, 'Preinfusion copy');
+  equal(next.steps[2].name, 'Pour');
 });
 
 run('duplicateStep copies a step and selects the copy', () => {

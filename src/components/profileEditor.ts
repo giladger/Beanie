@@ -310,8 +310,19 @@ export function duplicateStep(state: ProfileEditorState, index: number): Profile
 }
 
 export function addStep(state: ProfileEditorState): ProfileEditorState {
-  const steps = [...state.steps, defaultStep()];
-  return { ...state, steps, selectedStep: steps.length - 1, dirty: true };
+  const selected = state.steps[state.selectedStep];
+  const step = selected
+    ? {
+        ...selected,
+        name: `${selected.name || `Step ${state.selectedStep + 1}`} copy`,
+        exit: selected.exit ? { ...selected.exit } : null,
+        limiter: selected.limiter ? { ...selected.limiter } : null,
+        extra: { ...selected.extra }
+      }
+    : defaultStep();
+  const insertAt = clamp(state.selectedStep + 1, 0, state.steps.length);
+  const steps = [...state.steps.slice(0, insertAt), step, ...state.steps.slice(insertAt)];
+  return { ...state, steps, selectedStep: insertAt, dirty: true };
 }
 
 export function removeStep(state: ProfileEditorState, index: number): ProfileEditorState {
@@ -360,14 +371,14 @@ export function profileFromEditorState(state: ProfileEditorState): Profile {
 
 export function renderProfileEditor(state: ProfileEditorState): string {
   return `
-    <div class="profile-editor de1-profile-editor">
+    <div class="profile-editor">
       ${renderMeta(state)}
       <div class="pe-main-grid">
-        ${renderStepList(state)}
-        <section class="pe-workspace">
+        <section class="pe-left-rail">
+          ${renderStepList(state)}
           ${renderProfileChart(state)}
-          ${renderStepDetail(state)}
         </section>
+        ${renderStepDetail(state)}
       </div>
     </div>
   `;
@@ -425,11 +436,18 @@ function renderMeta(state: ProfileEditorState): string {
 }
 
 function renderStepList(state: ProfileEditorState): string {
+  const index = state.selectedStep;
   return `
     <section class="pe-steps">
       <div class="pe-steps-head">
         <h2>Steps</h2>
-        <button type="button" data-action="pe-add-step" title="Add step">${icon('plus')}</button>
+        <div class="pe-step-toolbar">
+          <button type="button" data-action="pe-add-step" title="Add step">${icon('plus')}</button>
+          <button type="button" data-action="pe-duplicate-step" data-index="${index}" aria-label="Duplicate selected step" title="Duplicate selected">${icon('copy')}</button>
+          <button type="button" data-action="pe-move-step" data-index="${index}" data-value="-1" aria-label="Move selected step up" title="Move up">${icon('arrow-up')}</button>
+          <button type="button" data-action="pe-move-step" data-index="${index}" data-value="1" aria-label="Move selected step down" title="Move down">${icon('arrow-down')}</button>
+          <button type="button" data-action="pe-remove-step" data-index="${index}" aria-label="Remove selected step" title="Remove selected">${icon('x')}</button>
+        </div>
       </div>
       <ol class="pe-step-list">
         ${state.steps.map((step, index) => renderStepRow(state, step, index)).join('')}
@@ -452,12 +470,6 @@ function renderStepRow(state: ProfileEditorState, step: EditorStep, index: numbe
           <small>${escapeHtml(step.pump)} ${escapeHtml(target)} · ${escapeHtml(formatNumber(step.temperature))} °C · ${escapeHtml(limiter)}</small>
         </span>
       </button>
-      <span class="pe-step-actions">
-        <button type="button" data-action="pe-duplicate-step" data-index="${index}" aria-label="Duplicate step" title="Duplicate">${icon('copy')}</button>
-        <button type="button" data-action="pe-move-step" data-index="${index}" data-value="-1" aria-label="Move up" title="Move up">${icon('arrow-up')}</button>
-        <button type="button" data-action="pe-move-step" data-index="${index}" data-value="1" aria-label="Move down" title="Move down">${icon('arrow-down')}</button>
-        <button type="button" data-action="pe-remove-step" data-index="${index}" aria-label="Remove step" title="Remove">${icon('x')}</button>
-      </span>
     </li>
   `;
 }
@@ -538,10 +550,8 @@ function renderValueControl(
   return `
     <div class="pe-value-control">
       <span>${escapeHtml(label)}</span>
-      <button type="button" data-action="pe-step-nudge" data-index="${index}" data-key="${key}" data-delta="${-delta}" aria-label="Decrease ${escapeAttr(label)}">${icon('minus')}</button>
       <input type="number" step="${escapeAttr(String(delta))}" data-action="pe-step-field" data-index="${index}" data-key="${key}" value="${escapeAttr(formatNumber(value))}" aria-label="${escapeAttr(label)}" />
       <em>${escapeHtml(unit)}</em>
-      <button type="button" data-action="pe-step-nudge" data-index="${index}" data-key="${key}" data-delta="${delta}" aria-label="Increase ${escapeAttr(label)}">${icon('plus')}</button>
     </div>
   `;
 }
@@ -583,9 +593,9 @@ function renderTransitionControl(index: number, transition: StepTransition): str
 }
 
 function renderProfileChart(state: ProfileEditorState): string {
-  const width = 900;
+  const width = 360;
   const height = 210;
-  const plot = { x: 42, y: 16, w: 820, h: 156 };
+  const plot = { x: 18, y: 18, w: 324, h: 150 };
   const totalSeconds = Math.max(1, state.steps.reduce((sum, step) => sum + Math.max(0, step.seconds || 0), 0));
   const pressure = steppedSeries(state, (step) => step.pressure, totalSeconds, plot, 12);
   const flow = steppedSeries(state, (step) => step.flow, totalSeconds, plot, 10);
@@ -603,8 +613,8 @@ function renderProfileChart(state: ProfileEditorState): string {
         <path class="pe-chart-flow" d="${flow}" fill="none"></path>
         <path class="pe-chart-temp" d="${temp}" fill="none"></path>
         <text x="${plot.x}" y="${height - 16}" class="pe-chart-label">pressure</text>
-        <text x="${plot.x + 108}" y="${height - 16}" class="pe-chart-label flow">flow</text>
-        <text x="${plot.x + 178}" y="${height - 16}" class="pe-chart-label temp">temperature</text>
+        <text x="${plot.x + 74}" y="${height - 16}" class="pe-chart-label flow">flow</text>
+        <text x="${plot.x + 126}" y="${height - 16}" class="pe-chart-label temp">temperature</text>
       </svg>
     </section>
   `;
