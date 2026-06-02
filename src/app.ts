@@ -1751,10 +1751,6 @@ export class BeanieApp {
           <p>${escapeHtml(bean?.notes ?? bean?.processing ?? 'Select a bean to load the last dial-in.')}</p>
         </div>
         <div class="hero-side">
-          <label class="switch">
-            <input type="checkbox" data-field="autoLoad" ${this.state.autoLoad ? 'checked' : ''} />
-            <span>Auto-load</span>
-          </label>
           ${this.renderApplyStatus()}
           <span class="chip">${escapeHtml(draft.sourceLabel ?? 'No source')}</span>
           ${this.renderBatchControl(bean)}
@@ -1999,10 +1995,6 @@ export class BeanieApp {
     return `
       <section class="history-panel panel">
         <div class="history-head">
-          <div>
-            <span class="eyebrow">History</span>
-            <h2>Shots</h2>
-          </div>
           <span class="chip">${this.historyCountLabel()}</span>
         </div>
         <div class="shot-list">
