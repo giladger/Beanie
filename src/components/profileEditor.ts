@@ -66,6 +66,7 @@ export type ProfileMetaKey =
 
 export type StepFieldKey =
   | 'name'
+  | 'popup'
   | 'temperature'
   | 'sensor'
   | 'pressure'
@@ -210,6 +211,8 @@ export function setStepField(
     switch (key) {
       case 'name':
         return { ...step, name: value };
+      case 'popup':
+        return { ...step, extra: { ...step.extra, popup: value } };
       case 'sensor':
         return { ...step, sensor: value === 'water' ? 'water' : 'coffee' };
       case 'temperature':
@@ -481,113 +484,132 @@ function renderStepDetail(state: ProfileEditorState): string {
   const isFlow = step.pump === 'flow';
   return `
     <section class="pe-step-detail" data-index="${index}">
-      <div class="pe-step-detail-head">
-        <label class="pe-field">
-          <span>Step ${index + 1}</span>
-          <input type="text" data-action="pe-step-field" data-index="${index}" data-key="name" value="${escapeAttr(step.name)}" />
-        </label>
-        <span class="pe-toggle" role="group" aria-label="Pump target">
-          <button type="button" class="${!isFlow ? 'active' : ''}" data-action="pe-step-pump" data-index="${index}" data-value="pressure">Pressure</button>
-          <button type="button" class="${isFlow ? 'active' : ''}" data-action="pe-step-pump" data-index="${index}" data-value="flow">Flow</button>
-        </span>
+      <div class="pe-step-editor-board">
+        <div class="pe-step-identity">
+          <label class="pe-field">
+            <span>Title</span>
+            <input type="text" data-action="pe-step-field" data-index="${index}" data-key="name" value="${escapeAttr(step.name)}" />
+          </label>
+          <label class="pe-field">
+            <span>Message</span>
+            <input type="text" data-action="pe-step-field" data-index="${index}" data-key="popup" value="${escapeAttr(stringValue(step.extra.popup) ?? '')}" />
+          </label>
+        </div>
+        <div class="pe-advanced-controls top">
+          ${renderVerticalControl(index, 'temperature', '1: Temperature', step.temperature, '°C', 1, 105, 0.5, 'thermometer', 'red')}
+          ${renderToggleTile(index, 'sensor', 'sensor', step.sensor, step.sensor === 'water' ? 'droplets' : 'coffee')}
+          ${renderGoalControl(index, 'flow', isFlow ? 'flow' : 'flow limit', isFlow ? step.flow : (step.limiter?.value ?? 0), 'ml/s', 0, 12, isFlow)}
+          ${renderGoalControl(index, 'pressure', isFlow ? 'pressure limit' : 'pressure', isFlow ? (step.limiter?.value ?? 0) : step.pressure, 'bar', 0, 12, !isFlow)}
+          ${renderToggleTile(index, 'transition', 'transition', step.transition, step.transition === 'smooth' ? 'waves' : 'move-right')}
+        </div>
+        <div class="pe-advanced-controls bottom">
+          ${renderVerticalControl(index, 'seconds', 'time', step.seconds, 's', 0, 127, 1, 'timer', 'stage')}
+          ${renderVerticalControl(index, 'volume', 'volume', step.volume, 'ml', 0, 1023, 1, 'beaker', 'blue')}
+          ${renderVerticalControl(index, 'weight', 'weight', step.weight, 'g', 0, 1000, 0.1, 'scale', 'amber')}
+          ${renderExitSlider(step, index, 'pressure', 'over')}
+          ${renderExitSlider(step, index, 'pressure', 'under')}
+          ${renderExitSlider(step, index, 'flow', 'over')}
+          ${renderExitSlider(step, index, 'flow', 'under')}
+        </div>
       </div>
-      <div class="pe-control-grid">
-        ${renderValueControl(index, 'temperature', 'Temp', step.temperature, '°C', 0.5)}
-        ${renderSensorControl(index, step.sensor)}
-        ${renderPumpValueControl(index, 'flow', isFlow ? 'Flow goal' : 'Flow limit', isFlow ? step.flow : (step.limiter?.value ?? 0), 'ml/s', 0.1)}
-        ${renderPumpValueControl(index, 'pressure', isFlow ? 'Pressure limit' : 'Pressure goal', isFlow ? (step.limiter?.value ?? 0) : step.pressure, 'bar', 0.1)}
-        ${renderTransitionControl(index, step.transition)}
-        ${renderValueControl(index, 'limiter_range', 'Limit range', step.limiter?.range ?? 0.6, '', 0.1)}
-      </div>
-      <div class="pe-stop-grid">
-        ${renderValueControl(index, 'seconds', 'Max time', step.seconds, 's', 1)}
-        ${renderValueControl(index, 'volume', 'Max volume', step.volume, 'ml', 1)}
-        ${renderValueControl(index, 'weight', 'Max weight', step.weight, 'g', 0.1)}
-      </div>
-      ${renderExit(step, index)}
     </section>
   `;
 }
 
-function renderExit(step: EditorStep, index: number): string {
-  const enabled = step.exit !== null;
-  const exit = step.exit ?? { type: 'pressure' as StepExitType, condition: 'over' as StepExitCondition, value: 0 };
-  const exits: Array<{ type: StepExitType; condition: StepExitCondition; label: string; unit: string }> = [
-    { type: 'pressure', condition: 'over', label: 'Pressure over', unit: 'bar' },
-    { type: 'pressure', condition: 'under', label: 'Pressure under', unit: 'bar' },
-    { type: 'flow', condition: 'over', label: 'Flow over', unit: 'ml/s' },
-    { type: 'flow', condition: 'under', label: 'Flow under', unit: 'ml/s' }
-  ];
-  return `
-    <section class="pe-exit-grid" aria-label="Exit condition">
-      ${exits.map((option) => {
-        const active = enabled && exit.type === option.type && exit.condition === option.condition;
-        const value = active ? exit.value : 0;
-        return `
-          <button type="button" class="pe-exit-card ${active ? 'active' : ''}" data-action="pe-step-exit-preset" data-index="${index}" data-type="${option.type}" data-condition="${option.condition}" data-value="${escapeAttr(formatNumber(value || defaultExitValue(option.type, option.condition)))}">
-            <span>${escapeHtml(option.label)}</span>
-            <strong>${active ? `${escapeHtml(formatNumber(value))} ${escapeHtml(option.unit)}` : '-'}</strong>
-          </button>
-        `;
-      }).join('')}
-      <label class="pe-exit-value">
-        <span>Exit value</span>
-        <input type="number" step="0.1" data-action="pe-step-exit" data-index="${index}" data-key="value" value="${escapeAttr(enabled ? formatNumber(exit.value) : '')}" placeholder="off" />
-      </label>
-      <button type="button" class="pe-exit-clear" data-action="pe-step-exit-clear" data-index="${index}">Off</button>
-    </section>
-  `;
-}
-
-function renderValueControl(
-  index: number,
-  key: StepFieldKey,
-  label: string,
-  value: number,
-  unit: string,
-  delta: number
-): string {
-  return `
-    <div class="pe-value-control">
-      <span>${escapeHtml(label)}</span>
-      <input type="number" step="${escapeAttr(String(delta))}" data-action="pe-step-field" data-index="${index}" data-key="${key}" value="${escapeAttr(formatNumber(value))}" aria-label="${escapeAttr(label)}" />
-      <em>${escapeHtml(unit)}</em>
-    </div>
-  `;
-}
-
-function renderPumpValueControl(
+function renderGoalControl(
   index: number,
   pumpKey: StepPump,
   label: string,
   value: number,
   unit: string,
-  delta: number
+  min: number,
+  max: number,
+  active: boolean
 ): string {
-  const field: StepFieldKey = label.includes('limit') ? 'limiter_value' : pumpKey;
-  return renderValueControl(index, field, label, value, unit, delta);
+  const field: StepFieldKey = active ? pumpKey : 'limiter_value';
+  return renderVerticalControl(index, field, label, value, unit, min, max, 0.1, pumpKey === 'flow' ? 'droplets' : 'gauge', pumpKey === 'flow' ? 'blue' : 'purple', {
+    action: 'pe-step-pump',
+    value: pumpKey,
+    active
+  });
 }
 
-function renderSensorControl(index: number, sensor: StepSensor): string {
+function renderVerticalControl(
+  index: number,
+  key: StepFieldKey,
+  label: string,
+  value: number,
+  unit: string,
+  min: number,
+  max: number,
+  step: number,
+  iconName: string,
+  tone: string,
+  centerAction?: { action: string; value: string; active?: boolean }
+): string {
+  const formatted = formatNumber(value);
+  const centerAttrs = centerAction
+    ? `data-action="${centerAction.action}" data-index="${index}" data-value="${escapeAttr(centerAction.value)}"`
+    : '';
   return `
-    <div class="pe-choice-control">
-      <span>Sensor</span>
-      <select data-action="pe-step-field" data-index="${index}" data-key="sensor">
-        <option value="coffee" ${sensor === 'coffee' ? 'selected' : ''}>Coffee</option>
-        <option value="water" ${sensor === 'water' ? 'selected' : ''}>Water</option>
-      </select>
+    <div class="pe-vertical-control ${escapeAttr(tone)} ${centerAction?.active ? 'active' : ''}">
+      <button type="button" class="pe-v-plus" data-action="pe-step-nudge" data-index="${index}" data-key="${key}" data-delta="${step}">${icon('plus')}</button>
+      <div class="pe-v-body">
+        <input class="pe-v-slider" type="range" min="${min}" max="${max}" step="${step}" data-action="pe-step-field" data-index="${index}" data-key="${key}" value="${escapeAttr(formatted)}" aria-label="${escapeAttr(label)}" />
+        <button type="button" class="pe-v-center" ${centerAttrs} aria-label="${escapeAttr(label)}">
+          ${icon(iconName)}
+        </button>
+      </div>
+      <button type="button" class="pe-v-minus" data-action="pe-step-nudge" data-index="${index}" data-key="${key}" data-delta="${-step}">${icon('minus')}</button>
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(formatted)}${unit ? ` ${escapeHtml(unit)}` : ''}</strong>
     </div>
   `;
 }
 
-function renderTransitionControl(index: number, transition: StepTransition): string {
+function renderToggleTile(
+  index: number,
+  type: 'sensor' | 'transition',
+  label: string,
+  value: string,
+  iconName: string
+): string {
+  const action = type === 'sensor' ? 'pe-step-sensor-toggle' : 'pe-step-transition-toggle';
   return `
-    <div class="pe-choice-control">
-      <span>Transition</span>
-      <span class="pe-toggle" role="group" aria-label="Transition">
-        <button type="button" class="${transition === 'fast' ? 'active' : ''}" data-action="pe-step-transition" data-index="${index}" data-value="fast">Fast</button>
-        <button type="button" class="${transition === 'smooth' ? 'active' : ''}" data-action="pe-step-transition" data-index="${index}" data-value="smooth">Smooth</button>
-      </span>
+    <div class="pe-toggle-tile">
+      <button type="button" class="pe-v-center" data-action="${action}" data-index="${index}" aria-label="${escapeAttr(label)}">
+        ${icon(iconName)}
+      </button>
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </div>
+  `;
+}
+
+function renderExitSlider(
+  step: EditorStep,
+  index: number,
+  type: StepExitType,
+  condition: StepExitCondition
+): string {
+  const active = step.exit?.type === type && step.exit.condition === condition;
+  const value = active ? step.exit!.value : 0;
+  const max = type === 'pressure' ? 12 : 8;
+  const unit = type === 'pressure' ? 'bar' : 'ml/s';
+  const label = `${type} is ${condition}`;
+  return `
+    <div class="pe-vertical-control exit ${active ? 'active' : ''}">
+      <button type="button" class="pe-v-plus" data-action="pe-step-exit-nudge" data-index="${index}" data-type="${type}" data-condition="${condition}" data-delta="0.1">${icon('plus')}</button>
+      <div class="pe-v-body">
+        <input class="pe-v-slider" type="range" min="0" max="${max}" step="0.1" data-action="pe-step-exit" data-index="${index}" data-key="value" data-type="${type}" data-condition="${condition}" value="${escapeAttr(formatNumber(value))}" aria-label="${escapeAttr(label)}" />
+        <button type="button" class="pe-v-center" data-action="pe-step-exit-preset" data-index="${index}" data-type="${type}" data-condition="${condition}" data-value="${escapeAttr(formatNumber(value || defaultExitValue(type, condition)))}" aria-label="${escapeAttr(label)}">
+          ${icon(type === 'pressure' ? (condition === 'over' ? 'arrow-up-to-line' : 'arrow-down-to-line') : 'droplets')}
+        </button>
+      </div>
+      <button type="button" class="pe-v-minus" data-action="pe-step-exit-nudge" data-index="${index}" data-type="${type}" data-condition="${condition}" data-delta="-0.1">${icon('minus')}</button>
+      <span>${escapeHtml(type)}</span>
+      <small>is ${escapeHtml(condition)}</small>
+      <strong>${active ? `${escapeHtml(formatNumber(value))} ${unit}` : '-'}</strong>
     </div>
   `;
 }

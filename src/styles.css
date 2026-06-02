@@ -1572,17 +1572,161 @@ p {
 
 .pe-step-detail {
   display: grid;
-  gap: 9px;
-  padding: 10px;
+  gap: 8px;
+  padding: 8px;
   align-content: start;
   overflow-y: auto;
 }
 
-.pe-step-detail-head {
+.pe-step-editor-board {
+  min-height: 560px;
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto;
+  grid-template-rows: auto minmax(220px, 1fr) minmax(220px, 1fr);
   gap: 8px;
-  align-items: end;
+}
+
+.pe-step-identity {
+  display: grid;
+  grid-template-columns: 1fr 0.72fr;
+  gap: 8px;
+}
+
+.pe-advanced-controls {
+  display: grid;
+  gap: 8px;
+}
+
+.pe-advanced-controls.top {
+  grid-template-columns: 1fr 1.2fr 1fr 1fr 1fr;
+}
+
+.pe-advanced-controls.bottom {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.pe-vertical-control,
+.pe-toggle-tile {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: 28px minmax(130px, 1fr) 28px auto auto;
+  gap: 4px;
+  justify-items: center;
+  align-items: center;
+  padding: 8px 6px;
+  border-radius: 6px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent),
+    var(--panel-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.pe-toggle-tile {
+  grid-template-rows: minmax(130px, 1fr) auto auto;
+}
+
+.pe-v-plus,
+.pe-v-minus {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--soft) 14%, var(--panel-2));
+  color: var(--soft);
+  padding: 0;
+  cursor: pointer;
+}
+
+.pe-v-body {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 120px;
+  display: grid;
+  place-items: center;
+}
+
+.pe-v-slider {
+  position: absolute;
+  inset: 12px auto 12px 50%;
+  width: 116px;
+  height: 18px;
+  transform: translateX(-50%) rotate(-90deg);
+  transform-origin: center;
+  accent-color: var(--teal);
+}
+
+.pe-v-center {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel) 78%, transparent);
+  color: var(--soft);
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
+}
+
+.pe-v-center .icon {
+  width: 34px;
+  height: 34px;
+  stroke-width: 1.7;
+}
+
+.pe-vertical-control.active .pe-v-center {
+  border-color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 20%, var(--panel));
+  color: var(--ink);
+}
+
+.pe-vertical-control > span,
+.pe-toggle-tile > span,
+.pe-vertical-control > small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 950;
+  line-height: 1.1;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.pe-vertical-control > strong,
+.pe-toggle-tile > strong {
+  color: #4e85f4;
+  font-size: 13px;
+  font-weight: 950;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.pe-vertical-control.red .pe-v-slider {
+  accent-color: var(--red);
+}
+
+.pe-vertical-control.blue .pe-v-slider {
+  accent-color: var(--blue);
+}
+
+.pe-vertical-control.purple .pe-v-slider {
+  accent-color: color-mix(in srgb, var(--blue) 45%, var(--red));
+}
+
+.pe-vertical-control.amber .pe-v-slider,
+.pe-vertical-control.stage .pe-v-slider {
+  accent-color: var(--amber);
+}
+
+.pe-vertical-control.exit.active {
+  background: color-mix(in srgb, var(--teal) 13%, var(--panel-2));
+}
+
+.pe-vertical-control.exit:not(.active) .pe-v-slider {
+  opacity: 0.35;
 }
 
 .pe-control-grid {
@@ -2642,7 +2786,6 @@ p {
   .pe-main-grid,
   .profile-selector-shell,
   .profile-preview-facts,
-  .pe-step-detail-head,
   .pe-control-grid,
   .pe-stop-grid,
   .pe-exit-grid {
@@ -2655,6 +2798,24 @@ p {
 
   .pe-left-rail {
     grid-template-rows: minmax(0, 1fr) 180px;
+  }
+
+  .pe-step-detail {
+    overflow-x: auto;
+  }
+
+  .pe-step-identity {
+    grid-template-columns: 1fr;
+  }
+
+  .pe-advanced-controls.top {
+    min-width: 560px;
+    grid-template-columns: repeat(5, minmax(96px, 1fr));
+  }
+
+  .pe-advanced-controls.bottom {
+    min-width: 720px;
+    grid-template-columns: repeat(7, minmax(92px, 1fr));
   }
 
   .profile-preview-large .profile-preview {

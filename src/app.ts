@@ -893,11 +893,44 @@ export class BeanieApp {
       case 'pe-step-transition':
         if (index != null) this.editorDispatch((pe) => setStepTransition(pe, Number(index), value === 'smooth' ? 'smooth' : 'fast'));
         break;
+      case 'pe-step-sensor-toggle':
+        if (index != null) {
+          this.editorDispatch((pe) => {
+            const step = pe.steps[Number(index)];
+            return setStepField(pe, Number(index), 'sensor', step?.sensor === 'water' ? 'coffee' : 'water');
+          });
+        }
+        break;
+      case 'pe-step-transition-toggle':
+        if (index != null) {
+          this.editorDispatch((pe) => {
+            const step = pe.steps[Number(index)];
+            return setStepTransition(pe, Number(index), step?.transition === 'smooth' ? 'fast' : 'smooth');
+          });
+        }
+        break;
       case 'pe-step-nudge':
         if (index != null && el.dataset.key) {
           this.editorDispatch((pe) =>
             nudgeStepField(pe, Number(index), el.dataset.key as StepFieldKey, Number(el.dataset.delta ?? '0'))
           );
+        }
+        break;
+      case 'pe-step-exit-nudge':
+        if (index != null) {
+          this.editorDispatch((pe) => {
+            const step = pe.steps[Number(index)];
+            const type = el.dataset.type === 'flow' ? 'flow' : 'pressure';
+            const condition = el.dataset.condition === 'under' ? 'under' : 'over';
+            const current = step?.exit?.type === type && step.exit.condition === condition
+              ? step.exit.value
+              : defaultExitValueForApp(type, condition);
+            return setStepExit(pe, Number(index), {
+              type,
+              condition,
+              value: Math.max(0, Number((current + Number(el.dataset.delta ?? '0')).toFixed(1)))
+            });
+          });
         }
         break;
       case 'pe-step-exit-preset':
@@ -1035,7 +1068,11 @@ export class BeanieApp {
       return setStepExit(pe, index, { condition: target.value === 'under' ? 'under' : 'over' });
     }
     if (key === 'value') {
-      return setStepExit(pe, index, { value: Number(target.value) || 0 });
+      return setStepExit(pe, index, {
+        type: target.dataset.type === 'flow' ? 'flow' : target.dataset.type === 'pressure' ? 'pressure' : undefined,
+        condition: target.dataset.condition === 'under' ? 'under' : target.dataset.condition === 'over' ? 'over' : undefined,
+        value: Number(target.value) || 0
+      });
     }
     return pe;
   }
@@ -2460,6 +2497,11 @@ function isThemePreference(value: string | undefined): value is ThemePreference 
 
 function isUIScalePreference(value: string | undefined): value is UIScalePreference {
   return value === 'compact' || value === 'standard' || value === 'large';
+}
+
+function defaultExitValueForApp(type: 'pressure' | 'flow', condition: 'over' | 'under'): number {
+  if (type === 'pressure') return condition === 'over' ? 11 : 0;
+  return condition === 'over' ? 6 : 0;
 }
 
 function escapeHtml(value: string): string {
