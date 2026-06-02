@@ -7,9 +7,17 @@ import {
   type SimpleKnobs,
   type SimpleType
 } from '../domain/simpleProfile';
+import { buildProfileChartModel, type ChartPoint, type ProfileChartModel } from './profileChartModel';
 import { icon } from './icons';
 
 export type EditorMode = 'basic' | 'advanced';
+
+interface ChartPlot {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
 
 export type StepSensor = 'coffee' | 'water';
 export type StepPump = 'pressure' | 'flow';
@@ -1000,12 +1008,11 @@ function renderExitSlider(
 function renderProfileChart(state: ProfileEditorState): string {
   const width = 360;
   const height = 210;
-  const plot = { x: 18, y: 18, w: 324, h: 150 };
-  const totalSeconds = Math.max(1, state.steps.reduce((sum, step) => sum + Math.max(0, step.seconds || 0), 0));
-  const pressure = steppedSeries(state, (step) => step.pressure, totalSeconds, plot, 12);
-  const flow = steppedSeries(state, (step) => step.flow, totalSeconds, plot, 12);
-  const temp = steppedSeries(state, (step) => step.temperature / 10, totalSeconds, plot, 12);
-  const selected = selectedStepBand(state, totalSeconds, plot);
+  const plot: ChartPlot = { x: 18, y: 18, w: 324, h: 150 };
+  const model = buildProfileChartModel(state.steps);
+  const pressure = traceToPath(model.pressure, plot, model.totalSeconds, 12);
+  const flow = traceToPath(model.flow, plot, model.totalSeconds, 12);
+  const temp = traceToPath(model.temperature.map((p) => ({ t: p.t, v: p.v / 10 })), plot, model.totalSeconds, 12);
   return `
     <section class="pe-chart-panel" aria-label="Profile preview">
       <svg class="pe-profile-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Pressure, flow, and temperature profile">
@@ -1013,7 +1020,7 @@ function renderProfileChart(state: ProfileEditorState): string {
         ${[0, 0.25, 0.5, 0.75, 1].map((tick) => `
           <line class="pe-chart-grid" x1="${plot.x}" x2="${plot.x + plot.w}" y1="${plot.y + plot.h * tick}" y2="${plot.y + plot.h * tick}"></line>
         `).join('')}
-        ${selected}
+        ${selectedStepBand(model, state.selectedStep, plot)}
         <path class="pe-chart-pressure" d="${pressure}" fill="none"></path>
         <path class="pe-chart-flow" d="${flow}" fill="none"></path>
         <path class="pe-chart-temp" d="${temp}" fill="none"></path>
@@ -1028,14 +1035,22 @@ function renderProfileChart(state: ProfileEditorState): string {
 function renderDe1ExplanationChart(state: ProfileEditorState): string {
   const width = 1188;
   const height = 250;
-  const plot = { x: 32, y: 10, w: 1136, h: 228 };
-  const maxValue = state.type === 'flow' ? 8 : 12;
-  const totalSeconds = Math.max(1, state.steps.reduce((sum, step) => sum + Math.max(0, step.seconds || 0), 0));
-  const pick = state.type === 'flow' ? (step: EditorStep) => step.flow : (step: EditorStep) => step.pressure;
-  const thinLine = steppedSeries(state, pick, totalSeconds, plot, maxValue);
-  const stageLines = stagedSeries(state, pick, totalSeconds, plot, maxValue);
-  const ticks = state.type === 'flow' ? [0, 2, 4, 6, 8] : [1, 3, 5, 7, 9, 11];
-  const axisTitle = state.type === 'flow' ? 'flow (ml/s)' : 'pressure (bar)';
+  const plot: ChartPlot = { x: 32, y: 10, w: 1136, h: 228 };
+  const isFlow = state.type === 'flow';
+  const maxValue = isFlow ? 8 : 12;
+  const model = buildProfileChartModel(state.steps);
+  const trace = isFlow ? model.flow : model.pressure;
+  const mainLine = traceToPath(trace, plot, model.totalSeconds, maxValue);
+  const ticks = isFlow ? [0, 2, 4, 6, 8] : [1, 3, 5, 7, 9, 11];
+  const axisTitle = isFlow ? 'flow (ml/s)' : 'pressure (bar)';
+  const nodes = model.spans.map((span, index) => {
+    const step = state.steps[index];
+    const value = step ? (isFlow ? step.flow : step.pressure) : 0;
+    return {
+      x: plot.x + (span.end / model.totalSeconds) * plot.w,
+      y: plot.y + plot.h - clamp01(value / maxValue) * plot.h
+    };
+  });
   return `
     <section class="pe-de1-chart-panel" aria-label="Profile preview">
       <svg class="pe-de1-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeAttr(axisTitle)} profile">
@@ -1052,88 +1067,33 @@ function renderDe1ExplanationChart(state: ProfileEditorState): string {
           return `<line class="pe-de1-grid x" x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${plot.y}" y2="${plot.y + plot.h}"></line>`;
         }).join('')}
         <text class="pe-de1-axis-title" transform="translate(24 ${plot.y + plot.h / 2}) rotate(-90)">${escapeHtml(axisTitle)}</text>
-        ${stageLines.map((line, index) => `<path class="pe-de1-stage-line stage-${Math.min(index + 1, 3)}" d="${line}" fill="none"></path>`).join('')}
-        <path class="pe-de1-main-line" d="${thinLine}" fill="none"></path>
-        ${seriesPoints(state, pick, totalSeconds, plot, maxValue).map((point) => `
-          <circle class="pe-de1-node" cx="${point.x}" cy="${point.y}" r="6"></circle>
+        ${selectedStepBand(model, state.selectedStep, plot)}
+        <path class="pe-de1-main-line" d="${mainLine}" fill="none"></path>
+        ${nodes.map((point) => `
+          <circle class="pe-de1-node" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="6"></circle>
         `).join('')}
       </svg>
     </section>
   `;
 }
 
-function stagedSeries(
-  state: ProfileEditorState,
-  pick: (step: EditorStep) => number,
-  totalSeconds: number,
-  plot: { x: number; y: number; w: number; h: number },
-  maxValue: number
-): string[] {
-  let elapsed = 0;
-  return state.steps.map((step) => {
-    const duration = Math.max(1, step.seconds || 1);
-    const x0 = plot.x + (elapsed / totalSeconds) * plot.w;
-    elapsed += duration;
-    const x1 = plot.x + (elapsed / totalSeconds) * plot.w;
-    const y = plot.y + plot.h - clamp01(pick(step) / maxValue) * plot.h;
-    return `M${x0.toFixed(1)} ${y.toFixed(1)}L${x1.toFixed(1)} ${y.toFixed(1)}`;
-  });
+// Map a model trace (time/value points) into an SVG path for the given plot box.
+function traceToPath(points: ChartPoint[], plot: ChartPlot, totalSeconds: number, maxValue: number): string {
+  return points
+    .map((point, index) => {
+      const x = plot.x + (point.t / totalSeconds) * plot.w;
+      const y = plot.y + plot.h - clamp01(point.v / maxValue) * plot.h;
+      return `${index === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .join('');
 }
 
-function seriesPoints(
-  state: ProfileEditorState,
-  pick: (step: EditorStep) => number,
-  totalSeconds: number,
-  plot: { x: number; y: number; w: number; h: number },
-  maxValue: number
-): Array<{ x: string; y: string }> {
-  let elapsed = 0;
-  return state.steps.map((step) => {
-    elapsed += Math.max(1, step.seconds || 1);
-    return {
-      x: (plot.x + (elapsed / totalSeconds) * plot.w).toFixed(1),
-      y: (plot.y + plot.h - clamp01(pick(step) / maxValue) * plot.h).toFixed(1)
-    };
-  });
-}
-
-function steppedSeries(
-  state: ProfileEditorState,
-  pick: (step: EditorStep) => number,
-  totalSeconds: number,
-  plot: { x: number; y: number; w: number; h: number },
-  maxValue: number
-): string {
-  let elapsed = 0;
-  let path = '';
-  state.steps.forEach((step, index) => {
-    const duration = Math.max(1, step.seconds || 1);
-    const x0 = plot.x + (elapsed / totalSeconds) * plot.w;
-    elapsed += duration;
-    const x1 = plot.x + (elapsed / totalSeconds) * plot.w;
-    const y = plot.y + plot.h - clamp01(pick(step) / maxValue) * plot.h;
-    path += `${index === 0 ? 'M' : 'L'}${x0.toFixed(1)} ${y.toFixed(1)}L${x1.toFixed(1)} ${y.toFixed(1)}`;
-  });
-  return path;
-}
-
-function selectedStepBand(
-  state: ProfileEditorState,
-  totalSeconds: number,
-  plot: { x: number; y: number; w: number; h: number }
-): string {
-  let elapsed = 0;
-  for (let i = 0; i < state.steps.length; i += 1) {
-    const step = state.steps[i]!;
-    const duration = Math.max(1, step.seconds || 1);
-    if (i === state.selectedStep) {
-      const x = plot.x + (elapsed / totalSeconds) * plot.w;
-      const width = Math.max(4, (duration / totalSeconds) * plot.w);
-      return `<rect class="pe-chart-selected" x="${x.toFixed(1)}" y="${plot.y}" width="${width.toFixed(1)}" height="${plot.h}"></rect>`;
-    }
-    elapsed += duration;
-  }
-  return '';
+function selectedStepBand(model: ProfileChartModel, selectedStep: number, plot: ChartPlot): string {
+  const span = model.spans[selectedStep];
+  if (!span) return '';
+  const x = plot.x + (span.start / model.totalSeconds) * plot.w;
+  const width = Math.max(4, ((span.end - span.start) / model.totalSeconds) * plot.w);
+  return `<rect class="pe-chart-selected" x="${x.toFixed(1)}" y="${plot.y}" width="${width.toFixed(1)}" height="${plot.h}"></rect>`;
 }
 
 function inferProfileTypeFromSteps(steps: EditorStep[]): string {
