@@ -116,6 +116,9 @@ const META_NUMBER_KEYS: ProfileMetaKey[] = [
 
 export const PROFILE_TYPES = ['advanced', 'pressure', 'flow'] as const;
 
+// de1app caps advanced profiles at 20 steps.
+export const MAX_STEPS = 20;
+
 /**
  * Canonical field ranges, mirrored from de1app `machine.tcl` / `vars.tcl` so the
  * editor's limits match the Decent tablet exactly. Single source of truth for
@@ -485,6 +488,7 @@ export function setStepExit(
 
 export function duplicateStep(state: ProfileEditorState, index: number): ProfileEditorState {
   if (index < 0 || index >= state.steps.length) return state;
+  if (state.steps.length >= MAX_STEPS) return state;
   const original = state.steps[index]!;
   const copy: EditorStep = {
     ...original,
@@ -498,6 +502,7 @@ export function duplicateStep(state: ProfileEditorState, index: number): Profile
 }
 
 export function addStep(state: ProfileEditorState): ProfileEditorState {
+  if (state.steps.length >= MAX_STEPS) return state;
   const selected = state.steps[state.selectedStep];
   const step = selected
     ? {
@@ -887,6 +892,9 @@ function renderStepDetail(state: ProfileEditorState): string {
           ${renderToggleTile(index, 'sensor', 'sensor', step.sensor, step.sensor === 'water' ? 'droplets' : 'coffee')}
           ${renderGoalControl(index, 'flow', isFlow ? 'flow' : 'flow limit', isFlow ? step.flow : (step.limiter?.value ?? 0), 'ml/s', 0, 12, isFlow)}
           ${renderGoalControl(index, 'pressure', isFlow ? 'pressure limit' : 'pressure', isFlow ? (step.limiter?.value ?? 0) : step.pressure, 'bar', 0, 12, !isFlow)}
+          ${step.limiter
+            ? renderVerticalControl(index, 'limiter_range', 'limit range', step.limiter.range, '', FIELD_SPECS.limiterRange.min, FIELD_SPECS.limiterRange.max, FIELD_SPECS.limiterRange.step, 'sliders-horizontal', 'stage')
+            : ''}
           ${renderToggleTile(index, 'transition', 'transition', step.transition, step.transition === 'smooth' ? 'waves' : 'move-right')}
         </div>
       </div>

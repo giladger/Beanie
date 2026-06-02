@@ -131,6 +131,13 @@ run('duplicateStep copies a step and selects the copy', () => {
   equal(next.steps[1].limiter?.value, 8);
 });
 
+run('caps advanced steps at 20 (de1app limit)', () => {
+  let state = createProfileEditorState(null);
+  for (let i = 0; i < 30; i += 1) state = addStep(state);
+  equal(state.steps.length, 20);
+  equal(duplicateStep(state, 0).steps.length, 20);
+});
+
 run('removeStep keeps at least one step and respects bounds', () => {
   const one = createProfileEditorState(null);
   equal(removeStep(one, 0).steps.length, 1);
