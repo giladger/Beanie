@@ -185,15 +185,15 @@ function validateProfile(value: unknown, path: string, issues: ValidationIssue[]
   const obj = expectRecord(value, path, issues);
   if (!obj) return;
 
-  optionalString(obj, 'title', path, issues);
-  optionalString(obj, 'author', path, issues);
-  optionalString(obj, 'notes', path, issues);
-  optionalString(obj, 'beverage_type', path, issues);
-  optionalNumber(obj, 'target_weight', path, issues);
-  optionalNumber(obj, 'target_volume', path, issues);
-  optionalNumber(obj, 'tank_temperature', path, issues);
+  optionalString(obj, 'title', path, issues, true);
+  optionalString(obj, 'author', path, issues, true);
+  optionalString(obj, 'notes', path, issues, true);
+  optionalString(obj, 'beverage_type', path, issues, true);
+  optionalNumber(obj, 'target_weight', path, issues, true);
+  optionalNumber(obj, 'target_volume', path, issues, true);
+  optionalNumber(obj, 'tank_temperature', path, issues, true);
   optionalArray(obj, 'steps', path, issues);
-  optionalString(obj, 'version', path, issues);
+  optionalString(obj, 'version', path, issues, true);
 }
 
 function validatePaginatedShots(value: unknown, path: string, issues: ValidationIssue[]): void {
