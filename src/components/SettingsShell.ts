@@ -13,36 +13,24 @@ interface SettingsSection {
   html: string;
 }
 
-export function renderSettingsShell(model: SettingsShellModel): string {
-  const query = model.query.trim().toLowerCase();
+export function renderSettingsShell(model: SettingsShellModel, activeSection: string): string {
   const sections = settingsSections(model);
-  const visibleSections = query
-    ? sections.filter((section) => `${section.title} ${section.terms}`.toLowerCase().includes(query))
-    : sections;
+  const active = sections.find((section) => section.id === activeSection) ?? sections[0]!;
 
   return `
-    <div class="modal-backdrop">
-      <div class="settings-shell panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-        <div class="modal-head settings-shell-head">
-          <div>
-            <span class="eyebrow">Skin</span>
-            <h2 id="settings-title">Settings</h2>
-          </div>
-          <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
-        </div>
-        <label class="settings-search">
-          ${icon('search')}
-          <input type="search" data-action="settings-search" value="${escapeAttr(model.query)}" placeholder="Search settings" />
-        </label>
-        <div class="settings-shell-content">
-          ${visibleSections.length === 0 ? '<p class="settings-empty">No settings match.</p>' : visibleSections.map((section) => section.html).join('')}
-        </div>
-        <div class="settings-shell-actions">
-          <button type="button" class="command" data-action="refresh">${icon('refresh-cw')}<span>Sync</span></button>
-          <button type="button" class="command primary" data-action="close-modal">Done</button>
-        </div>
-      </div>
-    </div>
+    <main class="page-body settings-page">
+      <nav class="settings-nav" aria-label="Settings sections">
+        ${sections
+          .map(
+            (section) =>
+              `<button type="button" class="settings-nav-btn ${section.id === active.id ? 'active' : ''}" data-action="settings-section" data-value="${escapeAttr(section.id)}" aria-pressed="${section.id === active.id}">${escapeHtml(section.title)}</button>`
+          )
+          .join('')}
+      </nav>
+      <section class="settings-detail">
+        ${active.html}
+      </section>
+    </main>
   `;
 }
 

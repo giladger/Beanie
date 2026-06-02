@@ -1,5 +1,6 @@
 import {
   Archive,
+  ChevronLeft,
   Coffee,
   Delete,
   Droplets,
@@ -24,6 +25,7 @@ export function refreshIcons(): void {
   createIcons({
     icons: {
       Archive,
+      ChevronLeft,
       Coffee,
       Delete,
       Droplets,

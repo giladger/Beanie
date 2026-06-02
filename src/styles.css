@@ -2031,3 +2031,156 @@ p {
     height: 300px;
   }
 }
+
+/* ---- Full-screen pages (view router) ---- */
+.app-shell-page {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.page-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: var(--topbar);
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.page-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 38px;
+  padding: 0 14px 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--soft);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 900;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.page-head-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.page-body {
+  width: min(900px, 100%);
+  margin: 0 auto;
+  padding: 14px;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.form-page label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.form-page input,
+.form-page textarea,
+.form-page select {
+  height: 46px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+  text-transform: none;
+  font-weight: 700;
+}
+
+.form-page textarea {
+  height: auto;
+  padding: 10px;
+  resize: vertical;
+}
+
+.settings-page {
+  width: min(1000px, 100%);
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 16px;
+  align-content: stretch;
+}
+
+.settings-nav {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.settings-nav-btn {
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--soft);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.settings-nav-btn.active {
+  border-color: var(--teal);
+  color: var(--ink);
+  background: var(--panel-3);
+}
+
+.settings-detail {
+  min-width: 0;
+}
+
+.profiles-page {
+  width: min(760px, 100%);
+}
+
+.profile-editor-page {
+  width: min(780px, 100%);
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+
+.pager-label {
+  font-weight: 800;
+  color: var(--muted);
+}
+
+@media (max-width: 720px) {
+  .settings-page {
+    grid-template-columns: 1fr;
+  }
+  .settings-nav {
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    overflow-x: auto;
+  }
+}

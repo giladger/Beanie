@@ -102,19 +102,19 @@ import {
   writeSettingsPreferences
 } from './domain/settings';
 
-type Modal =
+type Modal = 'edit-number' | null;
+type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
+type ApplyState = 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
+type View =
+  | 'workbench'
+  | 'settings'
+  | 'machine'
+  | 'profiles'
+  | 'profile-editor'
   | 'bean-editor'
   | 'batch-editor'
   | 'grinder-editor'
-  | 'profile-picker'
-  | 'profile-editor'
-  | 'machine-settings'
-  | 'settings'
-  | 'edit-number'
-  | 'shot-detail'
-  | null;
-type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
-type ApplyState = 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
+  | 'shot-detail';
 
 const initialSettingsPreferences = readSettingsPreferences();
 
@@ -150,6 +150,7 @@ interface AppState {
   presets: BeanPreset[];
   search: string;
   profileSearch: string;
+  profilePage: number;
   favoriteProfiles: string[];
   autoLoad: boolean;
   settingsPreferences: SettingsPreferences;
@@ -158,6 +159,8 @@ interface AppState {
   loading: boolean;
   busy: boolean;
   status: string;
+  view: View;
+  settingsSection: string;
   modal: Modal;
   editingBeanId: string | null;
   profileEditor: ProfileEditorState | null;
@@ -195,6 +198,7 @@ export class BeanieApp {
     presets: [],
     search: '',
     profileSearch: '',
+    profilePage: 0,
     favoriteProfiles: readFavoriteProfiles(),
     autoLoad: initialSettingsPreferences.autoLoad,
     settingsPreferences: initialSettingsPreferences,
@@ -203,6 +207,8 @@ export class BeanieApp {
     loading: true,
     busy: false,
     status: 'Starting',
+    view: 'workbench',
+    settingsSection: 'gateway',
     modal: null,
     editingBeanId: null,
     profileEditor: null,
@@ -493,7 +499,7 @@ export class BeanieApp {
     if (!shot) return;
     this.setState({
       draft: normalizeDraft(recipeFromShot(shot), this.state.profiles, this.state.grinders),
-      modal: null,
+      view: 'workbench',
       detailShotId: null,
       status: 'Shot recipe loaded'
     });
@@ -539,7 +545,7 @@ export class BeanieApp {
     this.setState({
       shots: this.state.shots.filter((shot) => shot.id !== id),
       busy: false,
-      modal: null,
+      view: 'workbench',
       detailShotId: null,
       status: this.state.demo ? 'Shot deleted (demo)' : 'Shot deleted'
     });
@@ -783,8 +789,11 @@ export class BeanieApp {
       case 'dialog-commit':
         this.commitEditDialog();
         break;
+      case 'go-view':
+        if (value) this.goView(value as View);
+        break;
       case 'open-shot':
-        if (id) this.setState({ modal: 'shot-detail', detailShotId: id });
+        if (id) this.setState({ view: 'shot-detail', detailShotId: id });
         break;
       case 'load-shot':
         if (id) this.loadShotRecipe(id);
@@ -808,7 +817,10 @@ export class BeanieApp {
         this.startSimulatedShot();
         break;
       case 'open-settings':
-        this.setState({ modal: 'settings' });
+        this.setState({ view: 'settings' });
+        break;
+      case 'settings-section':
+        if (value) this.setState({ settingsSection: value });
         break;
       case 'settings-theme':
         if (isThemePreference(el.dataset.value)) {
@@ -824,25 +836,28 @@ export class BeanieApp {
         await this.resetLocalCache();
         break;
       case 'open-add-bean':
-        this.setState({ modal: 'bean-editor', editingBeanId: null });
+        this.setState({ view: 'bean-editor', editingBeanId: null });
         break;
       case 'open-edit-bean':
-        this.setState({ modal: 'bean-editor', editingBeanId: id ?? this.state.selectedBeanId });
+        this.setState({ view: 'bean-editor', editingBeanId: id ?? this.state.selectedBeanId });
         break;
       case 'archive-bean':
         if (id) await this.archiveBean(id);
         break;
       case 'open-add-batch':
-        this.setState({ modal: 'batch-editor' });
+        this.setState({ view: 'batch-editor' });
         break;
       case 'open-add-grinder':
-        this.setState({ modal: 'grinder-editor' });
+        this.setState({ view: 'grinder-editor' });
         break;
       case 'open-profile-picker':
-        this.setState({ modal: 'profile-picker', profileSearch: '' });
+        this.setState({ view: 'profiles', profileSearch: '', profilePage: 0 });
+        break;
+      case 'profiles-page':
+        if (value) this.setState({ profilePage: Number(value) });
         break;
       case 'open-machine-settings':
-        this.setState({ modal: 'machine-settings' });
+        this.setState({ view: 'machine' });
         break;
       case 'pick-profile':
         if (id) this.pickProfile(id);
@@ -862,7 +877,7 @@ export class BeanieApp {
         break;
       case 'new-profile':
         this.setState({
-          modal: 'profile-editor',
+          view: 'profile-editor',
           editingProfileId: null,
           profileEditor: createProfileEditorState(null)
         });
@@ -905,7 +920,7 @@ export class BeanieApp {
       this.setState({ settingsSearch: target.value });
     }
     if (target.dataset.action === 'profile-search') {
-      this.setState({ profileSearch: target.value });
+      this.setState({ profileSearch: target.value, profilePage: 0 });
     }
     if (target.dataset.action?.startsWith('pe-')) {
       this.applyEditorEvent(target);
@@ -924,9 +939,19 @@ export class BeanieApp {
     }
     this.setState({
       draft: normalizeDraft(draft, this.state.profiles, this.state.grinders),
-      modal: null,
+      view: 'workbench',
       profileSearch: '',
       status: 'Profile selected'
+    });
+  }
+
+  private goView(view: View): void {
+    this.setState({
+      view,
+      editingBeanId: null,
+      profileEditor: null,
+      editingProfileId: null,
+      detailShotId: null
     });
   }
 
@@ -940,7 +965,7 @@ export class BeanieApp {
     const record = this.state.profiles.find((profile) => profile.id === id);
     if (!record) return;
     this.setState({
-      modal: 'profile-editor',
+      view: 'profile-editor',
       editingProfileId: id,
       profileEditor: createProfileEditorState(record.profile)
     });
@@ -1004,7 +1029,7 @@ export class BeanieApp {
         : [record, ...this.state.profiles];
       this.setState({
         profiles,
-        modal: null,
+        view: 'workbench',
         profileEditor: null,
         editingProfileId: null,
         busy: false,
@@ -1029,7 +1054,7 @@ export class BeanieApp {
       }
       this.setState({
         profiles,
-        modal: null,
+        view: 'workbench',
         profileEditor: null,
         editingProfileId: null,
         busy: false,
@@ -1164,12 +1189,12 @@ export class BeanieApp {
 
     this.setState({ busy: true, status: 'Saving machine settings' });
     if (this.state.demo) {
-      this.setState({ workflow, modal: null, busy: false, status: 'Machine settings saved (demo)' });
+      this.setState({ workflow, view: 'workbench', busy: false, status: 'Machine settings saved (demo)' });
       return;
     }
     try {
       const saved = await gateway.updateWorkflow(workflow);
-      this.setState({ workflow: saved, modal: null, busy: false, status: 'Machine settings saved' });
+      this.setState({ workflow: saved, view: 'workbench', busy: false, status: 'Machine settings saved' });
     } catch (error) {
       console.error('[Beanie] Save machine settings failed', error);
       this.setState({ busy: false, status: 'Save machine settings failed' });
@@ -1196,12 +1221,12 @@ export class BeanieApp {
         const beans = this.state.beans.map((bean) =>
           bean.id === editingId ? { ...bean, ...fields } : bean
         );
-        this.setState({ beans, modal: null, editingBeanId: null, busy: false, status: 'Bean saved (demo)' });
+        this.setState({ beans, view: 'workbench', editingBeanId: null, busy: false, status: 'Bean saved (demo)' });
       } else {
         const bean: Bean = { id: `demo-${Date.now()}`, ...fields } as Bean;
         this.setState({
           beans: [bean, ...this.state.beans],
-          modal: null,
+          view: 'workbench',
           editingBeanId: null,
           busy: false,
           status: 'Bean added (demo)'
@@ -1215,12 +1240,12 @@ export class BeanieApp {
       if (editingId) {
         const updated = await gateway.updateBean(editingId, fields);
         const beans = this.state.beans.map((bean) => (bean.id === editingId ? updated : bean));
-        this.setState({ beans, modal: null, editingBeanId: null, busy: false, status: 'Bean saved' });
+        this.setState({ beans, view: 'workbench', editingBeanId: null, busy: false, status: 'Bean saved' });
       } else {
         const bean = await gateway.createBean(fields);
         this.setState({
           beans: [bean, ...this.state.beans],
-          modal: null,
+          view: 'workbench',
           editingBeanId: null,
           busy: false,
           status: 'Bean added'
@@ -1246,7 +1271,7 @@ export class BeanieApp {
       }
     }
     const beans = this.state.beans.filter((bean) => bean.id !== id);
-    this.setState({ beans, modal: null, editingBeanId: null, busy: false, status: 'Bag archived' });
+    this.setState({ beans, view: 'workbench', editingBeanId: null, busy: false, status: 'Bag archived' });
     if (this.state.selectedBeanId === id) {
       const next = beans[0];
       if (next) await this.selectBean(next.id, { apply: false, preferWorkflow: false });
@@ -1274,7 +1299,7 @@ export class BeanieApp {
       this.setState({
         batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
         selectedBatchId: batch.id,
-        modal: null,
+        view: 'workbench',
         busy: false,
         status: 'Batch added (demo)'
       });
@@ -1287,7 +1312,7 @@ export class BeanieApp {
       this.setState({
         batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
         selectedBatchId: batch.id,
-        modal: null,
+        view: 'workbench',
         busy: false,
         status: 'Batch added'
       });
@@ -1314,7 +1339,7 @@ export class BeanieApp {
       this.setState({
         grinders: [grinder, ...this.state.grinders],
         draft: { ...this.state.draft, grinderId: grinder.id, grinderModel: grinder.model },
-        modal: null,
+        view: 'workbench',
         editDialog: null,
         busy: false,
         status
@@ -1467,17 +1492,10 @@ export class BeanieApp {
   private render(): void {
     const bean = this.selectedBean();
     const focus = this.captureFocus();
+    const isPage = this.state.view !== 'workbench';
     this.root.innerHTML = `
-      <div class="app-shell">
-        ${this.renderTopbar()}
-        <main class="workbench">
-          ${this.renderBeanRail()}
-          <section class="surface">
-            ${this.renderHero(bean)}
-            ${this.renderRecipeEditor(bean)}
-            ${this.renderHistory()}
-          </section>
-        </main>
+      <div class="app-shell ${isPage ? 'app-shell-page' : ''}">
+        ${isPage ? this.renderPage() : this.renderWorkbench(bean)}
         ${this.renderLivePanel()}
         ${this.renderModal()}
       </div>
@@ -1486,6 +1504,55 @@ export class BeanieApp {
     this.bindLiveElements();
     this.bindDetailChart();
     this.restoreFocus(focus);
+  }
+
+  private renderWorkbench(bean: Bean | null): string {
+    return `
+      ${this.renderTopbar()}
+      <main class="workbench">
+        ${this.renderBeanRail()}
+        <section class="surface">
+          ${this.renderHero(bean)}
+          ${this.renderRecipeEditor(bean)}
+          ${this.renderHistory()}
+        </section>
+      </main>
+    `;
+  }
+
+  private renderPage(): string {
+    switch (this.state.view) {
+      case 'settings':
+        return this.renderSettingsPage();
+      case 'machine':
+        return this.renderMachinePage();
+      case 'profiles':
+        return this.renderProfilesPage();
+      case 'profile-editor':
+        return this.renderProfileEditorPage();
+      case 'bean-editor':
+        return this.renderBeanEditorPage();
+      case 'batch-editor':
+        return this.renderBatchEditorPage();
+      case 'grinder-editor':
+        return this.renderGrinderEditorPage();
+      case 'shot-detail':
+        return this.renderShotDetailPage();
+      default:
+        return '';
+    }
+  }
+
+  private pageHeader(title: string, back: View = 'workbench', actions = ''): string {
+    return `
+      <header class="page-head">
+        <button class="page-back" data-action="go-view" data-value="${back}" aria-label="Back" title="Back">
+          ${icon('chevron-left')}<span>Back</span>
+        </button>
+        <h1 class="page-title">${escapeHtml(title)}</h1>
+        <div class="page-head-actions">${actions}</div>
+      </header>
+    `;
   }
 
   private bindDetailChart(): void {
@@ -1714,7 +1781,7 @@ export class BeanieApp {
     `;
   }
 
-  private renderProfilePicker(): string {
+  private renderProfilesPage(): string {
     const query = this.state.profileSearch.trim().toLowerCase();
     const favorites = new Set(this.state.favoriteProfiles);
     const selectedId = this.profileIdForDraft();
@@ -1730,29 +1797,36 @@ export class BeanieApp {
       return (a.profile.title ?? '').localeCompare(b.profile.title ?? '');
     });
 
+    const pageSize = 7;
+    const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
+    const page = Math.min(Math.max(0, this.state.profilePage), pageCount - 1);
+    const visible = sorted.slice(page * pageSize, page * pageSize + pageSize);
+    const actions = `<button class="icon-button" data-action="new-profile" aria-label="New profile" title="New profile">${icon('plus')}</button>`;
+
     return `
-      <div class="modal-backdrop">
-        <div class="modal panel profile-picker" role="dialog" aria-modal="true" aria-labelledby="profile-picker-title">
-          <div class="modal-head">
-            <h2 id="profile-picker-title">Profiles</h2>
-            <div class="modal-head-actions">
-              <button type="button" class="icon-button" data-action="new-profile" aria-label="New profile" title="New profile">${icon('plus')}</button>
-              <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
-            </div>
-          </div>
-          <label class="search">
-            ${icon('search')}
-            <input type="search" data-action="profile-search" value="${escapeAttr(this.state.profileSearch)}" placeholder="Search profiles" />
-          </label>
-          <div class="profile-list">
-            ${
-              sorted.length === 0
-                ? '<p class="empty">No profiles match.</p>'
-                : sorted.map((record) => this.renderProfileRow(record, favorites.has(record.id), record.id === selectedId)).join('')
-            }
-          </div>
+      ${this.pageHeader('Profiles', 'workbench', actions)}
+      <main class="page-body profiles-page">
+        <label class="search">
+          ${icon('search')}
+          <input type="search" data-action="profile-search" value="${escapeAttr(this.state.profileSearch)}" placeholder="Search profiles" />
+        </label>
+        <div class="profile-list">
+          ${
+            visible.length === 0
+              ? '<p class="empty">No profiles match.</p>'
+              : visible.map((record) => this.renderProfileRow(record, favorites.has(record.id), record.id === selectedId)).join('')
+          }
         </div>
-      </div>
+        ${
+          pageCount > 1
+            ? `<div class="pager">
+                <button class="command" data-action="profiles-page" data-value="${page - 1}" ${page === 0 ? 'disabled' : ''}>${icon('chevron-left')}<span>Prev</span></button>
+                <span class="pager-label">Page ${page + 1} / ${pageCount}</span>
+                <button class="command" data-action="profiles-page" data-value="${page + 1}" ${page >= pageCount - 1 ? 'disabled' : ''}><span>Next</span></button>
+              </div>`
+            : ''
+        }
+      </main>
     `;
   }
 
@@ -1887,172 +1961,128 @@ export class BeanieApp {
 
   private renderModal(): string {
     if (this.state.modal === 'edit-number') return this.renderEditDialog();
-    if (this.state.modal === 'shot-detail') return this.renderShotDetail();
-    if (this.state.modal === 'settings') {
-      return renderSettingsShell(this.settingsShellModel());
-    }
-    if (this.state.modal === 'bean-editor') return this.renderBeanEditor();
-    if (this.state.modal === 'batch-editor') return this.renderBatchEditor();
-    if (this.state.modal === 'grinder-editor') return this.renderGrinderEditor();
-    if (this.state.modal === 'profile-picker') return this.renderProfilePicker();
-    if (this.state.modal === 'profile-editor') return this.renderProfileEditorModal();
-    if (this.state.modal === 'machine-settings') return this.renderMachineSettings();
     return '';
   }
 
-  private renderProfileEditorModal(): string {
-    const pe = this.state.profileEditor;
-    if (!pe) return '';
+  private renderSettingsPage(): string {
     return `
-      <div class="modal-backdrop">
-        <div class="modal panel profile-editor-modal" role="dialog" aria-modal="true" aria-labelledby="profile-editor-title">
-          <div class="modal-head">
-            <h2 id="profile-editor-title">${this.state.editingProfileId ? 'Edit Profile' : 'New Profile'}</h2>
-            <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
-          </div>
-          ${renderProfileEditor(pe)}
-          <div class="modal-actions">
-            <button type="button" class="command" data-action="close-modal">Cancel</button>
-            <button type="button" class="command primary" data-action="save-profile">${icon('save')}<span>Save profile</span></button>
-          </div>
-        </div>
-      </div>
+      ${this.pageHeader('Settings', 'workbench', `<button class="icon-button" data-action="refresh" aria-label="Sync" title="Sync">${icon('refresh-cw')}</button>`)}
+      ${renderSettingsShell(this.settingsShellModel(), this.state.settingsSection)}
     `;
   }
 
-  private renderMachineSettings(): string {
+  private renderProfileEditorPage(): string {
+    const pe = this.state.profileEditor;
+    if (!pe) return this.pageHeader('Profile');
+    const actions = `<button type="button" class="command primary" data-action="save-profile">${icon('save')}<span>Save</span></button>`;
+    return `
+      ${this.pageHeader(this.state.editingProfileId ? 'Edit Profile' : 'New Profile', 'profiles', actions)}
+      <main class="page-body profile-editor-page">
+        ${renderProfileEditor(pe)}
+      </main>
+    `;
+  }
+
+  private renderMachinePage(): string {
     const steam = { ...DEFAULT_STEAM, ...this.state.workflow?.steamSettings };
     const water = { ...DEFAULT_HOT_WATER, ...this.state.workflow?.hotWaterData };
     const flush = { ...DEFAULT_RINSE, ...this.state.workflow?.rinseData };
     const num = (value?: number) => (value == null ? '' : String(value));
+    const actions = `<button class="command primary" type="submit" form="machine-form">${icon('save')}<span>Save</span></button>`;
     return `
-      <div class="modal-backdrop">
-        <form class="modal panel machine-settings" data-form="machine-settings" role="dialog" aria-modal="true" aria-labelledby="machine-settings-title">
-          <div class="modal-head">
-            <h2 id="machine-settings-title">Steam · Water · Flush</h2>
-            <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
+      ${this.pageHeader('Steam · Water · Flush', 'workbench', actions)}
+      <form id="machine-form" class="page-body machine-page" data-form="machine-settings">
+        <fieldset class="machine-group">
+          <legend>Steam</legend>
+          <div class="field-row">
+            <label>Time (s)<input type="number" name="steamDuration" min="0" step="1" value="${num(steam.duration)}" /></label>
+            <label>Temp (C)<input type="number" name="steamTemp" min="0" step="1" value="${num(steam.targetTemperature)}" /></label>
           </div>
-          <fieldset class="machine-group">
-            <legend>Steam</legend>
-            <div class="field-row">
-              <label>Time (s)<input type="number" name="steamDuration" min="0" step="1" value="${num(steam.duration)}" /></label>
-              <label>Temp (C)<input type="number" name="steamTemp" min="0" step="1" value="${num(steam.targetTemperature)}" /></label>
-            </div>
-          </fieldset>
-          <fieldset class="machine-group">
-            <legend>Hot water</legend>
-            <div class="field-row">
-              <label>Flow (ml/s)<input type="number" name="waterFlow" min="0" step="0.1" value="${num(water.flow)}" /></label>
-              <label>Duration (s)<input type="number" name="waterDuration" min="0" step="1" value="${num(water.duration)}" /></label>
-            </div>
-            <div class="field-row">
-              <label>Temp (C)<input type="number" name="waterTemp" min="0" step="1" value="${num(water.targetTemperature)}" /></label>
-              <label>Volume (ml)<input type="number" name="waterVolume" min="0" step="1" value="${num(water.volume)}" /></label>
-            </div>
-          </fieldset>
-          <fieldset class="machine-group">
-            <legend>Flush</legend>
-            <div class="field-row">
-              <label>Flow (ml/s)<input type="number" name="flushFlow" min="0" step="0.1" value="${num(flush.flow)}" /></label>
-              <label>Duration (s)<input type="number" name="flushDuration" min="0" step="1" value="${num(flush.duration)}" /></label>
-            </div>
-          </fieldset>
-          <div class="modal-actions">
-            <button type="button" class="command" data-action="close-modal">Cancel</button>
-            <button class="command primary" type="submit">${icon('save')}<span>Save</span></button>
+        </fieldset>
+        <fieldset class="machine-group">
+          <legend>Hot water</legend>
+          <div class="field-row">
+            <label>Flow (ml/s)<input type="number" name="waterFlow" min="0" step="0.1" value="${num(water.flow)}" /></label>
+            <label>Duration (s)<input type="number" name="waterDuration" min="0" step="1" value="${num(water.duration)}" /></label>
           </div>
-        </form>
-      </div>
+          <div class="field-row">
+            <label>Temp (C)<input type="number" name="waterTemp" min="0" step="1" value="${num(water.targetTemperature)}" /></label>
+            <label>Volume (ml)<input type="number" name="waterVolume" min="0" step="1" value="${num(water.volume)}" /></label>
+          </div>
+        </fieldset>
+        <fieldset class="machine-group">
+          <legend>Flush</legend>
+          <div class="field-row">
+            <label>Flow (ml/s)<input type="number" name="flushFlow" min="0" step="0.1" value="${num(flush.flow)}" /></label>
+            <label>Duration (s)<input type="number" name="flushDuration" min="0" step="1" value="${num(flush.duration)}" /></label>
+          </div>
+        </fieldset>
+      </form>
     `;
   }
 
-  private renderBeanEditor(): string {
+  private renderBeanEditorPage(): string {
     const editing = this.state.editingBeanId
       ? this.state.beans.find((bean) => bean.id === this.state.editingBeanId) ?? null
       : null;
     const v = (value: string | null | undefined) => escapeAttr(value ?? '');
+    const actions = `
+      ${editing ? `<button type="button" class="command danger" data-action="archive-bean" data-id="${escapeAttr(editing.id)}">${icon('archive')}<span>Archive</span></button>` : ''}
+      <button class="command primary" type="submit" form="bean-form">${icon('save')}<span>${editing ? 'Save' : 'Add'}</span></button>
+    `;
     return `
-      <div class="modal-backdrop">
-        <form class="modal panel" data-form="bean-editor" role="dialog" aria-modal="true" aria-labelledby="bean-editor-title">
-          <div class="modal-head">
-            <h2 id="bean-editor-title">${editing ? 'Edit Bean' : 'Add Bean'}</h2>
-            <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
-          </div>
-          <label>Roaster<input name="roaster" required autocomplete="off" value="${v(editing?.roaster)}" /></label>
-          <label>Coffee<input name="name" required autocomplete="off" value="${v(editing?.name)}" /></label>
-          <div class="field-row">
-            <label>Country<input name="country" autocomplete="off" value="${v(editing?.country)}" /></label>
-            <label>Region<input name="region" autocomplete="off" value="${v(editing?.region)}" /></label>
-          </div>
-          <label>Process<input name="processing" autocomplete="off" value="${v(editing?.processing)}" /></label>
-          <label>Notes<textarea name="notes" rows="2">${escapeHtml(editing?.notes ?? '')}</textarea></label>
-          <div class="modal-actions">
-            ${
-              editing
-                ? `<button type="button" class="command danger" data-action="archive-bean" data-id="${escapeAttr(editing.id)}">${icon('archive')}<span>Archive</span></button>`
-                : '<button type="button" class="command" data-action="close-modal">Cancel</button>'
-            }
-            <button class="command primary" type="submit">${icon('save')}<span>${editing ? 'Save' : 'Add'}</span></button>
-          </div>
-        </form>
-      </div>
+      ${this.pageHeader(editing ? 'Edit Bean' : 'Add Bean', 'workbench', actions)}
+      <form id="bean-form" class="page-body form-page" data-form="bean-editor">
+        <label>Roaster<input name="roaster" required autocomplete="off" value="${v(editing?.roaster)}" /></label>
+        <label>Coffee<input name="name" required autocomplete="off" value="${v(editing?.name)}" /></label>
+        <div class="field-row">
+          <label>Country<input name="country" autocomplete="off" value="${v(editing?.country)}" /></label>
+          <label>Region<input name="region" autocomplete="off" value="${v(editing?.region)}" /></label>
+        </div>
+        <label>Process<input name="processing" autocomplete="off" value="${v(editing?.processing)}" /></label>
+        <label>Notes<textarea name="notes" rows="3">${escapeHtml(editing?.notes ?? '')}</textarea></label>
+      </form>
     `;
   }
 
-  private renderBatchEditor(): string {
+  private renderBatchEditorPage(): string {
     const bean = this.selectedBean();
+    const actions = `<button class="command primary" type="submit" form="batch-form" ${bean ? '' : 'disabled'}>${icon('save')}<span>Add batch</span></button>`;
     return `
-      <div class="modal-backdrop">
-        <form class="modal panel" data-form="batch-editor" role="dialog" aria-modal="true" aria-labelledby="batch-editor-title">
-          <div class="modal-head">
-            <h2 id="batch-editor-title">Add Batch</h2>
-            <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
-          </div>
-          <p class="modal-hint">${escapeHtml(bean ? beanLabel(bean) : 'No bean selected')}</p>
-          <div class="field-row">
-            <label>Roast date<input type="date" name="roastDate" /></label>
-            <label>Roast level<input name="roastLevel" autocomplete="off" /></label>
-          </div>
-          <div class="field-row">
-            <label>Bag weight (g)<input type="number" name="weight" min="0" step="1" /></label>
-            <label>Remaining (g)<input type="number" name="weightRemaining" min="0" step="1" /></label>
-          </div>
-          <label class="switch inline-switch"><input type="checkbox" name="frozen" /><span>Frozen</span></label>
-          <div class="modal-actions">
-            <button type="button" class="command" data-action="close-modal">Cancel</button>
-            <button class="command primary" type="submit" ${bean ? '' : 'disabled'}>${icon('save')}<span>Add</span></button>
-          </div>
-        </form>
-      </div>
+      ${this.pageHeader('Add Batch', 'workbench', actions)}
+      <form id="batch-form" class="page-body form-page" data-form="batch-editor">
+        <p class="modal-hint">${escapeHtml(bean ? beanLabel(bean) : 'No bean selected')}</p>
+        <div class="field-row">
+          <label>Roast date<input type="date" name="roastDate" /></label>
+          <label>Roast level<input name="roastLevel" autocomplete="off" /></label>
+        </div>
+        <div class="field-row">
+          <label>Bag weight (g)<input type="number" name="weight" min="0" step="1" /></label>
+          <label>Remaining (g)<input type="number" name="weightRemaining" min="0" step="1" /></label>
+        </div>
+        <label class="switch inline-switch"><input type="checkbox" name="frozen" /><span>Frozen</span></label>
+      </form>
     `;
   }
 
-  private renderGrinderEditor(): string {
+  private renderGrinderEditorPage(): string {
+    const actions = `<button class="command primary" type="submit" form="grinder-form">${icon('save')}<span>Add grinder</span></button>`;
     return `
-      <div class="modal-backdrop">
-        <form class="modal panel" data-form="grinder-editor" role="dialog" aria-modal="true" aria-labelledby="grinder-editor-title">
-          <div class="modal-head">
-            <h2 id="grinder-editor-title">Add Grinder</h2>
-            <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
-          </div>
-          <label>Model<input name="model" required autocomplete="off" /></label>
-          <label>Burrs<input name="burrs" autocomplete="off" /></label>
-          <label>Setting type
-            <select name="settingType">
-              <option value="numeric">Numeric</option>
-              <option value="preset">Preset</option>
-            </select>
-          </label>
-          <div class="field-row">
-            <label>Small step<input type="number" name="settingSmallStep" min="0" step="0.01" value="0.1" /></label>
-            <label>Big step<input type="number" name="settingBigStep" min="0" step="0.1" value="1" /></label>
-          </div>
-          <div class="modal-actions">
-            <button type="button" class="command" data-action="close-modal">Cancel</button>
-            <button class="command primary" type="submit">${icon('save')}<span>Add</span></button>
-          </div>
-        </form>
-      </div>
+      ${this.pageHeader('Add Grinder', 'workbench', actions)}
+      <form id="grinder-form" class="page-body form-page" data-form="grinder-editor">
+        <label>Model<input name="model" required autocomplete="off" /></label>
+        <label>Burrs<input name="burrs" autocomplete="off" /></label>
+        <label>Setting type
+          <select name="settingType">
+            <option value="numeric">Numeric</option>
+            <option value="preset">Preset</option>
+          </select>
+        </label>
+        <div class="field-row">
+          <label>Small step<input type="number" name="settingSmallStep" min="0" step="0.01" value="0.1" /></label>
+          <label>Big step<input type="number" name="settingBigStep" min="0" step="0.1" value="1" /></label>
+        </div>
+      </form>
     `;
   }
 
@@ -2076,9 +2106,9 @@ export class BeanieApp {
     `;
   }
 
-  private renderShotDetail(): string {
+  private renderShotDetailPage(): string {
     const shot = this.state.shots.find((item) => item.id === this.state.detailShotId);
-    if (!shot) return '';
+    if (!shot) return this.pageHeader('Shot');
 
     const recipe = recipeFromShot(shot);
     const date = new Date(shot.timestamp);
@@ -2088,44 +2118,33 @@ export class BeanieApp {
       : date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
     return `
-      <div class="modal-backdrop">
-        <div class="shot-detail-modal panel" role="dialog" aria-modal="true" aria-labelledby="shot-detail-title">
-          <div class="modal-head shot-detail-head">
-            <div>
-              <span class="eyebrow">Shot</span>
-              <h2 id="shot-detail-title">${escapeHtml(title)}</h2>
-            </div>
-            <div class="shot-detail-head-actions">
-              ${enjoymentBadge(shot, 'detail')}
-              <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
-            </div>
-          </div>
-          <div class="detail-summary">
-            ${stat('Dose', formatGrams(recipe.dose))}
-            ${stat('Yield', formatGrams(recipe.yield))}
-            ${stat('Grind', recipe.grinderSetting ?? '--')}
-          </div>
-          <div class="detail-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</div>
-          <div class="detail-chart">
-            <canvas id="detail-canvas" class="live-canvas detail-canvas"></canvas>
-          </div>
-          <form class="detail-edit" data-form="edit-shot" data-id="${escapeAttr(shot.id)}">
-            <label class="detail-field">
-              <span>Notes</span>
-              <textarea name="notes" rows="2" placeholder="Tasting notes">${escapeHtml(notes)}</textarea>
-            </label>
-            <label class="detail-field detail-enjoyment-field">
-              <span>Enjoyment</span>
-              <input type="number" name="enjoyment" min="0" max="100" step="1" value="${escapeAttr(shot.annotations?.enjoyment != null ? String(shot.annotations.enjoyment) : '')}" />
-            </label>
-            <div class="detail-actions">
-              <button type="button" class="command danger" data-action="delete-shot" data-id="${escapeAttr(shot.id)}">${icon('trash-2')}<span>Delete</span></button>
-              <button type="button" class="command" data-action="load-shot" data-id="${escapeAttr(shot.id)}">${icon('sliders-horizontal')}<span>Load recipe</span></button>
-              <button type="submit" class="command primary">${icon('save')}<span>Save</span></button>
-            </div>
-          </form>
+      ${this.pageHeader(title, 'workbench', enjoymentBadge(shot, 'detail'))}
+      <main class="page-body shot-detail-page">
+        <div class="detail-summary">
+          ${stat('Dose', formatGrams(recipe.dose))}
+          ${stat('Yield', formatGrams(recipe.yield))}
+          ${stat('Grind', recipe.grinderSetting ?? '--')}
         </div>
-      </div>
+        <div class="detail-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</div>
+        <div class="detail-chart">
+          <canvas id="detail-canvas" class="live-canvas detail-canvas"></canvas>
+        </div>
+        <form class="detail-edit" data-form="edit-shot" data-id="${escapeAttr(shot.id)}">
+          <label class="detail-field">
+            <span>Notes</span>
+            <textarea name="notes" rows="2" placeholder="Tasting notes">${escapeHtml(notes)}</textarea>
+          </label>
+          <label class="detail-field detail-enjoyment-field">
+            <span>Enjoyment</span>
+            <input type="number" name="enjoyment" min="0" max="100" step="1" value="${escapeAttr(shot.annotations?.enjoyment != null ? String(shot.annotations.enjoyment) : '')}" />
+          </label>
+          <div class="detail-actions">
+            <button type="button" class="command danger" data-action="delete-shot" data-id="${escapeAttr(shot.id)}">${icon('trash-2')}<span>Delete</span></button>
+            <button type="button" class="command" data-action="load-shot" data-id="${escapeAttr(shot.id)}">${icon('sliders-horizontal')}<span>Load recipe</span></button>
+            <button type="submit" class="command primary">${icon('save')}<span>Save</span></button>
+          </div>
+        </form>
+      </main>
     `;
   }
 
