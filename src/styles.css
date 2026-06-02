@@ -1679,17 +1679,24 @@ p {
   --track: var(--stage-3);
 }
 
-.pe-de1-slider strong {
+.pe-de1-value {
   position: absolute;
   top: 61px;
   left: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
   color: var(--de1-blue);
+  font: inherit;
   font-size: 15px;
   font-weight: 800;
+  line-height: 1.1;
+  text-align: left;
   white-space: nowrap;
+  cursor: pointer;
 }
 
-.pe-de1-slider.vertical strong {
+.pe-de1-slider.vertical .pe-de1-value {
   top: calc(100% + 5px);
   right: 0;
   left: auto;
@@ -1740,7 +1747,7 @@ p {
   transform: rotate(-90deg);
 }
 
-.pe-de1-temperature strong {
+.pe-de1-temperature .pe-de1-value {
   position: absolute;
   left: 0;
   top: 205px;

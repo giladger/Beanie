@@ -553,7 +553,7 @@ function renderDe1HSlider(
     <label class="pe-de1-slider horizontal ${stage} ${label.startsWith('Limit') ? 'with-caption' : ''}" style="--x:${x}; --y:${y}; --w:${width}; --fill:${fill}%;">
       <span>${escapeHtml(label)}</span>
       <input type="range" min="${min}" max="${max}" step="${step}" value="${escapeAttr(formatNumber(value))}" data-action="pe-simple-field" data-key="${key}" aria-label="${escapeAttr(label)}" />
-      <strong>${escapeHtml(formatDe1Value(value, unit, offWhenZero))}</strong>
+      ${renderDe1ValueButton(key, value, unit, min, max, step, label, formatDe1Value(value, unit, offWhenZero))}
     </label>
   `;
 }
@@ -575,7 +575,7 @@ function renderDe1VSlider(
   return `
     <label class="pe-de1-slider vertical ${stage}" style="--x:${x}; --y:${y}; --h:${height}; --fill:${fill}%;">
       <input type="range" min="${min}" max="${max}" step="${step}" value="${escapeAttr(formatNumber(value))}" data-action="pe-simple-field" data-key="${key}" aria-label="${escapeAttr(label)}" />
-      <strong>${escapeHtml(formatDe1Value(value, unit, false, label.startsWith('<')))}</strong>
+      ${renderDe1ValueButton(key, value, unit, min, max, step, label, formatDe1Value(value, unit, false, label.startsWith('<')))}
     </label>
   `;
 }
@@ -587,8 +587,34 @@ function renderDe1Temperature(value: number): string {
       <input type="range" min="1" max="105" step="0.5" value="${escapeAttr(formatNumber(value))}" data-action="pe-simple-field" data-key="temperature" aria-label="temperature" />
       <button type="button" class="temp-mid" data-action="pe-simple-nudge" data-key="temperature" data-delta="0" aria-label="Temperature steps"></button>
       <button type="button" class="temp-minus" data-action="pe-simple-nudge" data-key="temperature" data-delta="-0.5" aria-label="Decrease temperature"></button>
-      <strong>${escapeHtml(formatNumber(value))}°C</strong>
+      ${renderDe1ValueButton('temperature', value, '°C', 1, 105, 0.5, 'Temperature', `${formatNumber(value)}°C`)}
     </aside>
+  `;
+}
+
+function renderDe1ValueButton(
+  key: SimpleProfileField,
+  value: number,
+  unit: string,
+  min: number,
+  max: number,
+  step: number,
+  title: string,
+  label: string
+): string {
+  return `
+    <button
+      type="button"
+      class="pe-de1-value"
+      data-action="pe-simple-edit"
+      data-key="${key}"
+      data-value="${escapeAttr(formatNumber(value))}"
+      data-title="${escapeAttr(title)}"
+      data-unit="${escapeAttr(unit)}"
+      data-min="${min}"
+      data-max="${max}"
+      data-step="${step}"
+    >${escapeHtml(label)}</button>
   `;
 }
 
