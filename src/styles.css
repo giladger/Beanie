@@ -1164,7 +1164,7 @@ p {
   place-items: stretch;
   padding: 8px;
   border-radius: 6px;
-  background: rgba(0, 0, 0, 0.1);
+  background: color-mix(in srgb, var(--panel-2) 78%, white);
   box-shadow: inset 0 0 0 1px var(--line);
 }
 
@@ -1176,20 +1176,30 @@ p {
 }
 
 .profile-preview-plot {
-  fill: rgba(0, 0, 0, 0.08);
-  stroke: var(--line);
+  fill: color-mix(in srgb, var(--panel) 84%, white);
+  stroke: var(--line-strong);
 }
 
 .profile-preview-grid {
-  stroke: rgba(255, 255, 255, 0.1);
+  stroke: color-mix(in srgb, var(--muted) 24%, transparent);
   stroke-width: 1;
 }
 
+.profile-preview-grid.vertical {
+  stroke: color-mix(in srgb, var(--muted) 16%, transparent);
+}
+
 .profile-preview-axis,
-.profile-preview-label {
+.profile-preview-label,
+.profile-preview-y-title,
+.profile-preview-temp-readout {
   fill: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 850;
+}
+
+.profile-preview-y-title {
+  font-size: 13px;
 }
 
 .profile-preview-label.pressure {
@@ -1207,7 +1217,7 @@ p {
 .profile-preview-pressure,
 .profile-preview-flow,
 .profile-preview-temp {
-  stroke-width: 5;
+  stroke-width: 4;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -1222,6 +1232,15 @@ p {
 
 .profile-preview-temp {
   stroke: var(--red);
+}
+
+.profile-preview-thermo-tube {
+  fill: color-mix(in srgb, var(--panel-2) 70%, white);
+  stroke: var(--line-strong);
+}
+
+.profile-preview-thermo-fill {
+  fill: var(--red);
 }
 
 .profile-preview-facts {

@@ -21,7 +21,7 @@ export function renderProfilePreview(profile: Profile | null | undefined): strin
   const targets = profileStepTargets(profile);
   const width = 760;
   const height = 320;
-  const plot = { x: 48, y: 24, w: 684, h: 226 };
+  const plot = { x: 82, y: 38, w: 478, h: 178 };
   if (targets.length === 0) {
     return `<svg class="profile-preview" viewBox="0 0 ${width} ${height}" role="img" aria-label="No profile preview"></svg>`;
   }
@@ -35,20 +35,28 @@ export function renderProfilePreview(profile: Profile | null | undefined): strin
     totalSeconds,
     plot
   );
+  const displayTemperature = firstNumber(targets.map((target) => target.temperature));
+  const gauge = temperatureGauge(displayTemperature, { x: 640, y: 40, h: 176 });
 
   return `<svg class="profile-preview" viewBox="0 0 ${width} ${height}" role="img" aria-label="Profile target preview">
     <rect class="profile-preview-plot" x="${plot.x}" y="${plot.y}" width="${plot.w}" height="${plot.h}" rx="5" />
-    ${[0, 3, 6, 9, 12].map((tick) => {
+    ${[1, 3, 5, 7, 9, 11].map((tick) => {
       const y = yFor(tick, plot);
       return `<line class="profile-preview-grid" x1="${plot.x}" x2="${plot.x + plot.w}" y1="${y}" y2="${y}" />
         <text class="profile-preview-axis" x="${plot.x - 12}" y="${y + 4}" text-anchor="end">${tick}</text>`;
     }).join('')}
+    ${[0, 15, 30, 45, 60].map((tick) => {
+      const x = plot.x + (tick / 60) * plot.w;
+      return `<line class="profile-preview-grid vertical" x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${plot.y}" y2="${plot.y + plot.h}" />`;
+    }).join('')}
+    <text class="profile-preview-y-title" x="22" y="${plot.y + plot.h / 2}" transform="rotate(-90 22 ${plot.y + plot.h / 2})">pressure (bar)</text>
     ${flowPath ? `<path class="profile-preview-flow" d="${flowPath}" fill="none" />` : ''}
     ${pressurePath ? `<path class="profile-preview-pressure" d="${pressurePath}" fill="none" />` : ''}
     ${temperaturePath ? `<path class="profile-preview-temp" d="${temperaturePath}" fill="none" />` : ''}
-    <text x="${plot.x}" y="${height - 24}" class="profile-preview-label pressure">pressure</text>
-    <text x="${plot.x + 118}" y="${height - 24}" class="profile-preview-label flow">flow</text>
-    <text x="${plot.x + 198}" y="${height - 24}" class="profile-preview-label temp">temp /10</text>
+    ${gauge}
+    <text x="${plot.x}" y="${plot.y + plot.h + 34}" class="profile-preview-label pressure">pressure</text>
+    <text x="${plot.x + 118}" y="${plot.y + plot.h + 34}" class="profile-preview-label flow">flow</text>
+    <text x="${plot.x + 198}" y="${plot.y + plot.h + 34}" class="profile-preview-label temp">temp /10</text>
   </svg>`;
 }
 
@@ -84,7 +92,31 @@ function stepNumber(step: unknown, key: string): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function firstNumber(values: Array<number | null>): number | null {
+  return values.find((value): value is number => value != null) ?? null;
+}
+
+function temperatureGauge(value: number | null, gauge: { x: number; y: number; h: number }): string {
+  const bulbR = 18;
+  const tubeW = 12;
+  const tubeX = gauge.x + bulbR - tubeW / 2;
+  const tubeY = gauge.y;
+  const tubeH = gauge.h - bulbR * 1.55;
+  const normalized = value == null ? 0 : Math.max(0, Math.min(1, (value - 60) / 45));
+  const fillH = Math.max(8, tubeH * normalized);
+  const fillY = tubeY + tubeH - fillH + 4;
+  const label = value == null ? '--' : `${Math.round(value)}°C`;
+  return `
+    <g class="profile-preview-thermo" aria-label="Temperature ${label}">
+      <rect class="profile-preview-thermo-tube" x="${tubeX}" y="${tubeY}" width="${tubeW}" height="${tubeH + 10}" rx="${tubeW / 2}" />
+      <rect class="profile-preview-thermo-fill" x="${tubeX + 2}" y="${fillY.toFixed(1)}" width="${tubeW - 4}" height="${fillH.toFixed(1)}" rx="${(tubeW - 4) / 2}" />
+      <circle class="profile-preview-thermo-fill" cx="${gauge.x + bulbR}" cy="${gauge.y + tubeH + bulbR}" r="${bulbR}" />
+      <text class="profile-preview-temp-readout" x="${gauge.x + bulbR}" y="${gauge.y + gauge.h + 20}" text-anchor="middle">${label}</text>
+    </g>
+  `;
+}
+
 function yFor(value: number, plot: { y: number; h: number }): number {
-  const normalized = Math.max(0, Math.min(1, value / 12));
+  const normalized = Math.max(0, Math.min(1, value / 11.5));
   return Number((plot.y + plot.h - normalized * plot.h).toFixed(1));
 }
