@@ -3643,6 +3643,32 @@ p {
   margin-left: auto;
 }
 
+/* Save: accent pill matching the Back pill (replaces the white boxy .command) */
+.pe-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent, #3b82f6);
+  color: #fff;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.pe-save .icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* match the toggle pill height to Back / Save */
+.pe-editor-head .pe-mode-btn {
+  padding: 9px 18px;
+}
+
 .pe-mode-btn,
 .pe-kind-btn {
   appearance: none;

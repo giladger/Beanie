@@ -2215,7 +2215,7 @@ export class BeanieApp {
         <button class="page-back" type="button" data-action="go-view" data-value="profiles" aria-label="Back">${icon('chevron-left')}<span>Back</span></button>
         ${renderEditorModeBar(pe)}
         <div class="page-head-actions">
-          <button type="button" class="command primary" data-action="save-profile">${icon('save')}<span>Save</span></button>
+          <button type="button" class="pe-save" data-action="save-profile">${icon('save')}<span>Save</span></button>
         </div>
       </header>
       <main class="page-body profile-editor-page">
