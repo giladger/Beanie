@@ -1918,15 +1918,21 @@ export class BeanieApp {
           </div>
           <button type="button" class="profile-fav ${favorite ? 'on' : ''}" data-action="toggle-favorite-profile" data-id="${escapeAttr(record.id)}" aria-label="${favorite ? 'Unfavorite' : 'Favorite'} ${escapeAttr(title)}" aria-pressed="${favorite}">${favorite ? '★' : '☆'}</button>
         </div>
-        <div class="profile-preview-large">
-          ${renderProfilePreview(record.profile)}
-        </div>
+        <section class="profile-preview-block">
+          <span class="eyebrow">Preview</span>
+          <div class="profile-preview-large">
+            ${renderProfilePreview(record.profile)}
+          </div>
+        </section>
         <dl class="profile-preview-facts">
           <div><dt>Type</dt><dd>${escapeHtml(displayProfileType(type))}</dd></div>
           <div><dt>Steps</dt><dd>${steps}</dd></div>
           <div><dt>Target</dt><dd>${escapeHtml(target || '--')}</dd></div>
         </dl>
-        ${record.profile.notes ? `<p class="profile-preview-notes">${escapeHtml(record.profile.notes)}</p>` : ''}
+        <section class="profile-description-block">
+          <span class="eyebrow">Description</span>
+          <p class="profile-preview-notes">${escapeHtml(record.profile.notes || 'No description.')}</p>
+        </section>
         <div class="profile-preview-actions">
           <button type="button" class="command primary" data-action="pick-profile" data-id="${escapeAttr(record.id)}">${active ? 'Selected' : 'Select'}</button>
           <button type="button" class="command" data-action="edit-profile" data-id="${escapeAttr(record.id)}">${icon('pencil')}<span>Edit</span></button>
