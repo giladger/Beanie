@@ -1998,13 +1998,13 @@ export class BeanieApp {
 
     return `
       ${this.pageHeader('Profiles', 'workbench', actions)}
-      <main class="page-body profiles-page de1-profiles-page">
+      <main class="page-body profiles-page">
         <label class="search">
           ${icon('search')}
           <input type="search" data-action="profile-search" value="${escapeAttr(this.state.profileSearch)}" placeholder="Search profiles" />
         </label>
         <section class="profile-selector-shell">
-          <div class="profile-list de1-profile-list">
+          <div class="profile-list">
             ${
               sorted.length === 0
                 ? '<p class="empty">No profiles match.</p>'
@@ -2040,7 +2040,7 @@ export class BeanieApp {
     return `
       <div class="profile-row ${active ? 'active' : ''} ${focused ? 'focused' : ''}">
         <button type="button" class="profile-pick" data-action="focus-profile" data-id="${escapeAttr(record.id)}">
-          <span class="profile-row-title">${favorite ? '★ ' : ''}${escapeHtml(shortTitle)}</span>
+          <span class="profile-row-title">${favorite ? '<span class="profile-row-fav">★</span> ' : ''}${escapeHtml(shortTitle)}</span>
           ${author ? `<span class="profile-row-author">${escapeHtml(author)}</span>` : ''}
         </button>
         ${active ? '<span class="profile-selected-dot">Selected</span>' : ''}
@@ -2058,18 +2058,15 @@ export class BeanieApp {
     }
     const title = record.profile.title ?? record.id;
     const author = record.profile.author ?? '';
-    const steps = Array.isArray(record.profile.steps) ? record.profile.steps.length : 0;
-    const type = record.profile.type ?? record.profile.legacy_profile_type ?? 'profile';
-    const target = [
-      record.profile.target_weight != null ? `${formatProfileNumber(record.profile.target_weight)}g` : null,
-      record.profile.target_volume != null ? `${formatProfileNumber(record.profile.target_volume)}ml` : null
-    ].filter(Boolean).join(' / ');
+    // reaprime drops `type`, so derive the real kind from the steps.
+    const type = createProfileEditorState(record.profile).type;
     return `
       <aside class="profile-preview-pane">
         <div class="profile-preview-head">
           <div>
             <span class="eyebrow">${escapeHtml(author || 'Profile')}</span>
             <h2>${escapeHtml(title)}</h2>
+            <span class="profile-type-chip">${escapeHtml(displayProfileType(type))}</span>
           </div>
           <button type="button" class="profile-fav ${favorite ? 'on' : ''}" data-action="toggle-favorite-profile" data-id="${escapeAttr(record.id)}" aria-label="${favorite ? 'Unfavorite' : 'Favorite'} ${escapeAttr(title)}" aria-pressed="${favorite}">${favorite ? '★' : '☆'}</button>
         </div>
@@ -2079,18 +2076,13 @@ export class BeanieApp {
             ${renderProfilePreview(record.profile)}
           </div>
         </section>
-        <dl class="profile-preview-facts">
-          <div><dt>Type</dt><dd>${escapeHtml(displayProfileType(type))}</dd></div>
-          <div><dt>Steps</dt><dd>${steps}</dd></div>
-          <div><dt>Target</dt><dd>${escapeHtml(target || '--')}</dd></div>
-        </dl>
         <section class="profile-description-block">
           <span class="eyebrow">Description</span>
           <p class="profile-preview-notes">${escapeHtml(record.profile.notes || 'No description.')}</p>
         </section>
         <div class="profile-preview-actions">
-          <button type="button" class="command primary" data-action="pick-profile" data-id="${escapeAttr(record.id)}">${active ? 'Selected' : 'Select'}</button>
-          <button type="button" class="command" data-action="edit-profile" data-id="${escapeAttr(record.id)}">${icon('pencil')}<span>Edit</span></button>
+          <button type="button" class="pa-edit" data-action="edit-profile" data-id="${escapeAttr(record.id)}">${icon('pencil')}<span>Edit</span></button>
+          <button type="button" class="pa-select ${active ? 'is-selected' : ''}" data-action="pick-profile" data-id="${escapeAttr(record.id)}">${active ? 'Selected' : 'Select'}</button>
         </div>
       </aside>
     `;
@@ -2531,10 +2523,6 @@ function displayProfileType(value: string): string {
           ? 'advanced'
           : value;
   return legacy.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function formatProfileNumber(value: number): string {
-  return Number.isInteger(value) ? value.toString() : value.toFixed(1);
 }
 
 function textOrNull(value: FormDataEntryValue | null): string | null {

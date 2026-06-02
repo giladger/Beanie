@@ -33,7 +33,7 @@ run('renders an svg preview with pressure, flow, and temperature paths when data
   });
   includes(svg, 'profile-preview-pressure');
   includes(svg, 'profile-preview-flow');
-  includes(svg, 'profile-preview-temp');
+  includes(svg, 'profile-preview-thermo');
   includes(svg, 'profile-preview-grid');
   includes(svg, '<path');
 });
@@ -46,7 +46,7 @@ run('matches de1 pressure preview by hiding flow traces', () => {
   });
   includes(svg, 'pressure (bar)');
   includes(svg, 'profile-preview-pressure');
-  includes(svg, 'profile-preview-temp');
+  includes(svg, 'profile-preview-thermo');
   excludes(svg, 'profile-preview-flow');
 });
 
@@ -75,7 +75,7 @@ run('uses Tcl settings_profile_type to render scalar pressure presets like de1ap
   const svg = renderProfilePreview(profile);
   includes(svg, 'pressure (bar)');
   includes(svg, 'profile-preview-pressure');
-  includes(svg, 'profile-preview-temp');
+  includes(svg, 'profile-preview-thermo');
   excludes(svg, 'profile-preview-flow');
   excludes(svg, 'Advanced');
 });
@@ -112,7 +112,7 @@ run('infers normalized pressure presets from flow preinfusion followed by pressu
   const svg = renderProfilePreview(profile);
   includes(svg, 'pressure (bar)');
   includes(svg, 'profile-preview-pressure');
-  includes(svg, 'profile-preview-temp');
+  includes(svg, 'profile-preview-thermo');
   excludes(svg, 'profile-preview-flow');
   excludes(svg, 'Advanced');
 });
@@ -123,9 +123,9 @@ run('matches de1 flow preview by hiding pressure traces', () => {
     legacy_profile_type: 'settings_2b',
     steps: [{ pressure: 6, flow: 2, temperature: 92 }, { pressure: 9, flow: 1.5, temperature: 94 }] as unknown[]
   });
-  includes(svg, 'Flow rate');
+  includes(svg, 'flow (ml/s)');
   includes(svg, 'profile-preview-flow');
-  includes(svg, 'profile-preview-temp');
+  includes(svg, 'profile-preview-thermo');
   excludes(svg, 'profile-preview-pressure');
 });
 
@@ -152,9 +152,9 @@ run('uses Tcl settings_profile_type to render scalar flow presets like de1app', 
   equal(targets[4]!.flow, 1.2);
 
   const svg = renderProfilePreview(profile);
-  includes(svg, 'Flow rate');
+  includes(svg, 'flow (ml/s)');
   includes(svg, 'profile-preview-flow');
-  includes(svg, 'profile-preview-temp');
+  includes(svg, 'profile-preview-thermo');
   excludes(svg, 'profile-preview-pressure');
 });
 
@@ -183,7 +183,6 @@ run('reads advanced_shot when Tcl-derived profiles do not expose canonical steps
       { pump: 'flow', flow: '2', temperature: '92', seconds: '8' }
     ]
   } as Profile);
-  includes(svg, 'Advanced');
   includes(svg, 'profile-preview-pressure');
   includes(svg, 'profile-preview-flow');
 });

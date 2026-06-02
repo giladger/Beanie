@@ -291,10 +291,19 @@ p {
 }
 
 .icon-button {
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   display: grid;
   place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--soft);
+  cursor: pointer;
+}
+
+.icon-button:hover {
+  border-color: color-mix(in srgb, var(--soft) 40%, var(--line));
 }
 
 .search {
@@ -1166,6 +1175,11 @@ p {
   align-content: start;
   max-height: none;
   overflow-y: auto;
+  min-height: 0;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 
 .profile-row {
@@ -1214,14 +1228,6 @@ p {
   display: grid;
   grid-template-columns: minmax(320px, 560px) minmax(520px, 1fr);
   gap: 10px;
-}
-
-.de1-profile-list {
-  min-height: 0;
-  padding: 8px;
-  border-radius: 8px;
-  background: var(--panel);
-  box-shadow: inset 0 0 0 1px var(--line);
 }
 
 .profile-preview-pane {
@@ -1388,6 +1394,78 @@ p {
   align-items: center;
   justify-content: end;
   gap: 8px;
+}
+
+/* Consistent action pills (match the editor's Back/Save) */
+.pa-select,
+.pa-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 18px;
+  border-radius: 999px;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.pa-select {
+  border: 0;
+  background: var(--teal);
+  color: #071015;
+}
+
+.pa-select.is-selected {
+  background: color-mix(in srgb, var(--teal) 18%, var(--panel-2));
+  color: var(--teal);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--teal) 55%, transparent);
+}
+
+.pa-edit {
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--soft);
+}
+
+.pa-edit .icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Derived kind chip under the title */
+.profile-type-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 8px;
+  padding: 3px 11px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--teal) 16%, var(--panel-2));
+  color: var(--teal);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+/* Amber favorite star in list rows (match the detail-pane star) */
+.profile-row-fav {
+  color: var(--amber);
+}
+
+/* Preview chart legend */
+.profile-preview-legend {
+  fill: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.profile-preview-legend-dot.pressure {
+  fill: #47e098;
+}
+
+.profile-preview-legend-dot.flow {
+  fill: #98c5ff;
 }
 
 .modal-head-actions {

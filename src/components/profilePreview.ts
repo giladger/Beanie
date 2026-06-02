@@ -40,7 +40,6 @@ export function renderProfilePreview(profile: Profile | null | undefined): strin
   const mode = previewMode(profile, targets);
   const yMax = mode === 'flow' ? 10 : mode === 'advanced' ? 12 : 11.5;
   const yTicks = mode === 'flow' ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] : mode === 'advanced' ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] : [1, 3, 5, 7, 9, 11];
-  const yTitle = mode === 'flow' ? 'Flow rate' : mode === 'advanced' ? 'Advanced' : 'pressure (bar)';
   if (targets.length === 0) {
     return `<svg class="profile-preview" viewBox="0 0 ${width} ${height}" role="img" aria-label="No profile preview"></svg>`;
   }
@@ -54,15 +53,22 @@ export function renderProfilePreview(profile: Profile | null | undefined): strin
     mode !== 'pressure'
       ? previewPath(targets, (t) => (mode === 'advanced' && t.pump === 'pressure' ? null : t.flow), totalSeconds, plot, yMax)
       : '';
-  const temperaturePath = previewPath(
-    targets,
-    (t) => (t.temperature == null ? null : t.temperature / 10),
-    totalSeconds,
-    plot,
-    yMax
-  );
   const displayTemperature = firstNumber(targets.map((target) => target.temperature));
   const gauge = temperatureGauge(displayTemperature, { x: 640, y: 40, h: 176 });
+
+  // Temperature is the gauge, not a line, so the only plotted lines (and the
+  // legend) are the pressure/flow goals.
+  const legendItems: { cls: string; label: string }[] = [];
+  if (pressurePath) legendItems.push({ cls: 'pressure', label: 'pressure (bar)' });
+  if (flowPath) legendItems.push({ cls: 'flow', label: 'flow (ml/s)' });
+  const legend = legendItems
+    .map((item, i) => {
+      const lx = plot.x + i * 150;
+      const ly = height - 16;
+      return `<circle class="profile-preview-legend-dot ${item.cls}" cx="${lx}" cy="${ly - 4}" r="4" />
+        <text class="profile-preview-legend" x="${lx + 11}" y="${ly}">${item.label}</text>`;
+    })
+    .join('');
 
   return `<svg class="profile-preview" viewBox="0 0 ${width} ${height}" role="img" aria-label="Profile target preview">
     <rect class="profile-preview-plot" x="${plot.x}" y="${plot.y}" width="${plot.w}" height="${plot.h}" rx="5" />
@@ -75,11 +81,10 @@ export function renderProfilePreview(profile: Profile | null | undefined): strin
       const x = plot.x + (tick / 60) * plot.w;
       return `<line class="profile-preview-grid vertical" x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${plot.y}" y2="${plot.y + plot.h}" />`;
     }).join('')}
-    <text class="profile-preview-y-title" x="22" y="${plot.y + plot.h / 2}" transform="rotate(-90 22 ${plot.y + plot.h / 2})">${yTitle}</text>
     ${pressurePath ? `<path class="profile-preview-pressure" d="${pressurePath}" fill="none" />` : ''}
     ${flowPath ? `<path class="profile-preview-flow" d="${flowPath}" fill="none" />` : ''}
-    ${temperaturePath ? `<path class="profile-preview-temp" d="${temperaturePath}" fill="none" />` : ''}
     ${gauge}
+    ${legend}
   </svg>`;
 }
 
