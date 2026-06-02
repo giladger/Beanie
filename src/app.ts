@@ -151,6 +151,7 @@ interface AppState {
   search: string;
   profileSearch: string;
   profilePage: number;
+  profileFocusId: string | null;
   favoriteProfiles: string[];
   autoLoad: boolean;
   settingsPreferences: SettingsPreferences;
@@ -198,6 +199,7 @@ export class BeanieApp {
     search: '',
     profileSearch: '',
     profilePage: 0,
+    profileFocusId: null,
     favoriteProfiles: readFavoriteProfiles(),
     autoLoad: initialSettingsPreferences.autoLoad,
     settingsPreferences: initialSettingsPreferences,
@@ -833,10 +835,18 @@ export class BeanieApp {
         this.setState({ view: 'grinder-editor', modal: null, editDialog: null });
         break;
       case 'open-profile-picker':
-        this.setState({ view: 'profiles', profileSearch: '', profilePage: 0 });
+        this.setState({
+          view: 'profiles',
+          profileSearch: '',
+          profilePage: 0,
+          profileFocusId: this.profileIdForDraft()
+        });
         break;
       case 'profiles-page':
         if (value) this.setState({ profilePage: Number(value) });
+        break;
+      case 'focus-profile':
+        if (id) this.focusProfile(id);
         break;
       case 'open-machine-settings':
         this.setState({ view: 'machine' });
@@ -926,7 +936,7 @@ export class BeanieApp {
       this.setState({ settingsSearch: target.value });
     }
     if (target.dataset.action === 'profile-search') {
-      this.setState({ profileSearch: target.value, profilePage: 0 });
+      this.setState({ profileSearch: target.value, profilePage: 0, profileFocusId: null });
     }
     if (target.dataset.action?.startsWith('pe-')) {
       this.applyEditorEvent(target);
@@ -947,6 +957,22 @@ export class BeanieApp {
       draft: normalizeDraft(draft, this.state.profiles, this.state.grinders),
       view: 'workbench',
       profileSearch: '',
+      status: 'Profile selected'
+    });
+  }
+
+  private focusProfile(id: string): void {
+    const record = this.state.profiles.find((profile) => profile.id === id);
+    const draft = { ...this.state.draft };
+    if (record) {
+      draft.profileId = record.id;
+      draft.profile = record.profile;
+      draft.profileTitle = record.profile.title ?? null;
+      draft.brewTemp = null;
+    }
+    this.setState({
+      draft: normalizeDraft(draft, this.state.profiles, this.state.grinders),
+      profileFocusId: id,
       status: 'Profile selected'
     });
   }
@@ -1812,53 +1838,104 @@ export class BeanieApp {
       if (fa !== fb) return fa - fb;
       return (a.profile.title ?? '').localeCompare(b.profile.title ?? '');
     });
-
-    const pageSize = 7;
-    const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
-    const page = Math.min(Math.max(0, this.state.profilePage), pageCount - 1);
-    const visible = sorted.slice(page * pageSize, page * pageSize + pageSize);
+    const focus =
+      sorted.find((record) => record.id === this.state.profileFocusId) ??
+      sorted.find((record) => record.id === selectedId) ??
+      sorted[0] ??
+      null;
     const actions = `<button class="icon-button" data-action="new-profile" aria-label="New profile" title="New profile">${icon('plus')}</button>`;
 
     return `
       ${this.pageHeader('Profiles', 'workbench', actions)}
-      <main class="page-body profiles-page">
+      <main class="page-body profiles-page de1-profiles-page">
         <label class="search">
           ${icon('search')}
           <input type="search" data-action="profile-search" value="${escapeAttr(this.state.profileSearch)}" placeholder="Search profiles" />
         </label>
-        <div class="profile-list">
-          ${
-            visible.length === 0
-              ? '<p class="empty">No profiles match.</p>'
-              : visible.map((record) => this.renderProfileRow(record, favorites.has(record.id), record.id === selectedId)).join('')
-          }
-        </div>
-        ${
-          pageCount > 1
-            ? `<div class="pager">
-                <button class="command" data-action="profiles-page" data-value="${page - 1}" ${page === 0 ? 'disabled' : ''}>${icon('chevron-left')}<span>Prev</span></button>
-                <span class="pager-label">Page ${page + 1} / ${pageCount}</span>
-                <button class="command" data-action="profiles-page" data-value="${page + 1}" ${page >= pageCount - 1 ? 'disabled' : ''}><span>Next</span></button>
-              </div>`
-            : ''
-        }
+        <section class="profile-selector-shell">
+          <div class="profile-list de1-profile-list">
+            ${
+              sorted.length === 0
+                ? '<p class="empty">No profiles match.</p>'
+                : this.renderProfileRows(sorted, favorites, selectedId, focus?.id ?? null)
+            }
+          </div>
+          ${this.renderProfilePreviewPane(focus, favorites.has(focus?.id ?? ''), focus?.id === selectedId)}
+        </section>
       </main>
     `;
   }
 
-  private renderProfileRow(record: ProfileRecord, favorite: boolean, active: boolean): string {
+  private renderProfileRows(
+    records: ProfileRecord[],
+    favorites: Set<string>,
+    selectedId: string | null,
+    focusId: string | null
+  ): string {
+    let lastGroup = '';
+    return records.map((record) => {
+      const title = record.profile.title ?? record.id;
+      const group = profileGroup(title, record.profile.author);
+      const header = group !== lastGroup ? `<div class="profile-group-header">${escapeHtml(group)}</div>` : '';
+      lastGroup = group;
+      return `${header}${this.renderProfileRow(record, favorites.has(record.id), record.id === selectedId, record.id === focusId)}`;
+    }).join('');
+  }
+
+  private renderProfileRow(record: ProfileRecord, favorite: boolean, active: boolean, focused = false): string {
     const title = record.profile.title ?? record.id;
+    const shortTitle = profileShortTitle(title);
     const author = record.profile.author ?? '';
     return `
-      <div class="profile-row ${active ? 'active' : ''}">
-        <button type="button" class="profile-fav ${favorite ? 'on' : ''}" data-action="toggle-favorite-profile" data-id="${escapeAttr(record.id)}" aria-label="${favorite ? 'Unfavorite' : 'Favorite'} ${escapeAttr(title)}" aria-pressed="${favorite}">${favorite ? '★' : '☆'}</button>
-        <button type="button" class="profile-pick" data-action="pick-profile" data-id="${escapeAttr(record.id)}">
-          <span class="profile-row-title">${escapeHtml(title)}</span>
+      <div class="profile-row ${active ? 'active' : ''} ${focused ? 'focused' : ''}">
+        <button type="button" class="profile-pick" data-action="focus-profile" data-id="${escapeAttr(record.id)}">
+          <span class="profile-row-title">${favorite ? '★ ' : ''}${escapeHtml(shortTitle)}</span>
           ${author ? `<span class="profile-row-author">${escapeHtml(author)}</span>` : ''}
         </button>
-        ${renderProfilePreview(record.profile)}
-        <button type="button" class="profile-edit" data-action="edit-profile" data-id="${escapeAttr(record.id)}" aria-label="Edit ${escapeAttr(title)}" title="Edit profile">${icon('pencil')}</button>
+        ${active ? '<span class="profile-selected-dot">Selected</span>' : ''}
       </div>
+    `;
+  }
+
+  private renderProfilePreviewPane(record: ProfileRecord | null, favorite: boolean, active: boolean): string {
+    if (!record) {
+      return `
+        <aside class="profile-preview-pane">
+          <p class="empty">No profile selected.</p>
+        </aside>
+      `;
+    }
+    const title = record.profile.title ?? record.id;
+    const author = record.profile.author ?? '';
+    const steps = Array.isArray(record.profile.steps) ? record.profile.steps.length : 0;
+    const type = record.profile.type ?? record.profile.legacy_profile_type ?? 'profile';
+    const target = [
+      record.profile.target_weight != null ? `${formatProfileNumber(record.profile.target_weight)}g` : null,
+      record.profile.target_volume != null ? `${formatProfileNumber(record.profile.target_volume)}ml` : null
+    ].filter(Boolean).join(' / ');
+    return `
+      <aside class="profile-preview-pane">
+        <div class="profile-preview-head">
+          <div>
+            <span class="eyebrow">${escapeHtml(author || 'Profile')}</span>
+            <h2>${escapeHtml(title)}</h2>
+          </div>
+          <button type="button" class="profile-fav ${favorite ? 'on' : ''}" data-action="toggle-favorite-profile" data-id="${escapeAttr(record.id)}" aria-label="${favorite ? 'Unfavorite' : 'Favorite'} ${escapeAttr(title)}" aria-pressed="${favorite}">${favorite ? '★' : '☆'}</button>
+        </div>
+        <div class="profile-preview-large">
+          ${renderProfilePreview(record.profile)}
+        </div>
+        <dl class="profile-preview-facts">
+          <div><dt>Type</dt><dd>${escapeHtml(displayProfileType(type))}</dd></div>
+          <div><dt>Steps</dt><dd>${steps}</dd></div>
+          <div><dt>Target</dt><dd>${escapeHtml(target || '--')}</dd></div>
+        </dl>
+        ${record.profile.notes ? `<p class="profile-preview-notes">${escapeHtml(record.profile.notes)}</p>` : ''}
+        <div class="profile-preview-actions">
+          <button type="button" class="command primary" data-action="pick-profile" data-id="${escapeAttr(record.id)}">${active ? 'Selected' : 'Select'}</button>
+          <button type="button" class="command" data-action="edit-profile" data-id="${escapeAttr(record.id)}">${icon('pencil')}<span>Edit</span></button>
+        </div>
+      </aside>
     `;
   }
 
@@ -2295,6 +2372,33 @@ function batchOptionLabel(batch: BeanBatch): string {
       : 'Batch';
   const remaining = batch.weightRemaining != null ? ` · ${formatGrams(batch.weightRemaining)}` : '';
   return `${roastText}${remaining}`;
+}
+
+function profileGroup(title: string, author?: string): string {
+  const slash = title.indexOf('/');
+  if (slash > 0) return title.slice(0, slash).trim();
+  return author?.trim() || 'Profiles';
+}
+
+function profileShortTitle(title: string): string {
+  const slash = title.indexOf('/');
+  return slash > 0 ? title.slice(slash + 1).trim() : title;
+}
+
+function displayProfileType(value: string): string {
+  const legacy =
+    value === 'settings_2a'
+      ? 'pressure'
+      : value === 'settings_2b'
+        ? 'flow'
+        : value === 'settings_2c' || value === 'settings_2c2'
+          ? 'advanced'
+          : value;
+  return legacy.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatProfileNumber(value: number): string {
+  return Number.isInteger(value) ? value.toString() : value.toFixed(1);
 }
 
 function textOrNull(value: FormDataEntryValue | null): string | null {
