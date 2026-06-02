@@ -1,7 +1,6 @@
 import type {
   Bean,
   BeanBatch,
-  BeanPreset,
   Grinder,
   HotWaterData,
   MachineSnapshot,
@@ -25,7 +24,6 @@ import {
   latestBatch,
   normalizeDraft,
   parseNumberInput,
-  presetName,
   profileBaseTemperature,
   ratioFor,
   recipeFromShot,
@@ -37,10 +35,8 @@ import {
 import {
   readFavoriteProfiles,
   readLastBeanId,
-  readPresets,
   writeFavoriteProfiles,
-  writeLastBeanId,
-  writePresets
+  writeLastBeanId
 } from './domain/storage';
 import {
   demoBatches,
@@ -150,7 +146,6 @@ interface AppState {
   shotsTotal: number;
   shotsLoadingMore: boolean;
   draft: RecipeDraft;
-  presets: BeanPreset[];
   search: string;
   profileSearch: string;
   profilePage: number;
@@ -198,7 +193,6 @@ export class BeanieApp {
     shotsTotal: 0,
     shotsLoadingMore: false,
     draft: emptyRecipe(),
-    presets: [],
     search: '',
     profileSearch: '',
     profilePage: 0,
@@ -326,7 +320,6 @@ export class BeanieApp {
       latestBatch(batches);
 
     const { records: shots, total: shotsTotal } = await this.loadFirstShots(bean);
-    const presets = readPresets(bean.id);
     const workflowMatches = this.workflowMatchesBean(bean);
     const draft =
       options.preferWorkflow && workflowMatches
@@ -339,7 +332,6 @@ export class BeanieApp {
       shots,
       shotsTotal,
       shotsLoadingMore: false,
-      presets,
       draft: normalizeDraft(draft, this.state.profiles, this.state.grinders),
       busy: false,
       applyState: 'idle',
@@ -463,30 +455,6 @@ export class BeanieApp {
   private isDirty(): boolean {
     if (!this.selectedBean() || this.state.appliedSignature == null) return false;
     return draftSignature(this.state.draft) !== this.state.appliedSignature;
-  }
-
-  private async savePreset(): Promise<void> {
-    const bean = this.selectedBean();
-    if (!bean) return;
-
-    const preset: BeanPreset = {
-      id: crypto.randomUUID(),
-      name: presetName(this.state.draft),
-      createdAt: new Date().toISOString(),
-      recipe: { ...this.state.draft, sourceLabel: 'Saved preset' }
-    };
-    const presets = [preset, ...this.state.presets].slice(0, 8);
-    writePresets(bean.id, presets);
-    this.setState({ presets, status: 'Preset saved' });
-  }
-
-  private usePreset(id: string): void {
-    const preset = this.state.presets.find((item) => item.id === id);
-    if (!preset) return;
-    this.setState({
-      draft: normalizeDraft(preset.recipe, this.state.profiles, this.state.grinders),
-      status: 'Preset loaded'
-    });
   }
 
   private resetFromLastShot(): void {
@@ -770,12 +738,6 @@ export class BeanieApp {
         break;
       case 'apply':
         await this.applyDraft();
-        break;
-      case 'save-preset':
-        await this.savePreset();
-        break;
-      case 'use-preset':
-        if (id) this.usePreset(id);
         break;
       case 'clear':
         this.setState({ draft: emptyRecipe(), status: 'Draft cleared' });
@@ -1759,17 +1721,6 @@ export class BeanieApp {
         ${this.controlGrind()}
         ${this.controlTemp()}
         ${this.controlProfile()}
-        <div class="quick-panel panel">
-          <div class="quick-head">
-            <span class="eyebrow">Bean presets</span>
-            <button class="text-button" data-action="save-preset">${icon('save')}<span>Save</span></button>
-          </div>
-          <div class="preset-list">
-            ${this.state.presets.length === 0 ? '<span class="empty">No presets</span>' : this.state.presets.map((preset) => `
-              <button class="preset" data-action="use-preset" data-id="${escapeAttr(preset.id)}">${escapeHtml(preset.name)}</button>
-            `).join('')}
-          </div>
-        </div>
         <div class="command-panel panel">
           <button class="command primary" data-action="apply" ${bean ? '' : 'disabled'}>${icon('sliders-horizontal')}<span>Apply</span></button>
           <button class="command" data-action="reset">${icon('rotate-ccw')}<span>Latest</span></button>
@@ -2265,7 +2216,6 @@ export class BeanieApp {
     const cleared = resetBeanieCache();
     await beanieCache.clear();
     this.setState({
-      presets: [],
       status: cleared === 0 ? 'Cache reset' : `Reset ${cleared} local item${cleared === 1 ? '' : 's'}`
     });
   }
