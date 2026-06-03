@@ -366,21 +366,25 @@ function stepExitNumber(step: unknown, type: string): number | null {
 }
 
 function temperatureGauge(value: number | null, gauge: { x: number; y: number; h: number }): string {
-  const bulbR = 18;
-  const tubeW = 12;
-  const tubeX = gauge.x + bulbR - tubeW / 2;
-  const tubeY = gauge.y;
-  const tubeH = gauge.h - bulbR * 1.55;
-  const normalized = value == null ? 0 : Math.max(0, Math.min(1, (value - 60) / 45));
-  const fillH = Math.max(8, tubeH * normalized);
-  const fillY = tubeY + tubeH - fillH + 4;
   const label = value == null ? '--' : `${Math.round(value)}°C`;
+  // A small thermometer glyph captioned with the value — a read-only indicator.
+  // (It used to be a full-height filled tube, which read as a draggable slider.)
+  const cx = gauge.x + 20;
+  const stemW = 12;
+  const stemH = 34;
+  const stemX = cx - stemW / 2;
+  const stemTop = gauge.y + gauge.h / 2 - 42;
+  const bulbR = 10;
+  const bulbCy = stemTop + stemH + bulbR - 3;
+  const normalized = value == null ? 0 : Math.max(0, Math.min(1, (value - 60) / 45));
+  const mercuryTop = stemTop + 5 + (stemH - 5) * (1 - normalized);
   return `
-    <g class="profile-preview-thermo" aria-label="Temperature ${label}">
-      <rect class="profile-preview-thermo-tube" x="${tubeX}" y="${tubeY}" width="${tubeW}" height="${tubeH + 10}" rx="${tubeW / 2}" />
-      <rect class="profile-preview-thermo-fill" x="${tubeX + 2}" y="${fillY.toFixed(1)}" width="${tubeW - 4}" height="${fillH.toFixed(1)}" rx="${(tubeW - 4) / 2}" />
-      <circle class="profile-preview-thermo-fill" cx="${gauge.x + bulbR}" cy="${gauge.y + tubeH + bulbR}" r="${bulbR}" />
-      <text class="profile-preview-temp-readout" x="${gauge.x + bulbR}" y="${gauge.y + gauge.h + 20}" text-anchor="middle">${label}</text>
+    <g class="profile-preview-thermo" role="img" aria-label="Temperature ${label}">
+      <text class="profile-preview-temp-cap" x="${cx}" y="${stemTop - 12}" text-anchor="middle">TEMP</text>
+      <rect class="profile-preview-thermo-tube" x="${stemX}" y="${stemTop}" width="${stemW}" height="${stemH + 9}" rx="${stemW / 2}" />
+      <rect class="profile-preview-thermo-fill" x="${stemX + 2.5}" y="${mercuryTop.toFixed(1)}" width="${stemW - 5}" height="${(bulbCy - mercuryTop).toFixed(1)}" rx="${(stemW - 5) / 2}" />
+      <circle class="profile-preview-thermo-fill" cx="${cx}" cy="${bulbCy}" r="${bulbR}" />
+      <text class="profile-preview-temp-value" x="${cx}" y="${bulbCy + 34}" text-anchor="middle">${label}</text>
     </g>
   `;
 }

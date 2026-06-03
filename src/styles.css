@@ -1700,6 +1700,19 @@ p {
   fill: var(--red);
 }
 
+.profile-preview-temp-cap {
+  fill: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+}
+
+.profile-preview-temp-value {
+  fill: var(--red);
+  font-size: 22px;
+  font-weight: 900;
+}
+
 .profile-preview-facts {
   margin: 0;
   display: grid;
