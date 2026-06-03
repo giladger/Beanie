@@ -3986,6 +3986,12 @@ p {
   stroke-linejoin: round;
 }
 
+.steam-graphic-svg {
+  width: 104px;
+  height: 104px;
+  stroke-width: 2.5;
+}
+
 .machine-card {
   min-width: 0;
   padding: 12px;

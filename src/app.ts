@@ -3628,11 +3628,11 @@ function machineGraphicIcon(tone: MachineLaneOptions<object>['tone']): string {
   }
 
   return `
-    <svg class="machine-graphic-svg" viewBox="0 0 64 64" role="img" aria-label="Steam">
-      <path d="M20.3 47H44.5C51.4 47 56 42.5 56 36.5C56 30.8 51.6 26.5 45.8 26.3C44.2 16.8 36.2 10.2 27.2 10.2C18.9 10.2 12.1 15.5 10.1 23.2C5 25 1.8 29.5 1.8 35C1.8 41.9 7.2 47 14.3 47H20.3Z" />
-      <path d="M32 24.2V53.8" />
-      <path d="M24.5 37.2C24.5 30.7 21.2 25.4 16.3 22.4" />
-      <path d="M39.5 37.2C39.5 30.7 42.8 25.4 47.7 22.4" />
+    <svg class="machine-graphic-svg steam-graphic-svg" viewBox="0 0 64 64" role="img" aria-label="Steam">
+      <path d="M15.2 47.5H46.8C53.7 47.5 58.5 42.8 58.5 36.5C58.5 30.7 54.2 26.2 48.5 25.5C46.1 15.9 37.6 9.5 27.8 9.5C19.1 9.5 11.8 15 9.4 23C4.3 25.1 1.5 29.8 1.5 35.3C1.5 42.4 7.2 47.5 15.2 47.5Z" />
+      <path d="M37 29.5V57.5" />
+      <path d="M23.4 27.7C29.2 31.2 32.1 36.2 32.1 43.2" />
+      <path d="M45.2 43.2C45.4 36.4 48.4 31.4 53.4 28" />
     </svg>
   `;
 }
