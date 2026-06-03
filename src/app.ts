@@ -152,7 +152,7 @@ import {
   type WaterPreset
 } from './domain/waterSettings';
 
-type Modal = 'edit-number' | 'edit-shot' | 'machine-label' | null;
+type Modal = 'bean-picker' | 'edit-number' | 'edit-shot' | 'machine-label' | null;
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
 type ShotEditField =
   | 'coffeeRoaster'
@@ -189,7 +189,7 @@ const initialSettingsPreferences = readSettingsPreferences();
 const FOCUSABLE_SEARCH = new Set(['search', 'profile-search', 'settings-search']);
 
 // Scrollable containers whose scroll position must survive a re-render.
-const SCROLL_SELECTORS = ['.bean-list', '.shot-list', '.page-body'];
+const SCROLL_SELECTORS = ['.bean-picker-list', '.shot-list', '.page-body'];
 
 const SHOT_SCORE_OPTIONS = [
   { value: 20, icon: '😞', label: 'Bad' },
@@ -1301,7 +1301,10 @@ export class BeanieApp {
 
     switch (action) {
       case 'select-bean':
-        if (id) await this.selectBean(id, { apply: true, preferWorkflow: false });
+        if (id) {
+          this.setState({ modal: null });
+          await this.selectBean(id, { apply: true, preferWorkflow: false });
+        }
         break;
       case 'adjust':
         if (field) this.adjustField(field, Number(el.dataset.delta ?? '0'));
@@ -1452,10 +1455,10 @@ export class BeanieApp {
         await this.resetLocalCache();
         break;
       case 'open-add-bean':
-        this.setState({ view: 'bean-editor', editingBeanId: null });
+        this.setState({ view: 'bean-editor', editingBeanId: null, modal: null });
         break;
       case 'open-edit-bean':
-        this.setState({ view: 'bean-editor', editingBeanId: id ?? this.state.selectedBeanId });
+        this.setState({ view: 'bean-editor', editingBeanId: id ?? this.state.selectedBeanId, modal: null });
         break;
       case 'archive-bean':
         if (id) await this.archiveBean(id);
@@ -1476,6 +1479,9 @@ export class BeanieApp {
           profilePage: 0,
           profileFocusId: this.profileIdForDraft()
         });
+        break;
+      case 'open-bean-picker':
+        this.setState({ modal: 'bean-picker', search: '' });
         break;
       case 'profiles-page':
         if (value) this.setState({ profilePage: Number(value) });
@@ -2641,7 +2647,6 @@ export class BeanieApp {
     return `
       ${this.renderTopbar()}
       <main class="workbench">
-        ${this.renderBeanRail()}
         <section class="surface">
           ${this.renderHero(bean)}
           ${this.renderRecipeEditor()}
@@ -2844,29 +2849,35 @@ export class BeanieApp {
     `;
   }
 
-  private renderBeanRail(): string {
+  private renderBeanPickerModal(): string {
     const query = this.state.search.trim().toLowerCase();
-    const beans = this.state.beans.filter((bean) => beanLabel(bean).toLowerCase().includes(query));
+    const selected = this.selectedBean();
+    const matches = this.state.beans.filter((bean) => beanLabel(bean).toLowerCase().includes(query));
+    const rows = matches.filter((bean) => bean.id !== selected?.id);
     return `
-      <aside class="bean-rail panel">
-        <div class="rail-head">
-          <div>
-            <span class="eyebrow">Beans</span>
-            <h2>Pick a bag</h2>
+      <div class="modal-backdrop bean-picker-backdrop" data-action="close-modal">
+        <section class="modal panel bean-picker-modal" role="dialog" aria-modal="true" aria-label="Pick a bag" data-action="noop">
+          <div class="modal-head bean-picker-head">
+            <div>
+              <span class="eyebrow">Beans</span>
+              <h2>Pick a bag</h2>
+            </div>
+            <div class="modal-head-actions">
+              <button class="icon-button" data-action="refresh" aria-label="Sync beans" title="Sync beans">${icon('refresh-cw')}</button>
+              <button class="icon-button" data-action="open-add-bean" aria-label="Add bean" title="Add bean">${icon('plus')}</button>
+              <button class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
+            </div>
           </div>
-          <div class="rail-actions">
-            <button class="icon-button" data-action="refresh" aria-label="Sync beans" title="Sync beans">${icon('refresh-cw')}</button>
-            <button class="icon-button" data-action="open-add-bean" aria-label="Add bean" title="Add bean">${icon('plus')}</button>
+          <label class="search bean-picker-search">
+            ${icon('search')}
+            <input type="search" data-action="search" value="${escapeAttr(this.state.search)}" placeholder="Search beans" autofocus />
+          </label>
+          <div class="bean-picker-list">
+            ${selected ? `<div class="bean-picker-current">${this.renderBeanButton(selected)}</div>` : ''}
+            ${rows.length === 0 ? '<p class="empty-history">No beans found.</p>' : rows.map((bean) => this.renderBeanButton(bean)).join('')}
           </div>
-        </div>
-        <label class="search">
-          ${icon('search')}
-          <input type="search" data-action="search" value="${escapeAttr(this.state.search)}" placeholder="Search beans" />
-        </label>
-        <div class="bean-list">
-          ${beans.map((bean) => this.renderBeanButton(bean)).join('')}
-        </div>
-      </aside>
+        </section>
+      </div>
     `;
   }
 
@@ -2882,11 +2893,15 @@ export class BeanieApp {
   }
 
   private renderHero(bean: Bean | null): string {
+    const title = bean ? beanLabel(bean) : 'Pick a bag';
     return `
       <section class="hero panel">
         <div class="hero-main">
           <div class="hero-title-row">
-            <h1>${bean ? escapeHtml(beanLabel(bean)) : 'No bean selected'}</h1>
+            <button class="bean-title-button" data-action="open-bean-picker" aria-label="Choose bean" title="Choose bean">
+              <span>${escapeHtml(title)}</span>
+              ${icon('chevron-down')}
+            </button>
             ${
               bean
                 ? `<div class="hero-bean-actions">
@@ -3214,6 +3229,7 @@ export class BeanieApp {
 
 
   private renderModal(): string {
+    if (this.state.modal === 'bean-picker') return this.renderBeanPickerModal();
     if (this.state.modal === 'edit-number') return this.renderEditDialog();
     if (this.state.modal === 'edit-shot') return this.renderShotEditModal();
     if (this.state.modal === 'machine-label') return this.renderMachineLabelModal();

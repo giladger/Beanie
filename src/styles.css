@@ -285,7 +285,7 @@ p {
   margin: 0 auto;
   padding: 8px 10px 10px;
   display: grid;
-  grid-template-columns: var(--rail-width) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--workbench-gap);
   min-width: 0;
   min-height: 0;
@@ -308,24 +308,6 @@ p {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-}
-
-.bean-rail {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
-}
-
-.rail-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 9px 10px 7px;
-}
-
-.rail-actions {
-  display: flex;
-  gap: 6px;
 }
 
 .icon-button {
@@ -372,15 +354,9 @@ p {
   color: var(--muted);
 }
 
-.bean-list,
 .shot-list {
   overflow: auto;
   min-height: 0;
-}
-
-.bean-list {
-  display: grid;
-  align-content: start;
 }
 
 .bean-row {
@@ -430,11 +406,41 @@ p {
   align-content: center;
 }
 
-.hero-main h1,
+.bean-title-button span,
 .hero-main p {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.bean-title-button {
+  max-width: 100%;
+  min-width: 0;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  font: inherit;
+  font-size: 26px;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.bean-title-button span {
+  min-width: 0;
+}
+
+.bean-title-button .icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: var(--muted);
 }
 
 .hero-side {
@@ -1133,6 +1139,68 @@ p {
   gap: 8px;
 }
 
+.bean-picker-backdrop {
+  padding: 8px;
+}
+
+.bean-picker-modal {
+  width: min(760px, calc(100vw - 16px));
+  height: calc(100vh - 16px);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--radius);
+}
+
+.bean-picker-head {
+  min-height: 42px;
+}
+
+.bean-picker-head h2 {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.bean-picker-head .modal-head-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.bean-picker-head .icon-button {
+  width: 36px;
+  height: 36px;
+}
+
+.bean-picker-search {
+  height: 38px;
+  margin: 0;
+}
+
+.bean-picker-search input {
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 15px;
+}
+
+.bean-picker-list {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.bean-picker-list .bean-row {
+  width: 100%;
+}
+
+.bean-picker-current {
+  border-bottom: 2px solid var(--line);
+}
+
 .machine-label-modal {
   width: min(340px, calc(100vw - 24px));
   gap: 10px;
@@ -1455,10 +1523,9 @@ p {
   min-width: 0;
 }
 
-.hero-title-row h1 {
+.hero-title-row .bean-title-button {
   flex: 0 1 auto;
   min-width: 0;
-  font-size: 26px;
 }
 
 .hero-bean-actions {
@@ -4026,10 +4093,6 @@ p {
     width: 100%;
     height: auto;
     grid-template-columns: 1fr;
-  }
-
-  .bean-rail {
-    max-height: 280px;
   }
 
   .surface {
