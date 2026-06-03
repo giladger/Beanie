@@ -1266,8 +1266,11 @@ p {
   width: 100%;
   min-width: 0;
   min-height: 38px;
+  display: flex;
+  align-items: center;
   padding: 0 10px;
   justify-content: flex-start;
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel-2);
@@ -1278,6 +1281,8 @@ p {
 }
 
 .shot-edit-value strong {
+  display: block;
+  max-width: 100%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1364,28 +1369,41 @@ p {
 
 .shot-field-options {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  max-height: min(46vh, 420px);
   overflow: auto;
 }
 
 .shot-field-options button {
   min-width: 0;
-  min-height: 38px;
+  min-height: 44px;
   display: grid;
-  gap: 2px;
+  gap: 1px;
   justify-items: start;
-  padding: 8px;
+  padding: 7px 10px;
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: 7px;
   background: var(--panel-2);
   color: var(--ink);
   text-align: left;
 }
 
+.shot-field-options strong {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .shot-field-options small {
   max-width: 100%;
   overflow: hidden;
+  font-size: 12px;
+  line-height: 1.1;
   color: var(--muted);
   text-overflow: ellipsis;
   white-space: nowrap;

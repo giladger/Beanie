@@ -738,9 +738,11 @@ export class BeanieApp {
     });
   }
 
-  private shotUpdateFromForm(_form: HTMLFormElement, shot: ShotRecord): ShotUpdate {
-    const draft =
-      this.state.shotEdit?.shotId === shot.id ? this.state.shotEdit : shotEditDraftFromShot(shot);
+  private shotUpdateFromForm(form: HTMLFormElement, shot: ShotRecord): ShotUpdate {
+    const draft = shotEditDraftWithFormNumbers(
+      this.state.shotEdit?.shotId === shot.id ? this.state.shotEdit : shotEditDraftFromShot(shot),
+      form
+    );
     const grinderId = draft.grinderId;
     const selectedGrinder = grinderId ? this.state.grinders.find((grinder) => grinder.id === grinderId) : null;
     const beanBatchId = draft.beanBatchId;
@@ -1676,6 +1678,11 @@ export class BeanieApp {
 
   private async onChange(event: Event): Promise<void> {
     const target = event.target as HTMLInputElement | HTMLSelectElement;
+    if (target.dataset.action === 'shot-edit-number') {
+      const field = target.dataset.field;
+      if (isShotEditField(field) && isShotNumberField(field)) this.applyShotEditField(field, target.value);
+      return;
+    }
     if (target.dataset.action?.startsWith('pe-')) {
       this.applyEditorEvent(target);
       return;
@@ -2510,8 +2517,9 @@ export class BeanieApp {
     const active = document.activeElement as HTMLInputElement | null;
     const action = active?.dataset?.action;
     if (!action) return null;
-    if (!FOCUSABLE_SEARCH.has(action) && !action.startsWith('pe-')) return null;
+    if (!FOCUSABLE_SEARCH.has(action) && !action.startsWith('pe-') && action !== 'shot-edit-number') return null;
     const parts = [`[data-action="${action}"]`];
+    if (active?.dataset.field != null) parts.push(`[data-field="${active.dataset.field}"]`);
     if (active?.dataset.index != null) parts.push(`[data-index="${active.dataset.index}"]`);
     if (active?.dataset.key != null) parts.push(`[data-key="${active.dataset.key}"]`);
     // The four exit sliders share action/index/key — disambiguate by type+condition.
@@ -3307,6 +3315,22 @@ export class BeanieApp {
         </button>
       </label>
     `;
+    const numberField = (name: Extract<ShotEditField, 'targetDoseWeight' | 'targetYield' | 'actualDoseWeight' | 'actualYield' | 'drinkTds' | 'drinkEy'>, label: string, value: number | null) => `
+      <label>
+        <span>${escapeHtml(label)}</span>
+        <input
+          class="shot-edit-number"
+          name="${escapeAttr(name)}"
+          type="number"
+          step="${escapeAttr(shotNumberFieldStep(name))}"
+          value="${escapeAttr(inputValue(value))}"
+          inputmode="decimal"
+          autocomplete="off"
+          data-action="shot-edit-number"
+          data-field="${escapeAttr(name)}"
+        />
+      </label>
+    `;
 
     return `
       <div class="modal-backdrop" data-action="close-modal">
@@ -3335,12 +3359,11 @@ export class BeanieApp {
             <fieldset class="shot-edit-section">
               <legend>Recipe</legend>
               <div class="shot-edit-fields">
-                ${field('targetDoseWeight', 'Target in', draft.targetDoseWeight)}
-                ${field('targetYield', 'Target out', draft.targetYield)}
-                ${field('actualDoseWeight', 'Actual in', draft.actualDoseWeight)}
-                ${field('actualYield', 'Actual out', draft.actualYield)}
-                ${field('grinderId', 'Grinder', grinderDisplayLabel(draft.grinderId, this.state.grinders))}
-                ${field('grinderModel', 'Model', draft.grinderModel)}
+                ${numberField('targetDoseWeight', 'Target in', draft.targetDoseWeight)}
+                ${numberField('targetYield', 'Target out', draft.targetYield)}
+                ${numberField('actualDoseWeight', 'Actual in', draft.actualDoseWeight)}
+                ${numberField('actualYield', 'Actual out', draft.actualYield)}
+                ${field('grinderId', 'Grinder', grinderDisplayLabel(draft.grinderId, this.state.grinders) ?? draft.grinderModel)}
                 ${field('grinderSetting', 'Grind', draft.grinderSetting)}
               </div>
             </fieldset>
@@ -3348,8 +3371,8 @@ export class BeanieApp {
             <fieldset class="shot-edit-section">
               <legend>Result</legend>
               <div class="shot-edit-fields">
-                ${field('drinkTds', 'TDS', draft.drinkTds)}
-                ${field('drinkEy', 'EY', draft.drinkEy)}
+                ${numberField('drinkTds', 'TDS', draft.drinkTds)}
+                ${numberField('drinkEy', 'EY', draft.drinkEy)}
                 <label class="wide">
                   <span>Score</span>
                   ${shotScoreControl(draft.enjoyment, { action: 'shot-edit-score', variant: 'edit' })}
@@ -4073,6 +4096,25 @@ function shotEditDraftFromShot(shot: ShotRecord): ShotEditDraft {
   };
 }
 
+function shotEditDraftWithFormNumbers(draft: ShotEditDraft, form: HTMLFormElement): ShotEditDraft {
+  let next = draft;
+  const fields: Array<Extract<ShotEditField, 'targetDoseWeight' | 'targetYield' | 'actualDoseWeight' | 'actualYield' | 'drinkTds' | 'drinkEy'>> = [
+    'targetDoseWeight',
+    'targetYield',
+    'actualDoseWeight',
+    'actualYield',
+    'drinkTds',
+    'drinkEy'
+  ];
+  for (const field of fields) {
+    const control = form.elements.namedItem(field);
+    if (control instanceof HTMLInputElement) {
+      next = { ...next, [field]: numberOrNullInput(control.value) };
+    }
+  }
+  return next;
+}
+
 function updateShotEditDraftField(
   draft: ShotEditDraft,
   field: ShotEditField,
@@ -4158,7 +4200,7 @@ function shotFieldSpec(
       label,
       kind: 'number',
       value: inputValue(value),
-      step: field === 'drinkTds' || field === 'drinkEy' ? '0.01' : '0.1',
+      step: shotNumberFieldStep(field),
       options: numericShotFieldOptions(field)
     };
   }
@@ -4336,6 +4378,10 @@ function isShotNumberField(field: ShotEditField): field is Extract<
     field === 'drinkTds' ||
     field === 'drinkEy'
   );
+}
+
+function shotNumberFieldStep(field: ShotEditField): string {
+  return field === 'drinkTds' || field === 'drinkEy' ? '0.01' : '0.1';
 }
 
 function batchOptionLabel(batch: BeanBatch): string {
