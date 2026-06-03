@@ -2601,7 +2601,14 @@ export class BeanieApp {
       const fa = favorites.has(a.id) ? 0 : 1;
       const fb = favorites.has(b.id) ? 0 : 1;
       if (fa !== fb) return fa - fb;
-      return (a.profile.title ?? '').localeCompare(b.profile.title ?? '');
+      const ga = this.profileGroupLabel(a, favorites);
+      const gb = this.profileGroupLabel(b, favorites);
+      if (ga !== gb) return ga.localeCompare(gb, undefined, { sensitivity: 'base' });
+      return profileShortTitle(a.profile.title ?? a.id).localeCompare(
+        profileShortTitle(b.profile.title ?? b.id),
+        undefined,
+        { sensitivity: 'base' }
+      );
     });
     const focus =
       sorted.find((record) => record.id === this.state.profileFocusId) ??
@@ -2631,6 +2638,13 @@ export class BeanieApp {
     `;
   }
 
+  // Group key for the picker: favorites cluster first, otherwise group by the
+  // title's folder prefix (e.g. "A-Flow/…") or, lacking one, by author.
+  private profileGroupLabel(record: ProfileRecord, favorites: Set<string>): string {
+    if (favorites.has(record.id)) return 'Favorites';
+    return profileGroup(record.profile.title ?? record.id, record.profile.author);
+  }
+
   private renderProfileRows(
     records: ProfileRecord[],
     favorites: Set<string>,
@@ -2639,23 +2653,26 @@ export class BeanieApp {
   ): string {
     let lastGroup = '';
     return records.map((record) => {
-      const title = record.profile.title ?? record.id;
-      const group = profileGroup(title, record.profile.author);
+      const group = this.profileGroupLabel(record, favorites);
       const header = group !== lastGroup ? `<div class="profile-group-header">${escapeHtml(group)}</div>` : '';
       lastGroup = group;
-      return `${header}${this.renderProfileRow(record, favorites.has(record.id), record.id === selectedId, record.id === focusId)}`;
+      return `${header}${this.renderProfileRow(record, favorites.has(record.id), record.id === selectedId, group, record.id === focusId)}`;
     }).join('');
   }
 
-  private renderProfileRow(record: ProfileRecord, favorite: boolean, active: boolean, focused = false): string {
+  private renderProfileRow(record: ProfileRecord, favorite: boolean, active: boolean, group: string, focused = false): string {
     const title = record.profile.title ?? record.id;
     const shortTitle = profileShortTitle(title);
-    const author = record.profile.author ?? '';
+    const author = (record.profile.author ?? '').trim();
+    // The group header already conveys the author/folder, so only surface the
+    // author here when it adds something the header doesn't (avoids "Decent"
+    // under a "DECENT" header).
+    const showAuthor = author !== '' && author.toLowerCase() !== group.toLowerCase();
     return `
       <div class="profile-row ${active ? 'active' : ''} ${focused ? 'focused' : ''}">
         <button type="button" class="profile-pick" data-action="focus-profile" data-id="${escapeAttr(record.id)}">
           <span class="profile-row-title">${favorite ? '<span class="profile-row-fav">★</span> ' : ''}${escapeHtml(shortTitle)}</span>
-          ${author ? `<span class="profile-row-author">${escapeHtml(author)}</span>` : ''}
+          ${showAuthor ? `<span class="profile-row-author">${escapeHtml(author)}</span>` : ''}
         </button>
         ${active ? '<span class="profile-selected-dot">Selected</span>' : ''}
       </div>

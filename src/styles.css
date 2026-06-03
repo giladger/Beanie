@@ -1377,11 +1377,16 @@ p {
 }
 
 .profile-group-header {
-  padding: 8px 8px 2px;
+  padding: 12px 8px 4px;
   color: var(--muted);
   font-size: 11px;
   font-weight: 950;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.profile-list > .profile-group-header:first-child {
+  padding-top: 2px;
 }
 
 .profile-selected-dot {
