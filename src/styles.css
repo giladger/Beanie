@@ -265,7 +265,7 @@ p {
 
 .surface {
   display: grid;
-  grid-template-rows: minmax(76px, auto) auto minmax(190px, 1fr);
+  grid-template-rows: 50px 62px minmax(190px, 1fr);
   gap: var(--workbench-gap);
   min-width: 0;
   min-height: 0;
@@ -380,17 +380,16 @@ p {
 
 .hero {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(450px, 0.76fr);
-  gap: 12px;
-  align-items: stretch;
-  padding: 10px 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 0 12px;
 }
 
 .hero-main {
   min-width: 0;
   display: grid;
   align-content: center;
-  gap: 5px;
 }
 
 .hero-main h1,
@@ -401,49 +400,11 @@ p {
 }
 
 .hero-side {
-  display: grid;
-  grid-template-columns: minmax(210px, 1fr) auto;
+  display: flex;
   min-width: 0;
   align-items: center;
-  justify-content: stretch;
+  justify-content: flex-end;
   gap: 8px;
-}
-
-.hero-profile-button {
-  min-width: 0;
-  height: 100%;
-  min-height: 52px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 18px;
-  grid-template-rows: auto auto;
-  align-content: center;
-  align-items: center;
-  column-gap: 10px;
-  row-gap: 4px;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel-2);
-  color: var(--ink);
-  text-align: left;
-}
-
-.hero-profile-button .eyebrow {
-  grid-column: 1 / -1;
-}
-
-.hero-profile-button strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 14px;
-  line-height: 1;
-}
-
-.hero-profile-button .icon {
-  justify-self: end;
-  color: var(--soft);
 }
 
 .hero-context {
@@ -486,7 +447,7 @@ p {
 
 .recipe-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(112px, 1fr));
+  grid-template-columns: minmax(220px, 1.35fr) repeat(5, minmax(104px, 1fr));
   gap: 0;
   min-width: 0;
   min-height: 0;
@@ -499,30 +460,33 @@ p {
 .select-control,
 .quick-panel,
 .command-panel {
-  padding: 8px 10px;
+  padding: 7px 10px;
   background: transparent;
   border-color: transparent;
   box-shadow: none;
 }
 
 .control {
-  min-height: 64px;
+  min-height: 60px;
   display: grid;
   grid-template-rows: auto 1fr;
-  gap: 6px;
+  gap: 5px;
 }
 
-.control + .control,
+.control,
 .select-control {
   border-left: 1px solid rgba(255, 255, 255, 0.09);
 }
 
+.select-control:first-child {
+  border-left: 0;
+}
+
 .select-control {
-  grid-column: span 6;
-  min-height: 54px;
+  min-height: 60px;
   display: grid;
   grid-template-rows: auto 1fr;
-  gap: 6px;
+  gap: 5px;
 }
 
 .stepper {
@@ -800,27 +764,13 @@ p {
   margin-top: 0;
   display: inline-flex;
   align-items: baseline;
-  gap: 4px;
   color: var(--green);
   font-weight: 950;
   text-shadow: 0 0 16px rgba(135, 222, 129, 0.28);
 }
 
 .enjoyment-badge::before {
-  content: "";
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--green);
-  box-shadow: 0 0 12px rgba(135, 222, 129, 0.65);
-  align-self: center;
-}
-
-.enjoyment-badge span {
-  color: rgba(135, 222, 129, 0.82);
-  font-size: 9px;
-  font-weight: 950;
-  text-transform: uppercase;
+  content: none;
 }
 
 .enjoyment-badge strong {
@@ -830,16 +780,7 @@ p {
 }
 
 .enjoyment-badge.large {
-  gap: 6px;
-}
-
-.enjoyment-badge.large::before {
-  width: 9px;
-  height: 9px;
-}
-
-.enjoyment-badge.large span {
-  font-size: 10px;
+  justify-self: end;
 }
 
 .enjoyment-badge.large strong {
@@ -1110,6 +1051,7 @@ p {
 .hero-title-row h1 {
   flex: 0 1 auto;
   min-width: 0;
+  font-size: 26px;
 }
 
 .hero-bean-actions {
@@ -1126,20 +1068,20 @@ p {
 }
 
 .batch-control select {
-  height: 30px;
-  max-width: 156px;
+  height: 34px;
+  max-width: 170px;
   padding: 0 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel-2);
   color: var(--soft);
-  font-size: 11px;
-  font-weight: 800;
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .batch-control .icon-button {
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
 }
 
 .input-dialog-add-choice {
@@ -1154,15 +1096,26 @@ p {
   justify-content: space-between;
   gap: 8px;
   width: 100%;
-  height: 46px;
-  padding: 0 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel-2);
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--ink);
   font: inherit;
-  font-weight: 800;
+  font-weight: 900;
   cursor: pointer;
+}
+
+.profile-button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-button .icon {
+  color: var(--soft);
 }
 
 .profile-picker {

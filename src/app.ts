@@ -1903,7 +1903,6 @@ export class BeanieApp {
   }
 
   private renderHero(bean: Bean | null): string {
-    const draft = this.state.draft;
     return `
       <section class="hero panel">
         <div class="hero-main">
@@ -1920,11 +1919,6 @@ export class BeanieApp {
           </div>
         </div>
         <div class="hero-side">
-          <button type="button" class="hero-profile-button" data-action="open-profile-picker">
-            <span class="eyebrow">Profile</span>
-            <strong>${escapeHtml(draft.profileTitle ?? 'No profile')}</strong>
-            ${icon('sliders-horizontal')}
-          </button>
           <div class="hero-context">
             ${this.renderBatchControl(bean)}
           </div>
@@ -1937,6 +1931,7 @@ export class BeanieApp {
     const draft = this.state.draft;
     return `
       <section class="recipe-grid">
+        ${this.controlProfile()}
         ${this.controlNumber('Dose', 'dose', draft.dose, 0.5)}
         ${this.controlNumber('Yield', 'yield', draft.yield, 1)}
         ${this.controlRatio()}
@@ -1970,6 +1965,19 @@ export class BeanieApp {
           <button class="value-button" data-action="edit-field" data-field="grinderSetting">${escapeHtml(draft.grinderSetting ?? '--')}</button>
           <button data-action="adjust" data-field="grinderSetting" data-delta="${step}" aria-label="Increase grind">${icon('plus')}</button>
         </div>
+      </div>
+    `;
+  }
+
+  private controlProfile(): string {
+    const title = this.state.draft.profileTitle ?? 'No profile';
+    return `
+      <div class="select-control profile-control panel">
+        <label>Profile</label>
+        <button type="button" class="profile-button" data-action="open-profile-picker">
+          <span>${escapeHtml(title)}</span>
+          ${icon('sliders-horizontal')}
+        </button>
       </div>
     `;
   }
@@ -2489,7 +2497,7 @@ function enjoymentBadge(shot: ShotRecord, size: 'row' | 'detail' = 'row'): strin
   const value = shot.annotations?.enjoyment;
   if (value == null) return '';
   const formatted = Number.isInteger(value) ? value.toString() : value.toFixed(1);
-  return `<span class="enjoyment-badge ${size === 'detail' ? 'large' : ''}" aria-label="Enjoyment ${escapeAttr(formatted)}"><span>Enjoy</span><strong>${escapeHtml(formatted)}</strong></span>`;
+  return `<span class="enjoyment-badge ${size === 'detail' ? 'large' : ''}" aria-label="Enjoyment ${escapeAttr(formatted)}"><strong>${escapeHtml(formatted)}</strong></span>`;
 }
 
 function batchOptionLabel(batch: BeanBatch): string {
