@@ -23,6 +23,7 @@ interface ProjectedPoint {
 export interface LiveChartOptions {
   detailed?: boolean;
   hideMaxTimeLabel?: boolean;
+  pixelScale?: number;
 }
 
 const MARGIN_DETAILED = { top: 42, right: 22, bottom: 38, left: 42 };
@@ -109,6 +110,7 @@ export class LiveChart {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly detailed: boolean;
+  private readonly pixelScale: number;
   private hideMaxTimeLabel: boolean;
   private model: LiveChartModel | null = null;
   private cssWidth = 0;
@@ -121,6 +123,7 @@ export class LiveChart {
     this.canvas = canvas;
     this.ctx = ctx;
     this.detailed = options.detailed ?? false;
+    this.pixelScale = options.pixelScale ?? 1;
     this.hideMaxTimeLabel = options.hideMaxTimeLabel ?? false;
   }
 
@@ -135,7 +138,8 @@ export class LiveChart {
   resize(): void {
     const cssWidth = this.canvas.clientWidth;
     const cssHeight = this.canvas.clientHeight;
-    const ratio = typeof window !== 'undefined' && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
+    const deviceRatio = typeof window !== 'undefined' && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
+    const ratio = deviceRatio * Math.max(1, this.pixelScale);
     if (cssWidth === this.cssWidth && cssHeight === this.cssHeight && ratio === this.dpr) {
       return;
     }

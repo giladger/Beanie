@@ -1076,6 +1076,12 @@ export class BeanieApp {
   }
 
   private onShotEnded(): void {
+    const shotWindow = this.liveShot.snapshot;
+    const refreshContext = {
+      previousShotIds: new Set(this.state.shots.map((shot) => shot.id)),
+      startedAtMs: shotWindow.startMs,
+      endedAtMs: shotWindow.lastActiveMs ?? Date.now()
+    };
     const reason = this.liveShot.completionReason;
     this.setState({
       liveActive: false,
@@ -1084,11 +1090,49 @@ export class BeanieApp {
     this.liveShot.reset();
     const bean = this.selectedBean();
     if (bean && !this.state.demo) {
-      void beanieCache.invalidateShotMutation().catch(() => {});
-      void this.loadFirstShots(bean).then(({ records, total }) =>
-        this.setState({ shots: records, shotsTotal: total })
-      );
+      void this.refreshShotsAfterLiveShot(bean, refreshContext);
     }
+  }
+
+  private async refreshShotsAfterLiveShot(
+    bean: Bean,
+    context: { previousShotIds: Set<string>; startedAtMs: number | null; endedAtMs: number | null }
+  ): Promise<void> {
+    const delays = [0, 500, 1000, 2000];
+    let lastRecords: ShotRecord[] = [];
+    let lastTotal = this.state.shotsTotal;
+
+    for (let attempt = 0; attempt < delays.length; attempt += 1) {
+      const delayMs = delays[attempt]!;
+      if (delayMs > 0) await delay(delayMs);
+      if (this.selectedBean()?.id !== bean.id) return;
+
+      await beanieCache.invalidateShotMutation().catch(() => {});
+      const { records, total } = await this.loadFirstShots(bean);
+      lastRecords = records;
+      lastTotal = total;
+
+      const shotId = completedLiveShotId(records, context, attempt === delays.length - 1);
+      if (!shotId) continue;
+
+      this.setState({
+        shots: records,
+        shotsTotal: total,
+        shotsLoadingMore: false,
+        detailShotId: shotId,
+        status: 'Shot list updated'
+      });
+      return;
+    }
+
+    if (this.selectedBean()?.id !== bean.id) return;
+    this.setState({
+      shots: lastRecords,
+      shotsTotal: lastTotal,
+      shotsLoadingMore: false,
+      detailShotId: lastRecords[0]?.id ?? this.state.detailShotId,
+      status: 'Shot list updated'
+    });
   }
 
   // Demo affordance: replay a deterministic simulated shot at real-time pacing so
@@ -2527,7 +2571,7 @@ export class BeanieApp {
     if (!canvas) return;
     const shot = this.selectedHistoryShot();
     if (!shot) return;
-    const chart = new LiveChart(canvas, { detailed: true });
+    const chart = new LiveChart(canvas, { detailed: true, pixelScale: 2 });
     chart.setModel(chartModelFromShot(shot));
     // Draw after layout so the canvas has its CSS box for DPR sizing.
     window.requestAnimationFrame(() => {
@@ -4160,6 +4204,27 @@ function shotDurationLabel(shot: ShotRecord): string | null {
   return `${Math.round((last - first) / 1000)}s`;
 }
 
+function completedLiveShotId(
+  records: ShotRecord[],
+  context: { previousShotIds: Set<string>; startedAtMs: number | null; endedAtMs: number | null },
+  allowFallback: boolean
+): string | null {
+  const newShot = records.find((shot) => !context.previousShotIds.has(shot.id));
+  if (newShot) return newShot.id;
+
+  const start = context.startedAtMs != null ? context.startedAtMs - 10_000 : null;
+  const end = (context.endedAtMs ?? Date.now()) + 60_000;
+  if (start != null) {
+    const timeMatch = records.find((shot) => {
+      const timestamp = Date.parse(shot.timestamp);
+      return Number.isFinite(timestamp) && timestamp >= start && timestamp <= end;
+    });
+    if (timeMatch) return timeMatch.id;
+  }
+
+  return allowFallback ? records[0]?.id ?? null : null;
+}
+
 function enjoymentBadge(shot: ShotRecord, size: 'row' | 'detail' = 'row'): string {
   const value = shot.annotations?.enjoyment;
   if (value == null) return '';
@@ -4454,6 +4519,10 @@ function uniqueTextOptions(items: ShotFieldOption[]): ShotFieldOption[] {
 
 function optionKey(value: string): string {
   return value.trim().toLocaleLowerCase();
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function shotFieldLabel(field: ShotEditField): string {
