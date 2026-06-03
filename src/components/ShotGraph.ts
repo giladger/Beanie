@@ -1,6 +1,8 @@
 import type { ShotRecord } from '../api/types';
 import { buildShotGraphModel, type ShotGraphModel, type ShotGraphSeries } from './shotGraphModel';
 
+const DEBUG_VERTICAL_STROKE_WIDTH = 5;
+
 interface GraphOptions {
   detailed?: boolean;
   width?: number;
@@ -94,7 +96,7 @@ function renderDashedTrace(
       segments.push(renderDashedRun(series, run));
       run.length = 0;
       segments.push(
-        `<line class="trace ${series.className}" x1="${snapSvgPixel((x1 + x2) / 2)}" y1="${y1.toFixed(1)}" x2="${snapSvgPixel((x1 + x2) / 2)}" y2="${y2.toFixed(1)}" stroke="${series.color}" stroke-linecap="butt" />`
+        `<line class="trace ${series.className}" x1="${snapSvgPixel((x1 + x2) / 2)}" y1="${y1.toFixed(1)}" x2="${snapSvgPixel((x1 + x2) / 2)}" y2="${y2.toFixed(1)}" stroke="${series.color}" stroke-width="${DEBUG_VERTICAL_STROKE_WIDTH}" stroke-linecap="butt" />`
       );
       continue;
     }
@@ -132,7 +134,7 @@ function renderStepMarkers(
           detailed && index < labelLimit
             ? `<text class="chart-axis-label" x="${(x + 4).toFixed(1)}" y="${(plot.y + 13 + (index % 2) * 14).toFixed(1)}">${escapeHtml(marker.label)}</text>`
             : '';
-        return `<path class="chart-step-marker" d="${verticalDashPath(x, plot.y, plot.y + plot.height, 5, 5, plot.y)}" stroke="rgba(255,255,255,0.44)" stroke-width="${detailed ? 1.4 : 1}" fill="none" />
+        return `<path class="chart-step-marker" d="${verticalDashPath(x, plot.y, plot.y + plot.height, 5, 5, plot.y)}" stroke="rgba(255,255,255,0.44)" stroke-width="${DEBUG_VERTICAL_STROKE_WIDTH}" fill="none" />
           ${label}`;
       })
       .join('')}

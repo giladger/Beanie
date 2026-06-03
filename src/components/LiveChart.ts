@@ -27,6 +27,7 @@ const MARKER_LINE = 'rgba(255,255,255,0.44)';
 const TEXT_COLOR = 'rgba(245,247,248,0.82)';
 const MUTED_TEXT = 'rgba(255,255,255,0.5)';
 const NODATA_LINE = 'rgba(255,255,255,0.18)';
+const DEBUG_VERTICAL_STROKE_WIDTH = 5;
 
 export function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -228,7 +229,7 @@ export class LiveChart {
     const ctx = this.ctx;
     const labelLimit = 6;
     ctx.strokeStyle = MARKER_LINE;
-    ctx.lineWidth = detailed ? 1.4 : 1;
+    ctx.lineWidth = DEBUG_VERTICAL_STROKE_WIDTH;
     ctx.lineCap = 'butt';
     ctx.setLineDash([]);
     for (let i = 0; i < model.markers.length; i += 1) {
@@ -388,11 +389,14 @@ function drawDashedSegments(
 }
 
 function strokeSolidConnector(ctx: CanvasRenderingContext2D, x: number, y1: number, y2: number): void {
+  const previousLineWidth = ctx.lineWidth;
   ctx.setLineDash([]);
+  ctx.lineWidth = DEBUG_VERTICAL_STROKE_WIDTH;
   ctx.beginPath();
   ctx.moveTo(x, y1);
   ctx.lineTo(x, y2);
   ctx.stroke();
+  ctx.lineWidth = previousLineWidth;
 }
 
 function strokeDashedRun(
