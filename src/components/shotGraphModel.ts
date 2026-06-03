@@ -7,7 +7,6 @@ export type ShotGraphSeriesKey =
   | 'targetFlow'
   | 'groupTemperature'
   | 'targetTemperature'
-  | 'weight'
   | 'weightFlow';
 
 export interface ShotGraphSample {
@@ -122,16 +121,6 @@ const SERIES_DEFINITIONS: ShotGraphSeriesDefinition[] = [
       machineNumber(measurement, 'targetMixTemperature'),
     timestamp: machineTimestamp,
     scale: (value) => value / 10
-  },
-  {
-    key: 'weight',
-    label: 'Weight /5',
-    shortLabel: 'Weight',
-    className: 'trace-weight',
-    color: '#ffc260',
-    value: (measurement) => scaleNumber(measurement, 'weight'),
-    timestamp: scaleTimestamp,
-    scale: (value) => value / 5
   },
   {
     key: 'weightFlow',

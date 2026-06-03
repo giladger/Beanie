@@ -1003,10 +1003,6 @@ p {
   stroke: var(--blue);
 }
 
-.trace-weight {
-  stroke: var(--green);
-}
-
 .trace-temp {
   stroke: var(--amber);
   opacity: 0.9;

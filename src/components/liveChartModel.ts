@@ -100,14 +100,6 @@ export const LIVE_SERIES: LiveSeriesDefinition[] = [
     scale: (value) => value / 10
   },
   {
-    key: 'weight',
-    label: 'Weight /5',
-    shortLabel: 'Weight',
-    color: '#ffc260',
-    value: (_machine, scale) => numeric(scale?.weight),
-    scale: (value) => value / 5
-  },
-  {
     key: 'weightFlow',
     label: 'Weight flow',
     shortLabel: 'Weight flow',
@@ -134,7 +126,7 @@ export function chartModelFromShot(shot: ShotRecord | null): LiveChartModel {
     markers: model.markers.map((marker) => ({ t: marker.t, label: marker.label })),
     maxTime: model.maxTime,
     // Fixed 0-12 bar pressure axis, like the Decent app's espresso graph. Flow,
-    // weight/5 and temp/10 all fall under 12, so they share the scale cleanly.
+    // weight flow and temp/10 all fall under 12, so they share the scale cleanly.
     maxY: 12
   };
 }

@@ -14,12 +14,10 @@ run('builds all supported shot graph series when rich measurement data exists', 
       'targetFlow',
       'groupTemperature',
       'targetTemperature',
-      'weight',
       'weightFlow'
     ]
   );
   equal(seriesValue(model, 'targetTemperature', 1), 9.3);
-  equal(seriesValue(model, 'weight', 1), 4);
   equal(seriesValue(model, 'weightFlow', 1), 1.2);
   equal(model.missingSeries.length, 0);
 });

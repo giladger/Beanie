@@ -5,7 +5,7 @@ import { LIVE_SERIES } from '../components/liveChartModel';
 // Pure live-shot data layer. Ingests live machine + scale WebSocket snapshots,
 // runs a small shot-detection state machine, and accumulates every telemetry
 // frame (no decimation) into a LiveChartModel that mirrors the historical
-// shotGraphModel conventions (temp/10 + weight/5 scaling, max(10, ceil(/2)*2)
+// shotGraphModel conventions (temp/10 scaling, max(10, ceil(/2)*2)
 // Y flooring). All heavy logic lives in pure functions; the LiveShotSession
 // class is a thin mutable wrapper over them.
 

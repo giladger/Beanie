@@ -18,14 +18,14 @@ run('shot start detection sets t=0 at the first active frame', () => {
 
 run('points accumulate with correct elapsed time and scaled values', () => {
   const session = new LiveShotSession();
-  session.ingest(pourFrame(0, { groupTemperature: 92, weight: 20 }));
-  session.ingest(pourFrame(2000, { groupTemperature: 93, weight: 36 }));
+  session.ingest(pourFrame(0, { groupTemperature: 92, weight: 20, weightFlow: 1.1 }));
+  session.ingest(pourFrame(2000, { groupTemperature: 93, weight: 36, weightFlow: 1.3 }));
 
   equal(seriesValue(session, 'groupTemperature', 0).value, 9.2);
   equal(seriesValue(session, 'groupTemperature', 1).value, 9.3);
-  equal(seriesValue(session, 'weight', 0).value, 4);
-  equal(seriesValue(session, 'weight', 1).value, 7.2);
-  equal(seriesValue(session, 'weight', 1).t, 2);
+  equal(seriesValue(session, 'weightFlow', 0).value, 1.1);
+  equal(seriesValue(session, 'weightFlow', 1).value, 1.3);
+  equal(seriesValue(session, 'weightFlow', 1).t, 2);
 });
 
 run('idle frames before the shot starts are ignored', () => {
@@ -70,8 +70,8 @@ run('re-entering espresso after end starts a new session and resets points', () 
   session.ingest(pourFrame(5000, { weight: 0, pressure: 3 }));
   equal(session.isActive, true);
   equal(session.completionReason, null);
-  equal(seriesValue(session, 'weight', 0).t, 0);
-  equal(session.model().series.find((series) => series.key === 'weight')!.points.length, 1);
+  equal(seriesValue(session, 'pressure', 0).t, 0);
+  equal(session.model().series.find((series) => series.key === 'pressure')!.points.length, 1);
 });
 
 run('maxY never shrinks within a session', () => {
@@ -103,7 +103,6 @@ run('model only includes series that have points', () => {
   });
   const keys = session.model().series.map((series) => series.key);
   equal(includesKey(keys, 'pressure'), true);
-  equal(includesKey(keys, 'weight'), false);
   equal(includesKey(keys, 'weightFlow'), false);
 });
 
@@ -161,7 +160,13 @@ function scaleSnapshot(overrides: Partial<ScaleSnapshot>): ScaleSnapshot {
 
 function pourFrame(
   tMs: number,
-  values: { pressure?: number; flow?: number; groupTemperature?: number; weight?: number }
+  values: {
+    pressure?: number;
+    flow?: number;
+    groupTemperature?: number;
+    weight?: number;
+    weightFlow?: number;
+  }
 ): LiveFrame {
   return {
     tMs,
@@ -171,7 +176,7 @@ function pourFrame(
       flow: values.flow ?? 0,
       groupTemperature: values.groupTemperature ?? 92
     }),
-    scale: scaleSnapshot({ weight: values.weight ?? 0 })
+    scale: scaleSnapshot({ weight: values.weight ?? 0, weightFlow: values.weightFlow ?? 0 })
   };
 }
 
