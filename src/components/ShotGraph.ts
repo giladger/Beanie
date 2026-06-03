@@ -106,9 +106,7 @@ function renderDashedTrace(
       run.push({ x: x2, y: y1 });
       segments.push(renderDashedRun(series, run));
       run.length = 0;
-      segments.push(
-        `<line class="trace ${series.className}" x1="${snapSvgPixel(x2)}" y1="${y1.toFixed(1)}" x2="${snapSvgPixel(x2)}" y2="${y2.toFixed(1)}" stroke="${series.color}" stroke-linecap="butt" />`
-      );
+      segments.push(renderDashedConnector(series, x2, y1, y2));
       run.push({ x: x2, y: y2 });
       continue;
     }
@@ -140,6 +138,20 @@ function renderDashedRun(series: ShotGraphSeries, points: Array<{ x: number; y: 
   if (points.length < 2) return '';
   const pointList = points.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' ');
   return `<polyline class="trace ${series.className}" points="${pointList}" stroke="${series.color}" stroke-dasharray="${escapeAttr(series.dashArray!)}" />`;
+}
+
+function renderDashedConnector(series: ShotGraphSeries, x: number, y1: number, y2: number): string {
+  const [dash, gap] = dashArrayParts(series.dashArray);
+  return `<path class="trace ${series.className}" d="${verticalDashPath(x, y1, y2, dash, gap)}" stroke="${series.color}" stroke-linecap="butt" fill="none" />`;
+}
+
+function dashArrayParts(dashArray: string | undefined): [number, number] {
+  if (!dashArray) return [6, 5];
+  const values = dashArray
+    .split(/[\s,]+/)
+    .map((item) => Number.parseFloat(item))
+    .filter((value) => Number.isFinite(value));
+  return [values[0] ?? 6, values[1] ?? values[0] ?? 5];
 }
 
 function traceStrokeAttrs(series: ShotGraphSeries): string {

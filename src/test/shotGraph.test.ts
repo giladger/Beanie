@@ -81,9 +81,11 @@ run('renders abrupt target jumps as horizontal runs plus vertical connectors', (
   includes(svg, 'points="42.0,250.0 127.6,250.0" stroke="#7fcf9f" stroke-dasharray="6 5"');
   includes(
     svg,
-    'x1="128.5" y1="250.0" x2="128.5" y2="94.0" stroke="#7fcf9f" stroke-linecap="butt"'
+    'd="M128.5 94L128.5 100 M128.5 105L128.5 111'
   );
+  includes(svg, 'stroke="#7fcf9f" stroke-linecap="butt" fill="none"');
   notIncludes(svg, 'points="42.0,250.0 127.6,94.0"');
+  notIncludes(svg, 'x1="128.5" y1="250.0" x2="128.5" y2="94.0"');
   notIncludes(svg, 'stroke-width="5"');
 });
 

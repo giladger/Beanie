@@ -389,7 +389,7 @@ function drawDashedSegments(
       run.push({ ...previous, t: current.t, x: current.x });
       strokeDashedRun(ctx, run, lineDash);
       run.length = 0;
-      strokeSolidConnector(ctx, snapPixel(current.x), previous.y, current.y);
+      strokeDashedConnector(ctx, snapPixel(current.x), previous.y, current.y, lineDash);
       run.push(current);
       continue;
     }
@@ -413,12 +413,15 @@ function isVisuallyVertical(previous: ProjectedPoint, current: ProjectedPoint): 
   return dx < 0.75 || (dx <= 14 && dy >= dx * 2);
 }
 
-function strokeSolidConnector(ctx: CanvasRenderingContext2D, x: number, y1: number, y2: number): void {
+function strokeDashedConnector(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y1: number,
+  y2: number,
+  lineDash: number[]
+): void {
   ctx.setLineDash([]);
-  ctx.beginPath();
-  ctx.moveTo(x, y1);
-  ctx.lineTo(x, y2);
-  ctx.stroke();
+  drawVerticalDash(ctx, x, y1, y2, lineDash[0] ?? 6, lineDash[1] ?? 5);
 }
 
 function strokeDashedRun(
