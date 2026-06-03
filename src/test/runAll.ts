@@ -9,3 +9,4 @@ import './beanWorkflow.test';
 import './waterSettings.test';
 import './cache.test';
 import './gateway.test';
+import './settings.test';

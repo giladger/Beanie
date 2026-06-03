@@ -35,6 +35,28 @@ import {
   readWorkflow,
   type ApiResponseGuard
 } from './guards';
+import {
+  de1MachineSettingsPatchBody,
+  readDe1AdvancedSettings,
+  readDe1Calibration,
+  readDevices,
+  readPlugins,
+  readPresenceSettings,
+  readReaSettings,
+  readSkins,
+  readWakeSchedules,
+  type De1AdvancedSettings,
+  type De1AdvancedSettingsPatch,
+  type De1Calibration,
+  type DeviceInfo,
+  type PluginInfo,
+  type PresenceSettings,
+  type PresenceSettingsPatch,
+  type ReaSettings,
+  type ReaSettingsPatch,
+  type SkinInfo,
+  type WakeSchedule
+} from './settings';
 
 function resolveGatewayOrigin(): string {
   const override = window.BEANIE_GATEWAY;
@@ -143,6 +165,14 @@ async function fetchEmpty(
   }
 }
 
+function jsonPost(body: unknown): RequestInit {
+  return {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  };
+}
+
 export const gateway = {
   workflow: () => fetchJson<Workflow>('workflow', '/api/v1/workflow', readWorkflow),
   updateWorkflow: (body: Workflow) =>
@@ -208,6 +238,64 @@ export const gateway = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     }),
+
+  // --- settings ---
+  settings: () => fetchJson<ReaSettings>('settings', '/api/v1/settings', readReaSettings),
+  updateSettings: (patch: ReaSettingsPatch) =>
+    fetchEmpty('settings', '/api/v1/settings', jsonPost(patch)),
+  machineAdvancedSettings: () =>
+    fetchJson<De1AdvancedSettings>('settings', '/api/v1/machine/settings/advanced', readDe1AdvancedSettings),
+  updateMachineAdvancedSettings: (patch: De1AdvancedSettingsPatch) =>
+    fetchEmpty('settings', '/api/v1/machine/settings/advanced', jsonPost(patch)),
+  calibration: () =>
+    fetchJson<De1Calibration>('settings', '/api/v1/machine/calibration', readDe1Calibration),
+  updateCalibration: (flowMultiplier: number) =>
+    fetchEmpty('settings', '/api/v1/machine/calibration', jsonPost({ flowMultiplier })),
+  resetMachineSettings: () =>
+    fetchEmpty('settings', '/api/v1/machine/settings/reset', { method: 'DELETE' }),
+  presenceSettings: () =>
+    fetchJson<PresenceSettings>('settings', '/api/v1/presence/settings', readPresenceSettings),
+  updatePresenceSettings: (patch: PresenceSettingsPatch) =>
+    fetchEmpty('settings', '/api/v1/presence/settings', jsonPost(patch)),
+  skins: () => fetchJson<SkinInfo[]>('settings', '/api/v1/webui/skins', readSkins),
+
+  // --- devices (pairing) ---
+  devices: () => fetchJson<DeviceInfo[]>('settings', '/api/v1/devices', readDevices),
+  scanDevices: async (): Promise<DeviceInfo[]> => {
+    // Scan-only (no auto-connect) so the user explicitly picks a device, then list.
+    await fetchEmpty('settings', '/api/v1/devices/scan?connect=false');
+    return fetchJson<DeviceInfo[]>('settings', '/api/v1/devices', readDevices);
+  },
+  connectDevice: (deviceId: string) =>
+    fetchEmpty('settings', '/api/v1/devices/connect', { ...jsonPost({ deviceId }), method: 'PUT' }),
+  disconnectDevice: (deviceId: string) =>
+    fetchEmpty('settings', '/api/v1/devices/disconnect', { ...jsonPost({ deviceId }), method: 'PUT' }),
+
+  // --- maintenance (machine state) + firmware ---
+  setMachineState: (state: string) =>
+    fetchEmpty('machine', `/api/v1/machine/state/${encodeURIComponent(state)}`, { method: 'PUT' }),
+  uploadFirmware: (bytes: ArrayBuffer) =>
+    fetchEmpty('machine', '/api/v1/machine/firmware', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: bytes
+    }),
+
+  // --- wake schedules ---
+  wakeSchedules: () => fetchJson<WakeSchedule[]>('settings', '/api/v1/presence/schedules', readWakeSchedules),
+  addWakeSchedule: (body: { time: string; daysOfWeek: number[]; enabled: boolean; keepAwakeFor?: number | null }) =>
+    fetchEmpty('settings', '/api/v1/presence/schedules', jsonPost(body)),
+  updateWakeSchedule: (id: string, body: Partial<WakeSchedule>) =>
+    fetchEmpty('settings', `/api/v1/presence/schedules/${encodeURIComponent(id)}`, { ...jsonPost(body), method: 'PUT' }),
+  deleteWakeSchedule: (id: string) =>
+    fetchEmpty('settings', `/api/v1/presence/schedules/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  // --- plugins ---
+  plugins: () => fetchJson<PluginInfo[]>('settings', '/api/v1/plugins', readPlugins),
+  enablePlugin: (id: string) =>
+    fetchEmpty('settings', `/api/v1/plugins/${encodeURIComponent(id)}/enable`, { method: 'POST' }),
+  disablePlugin: (id: string) =>
+    fetchEmpty('settings', `/api/v1/plugins/${encodeURIComponent(id)}/disable`, { method: 'POST' }),
   shots: (query: URLSearchParams) =>
     fetchJson<PaginatedShots>('shots', `/api/v1/shots?${query.toString()}`, readPaginatedShots),
   shot: (id: string) =>
@@ -228,12 +316,9 @@ export const gateway = {
     fetchJson<MachineCapabilities>('machine', '/api/v1/machine/capabilities', readMachineCapabilities),
   machineSettings: () =>
     fetchJson<De1MachineSettings>('machine', '/api/v1/machine/settings', readDe1MachineSettings),
-  updateMachineSettings: (body: De1MachineSettings) =>
-    fetchEmpty('machine', '/api/v1/machine/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    }),
+  updateMachineSettings: (patch: Partial<De1MachineSettings>) =>
+    // POST expects usb as 'enable' | 'disable'; the GET response uses a boolean.
+    fetchEmpty('machine', '/api/v1/machine/settings', jsonPost(de1MachineSettingsPatchBody(patch))),
   tareScale: () => fetchEmpty('scale', '/api/v1/scale/tare', { method: 'PUT' })
 };
 

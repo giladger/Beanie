@@ -4,6 +4,14 @@ import type {
   ThemePreference,
   UIScalePreference
 } from '../domain/settings';
+import {
+  SETTINGS_SPEC,
+  fieldValue,
+  minutesToTime,
+  type SettingsBundle,
+  type SettingsField,
+  type SettingsSpecSection
+} from '../domain/settingsModel';
 import { icon } from './icons';
 
 interface SettingsSection {
@@ -13,8 +21,12 @@ interface SettingsSection {
   html: string;
 }
 
-export function renderSettingsShell(model: SettingsShellModel, activeSection: string): string {
-  const sections = settingsSections(model);
+export function renderSettingsShell(
+  model: SettingsShellModel,
+  activeSection: string,
+  bundle: SettingsBundle | null
+): string {
+  const sections = settingsSections(model, bundle);
   const active = sections.find((section) => section.id === activeSection) ?? sections[0]!;
 
   return `
@@ -34,8 +46,8 @@ export function renderSettingsShell(model: SettingsShellModel, activeSection: st
   `;
 }
 
-function settingsSections(model: SettingsShellModel): SettingsSection[] {
-  return [
+function settingsSections(model: SettingsShellModel, bundle: SettingsBundle | null): SettingsSection[] {
+  const sections: SettingsSection[] = [
     {
       id: 'gateway',
       title: 'Gateway',
@@ -47,7 +59,35 @@ function settingsSections(model: SettingsShellModel): SettingsSection[] {
       title: 'Appearance',
       terms: 'theme ui scale display compact standard large light dark',
       html: renderSection('Appearance', renderAppearanceRows(model.preferences))
-    },
+    }
+  ];
+  // reaprime-backed sections (only when settings have loaded from the gateway/demo)
+  if (bundle) {
+    sections.push({
+      id: 'devices',
+      title: 'Devices',
+      terms: 'bluetooth scan connect machine scale pair device',
+      html: renderDevicesSection(bundle)
+    });
+    for (const spec of SETTINGS_SPEC) {
+      sections.push({ id: spec.id, title: spec.title, terms: spec.terms, html: renderSpecSection(spec, bundle) });
+    }
+    sections.push(
+      {
+        id: 'maintenance',
+        title: 'Maintenance',
+        terms: 'descale clean sleep firmware update flush',
+        html: renderMaintenanceSection()
+      },
+      {
+        id: 'plugins',
+        title: 'Plugins',
+        terms: 'plugins visualizer extensions enable disable',
+        html: renderPluginsSection(bundle)
+      }
+    );
+  }
+  sections.push(
     {
       id: 'workflow',
       title: 'Workflow',
@@ -66,7 +106,133 @@ function settingsSections(model: SettingsShellModel): SettingsSection[] {
       terms: 'version build commit default skin about',
       html: renderSection('About', renderAboutRows(model))
     }
-  ];
+  );
+  return sections;
+}
+
+function renderSpecSection(section: SettingsSpecSection, bundle: SettingsBundle): string {
+  const rows = section.fields.map((field) => renderSettingsField(field, bundle)).join('');
+  let extra = '';
+  if (section.id === 'machine-advanced') {
+    extra = settingControlRow(
+      'Reset machine settings',
+      'Restore DE1 fan, heater, refill, calibration, and purge defaults',
+      `<button type="button" class="text-button" data-action="settings-reset-machine">${icon('rotate-ccw')}<span>Reset</span></button>`
+    );
+  } else if (section.id === 'power') {
+    extra = renderWakeSchedules(bundle);
+  }
+  return renderSection(section.title, rows + extra);
+}
+
+function renderDevicesSection(bundle: SettingsBundle): string {
+  const scan = settingControlRow(
+    'Bluetooth devices',
+    'Scan for machines and scales, then connect',
+    `<button type="button" class="text-button" data-action="settings-scan-devices">${icon('refresh-cw')}<span>Scan</span></button>`
+  );
+  const rows = bundle.devices.length
+    ? bundle.devices.map(renderDeviceRow).join('')
+    : `<p class="settings-empty">No devices found yet — tap Scan to search.</p>`;
+  return renderSection('Devices', scan + rows);
+}
+
+function renderDeviceRow(device: SettingsBundle['devices'][number]): string {
+  const connected = device.state === 'connected';
+  const action = connected ? 'settings-disconnect-device' : 'settings-connect-device';
+  const label = connected ? 'Disconnect' : 'Connect';
+  return settingControlRow(
+    device.name,
+    `${device.type} · ${connected ? 'connected' : 'available'}`,
+    `<button type="button" class="text-button ${connected ? '' : 'primary'}" data-action="${action}" data-id="${escapeAttr(device.id)}">${escapeHtml(label)}</button>`
+  );
+}
+
+function renderMaintenanceSection(): string {
+  const stateBtn = (state: string, label: string): string =>
+    `<button type="button" class="text-button" data-action="settings-machine-state" data-value="${state}">${escapeHtml(label)}</button>`;
+  return renderSection('Maintenance', [
+    settingControlRow('Descale', 'Run the descaling cycle on the machine', stateBtn('descaling', 'Start descale')),
+    settingControlRow('Clean', 'Run the cleaning cycle', stateBtn('cleaning', 'Start clean')),
+    settingControlRow('Sleep', 'Put the machine to sleep', stateBtn('sleeping', 'Sleep')),
+    settingControlRow(
+      'Firmware update',
+      'Upload a DE1 firmware file — the machine applies it (this can take a while)',
+      `<label class="text-button"><input type="file" accept=".bin,.fw,.dfu" data-action="settings-firmware" hidden />${icon('save')}<span>Upload…</span></label>`
+    )
+  ].join(''));
+}
+
+function renderPluginsSection(bundle: SettingsBundle): string {
+  if (!bundle.plugins.length) return renderSection('Plugins', `<p class="settings-empty">No plugins installed.</p>`);
+  const rows = bundle.plugins
+    .map((plugin) =>
+      settingControlRow(
+        plugin.name,
+        [plugin.author, plugin.version ? `v${plugin.version}` : ''].filter(Boolean).join(' · '),
+        `<label class="settings-toggle"><input type="checkbox" data-action="settings-plugin-toggle" data-id="${escapeAttr(plugin.id)}" ${plugin.loaded ? 'checked' : ''} /><span></span></label>`
+      )
+    )
+    .join('');
+  return renderSection('Plugins', rows);
+}
+
+function renderWakeSchedules(bundle: SettingsBundle): string {
+  const dayNames = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const fmtDays = (days: number[]): string => (days.length === 0 ? 'Every day' : days.map((d) => dayNames[d] ?? '').join(' '));
+  const rows = bundle.schedules
+    .map(
+      (schedule) => `
+        <div class="settings-line">
+          <div>
+            <span>${escapeHtml(schedule.time)}</span>
+            <small>${escapeHtml(fmtDays(schedule.daysOfWeek))}${schedule.keepAwakeFor ? ` · keep awake ${schedule.keepAwakeFor}m` : ''}</small>
+          </div>
+          <span class="settings-schedule-actions">
+            <label class="settings-toggle"><input type="checkbox" data-action="settings-schedule-toggle" data-id="${escapeAttr(schedule.id)}" ${schedule.enabled ? 'checked' : ''} /><span></span></label>
+            <button type="button" class="text-button" data-action="settings-schedule-delete" data-id="${escapeAttr(schedule.id)}" aria-label="Delete schedule">${icon('x')}</button>
+          </span>
+        </div>`
+    )
+    .join('');
+  const add = `
+    <div class="settings-line">
+      <div><span>Add wake schedule</span><small>Wakes daily at the chosen time</small></div>
+      <span class="settings-schedule-add">
+        <input class="settings-input" type="time" data-action="settings-schedule-time" value="06:30" />
+        <button type="button" class="text-button primary" data-action="settings-schedule-add">${icon('plus')}<span>Add</span></button>
+      </span>
+    </div>`;
+  return `<div class="settings-subsection"><h4>Wake schedules</h4>${rows}${add}</div>`;
+}
+
+function renderSettingsField(field: SettingsField, bundle: SettingsBundle): string {
+  const value = fieldValue(bundle, field);
+  const base = `data-action="settings-field" data-group="${field.group}" data-key="${escapeAttr(field.key)}" data-type="${field.type}"`;
+  let control = '';
+  if (field.type === 'toggle') {
+    control = `<label class="settings-toggle"><input type="checkbox" ${base} ${value === true ? 'checked' : ''} /><span></span></label>`;
+  } else if (field.type === 'select') {
+    const current = String(value ?? '');
+    const options = field.optionsFrom === 'skins'
+      ? bundle.skins.map((skin) => ({ value: skin.id, label: skin.name }))
+      : (field.options ?? []);
+    control = `<select class="settings-select" ${base}>${options
+      .map((o) => `<option value="${escapeAttr(o.value)}" ${o.value === current ? 'selected' : ''}>${escapeHtml(o.label)}</option>`)
+      .join('')}</select>`;
+  } else if (field.type === 'time') {
+    control = `<input class="settings-input" type="time" ${base} value="${minutesToTime(typeof value === 'number' ? value : null)}" />`;
+  } else {
+    const num = typeof value === 'number' ? String(value) : '';
+    const unit = field.unit ? `<span class="settings-unit">${escapeHtml(field.unit)}</span>` : '';
+    const bounds = [
+      field.min != null ? `min="${field.min}"` : '',
+      field.max != null ? `max="${field.max}"` : '',
+      field.step != null ? `step="${field.step}"` : ''
+    ].join(' ');
+    control = `<span class="settings-number"><input class="settings-input" type="number" ${base} ${bounds} value="${escapeAttr(num)}" />${unit}</span>`;
+  }
+  return settingControlRow(field.label, field.help ?? '', control);
 }
 
 function renderGatewayRows(model: SettingsShellModel): string {
