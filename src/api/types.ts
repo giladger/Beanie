@@ -241,7 +241,8 @@ export type ApiResourceName =
   | 'shots'
   | 'shot'
   | 'machine'
-  | 'scale';
+  | 'scale'
+  | 'settings';
 
 export type ApiIssueKind = 'network' | 'http' | 'malformed' | 'unknown';
 

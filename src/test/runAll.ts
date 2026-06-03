@@ -8,3 +8,4 @@ import './profileChartModel.test';
 import './beanWorkflow.test';
 import './cache.test';
 import './gateway.test';
+import './settings.test';

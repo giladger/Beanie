@@ -30,6 +30,25 @@ import {
   readWorkflow,
   type ApiResponseGuard
 } from './guards';
+import {
+  de1SettingsPatchBody,
+  readDe1AdvancedSettings,
+  readDe1Calibration,
+  readDe1Settings,
+  readPresenceSettings,
+  readReaSettings,
+  readSkins,
+  type De1AdvancedSettings,
+  type De1AdvancedSettingsPatch,
+  type De1Calibration,
+  type De1Settings,
+  type De1SettingsPatch,
+  type PresenceSettings,
+  type PresenceSettingsPatch,
+  type ReaSettings,
+  type ReaSettingsPatch,
+  type SkinInfo
+} from './settings';
 
 function resolveGatewayOrigin(): string {
   const override = window.BEANIE_GATEWAY;
@@ -138,6 +157,14 @@ async function fetchEmpty(
   }
 }
 
+function jsonPost(body: unknown): RequestInit {
+  return {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  };
+}
+
 export const gateway = {
   workflow: () => fetchJson<Workflow>('workflow', '/api/v1/workflow', readWorkflow),
   updateWorkflow: (body: Workflow) =>
@@ -203,6 +230,30 @@ export const gateway = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     }),
+
+  // --- settings ---
+  settings: () => fetchJson<ReaSettings>('settings', '/api/v1/settings', readReaSettings),
+  updateSettings: (patch: ReaSettingsPatch) =>
+    fetchEmpty('settings', '/api/v1/settings', jsonPost(patch)),
+  machineSettings: () =>
+    fetchJson<De1Settings>('settings', '/api/v1/machine/settings', readDe1Settings),
+  updateMachineSettings: (patch: De1SettingsPatch) =>
+    fetchEmpty('settings', '/api/v1/machine/settings', jsonPost(de1SettingsPatchBody(patch))),
+  machineAdvancedSettings: () =>
+    fetchJson<De1AdvancedSettings>('settings', '/api/v1/machine/settings/advanced', readDe1AdvancedSettings),
+  updateMachineAdvancedSettings: (patch: De1AdvancedSettingsPatch) =>
+    fetchEmpty('settings', '/api/v1/machine/settings/advanced', jsonPost(patch)),
+  calibration: () =>
+    fetchJson<De1Calibration>('settings', '/api/v1/machine/calibration', readDe1Calibration),
+  updateCalibration: (flowMultiplier: number) =>
+    fetchEmpty('settings', '/api/v1/machine/calibration', jsonPost({ flowMultiplier })),
+  resetMachineSettings: () =>
+    fetchEmpty('settings', '/api/v1/machine/settings/reset', { method: 'DELETE' }),
+  presenceSettings: () =>
+    fetchJson<PresenceSettings>('settings', '/api/v1/presence/settings', readPresenceSettings),
+  updatePresenceSettings: (patch: PresenceSettingsPatch) =>
+    fetchEmpty('settings', '/api/v1/presence/settings', jsonPost(patch)),
+  skins: () => fetchJson<SkinInfo[]>('settings', '/api/v1/webui/skins', readSkins),
   shots: (query: URLSearchParams) =>
     fetchJson<PaginatedShots>('shots', `/api/v1/shots?${query.toString()}`, readPaginatedShots),
   shot: (id: string) =>
