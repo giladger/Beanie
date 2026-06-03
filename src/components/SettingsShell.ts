@@ -110,7 +110,10 @@ function renderSettingsField(field: SettingsField, bundle: SettingsBundle): stri
     control = `<label class="settings-toggle"><input type="checkbox" ${base} ${value === true ? 'checked' : ''} /><span></span></label>`;
   } else if (field.type === 'select') {
     const current = String(value ?? '');
-    control = `<select class="settings-select" ${base}>${(field.options ?? [])
+    const options = field.optionsFrom === 'skins'
+      ? bundle.skins.map((skin) => ({ value: skin.id, label: skin.name }))
+      : (field.options ?? []);
+    control = `<select class="settings-select" ${base}>${options
       .map((o) => `<option value="${escapeAttr(o.value)}" ${o.value === current ? 'selected' : ''}>${escapeHtml(o.label)}</option>`)
       .join('')}</select>`;
   } else if (field.type === 'time') {

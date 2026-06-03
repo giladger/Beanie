@@ -50,6 +50,8 @@ export interface SettingsField {
   max?: number;
   step?: number;
   options?: SettingsOption[];
+  /** Populate select options dynamically from the bundle (e.g. installed skins). */
+  optionsFrom?: 'skins';
 }
 
 export interface SettingsSpecSection {
@@ -82,6 +84,7 @@ export const SETTINGS_SPEC: SettingsSpecSection[] = [
         options: opts(GATEWAY_MODES),
         help: 'How much control external clients (this skin) have over the machine.'
       },
+      { group: 'rea', key: 'defaultSkinId', label: 'Active skin', type: 'select', optionsFrom: 'skins', help: 'The skin reaprime serves by default.' },
       { group: 'rea', key: 'logLevel', label: 'Log level', type: 'select', options: opts(LOG_LEVELS, (v) => v) },
       { group: 'rea', key: 'automaticUpdateCheck', label: 'Automatic update check', type: 'toggle' }
     ]
