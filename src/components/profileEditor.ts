@@ -1015,9 +1015,10 @@ function renderDe1ExplanationChart(state: ProfileEditorState): string {
           const x = plot.x + plot.w * tick;
           return `<line class="pe-de1-grid x" x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${plot.y}" y2="${plot.y + plot.h}"></line>`;
         }).join('')}
-        <path class="pe-de1-main-line" d="${mainLine}" fill="none"></path>
+        <path class="pe-de1-main-fill ${isFlow ? 'flow' : 'pressure'}" d="${mainLine}L${(plot.x + plot.w).toFixed(1)} ${(plot.y + plot.h).toFixed(1)}L${plot.x} ${(plot.y + plot.h).toFixed(1)}Z" stroke="none"></path>
+        <path class="pe-de1-main-line ${isFlow ? 'flow' : 'pressure'}" d="${mainLine}" fill="none"></path>
         ${nodes.map((point) => `
-          <circle class="pe-de1-node" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="6"></circle>
+          <circle class="pe-de1-node ${isFlow ? 'flow' : 'pressure'}" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="6"></circle>
         `).join('')}
       </svg>
     </section>
