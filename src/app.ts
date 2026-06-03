@@ -183,7 +183,7 @@ const FOCUSABLE_SEARCH = new Set(['search', 'profile-search', 'settings-search']
 const SCROLL_SELECTORS = ['.bean-list', '.shot-list', '.page-body'];
 
 const SHOT_SCORE_OPTIONS = [
-  { value: 20, icon: '☹', label: 'Bad' },
+  { value: 20, icon: '😞', label: 'Bad' },
   { value: 40, icon: '😕', label: 'Meh' },
   { value: 60, icon: '😐', label: 'Okay' },
   { value: 80, icon: '🙂', label: 'Good' },
@@ -191,8 +191,6 @@ const SHOT_SCORE_OPTIONS = [
 ] as const;
 
 type ShotScoreOption = (typeof SHOT_SCORE_OPTIONS)[number];
-
-const NO_SCORE_VALUE = '__none__';
 
 // Which editor field a tap-to-edit numpad dialog is bound to.
 interface ProfileEditTarget {
@@ -1156,10 +1154,13 @@ export class BeanieApp {
         if (isShotEditField(field)) this.applyShotEditField(field, value ?? '');
         break;
       case 'shot-edit-score':
-        this.setShotEditEnjoyment(scoreValueFromDataset(value));
+        this.setShotEditEnjoyment(scoreValueFromTap(value, this.state.shotEdit?.enjoyment ?? null));
         break;
       case 'set-shot-score':
-        if (id) await this.updateShotEnjoyment(id, scoreValueFromDataset(value));
+        if (id) {
+          const shot = this.state.shots.find((item) => item.id === id);
+          await this.updateShotEnjoyment(id, scoreValueFromTap(value, shot?.annotations?.enjoyment ?? null));
+        }
         break;
       case 'machine-command':
         if (isMachineCommand(value)) await this.toggleMachineCommand(value);
@@ -2926,19 +2927,10 @@ export class BeanieApp {
 
   private renderShotListItem(shot: ShotRecord, active: boolean): string {
     const recipe = recipeFromShot(shot);
-    const date = new Date(shot.timestamp);
-    const time = Number.isNaN(date.valueOf())
-      ? shot.timestamp
-      : date.toLocaleTimeString([], {
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: false
-        });
     const duration = shotDurationLabel(shot);
     return `
       <button class="shot-item ${active ? 'active' : ''}" data-action="select-history-shot" data-id="${escapeAttr(shot.id)}">
         <span class="shot-item-info">
-          <span class="shot-item-time">${escapeHtml(time)}</span>
           <span class="shot-item-recipe">${formatGrams(recipe.dose)} → ${formatGrams(recipe.yield)}</span>
           <span class="shot-item-dur">${duration ? escapeHtml(duration) : ''}</span>
           ${enjoymentBadge(shot)}
@@ -3937,7 +3929,6 @@ function shotScoreControl(
         const active = current?.value === item.value;
         return `<button type="button" class="${active ? 'active' : ''}" data-action="${options.action}"${idAttr} data-value="${item.value}" aria-label="${escapeAttr(item.label)}" aria-pressed="${active}" title="${escapeAttr(item.label)}">${escapeHtml(item.icon)}</button>`;
       }).join('')}
-      <button type="button" class="${value == null ? 'active' : ''}" data-action="${options.action}"${idAttr} data-value="${NO_SCORE_VALUE}" aria-label="Clear score" aria-pressed="${value == null}" title="Clear score">0</button>
     </div>
   `;
 }
@@ -3956,10 +3947,11 @@ function scoreOptionForValue(value: number | null | undefined): ShotScoreOption 
   return closest;
 }
 
-function scoreValueFromDataset(value: string | undefined): number | null {
-  if (!value || value === NO_SCORE_VALUE) return null;
+function scoreValueFromTap(value: string | undefined, currentValue: number | null | undefined): number | null {
+  if (!value) return null;
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  if (!Number.isFinite(parsed)) return null;
+  return scoreOptionForValue(currentValue)?.value === parsed ? null : parsed;
 }
 
 function shotEditDraftFromShot(shot: ShotRecord): ShotEditDraft {

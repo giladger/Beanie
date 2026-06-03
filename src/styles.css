@@ -684,18 +684,10 @@ p {
 .shot-item-info {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(42px, auto) minmax(78px, auto) auto minmax(0, 1fr);
-  align-items: baseline;
+  grid-template-columns: minmax(96px, auto) auto minmax(24px, 1fr);
+  align-items: center;
   column-gap: 8px;
   overflow: hidden;
-}
-
-.shot-item-time {
-  flex: none;
-  font-size: 11px;
-  font-weight: 800;
-  color: var(--muted);
-  white-space: nowrap;
 }
 
 .shot-item-recipe {
@@ -716,8 +708,20 @@ p {
 
 .shot-item .enjoyment-badge {
   justify-self: end;
+  align-self: center;
+  width: 24px;
+  height: 24px;
   min-width: 0;
   margin-left: 0;
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+.shot-item .enjoyment-badge strong {
+  display: block;
+  font-size: 18px;
+  line-height: 1;
 }
 
 .shot-item-profile {
@@ -1284,7 +1288,7 @@ p {
 
 .shot-score-control {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -1307,7 +1311,7 @@ p {
 }
 
 .shot-score-control.compact {
-  grid-template-columns: repeat(6, 30px);
+  grid-template-columns: repeat(5, 30px);
   gap: 4px;
 }
 
