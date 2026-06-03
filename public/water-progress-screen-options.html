@@ -280,9 +280,8 @@
       width: 310px;
       height: 310px;
       border-radius: 999px;
-      background:
-        radial-gradient(circle at center, #091015 0 62%, transparent 63%),
-        conic-gradient(var(--flush) 0 224deg, #182129 224deg 360deg);
+      border: 1px solid var(--line);
+      background: #0a1116;
       display: grid;
       place-items: center;
       position: relative;
@@ -292,7 +291,7 @@
       content: "";
       position: absolute;
       inset: 22px;
-      border: 1px solid var(--line);
+      border: 1px solid var(--line-soft);
       border-radius: inherit;
     }
 
@@ -330,7 +329,7 @@
 
     .focus-actions {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 300px;
+      grid-template-columns: minmax(0, 1fr) 320px;
       gap: 16px;
       align-items: stretch;
     }
@@ -345,7 +344,7 @@
       border-radius: 8px;
       background: var(--panel);
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .strip-item {
@@ -661,9 +660,7 @@
       </div>
       <div class="screen">
         <div class="topbar">
-          <div class="back">‹ Back</div>
           <strong>Flushing</strong>
-          <div class="state-pill"><i class="dot"></i> Running</div>
         </div>
         <div class="content">
           <section class="focus-main">
@@ -688,8 +685,6 @@
             <div class="status-strip">
               <div class="strip-item"><span>Elapsed</span><strong>1.6s</strong></div>
               <div class="strip-item"><span>Target</span><strong>10.0s</strong></div>
-              <div class="strip-item"><span>Progress</span><strong>16%</strong></div>
-              <div class="strip-item"><span>State</span><strong>Flush</strong></div>
             </div>
             <button class="stop" type="button">Stop</button>
           </section>
