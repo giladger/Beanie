@@ -224,6 +224,7 @@ interface AppState {
   machineEdit: MachineEditTarget | null;
   machineLabelEdit: MachineLabelEditTarget | null;
   machinePresetLabels: Record<string, string>;
+  machinePresetValues: MachinePresetValueOverrides;
   detailShotId: string | null;
   machineInfo: MachineInfo | null;
   machineCapabilities: MachineCapabilities | null;
@@ -283,6 +284,7 @@ export class BeanieApp {
     machineEdit: null,
     machineLabelEdit: null,
     machinePresetLabels: readMachinePresetLabels(),
+    machinePresetValues: readMachinePresetValues(),
     detailShotId: null,
     machineInfo: null,
     machineCapabilities: null,
@@ -1918,17 +1920,20 @@ export class BeanieApp {
     let rinseData = this.currentRinseData();
 
     if (name === 'steamPreset') {
-      const preset = STEAM_PRESETS.find((item) => item.id === presetId);
+      const preset = machinePresetsWithValues(name, STEAM_PRESETS, this.state.machinePresetValues)
+        .find((item) => item.id === presetId);
       if (!preset) return;
       steamSettings = clampSteam({ ...DEFAULT_STEAM, ...preset.values }, capabilities);
     }
     if (name === 'waterPreset') {
-      const preset = HOT_WATER_PRESETS.find((item) => item.id === presetId);
+      const preset = machinePresetsWithValues(name, HOT_WATER_PRESETS, this.state.machinePresetValues)
+        .find((item) => item.id === presetId);
       if (!preset) return;
       hotWaterData = clampHotWater({ ...DEFAULT_HOT_WATER, ...preset.values }, capabilities);
     }
     if (name === 'flushPreset') {
-      const preset = FLUSH_PRESETS.find((item) => item.id === presetId);
+      const preset = machinePresetsWithValues(name, FLUSH_PRESETS, this.state.machinePresetValues)
+        .find((item) => item.id === presetId);
       if (!preset) return;
       rinseData = clampFlush({ ...DEFAULT_RINSE, ...preset.values }, capabilities);
     }
@@ -1942,6 +1947,18 @@ export class BeanieApp {
     const steamSettings = this.currentSteamSettings();
     const hotWaterData = this.currentHotWaterData();
     const rinseData = this.currentRinseData();
+    const selectedSteamPreset = matchingPreset(
+      steamSettings,
+      machinePresetsWithValues('steamPreset', STEAM_PRESETS, this.state.machinePresetValues)
+    );
+    const selectedWaterPreset = matchingPreset(
+      hotWaterData,
+      machinePresetsWithValues('waterPreset', HOT_WATER_PRESETS, this.state.machinePresetValues)
+    );
+    const selectedFlushPreset = matchingPreset(
+      rinseData,
+      machinePresetsWithValues('flushPreset', FLUSH_PRESETS, this.state.machinePresetValues)
+    );
 
     if (name === 'steamFlow') steamSettings.flow = value;
     if (name === 'steamTemp') steamSettings.targetTemperature = value;
@@ -1955,12 +1972,58 @@ export class BeanieApp {
     if (name === 'flushFlow') rinseData.flow = value;
     if (name === 'flushTemp') rinseData.targetTemperature = value;
 
+    const nextSteamSettings = clampSteam(steamSettings, capabilities);
+    const nextHotWaterData = clampHotWater(hotWaterData, capabilities);
+    const nextRinseData = clampFlush(rinseData, capabilities);
+    this.savePresetValuesAfterMachineEdit(
+      name,
+      selectedSteamPreset,
+      selectedWaterPreset,
+      selectedFlushPreset,
+      nextSteamSettings,
+      nextHotWaterData,
+      nextRinseData
+    );
+
     await this.setMachineWorkflow(
-      clampSteam(steamSettings, capabilities),
-      clampHotWater(hotWaterData, capabilities),
-      clampFlush(rinseData, capabilities),
+      nextSteamSettings,
+      nextHotWaterData,
+      nextRinseData,
       'Machine setting saved'
     );
+  }
+
+  private savePresetValuesAfterMachineEdit(
+    fieldName: string,
+    selectedSteamPreset: string,
+    selectedWaterPreset: string,
+    selectedFlushPreset: string,
+    steamSettings: SteamSettings,
+    hotWaterData: HotWaterData,
+    rinseData: RinseData
+  ): void {
+    let key: string | null = null;
+    let values: object | null = null;
+    if (fieldName.startsWith('steam') && selectedSteamPreset !== 'custom') {
+      key = machinePresetLabelKey('steamPreset', selectedSteamPreset);
+      values = steamSettings;
+    }
+    if (fieldName.startsWith('water') && selectedWaterPreset !== 'custom') {
+      key = machinePresetLabelKey('waterPreset', selectedWaterPreset);
+      values = hotWaterData;
+    }
+    if (fieldName.startsWith('flush') && selectedFlushPreset !== 'custom') {
+      key = machinePresetLabelKey('flushPreset', selectedFlushPreset);
+      values = rinseData;
+    }
+    if (!key || !values) return;
+
+    const machinePresetValues = {
+      ...this.state.machinePresetValues,
+      [key]: numericPresetValues(values)
+    };
+    writeMachinePresetValues(machinePresetValues);
+    this.setState({ machinePresetValues });
   }
 
   private async setMachineWorkflow(
@@ -2783,9 +2846,12 @@ export class BeanieApp {
     const steam = this.currentSteamSettings();
     const water = this.currentHotWaterData();
     const flush = this.currentRinseData();
-    const steamPreset = matchingPreset(steam, STEAM_PRESETS);
-    const waterPreset = matchingPreset(water, HOT_WATER_PRESETS);
-    const flushPreset = matchingPreset(flush, FLUSH_PRESETS);
+    const steamPresets = machinePresetsWithValues('steamPreset', STEAM_PRESETS, this.state.machinePresetValues);
+    const waterPresets = machinePresetsWithValues('waterPreset', HOT_WATER_PRESETS, this.state.machinePresetValues);
+    const flushPresets = machinePresetsWithValues('flushPreset', FLUSH_PRESETS, this.state.machinePresetValues);
+    const steamPreset = matchingPreset(steam, steamPresets);
+    const waterPreset = matchingPreset(water, waterPresets);
+    const flushPreset = matchingPreset(flush, flushPresets);
     return `
       ${this.pageHeader('Steam · Water · Flush')}
       <main class="page-body machine-page">
@@ -2795,7 +2861,7 @@ export class BeanieApp {
             eyebrow: 'Steam',
             title: 'Milk',
             presetName: 'steamPreset',
-            presets: STEAM_PRESETS,
+            presets: steamPresets,
             selectedPreset: steamPreset,
             labelOverrides: this.state.machinePresetLabels,
             values: [
@@ -2810,7 +2876,7 @@ export class BeanieApp {
             eyebrow: 'Hot water',
             title: 'Drink',
             presetName: 'waterPreset',
-            presets: HOT_WATER_PRESETS,
+            presets: waterPresets,
             selectedPreset: waterPreset,
             labelOverrides: this.state.machinePresetLabels,
             values: [
@@ -2825,7 +2891,7 @@ export class BeanieApp {
             eyebrow: 'Flush',
             title: 'Clean',
             presetName: 'flushPreset',
-            presets: FLUSH_PRESETS,
+            presets: flushPresets,
             selectedPreset: flushPreset,
             labelOverrides: this.state.machinePresetLabels,
             values: [
@@ -3381,6 +3447,9 @@ export class BeanieApp {
 }
 
 const machinePresetLabelsStorageKey = 'beanie:machine-preset-labels';
+const machinePresetValuesStorageKey = 'beanie:machine-preset-values';
+
+type MachinePresetValueOverrides = Record<string, Record<string, number>>;
 
 function readMachinePresetLabels(): Record<string, string> {
   try {
@@ -3399,8 +3468,56 @@ function writeMachinePresetLabels(labels: Record<string, string>): void {
   localStorage.setItem(machinePresetLabelsStorageKey, JSON.stringify(labels));
 }
 
+function readMachinePresetValues(): MachinePresetValueOverrides {
+  try {
+    const raw = localStorage.getItem(machinePresetValuesStorageKey);
+    const parsed = raw ? JSON.parse(raw) : {};
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed).flatMap(([key, value]) => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+        const numericValues = Object.fromEntries(
+          Object.entries(value).filter((entry): entry is [string, number] => (
+            typeof entry[1] === 'number' && Number.isFinite(entry[1])
+          ))
+        );
+        return Object.keys(numericValues).length > 0 ? [[key, numericValues]] : [];
+      })
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writeMachinePresetValues(values: MachinePresetValueOverrides): void {
+  localStorage.setItem(machinePresetValuesStorageKey, JSON.stringify(values));
+}
+
 function machinePresetLabelKey(name: string, presetId: string): string {
   return `${name}:${presetId}`;
+}
+
+function machinePresetsWithValues<T extends object>(
+  name: string,
+  presets: WaterPreset<T>[],
+  valueOverrides: MachinePresetValueOverrides
+): WaterPreset<T>[] {
+  return presets.map((preset) => {
+    const overrides = valueOverrides[machinePresetLabelKey(name, preset.id)];
+    if (!overrides) return preset;
+    return {
+      ...preset,
+      values: { ...preset.values, ...overrides }
+    };
+  });
+}
+
+function numericPresetValues(values: object): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(values).filter((entry): entry is [string, number] => (
+      typeof entry[1] === 'number' && Number.isFinite(entry[1])
+    ))
+  );
 }
 
 function presetLabel<T extends object>(
