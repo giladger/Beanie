@@ -5,9 +5,11 @@ import type {
   ApiResourceName,
   Bean,
   BeanBatch,
+  De1MachineSettings,
   DemoStartupSnapshot,
   GatewayStartupSnapshot,
   Grinder,
+  MachineCapabilities,
   MachineState,
   PaginatedShots,
   Profile,
@@ -21,8 +23,10 @@ import {
   readBatches,
   readBean,
   readBeans,
+  readDe1MachineSettings,
   readGrinder,
   readGrinders,
+  readMachineCapabilities,
   readPaginatedShots,
   readProfile,
   readProfiles,
@@ -224,6 +228,16 @@ export const gateway = {
   requestState: (state: MachineState) =>
     fetchEmpty('machine', `/api/v1/machine/state/${encodeURIComponent(state)}`, {
       method: 'PUT'
+    }),
+  machineCapabilities: () =>
+    fetchJson<MachineCapabilities>('machine', '/api/v1/machine/capabilities', readMachineCapabilities),
+  machineSettings: () =>
+    fetchJson<De1MachineSettings>('machine', '/api/v1/machine/settings', readDe1MachineSettings),
+  updateMachineSettings: (body: De1MachineSettings) =>
+    fetchEmpty('machine', '/api/v1/machine/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
     }),
   tareScale: () => fetchEmpty('scale', '/api/v1/scale/tare', { method: 'PUT' })
 };

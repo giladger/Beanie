@@ -1,7 +1,9 @@
 import type {
   Bean,
   BeanBatch,
+  De1MachineSettings,
   Grinder,
+  MachineCapabilities,
   PaginatedShots,
   ProfileRecord,
   ShotRecord,
@@ -67,6 +69,14 @@ export function readProfile(value: unknown): ProfileRecord {
 
 export function readWorkflow(value: unknown): Workflow {
   return checked('Workflow', value, validateWorkflow);
+}
+
+export function readMachineCapabilities(value: unknown): MachineCapabilities {
+  return checked('MachineCapabilities', value, validateMachineCapabilities);
+}
+
+export function readDe1MachineSettings(value: unknown): De1MachineSettings {
+  return checked('De1MachineSettings', value, validateDe1MachineSettings);
 }
 
 export function readPaginatedShots(value: unknown): PaginatedShots {
@@ -160,6 +170,36 @@ function validateWorkflow(value: unknown, path: string, issues: ValidationIssue[
   optionalRecord(obj, 'steamSettings', path, issues);
   optionalRecord(obj, 'hotWaterData', path, issues);
   optionalRecord(obj, 'rinseData', path, issues);
+}
+
+function validateMachineCapabilities(
+  value: unknown,
+  path: string,
+  issues: ValidationIssue[]
+): void {
+  const obj = expectRecord(value, path, issues);
+  if (!obj) return;
+
+  requiredStringArray(obj, 'capabilities', path, issues);
+}
+
+function validateDe1MachineSettings(
+  value: unknown,
+  path: string,
+  issues: ValidationIssue[]
+): void {
+  const obj = expectRecord(value, path, issues);
+  if (!obj) return;
+
+  optionalBoolean(obj, 'usb', path, issues, true);
+  optionalNumber(obj, 'fan', path, issues, true);
+  optionalNumber(obj, 'flushTemp', path, issues, true);
+  optionalNumber(obj, 'flushFlow', path, issues, true);
+  optionalNumber(obj, 'flushTimeout', path, issues, true);
+  optionalNumber(obj, 'hotWaterFlow', path, issues, true);
+  optionalNumber(obj, 'steamFlow', path, issues, true);
+  optionalNumber(obj, 'tankTemp', path, issues, true);
+  optionalNumber(obj, 'steamPurgeMode', path, issues, true);
 }
 
 function validateWorkflowContext(
@@ -363,10 +403,11 @@ function optionalBoolean(
   obj: Record<string, unknown>,
   key: string,
   path: string,
-  issues: ValidationIssue[]
+  issues: ValidationIssue[],
+  nullable = false
 ): void {
   const value = obj[key];
-  if (value === undefined) return;
+  if (value === undefined || (nullable && value === null)) return;
   if (typeof value !== 'boolean') {
     issues.push({ path: `${path}.${key}`, message: 'Expected a boolean' });
   }
@@ -409,6 +450,24 @@ function optionalStringArray(
 ): void {
   const value = obj[key];
   if (value === undefined || (nullable && value === null)) return;
+  if (!Array.isArray(value)) {
+    issues.push({ path: `${path}.${key}`, message: 'Expected an array' });
+    return;
+  }
+  value.forEach((item, index) => {
+    if (typeof item !== 'string') {
+      issues.push({ path: `${path}.${key}[${index}]`, message: 'Expected a string' });
+    }
+  });
+}
+
+function requiredStringArray(
+  obj: Record<string, unknown>,
+  key: string,
+  path: string,
+  issues: ValidationIssue[]
+): void {
+  const value = obj[key];
   if (!Array.isArray(value)) {
     issues.push({ path: `${path}.${key}`, message: 'Expected an array' });
     return;
