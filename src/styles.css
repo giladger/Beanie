@@ -3089,13 +3089,20 @@ p {
   text-align: right;
 }
 
-.settings-number {
+/* Scoped under .settings-line (0,2,0) so they beat the label rule
+   `.settings-line span` (0,1,1) — otherwise the unit span blockifies and
+   drops below the input. */
+.settings-line .settings-number {
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
-.settings-unit {
+.settings-line .settings-unit {
+  display: inline-block;
+  overflow: visible;
+  min-width: 34px;
+  text-align: left;
   color: var(--muted);
   font-size: 11px;
   font-weight: 800;

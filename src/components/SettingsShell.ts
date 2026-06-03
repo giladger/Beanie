@@ -224,7 +224,9 @@ function renderSettingsField(field: SettingsField, bundle: SettingsBundle): stri
     control = `<input class="settings-input" type="time" ${base} value="${minutesToTime(typeof value === 'number' ? value : null)}" />`;
   } else {
     const num = typeof value === 'number' ? String(value) : '';
-    const unit = field.unit ? `<span class="settings-unit">${escapeHtml(field.unit)}</span>` : '';
+    // Always emit the unit span (empty when unitless) so its fixed-width gutter
+    // reserves space and every number input shares the same right edge.
+    const unit = `<span class="settings-unit">${field.unit ? escapeHtml(field.unit) : ''}</span>`;
     const bounds = [
       field.min != null ? `min="${field.min}"` : '',
       field.max != null ? `max="${field.max}"` : '',
