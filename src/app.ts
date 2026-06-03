@@ -147,6 +147,7 @@ import {
 type Modal = 'edit-number' | 'edit-shot' | null;
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
 type ApplyState = 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
+type LiveChartMode = 'preset45' | 'auto';
 type View =
   | 'workbench'
   | 'settings'
@@ -222,6 +223,7 @@ interface AppState {
   machine: MachineSnapshot | null;
   scale: ScaleSnapshot | null;
   liveActive: boolean;
+  liveChartMode: LiveChartMode;
   asleep: boolean;
   applyState: ApplyState;
   appliedSignature: string | null;
@@ -278,6 +280,7 @@ export class BeanieApp {
     machine: null,
     scale: null,
     liveActive: false,
+    liveChartMode: 'preset45',
     asleep: false,
     applyState: 'idle',
     appliedSignature: null
@@ -842,7 +845,11 @@ export class BeanieApp {
       if (!this.state.liveActive || !this.liveChart || !this.liveDirty) return;
       this.liveDirty = false;
       this.liveChart.resize();
-      this.liveChart.setModel(this.liveShot.model());
+      const model = this.liveShot.model(liveChartModelOptions(this.state.liveChartMode));
+      this.liveChart.setOptions({
+        hideMaxTimeLabel: liveChartHideMaxTimeLabel(this.state.liveChartMode, model.maxTime)
+      });
+      this.liveChart.setModel(model);
       this.liveChart.draw();
       this.updateLiveReadouts();
     });
@@ -861,7 +868,10 @@ export class BeanieApp {
     }
     if (canvas !== this.liveCanvas) {
       this.liveCanvas = canvas;
-      this.liveChart = new LiveChart(canvas, { detailed: true });
+      this.liveChart = new LiveChart(canvas, {
+        detailed: true,
+        hideMaxTimeLabel: this.state.liveChartMode === 'auto'
+      });
     }
     this.liveReadoutEls = {
       time: this.root.querySelector<HTMLElement>('#live-time'),
@@ -997,6 +1007,11 @@ export class BeanieApp {
         break;
       case 'machine-command':
         if (isMachineCommand(value)) await this.toggleMachineCommand(value);
+        break;
+      case 'toggle-live-chart-mode':
+        this.setState({
+          liveChartMode: this.state.liveChartMode === 'preset45' ? 'auto' : 'preset45'
+        });
         break;
       case 'stop':
         await this.machineAction('idle');
@@ -2231,11 +2246,24 @@ export class BeanieApp {
 
   private renderLivePanel(): string {
     if (!this.state.liveActive) return '';
+    const preset45 = this.state.liveChartMode === 'preset45';
     return `
       <div class="live-panel">
         <div class="live-card panel">
           <div class="live-head">
-            <span class="eyebrow">Live shot</span>
+            <div class="live-title-row">
+              <span class="eyebrow">Live shot</span>
+              <button
+                class="live-chart-toggle ${preset45 ? 'active' : ''}"
+                data-action="toggle-live-chart-mode"
+                aria-pressed="${preset45 ? 'true' : 'false'}"
+                aria-label="${preset45 ? '45 second chart preset' : 'Auto chart scale'}"
+                title="${preset45 ? '45 second chart preset' : 'Auto chart scale'}"
+              >
+                ${icon('timer')}
+                <span>${preset45 ? '45s' : 'Auto'}</span>
+              </button>
+            </div>
             <div class="live-readouts">
               ${liveReadout('Time', 'live-time', '0.0s')}
               ${liveReadout('Weight', 'live-weight', '--', 'g')}
@@ -2280,9 +2308,9 @@ export class BeanieApp {
   private renderMachineCommands(): string {
     if (!machineCommandsAvailable(this.state.demo, this.state.machineInfo)) return '';
     const current = this.state.machine?.state?.state ?? 'idle';
-    const disabled = this.state.busy ? ' disabled' : '';
-    const commands: Array<{ state: MachineState; label: string; icon: string }> = [
+    const commands: Array<{ state: MachineState; label: string; icon: string; stop?: boolean }> = [
       { state: 'espresso', label: 'Shot', icon: 'coffee' },
+      { state: 'idle', label: 'Stop', icon: 'square', stop: true },
       { state: 'steam', label: 'Steam', icon: 'waves' },
       { state: 'flush', label: 'Flush', icon: 'refresh-cw' },
       { state: 'hotWater', label: 'Water', icon: 'droplets' }
@@ -2290,14 +2318,15 @@ export class BeanieApp {
     return `
       <div class="top-machine-actions" role="toolbar" aria-label="Machine commands">
         ${commands
-          .map(({ state, label, icon: iconName }) => {
-            const active = current === state;
-            const title = active ? `Stop ${label.toLowerCase()}` : label;
+          .map(({ state, label, icon: iconName, stop }) => {
+            const active = !stop && current === state;
+            const disabled = this.state.busy || (stop && current === 'idle') ? ' disabled' : '';
+            const title = stop ? 'Stop' : active ? `Stop ${label.toLowerCase()}` : label;
             return `
               <button
-                class="machine-command ${active ? 'active' : ''}"
-                data-action="machine-command"
-                data-value="${escapeAttr(state)}"
+                class="machine-command ${active ? 'active' : ''} ${stop ? 'stop' : ''}"
+                data-action="${stop ? 'stop' : 'machine-command'}"
+                ${stop ? '' : `data-value="${escapeAttr(state)}"`}
                 aria-pressed="${active ? 'true' : 'false'}"
                 aria-label="${escapeAttr(title)}"
                 title="${escapeAttr(title)}"
@@ -3664,13 +3693,21 @@ function isEditField(value: string | undefined): value is EditField {
 }
 
 function isMachineCommand(value: string | undefined): value is MachineState {
-  return value === 'espresso' || value === 'steam' || value === 'flush' || value === 'hotWater';
+  return value === 'espresso' || value === 'idle' || value === 'steam' || value === 'flush' || value === 'hotWater';
 }
 
 function machineCommandsAvailable(demo: boolean, info: MachineInfo | null): boolean {
   if (demo) return true;
   if (!info) return false;
   return isSimulatorMachine(info) || hasGroupHeadController(info) === false;
+}
+
+function liveChartModelOptions(mode: LiveChartMode): { minTime?: number } {
+  return mode === 'preset45' ? { minTime: 45 } : {};
+}
+
+function liveChartHideMaxTimeLabel(mode: LiveChartMode, maxTime: number): boolean {
+  return mode === 'auto' || maxTime > 45;
 }
 
 function hasGroupHeadController(info: MachineInfo): boolean | null {

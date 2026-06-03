@@ -65,6 +65,12 @@ export interface LiveShotOptions {
   targetWeight?: number;
 }
 
+export interface LiveChartModelOptions {
+  // Keeps the chart window at least this wide from shot start. The model still
+  // expands if a shot runs longer, so plotted points never clip off the right.
+  minTime?: number;
+}
+
 export function createLiveShotState(): LiveShotState {
   return {
     phase: 'idle',
@@ -208,7 +214,10 @@ function isEspressoPour(machine: MachineSnapshot | null | undefined): boolean {
 // Builds the chart-ready model from accumulated session state. Only series that
 // have at least one point are included. maxY uses the monotonic peak so the axis
 // never shrinks mid-shot.
-export function buildLiveChartModel(state: LiveShotState): LiveChartModel {
+export function buildLiveChartModel(
+  state: LiveShotState,
+  options: LiveChartModelOptions = {}
+): LiveChartModel {
   const presentSeries: LiveChartSeries[] = state.series
     .filter((accumulator) => accumulator.points.length > 0)
     .map((accumulator) => ({
@@ -220,7 +229,7 @@ export function buildLiveChartModel(state: LiveShotState): LiveChartModel {
       points: accumulator.points
     }));
 
-  const maxTime = Math.max(elapsedSecondsFor(state), 1);
+  const maxTime = Math.max(elapsedSecondsFor(state), options.minTime ?? 1, 1);
   const maxScaled = Math.max(10, state.maxScaledValue);
 
   return {
@@ -254,8 +263,8 @@ export class LiveShotSession {
     this.state = createLiveShotState();
   }
 
-  model(): LiveChartModel {
-    return buildLiveChartModel(this.state);
+  model(options?: LiveChartModelOptions): LiveChartModel {
+    return buildLiveChartModel(this.state, options);
   }
 
   get phase(): LiveShotPhase {

@@ -15,6 +15,7 @@ export interface PlotArea {
 
 export interface LiveChartOptions {
   detailed?: boolean;
+  hideMaxTimeLabel?: boolean;
 }
 
 const MARGIN_DETAILED = { top: 42, right: 22, bottom: 38, left: 42 };
@@ -99,6 +100,7 @@ export class LiveChart {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly detailed: boolean;
+  private hideMaxTimeLabel: boolean;
   private model: LiveChartModel | null = null;
   private cssWidth = 0;
   private cssHeight = 0;
@@ -110,10 +112,15 @@ export class LiveChart {
     this.canvas = canvas;
     this.ctx = ctx;
     this.detailed = options.detailed ?? false;
+    this.hideMaxTimeLabel = options.hideMaxTimeLabel ?? false;
   }
 
   setModel(model: LiveChartModel): void {
     this.model = model;
+  }
+
+  setOptions(options: LiveChartOptions): void {
+    if (options.hideMaxTimeLabel != null) this.hideMaxTimeLabel = options.hideMaxTimeLabel;
   }
 
   resize(): void {
@@ -205,6 +212,7 @@ export class LiveChart {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
     for (let i = 0; i < xTicks.length; i += 1) {
+      if (this.hideMaxTimeLabel && i === xTicks.length - 1) continue;
       const x = projectX(xTicks[i]!, model.maxTime, plot);
       ctx.fillText(`${formatTick(xTicks[i]!)}s`, x, height - 12);
     }
@@ -221,15 +229,14 @@ export class LiveChart {
     const labelLimit = 6;
     ctx.strokeStyle = MARKER_LINE;
     ctx.lineWidth = detailed ? 1.4 : 1;
-    ctx.setLineDash([5, 5]);
-    ctx.beginPath();
-    for (let i = 0; i < model.markers.length; i += 1) {
-      const x = projectX(model.markers[i]!.t, model.maxTime, plot);
-      ctx.moveTo(x, plot.y);
-      ctx.lineTo(x, plot.y + plot.height);
-    }
-    ctx.stroke();
+    ctx.lineCap = 'butt';
     ctx.setLineDash([]);
+    for (let i = 0; i < model.markers.length; i += 1) {
+      const x = snapPixel(projectX(model.markers[i]!.t, model.maxTime, plot));
+      drawVerticalDash(ctx, x, plot.y, plot.y + plot.height);
+    }
+    ctx.setLineDash([]);
+    ctx.lineCap = 'round';
 
     if (detailed) {
       ctx.fillStyle = TEXT_COLOR;
@@ -319,4 +326,26 @@ export class LiveChart {
       ctx.fillText(item.shortLabel, x + 29, y);
     }
   }
+}
+
+function drawVerticalDash(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y1: number,
+  y2: number,
+  dash = 5,
+  gap = 5
+): void {
+  const start = Math.round(y1);
+  const end = Math.round(y2);
+  ctx.beginPath();
+  for (let y = start; y < end; y += dash + gap) {
+    ctx.moveTo(x, y);
+    ctx.lineTo(x, Math.min(y + dash, end));
+  }
+  ctx.stroke();
+}
+
+function snapPixel(value: number): number {
+  return Math.round(value) + 0.5;
 }

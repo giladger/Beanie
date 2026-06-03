@@ -95,11 +95,22 @@ function renderStepMarkers(
           detailed && index < labelLimit
             ? `<text class="chart-axis-label" x="${(x + 4).toFixed(1)}" y="${(plot.y + 13 + (index % 2) * 14).toFixed(1)}">${escapeHtml(marker.label)}</text>`
             : '';
-        return `<line class="chart-step-marker" x1="${x.toFixed(1)}" y1="${plot.y}" x2="${x.toFixed(1)}" y2="${plot.y + plot.height}" stroke="rgba(255,255,255,0.44)" stroke-width="${detailed ? 1.4 : 1}" stroke-dasharray="5 5" />
+        return `<path class="chart-step-marker" d="${verticalDashPath(x, plot.y, plot.y + plot.height)}" stroke="rgba(255,255,255,0.44)" stroke-width="${detailed ? 1.4 : 1}" fill="none" />
           ${label}`;
       })
       .join('')}
   </g>`;
+}
+
+function verticalDashPath(x: number, y1: number, y2: number, dash = 5, gap = 5): string {
+  const start = Math.round(y1);
+  const end = Math.round(y2);
+  const roundedX = (Math.round(x) + 0.5).toFixed(1);
+  const commands: string[] = [];
+  for (let y = start; y < end; y += dash + gap) {
+    commands.push(`M${roundedX} ${y}L${roundedX} ${Math.min(y + dash, end)}`);
+  }
+  return commands.join(' ');
 }
 
 function renderGrid(

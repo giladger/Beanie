@@ -84,6 +84,15 @@ run('maxY never shrinks within a session', () => {
   equal(session.model().maxY, peak);
 });
 
+run('model can begin with a preset x-axis duration', () => {
+  const session = new LiveShotSession();
+  session.ingest(pourFrame(0, { pressure: 6 }));
+
+  equal(session.model({ minTime: 45 }).maxTime, 45);
+  session.ingest(pourFrame(46000, { pressure: 7 }));
+  equal(session.model({ minTime: 45 }).maxTime, 46);
+});
+
 run('model only includes series that have points', () => {
   const session = new LiveShotSession();
   // Machine-only frame: no scale, so weight / weightFlow series stay empty.
