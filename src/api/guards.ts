@@ -179,6 +179,9 @@ function validateWorkflowContext(
   optionalString(obj, 'coffeeName', path, issues, true);
   optionalString(obj, 'coffeeRoaster', path, issues, true);
   optionalString(obj, 'finalBeverageType', path, issues, true);
+  optionalString(obj, 'baristaName', path, issues, true);
+  optionalString(obj, 'drinkerName', path, issues, true);
+  optionalRecord(obj, 'extras', path, issues, true);
 }
 
 function validateProfile(value: unknown, path: string, issues: ValidationIssue[]): void {
@@ -236,8 +239,11 @@ function validateShotAnnotations(
 
   optionalNumber(obj, 'actualDoseWeight', path, issues, true);
   optionalNumber(obj, 'actualYield', path, issues, true);
+  optionalNumber(obj, 'drinkTds', path, issues, true);
+  optionalNumber(obj, 'drinkEy', path, issues, true);
   optionalNumber(obj, 'enjoyment', path, issues, true);
   optionalString(obj, 'espressoNotes', path, issues, true);
+  optionalRecord(obj, 'extras', path, issues, true);
 }
 
 function validateShotMeasurement(

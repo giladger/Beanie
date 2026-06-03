@@ -9,10 +9,13 @@ import type {
   RecipeDraft,
   RinseData,
   ScaleSnapshot,
+  ShotAnnotations,
   ShotRecord,
   ShotSummary,
+  ShotUpdate,
   SteamSettings,
-  Workflow
+  Workflow,
+  WorkflowContext
 } from './api/types';
 import { gateway, gatewayHttpOrigin, gatewayWsOrigin } from './api/gateway';
 import {
@@ -107,7 +110,7 @@ import {
   writeSettingsPreferences
 } from './domain/settings';
 
-type Modal = 'edit-number' | null;
+type Modal = 'edit-number' | 'edit-shot' | null;
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
 type ApplyState = 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
 type View =
@@ -526,6 +529,110 @@ export class BeanieApp {
     this.setState({ detailShotId: shotId, status: 'Shot selected' });
   }
 
+  private openShotEditor(): void {
+    if (!this.selectedHistoryShot()) return;
+    this.setState({
+      modal: 'edit-shot',
+      editDialog: null,
+      profileEdit: null
+    });
+  }
+
+  private async submitShotDyeEditor(form: HTMLFormElement): Promise<void> {
+    const shotId = form.dataset.id ?? this.selectedHistoryShot()?.id;
+    const shot = shotId ? this.state.shots.find((item) => item.id === shotId) : null;
+    if (!shot) return;
+
+    const update = this.shotUpdateFromForm(form, shot);
+    if (typeof update === 'string') {
+      this.setState({ status: update });
+      return;
+    }
+
+    this.setState({ busy: true, status: 'Saving shot' });
+    if (this.state.demo) {
+      this.replaceShotRecord(applyShotUpdate(shot, update), 'Shot saved (demo)');
+      return;
+    }
+
+    try {
+      const saved = await gateway.updateShot(shot.id, update);
+      await beanieCache.invalidateShotMutation(saved.id);
+      await beanieCache.putShotRecord(saved);
+      this.replaceShotRecord(saved, 'Shot saved');
+    } catch (error) {
+      console.error('[Beanie] Save shot failed', error);
+      this.setState({ busy: false, status: 'Save shot failed' });
+    }
+  }
+
+  private replaceShotRecord(shot: ShotRecord, status: string): void {
+    const shots = this.state.shots.map((item) => (item.id === shot.id ? shot : item));
+    this.setState({
+      shots,
+      detailShotId: shot.id,
+      modal: null,
+      editDialog: null,
+      busy: false,
+      status
+    });
+  }
+
+  private shotUpdateFromForm(form: HTMLFormElement, shot: ShotRecord): ShotUpdate | string {
+    const data = new FormData(form);
+    const annotationExtras = recordJsonOrNullInput(data.get('annotationExtras'), 'Shot extras');
+    if (annotationExtras.error) return annotationExtras.error;
+    const contextExtras = recordJsonOrNullInput(data.get('contextExtras'), 'Context extras');
+    if (contextExtras.error) return contextExtras.error;
+
+    const grinderId = textOrNull(data.get('grinderId'));
+    const selectedGrinder = grinderId ? this.state.grinders.find((grinder) => grinder.id === grinderId) : null;
+    const beanBatchId = textOrNull(data.get('beanBatchId'));
+    const selectedBatch = this.batchAndBeanForId(beanBatchId);
+
+    const context: WorkflowContext = {
+      ...(shot.workflow?.context ?? {}),
+      targetDoseWeight: numberOrNullInput(data.get('targetDoseWeight')),
+      targetYield: numberOrNullInput(data.get('targetYield')),
+      grinderId,
+      grinderModel: textOrNull(data.get('grinderModel')) ?? selectedGrinder?.model ?? null,
+      grinderSetting: textOrNull(data.get('grinderSetting')),
+      beanBatchId,
+      coffeeName: textOrNull(data.get('coffeeName')) ?? selectedBatch?.bean.name ?? null,
+      coffeeRoaster: textOrNull(data.get('coffeeRoaster')) ?? selectedBatch?.bean.roaster ?? null,
+      finalBeverageType: textOrNull(data.get('finalBeverageType')),
+      baristaName: textOrNull(data.get('baristaName')),
+      drinkerName: textOrNull(data.get('drinkerName')),
+      extras: contextExtras.value
+    };
+    const annotations: ShotAnnotations = {
+      ...(shot.annotations ?? {}),
+      actualDoseWeight: numberOrNullInput(data.get('actualDoseWeight')),
+      actualYield: numberOrNullInput(data.get('actualYield')),
+      drinkTds: numberOrNullInput(data.get('drinkTds')),
+      drinkEy: numberOrNullInput(data.get('drinkEy')),
+      enjoyment: numberOrNullInput(data.get('enjoyment')),
+      espressoNotes: textOrNull(data.get('espressoNotes')),
+      extras: annotationExtras.value
+    };
+
+    return {
+      workflow: { context },
+      annotations,
+      shotNotes: annotations.espressoNotes ?? null,
+      metadata: annotations.extras ?? null
+    };
+  }
+
+  private batchAndBeanForId(batchId: string | null): { batch: BeanBatch; bean: Bean } | null {
+    if (!batchId) return null;
+    for (const bean of this.state.beans) {
+      const batch = (this.state.batchesByBean[bean.id] ?? []).find((item) => item.id === batchId);
+      if (batch) return { batch, bean };
+    }
+    return null;
+  }
+
   private async machineAction(state: MachineState): Promise<void> {
     this.setState({ busy: true, status: `Sending ${state}` });
     if (this.state.demo) {
@@ -779,6 +886,9 @@ export class BeanieApp {
         break;
       case 'select-history-shot':
         if (id) this.selectHistoryShot(id);
+        break;
+      case 'edit-shot':
+        this.openShotEditor();
         break;
       case 'stop':
         await this.machineAction('idle');
@@ -1254,6 +1364,11 @@ export class BeanieApp {
 
   private async onSubmit(event: Event): Promise<void> {
     const form = event.target as HTMLFormElement;
+    if (form.dataset.form === 'shot-dye-editor') {
+      event.preventDefault();
+      await this.submitShotDyeEditor(form);
+      return;
+    }
     if (form.dataset.form === 'bean-editor') {
       event.preventDefault();
       await this.submitBeanEditor(form);
@@ -2164,9 +2279,7 @@ export class BeanieApp {
     const date = new Date(shot.timestamp);
     const time = Number.isNaN(date.valueOf())
       ? shot.timestamp
-      : date.toLocaleString([], {
-          month: 'short',
-          day: 'numeric',
+      : date.toLocaleTimeString([], {
           hour: '2-digit',
           minute: '2-digit',
           hour12: false
@@ -2201,6 +2314,7 @@ export class BeanieApp {
         <span class="pane-stat">${duration ? escapeHtml(duration) : ''}</span>
         <span class="pane-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
         ${enjoymentBadge(shot, 'detail')}
+        <button class="icon-button shot-edit-button" data-action="edit-shot" aria-label="Edit shot fields" title="Edit shot fields">${icon('pencil')}</button>
       </div>
       <div class="detail-chart">
         <canvas id="detail-canvas" class="live-canvas detail-canvas"></canvas>
@@ -2225,6 +2339,7 @@ export class BeanieApp {
 
   private renderModal(): string {
     if (this.state.modal === 'edit-number') return this.renderEditDialog();
+    if (this.state.modal === 'edit-shot') return this.renderShotEditModal();
     return '';
   }
 
@@ -2381,6 +2496,137 @@ export class BeanieApp {
     const dialog = this.state.editDialog;
     if (!dialog) return '';
     return renderInputDialog(dialog);
+  }
+
+  private renderShotEditModal(): string {
+    const shot = this.selectedHistoryShot();
+    if (!shot) return '';
+    const ctx = shot.workflow?.context ?? {};
+    const ann = shot.annotations ?? {};
+    const annotationsExtras = ann.extras ?? shot.metadata ?? null;
+    const shotDate = new Date(shot.timestamp);
+    const shotLabel = Number.isNaN(shotDate.valueOf())
+      ? shot.timestamp
+      : shotDate.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const text = (name: string, label: string, value: unknown, wide = false) => `
+      <label class="${wide ? 'wide' : ''}">
+        <span>${escapeHtml(label)}</span>
+        <input name="${escapeAttr(name)}" value="${escapeAttr(inputValue(value))}" autocomplete="off" />
+      </label>
+    `;
+    const number = (name: string, label: string, value: unknown, step = '0.1') => `
+      <label>
+        <span>${escapeHtml(label)}</span>
+        <input name="${escapeAttr(name)}" type="number" step="${escapeAttr(step)}" value="${escapeAttr(inputValue(value))}" autocomplete="off" inputmode="decimal" />
+      </label>
+    `;
+    const textarea = (name: string, label: string, value: unknown, wide = true) => `
+      <label class="${wide ? 'wide' : ''}">
+        <span>${escapeHtml(label)}</span>
+        <textarea name="${escapeAttr(name)}" rows="3" spellcheck="false">${escapeHtml(inputValue(value))}</textarea>
+      </label>
+    `;
+
+    return `
+      <div class="modal-backdrop" data-action="close-modal">
+        <form class="modal panel shot-edit-modal" data-form="shot-dye-editor" data-id="${escapeAttr(shot.id)}" onclick="event.stopPropagation()">
+          <div class="modal-head shot-edit-head">
+            <div>
+              <h2>Edit shot</h2>
+              <p class="modal-hint">${escapeHtml(shotLabel)}</p>
+            </div>
+            <button type="button" class="icon-button" data-action="close-modal" aria-label="Close">${icon('x')}</button>
+          </div>
+
+          <div class="shot-edit-grid">
+            <fieldset class="shot-edit-section">
+              <legend>Bean</legend>
+              <div class="shot-edit-fields">
+                ${text('coffeeRoaster', 'Roaster', ctx.coffeeRoaster)}
+                ${text('coffeeName', 'Bean', ctx.coffeeName)}
+                <label>
+                  <span>Batch</span>
+                  <select name="beanBatchId">${this.renderBatchOptions(ctx.beanBatchId ?? null)}</select>
+                </label>
+                ${text('finalBeverageType', 'Drink', ctx.finalBeverageType)}
+                ${text('baristaName', 'Barista', ctx.baristaName)}
+                ${text('drinkerName', 'Drinker', ctx.drinkerName)}
+              </div>
+            </fieldset>
+
+            <fieldset class="shot-edit-section">
+              <legend>Recipe</legend>
+              <div class="shot-edit-fields">
+                ${number('targetDoseWeight', 'Target in', ctx.targetDoseWeight)}
+                ${number('targetYield', 'Target out', ctx.targetYield)}
+                ${number('actualDoseWeight', 'Actual in', ann.actualDoseWeight)}
+                ${number('actualYield', 'Actual out', ann.actualYield)}
+                <label>
+                  <span>Grinder</span>
+                  <select name="grinderId">${this.renderGrinderOptions(ctx.grinderId ?? null)}</select>
+                </label>
+                ${text('grinderModel', 'Model', ctx.grinderModel)}
+                ${text('grinderSetting', 'Grind', ctx.grinderSetting)}
+              </div>
+            </fieldset>
+
+            <fieldset class="shot-edit-section">
+              <legend>Result</legend>
+              <div class="shot-edit-fields">
+                ${number('drinkTds', 'TDS', ann.drinkTds, '0.01')}
+                ${number('drinkEy', 'EY', ann.drinkEy, '0.01')}
+                ${number('enjoyment', 'Score', ann.enjoyment, '1')}
+                ${textarea('espressoNotes', 'Notes', ann.espressoNotes ?? shot.shotNotes ?? '')}
+              </div>
+            </fieldset>
+
+            <fieldset class="shot-edit-section shot-edit-extras">
+              <legend>Extras</legend>
+              <div class="shot-edit-fields">
+                ${textarea('contextExtras', 'Context JSON', jsonInputValue(ctx.extras), false)}
+                ${textarea('annotationExtras', 'Shot JSON', jsonInputValue(annotationsExtras), false)}
+              </div>
+            </fieldset>
+          </div>
+
+          <div class="modal-actions shot-edit-actions">
+            <button type="button" class="command" data-action="close-modal">Cancel</button>
+            <button type="submit" class="command primary">${icon('save')}<span>Save</span></button>
+          </div>
+        </form>
+      </div>
+    `;
+  }
+
+  private renderBatchOptions(selectedId: string | null): string {
+    const options: string[] = ['<option value="">No batch</option>'];
+    const seen = new Set<string>();
+    for (const bean of this.state.beans) {
+      for (const batch of this.state.batchesByBean[bean.id] ?? []) {
+        seen.add(batch.id);
+        const selected = batch.id === selectedId ? ' selected' : '';
+        const label = `${bean.roaster} ${bean.name} · ${batchOptionLabel(batch)}`;
+        options.push(`<option value="${escapeAttr(batch.id)}"${selected}>${escapeHtml(label)}</option>`);
+      }
+    }
+    if (selectedId && !seen.has(selectedId)) {
+      options.push(`<option value="${escapeAttr(selectedId)}" selected>${escapeHtml(selectedId)}</option>`);
+    }
+    return options.join('');
+  }
+
+  private renderGrinderOptions(selectedId: string | null): string {
+    const options: string[] = ['<option value="">No grinder</option>'];
+    const seen = new Set<string>();
+    for (const grinder of this.state.grinders) {
+      seen.add(grinder.id);
+      const selected = grinder.id === selectedId ? ' selected' : '';
+      options.push(`<option value="${escapeAttr(grinder.id)}"${selected}>${escapeHtml(grinder.model)}</option>`);
+    }
+    if (selectedId && !seen.has(selectedId)) {
+      options.push(`<option value="${escapeAttr(selectedId)}" selected>${escapeHtml(selectedId)}</option>`);
+    }
+    return options.join('');
   }
 
   private settingsShellModel() {
@@ -2543,6 +2789,61 @@ function numberOrNullInput(value: FormDataEntryValue | null): number | null {
   if (!text) return null;
   const parsed = Number(text);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function inputValue(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : String(round(value, 3));
+  return String(value);
+}
+
+function jsonInputValue(value: unknown): string {
+  if (!isRecord(value)) return '';
+  return JSON.stringify(value, null, 2);
+}
+
+function recordJsonOrNullInput(
+  value: FormDataEntryValue | null,
+  label: string
+): { value: Record<string, unknown> | null; error?: string } {
+  const text = String(value ?? '').trim();
+  if (!text) return { value: null };
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (!isRecord(parsed)) return { value: null, error: `${label} must be a JSON object` };
+    return { value: parsed };
+  } catch {
+    return { value: null, error: `${label} has invalid JSON` };
+  }
+}
+
+function applyShotUpdate(shot: ShotRecord, update: ShotUpdate): ShotRecord {
+  const workflow = update.workflow
+    ? ({
+        ...(shot.workflow ?? {}),
+        ...update.workflow,
+        context: Object.prototype.hasOwnProperty.call(update.workflow, 'context')
+          ? update.workflow.context
+          : shot.workflow?.context
+      } as Workflow)
+    : shot.workflow;
+  return {
+    ...shot,
+    workflow,
+    annotations: Object.prototype.hasOwnProperty.call(update, 'annotations')
+      ? update.annotations
+      : shot.annotations,
+    shotNotes: Object.prototype.hasOwnProperty.call(update, 'shotNotes')
+      ? update.shotNotes
+      : shot.shotNotes,
+    metadata: Object.prototype.hasOwnProperty.call(update, 'metadata')
+      ? update.metadata
+      : shot.metadata
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function temp(value: number | null | undefined): string {

@@ -120,6 +120,9 @@ export interface WorkflowContext {
   coffeeName?: string | null;
   coffeeRoaster?: string | null;
   finalBeverageType?: string | null;
+  baristaName?: string | null;
+  drinkerName?: string | null;
+  extras?: Record<string, unknown> | null;
 }
 
 export interface SteamSettings {
@@ -159,16 +162,21 @@ export interface WorkflowUpdate {
   context?: WorkflowContext;
 }
 
+export interface ShotAnnotations {
+  actualDoseWeight?: number | null;
+  actualYield?: number | null;
+  drinkTds?: number | null;
+  drinkEy?: number | null;
+  enjoyment?: number | null;
+  espressoNotes?: string | null;
+  extras?: Record<string, unknown> | null;
+}
+
 export interface ShotSummary {
   id: string;
   timestamp: string;
   workflow?: Workflow | null;
-  annotations?: {
-    actualDoseWeight?: number | null;
-    actualYield?: number | null;
-    enjoyment?: number | null;
-    espressoNotes?: string | null;
-  } | null;
+  annotations?: ShotAnnotations | null;
   shotNotes?: string | null;
   metadata?: Record<string, unknown> | null;
 }
@@ -192,6 +200,13 @@ export interface ShotMeasurement {
 
 export interface ShotRecord extends ShotSummary {
   measurements: ShotMeasurement[];
+}
+
+export interface ShotUpdate {
+  workflow?: Partial<Workflow> & { context?: WorkflowContext | null };
+  annotations?: ShotAnnotations | null;
+  shotNotes?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface PaginatedShots {

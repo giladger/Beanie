@@ -13,6 +13,7 @@ import type {
   Profile,
   ProfileRecord,
   ShotRecord,
+  ShotUpdate,
   Workflow
 } from './types';
 import {
@@ -207,13 +208,7 @@ export const gateway = {
     fetchJson<PaginatedShots>('shots', `/api/v1/shots?${query.toString()}`, readPaginatedShots),
   shot: (id: string) =>
     fetchJson<ShotRecord>('shot', `/api/v1/shots/${encodeURIComponent(id)}`, readShotRecord),
-  updateShot: (
-    id: string,
-    body: {
-      annotations?: { espressoNotes?: string | null; enjoyment?: number | null };
-      shotNotes?: string | null;
-    }
-  ) =>
+  updateShot: (id: string, body: ShotUpdate) =>
     fetchJson<ShotRecord>('shot', `/api/v1/shots/${encodeURIComponent(id)}`, readShotRecord, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
