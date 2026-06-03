@@ -1,8 +1,10 @@
 import type {
   Bean,
   BeanBatch,
+  De1MachineSettings,
   Grinder,
   HotWaterData,
+  MachineCapabilities,
   MachineSnapshot,
   MachineState,
   ProfileRecord,
@@ -109,6 +111,25 @@ import {
   type UIScalePreference,
   writeSettingsPreferences
 } from './domain/settings';
+import {
+  DEFAULT_HOT_WATER,
+  DEFAULT_RINSE,
+  DEFAULT_STEAM,
+  FLUSH_PRESETS,
+  HOT_WATER_PRESETS,
+  STEAM_PRESETS,
+  clampFlush,
+  clampHotWater,
+  clampSteam,
+  flushValues,
+  hotWaterValues,
+  matchingPreset,
+  steamValues,
+  waterControlCapabilities,
+  type NumberSpec,
+  type WaterControlCapabilities,
+  type WaterPreset
+} from './domain/waterSettings';
 
 type Modal = 'edit-number' | 'edit-shot' | null;
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
@@ -129,21 +150,6 @@ const FOCUSABLE_SEARCH = new Set(['search', 'profile-search', 'settings-search']
 
 // Scrollable containers whose scroll position must survive a re-render.
 const SCROLL_SELECTORS = ['.bean-list', '.shot-list', '.page-body'];
-
-// Mirror ReaPrime's SteamSettings / HotWaterData / RinseData defaults.
-const DEFAULT_STEAM: SteamSettings = {
-  targetTemperature: 150,
-  duration: 50,
-  flow: 0.8,
-  stopAtTemperature: 0
-};
-const DEFAULT_HOT_WATER: HotWaterData = {
-  targetTemperature: 75,
-  duration: 30,
-  volume: 50,
-  flow: 10
-};
-const DEFAULT_RINSE: RinseData = { targetTemperature: 90, duration: 10, flow: 6 };
 
 // Which editor field a tap-to-edit numpad dialog is bound to.
 interface ProfileEditTarget {
@@ -187,6 +193,8 @@ interface AppState {
   editDialog: InputDialogState | null;
   profileEdit: ProfileEditTarget | null;
   detailShotId: string | null;
+  machineCapabilities: MachineCapabilities | null;
+  machineSettings: De1MachineSettings | null;
   machine: MachineSnapshot | null;
   scale: ScaleSnapshot | null;
   liveActive: boolean;
@@ -237,6 +245,8 @@ export class BeanieApp {
     editDialog: null,
     profileEdit: null,
     detailShotId: null,
+    machineCapabilities: null,
+    machineSettings: null,
     machine: null,
     scale: null,
     liveActive: false,
@@ -323,6 +333,7 @@ export class BeanieApp {
       if (prevSignature != null && workflowSignature(workflow) !== prevSignature) {
         this.setState({ applyState: 'stale', status: 'Workflow changed on the machine' });
       }
+      void this.loadMachineControlState();
       this.connectMachineSocket();
       this.connectScaleSocket();
     } catch (error) {
@@ -339,11 +350,31 @@ export class BeanieApp {
       grinders: demoGrinders,
       profiles: demoProfiles,
       machine: demoMachine,
+      machineCapabilities: { capabilities: [] },
+      machineSettings: {
+        steamFlow: demoWorkflow.steamSettings?.flow,
+        hotWaterFlow: demoWorkflow.hotWaterData?.flow,
+        flushTemp: demoWorkflow.rinseData?.targetTemperature,
+        flushFlow: demoWorkflow.rinseData?.flow,
+        flushTimeout: demoWorkflow.rinseData?.duration
+      },
       demo: true,
       loading: false,
       status: 'Demo data'
     });
     void this.selectBean(demoBeans[0]!.id, { apply: false, preferWorkflow: true });
+  }
+
+  private async loadMachineControlState(): Promise<void> {
+    if (this.state.demo) return;
+    const [capabilities, settings] = await Promise.allSettled([
+      gateway.machineCapabilities(),
+      gateway.machineSettings()
+    ]);
+    const next: Partial<AppState> = {};
+    if (capabilities.status === 'fulfilled') next.machineCapabilities = capabilities.value;
+    if (settings.status === 'fulfilled') next.machineSettings = settings.value;
+    if (Object.keys(next).length > 0) this.setState(next);
   }
 
   private async selectBean(
@@ -959,6 +990,7 @@ export class BeanieApp {
         break;
       case 'open-machine-settings':
         this.setState({ view: 'machine' });
+        void this.loadMachineControlState();
         break;
       case 'pick-profile':
         if (id) this.pickProfile(id);
@@ -1392,26 +1424,23 @@ export class BeanieApp {
 
   private async submitMachineSettings(form: HTMLFormElement): Promise<void> {
     const data = new FormData(form);
-    const steamSettings: SteamSettings = {
-      ...DEFAULT_STEAM,
-      ...this.state.workflow?.steamSettings,
-      duration: numberOrNullInput(data.get('steamDuration')) ?? DEFAULT_STEAM.duration,
-      targetTemperature: numberOrNullInput(data.get('steamTemp')) ?? DEFAULT_STEAM.targetTemperature
-    };
-    const hotWaterData: HotWaterData = {
-      ...DEFAULT_HOT_WATER,
-      ...this.state.workflow?.hotWaterData,
-      flow: numberOrNullInput(data.get('waterFlow')) ?? DEFAULT_HOT_WATER.flow,
-      duration: numberOrNullInput(data.get('waterDuration')) ?? DEFAULT_HOT_WATER.duration,
-      targetTemperature: numberOrNullInput(data.get('waterTemp')) ?? DEFAULT_HOT_WATER.targetTemperature,
-      volume: numberOrNullInput(data.get('waterVolume')) ?? DEFAULT_HOT_WATER.volume
-    };
-    const rinseData: RinseData = {
-      ...DEFAULT_RINSE,
-      ...this.state.workflow?.rinseData,
-      flow: numberOrNullInput(data.get('flushFlow')) ?? DEFAULT_RINSE.flow,
-      duration: numberOrNullInput(data.get('flushDuration')) ?? DEFAULT_RINSE.duration
-    };
+    const capabilities = waterControlCapabilities({
+      capabilities: this.state.machineCapabilities,
+      settings: this.state.machineSettings,
+      demo: this.state.demo
+    });
+    const steamSettings = clampSteam(
+      steamSettingsFromForm(data, steamValues(this.state.workflow, this.state.machineSettings)),
+      capabilities
+    );
+    const hotWaterData = clampHotWater(
+      hotWaterFromForm(data, hotWaterValues(this.state.workflow, this.state.machineSettings)),
+      capabilities
+    );
+    const rinseData = clampFlush(
+      flushFromForm(data, flushValues(this.state.workflow, this.state.machineSettings)),
+      capabilities
+    );
     const workflow: Workflow = {
       ...(this.state.workflow ?? {}),
       steamSettings,
@@ -1420,13 +1449,27 @@ export class BeanieApp {
     };
 
     this.setState({ busy: true, status: 'Saving machine settings' });
+    const machineSettings = machineSettingsFromWorkflow(steamSettings, hotWaterData, rinseData, this.state.machineSettings);
     if (this.state.demo) {
-      this.setState({ workflow, view: 'workbench', busy: false, status: 'Machine settings saved (demo)' });
+      this.setState({
+        workflow,
+        machineSettings,
+        view: 'workbench',
+        busy: false,
+        status: 'Machine settings saved (demo)'
+      });
       return;
     }
     try {
       const saved = await gateway.updateWorkflow(workflow);
-      this.setState({ workflow: saved, view: 'workbench', busy: false, status: 'Machine settings saved' });
+      this.setState({
+        workflow: saved,
+        machineSettings,
+        view: 'workbench',
+        busy: false,
+        status: 'Machine settings saved'
+      });
+      void this.loadMachineControlState();
     } catch (error) {
       console.error('[Beanie] Save machine settings failed', error);
       this.setState({ busy: false, status: 'Save machine settings failed' });
@@ -2370,39 +2413,73 @@ export class BeanieApp {
   }
 
   private renderMachinePage(): string {
-    const steam = { ...DEFAULT_STEAM, ...this.state.workflow?.steamSettings };
-    const water = { ...DEFAULT_HOT_WATER, ...this.state.workflow?.hotWaterData };
-    const flush = { ...DEFAULT_RINSE, ...this.state.workflow?.rinseData };
-    const num = (value?: number) => (value == null ? '' : String(value));
+    const capabilities = waterControlCapabilities({
+      capabilities: this.state.machineCapabilities,
+      settings: this.state.machineSettings,
+      demo: this.state.demo
+    });
+    const steam = steamValues(this.state.workflow, this.state.machineSettings);
+    const water = hotWaterValues(this.state.workflow, this.state.machineSettings);
+    const flush = flushValues(this.state.workflow, this.state.machineSettings);
+    const steamPreset = matchingPreset(steam, STEAM_PRESETS);
+    const waterPreset = matchingPreset(water, HOT_WATER_PRESETS);
+    const flushPreset = matchingPreset(flush, FLUSH_PRESETS);
     const actions = `<button class="command primary" type="submit" form="machine-form">${icon('save')}<span>Save</span></button>`;
     return `
       ${this.pageHeader('Steam · Water · Flush', 'workbench', actions)}
       <form id="machine-form" class="page-body machine-page" data-form="machine-settings">
-        <fieldset class="machine-group">
-          <legend>Steam</legend>
-          <div class="field-row">
-            <label>Time (s)<input type="number" name="steamDuration" min="0" step="1" value="${num(steam.duration)}" /></label>
-            <label>Temp (C)<input type="number" name="steamTemp" min="0" step="1" value="${num(steam.targetTemperature)}" /></label>
+        <div class="machine-status-strip">
+          ${machineStatusChip('Source', sourceLabel(capabilities))}
+          ${machineStatusChip('Machine', this.state.machine?.state?.state ? capitalize(this.state.machine.state.state) : 'Waiting')}
+          ${machineStatusChip('Hardware', hardwareLabel(capabilities.hardware))}
+        </div>
+        <section class="machine-card steam">
+          <div class="machine-card-head">
+            <div>
+              <span class="eyebrow">Steam</span>
+              <h2>Jug setup</h2>
+            </div>
+            <strong>${formatMachineValue(steam.flow)} ml/s · ${formatMachineValue(steam.targetTemperature)}C · ${formatMachineValue(steam.duration)}s</strong>
           </div>
-        </fieldset>
-        <fieldset class="machine-group">
-          <legend>Hot water</legend>
-          <div class="field-row">
-            <label>Flow (ml/s)<input type="number" name="waterFlow" min="0" step="0.1" value="${num(water.flow)}" /></label>
-            <label>Duration (s)<input type="number" name="waterDuration" min="0" step="1" value="${num(water.duration)}" /></label>
+          ${renderPresetGroup('steamPreset', STEAM_PRESETS, steamPreset)}
+          <div class="machine-custom-grid">
+            ${renderMachineNumber('steamFlow', 'Flow', steam.flow, capabilities.steam.flow)}
+            ${renderMachineNumber('steamTemp', 'Temp', steam.targetTemperature, capabilities.steam.targetTemperature)}
+            ${renderMachineNumber('steamDuration', 'Duration', steam.duration, capabilities.steam.duration)}
+            ${renderMachineNumber('steamStopTemp', 'Milk stop', steam.stopAtTemperature, capabilities.steam.stopAtTemperature!)}
           </div>
-          <div class="field-row">
-            <label>Temp (C)<input type="number" name="waterTemp" min="0" step="1" value="${num(water.targetTemperature)}" /></label>
-            <label>Volume (ml)<input type="number" name="waterVolume" min="0" step="1" value="${num(water.volume)}" /></label>
+        </section>
+        <section class="machine-card hot-water">
+          <div class="machine-card-head">
+            <div>
+              <span class="eyebrow">Hot water</span>
+              <h2>Cup fill</h2>
+            </div>
+            <strong>${formatMachineValue(water.targetTemperature)}C · ${formatMachineValue(water.flow)} ml/s · ${formatMachineValue(water.volume)} ml</strong>
           </div>
-        </fieldset>
-        <fieldset class="machine-group">
-          <legend>Flush</legend>
-          <div class="field-row">
-            <label>Flow (ml/s)<input type="number" name="flushFlow" min="0" step="0.1" value="${num(flush.flow)}" /></label>
-            <label>Duration (s)<input type="number" name="flushDuration" min="0" step="1" value="${num(flush.duration)}" /></label>
+          ${renderPresetGroup('waterPreset', HOT_WATER_PRESETS, waterPreset)}
+          <div class="machine-custom-grid">
+            ${renderMachineNumber('waterTemp', 'Temp', water.targetTemperature, capabilities.hotWater.targetTemperature)}
+            ${renderMachineNumber('waterFlow', 'Flow', water.flow, capabilities.hotWater.flow)}
+            ${renderMachineNumber('waterVolume', 'Volume', water.volume, capabilities.hotWater.volume!)}
+            ${renderMachineNumber('waterDuration', 'Duration', water.duration, capabilities.hotWater.duration)}
           </div>
-        </fieldset>
+        </section>
+        <section class="machine-card flush">
+          <div class="machine-card-head">
+            <div>
+              <span class="eyebrow">Flush</span>
+              <h2>Rinse cycle</h2>
+            </div>
+            <strong>${formatMachineValue(flush.duration)}s · ${formatMachineValue(flush.flow)} ml/s · ${formatMachineValue(flush.targetTemperature)}C</strong>
+          </div>
+          ${renderPresetGroup('flushPreset', FLUSH_PRESETS, flushPreset)}
+          <div class="machine-custom-grid flush-grid">
+            ${renderMachineNumber('flushDuration', 'Duration', flush.duration, capabilities.flush.duration)}
+            ${renderMachineNumber('flushFlow', 'Flow', flush.flow, capabilities.flush.flow)}
+            ${renderMachineNumber('flushTemp', 'Temp', flush.targetTemperature, capabilities.flush.targetTemperature)}
+          </div>
+        </section>
       </form>
     `;
   }
@@ -2710,6 +2787,138 @@ export class BeanieApp {
     this.render();
   }
 
+}
+
+function renderPresetGroup<T extends object>(
+  name: string,
+  presets: WaterPreset<T>[],
+  selected: string
+): string {
+  const custom = `
+    <label class="machine-preset ${selected === 'custom' ? 'active' : ''}">
+      <input type="radio" name="${escapeAttr(name)}" value="custom" ${selected === 'custom' ? 'checked' : ''} />
+      <span>
+        <strong>Custom</strong>
+        <em>Manual values</em>
+      </span>
+    </label>
+  `;
+  return `
+    <div class="machine-presets" role="group">
+      ${presets.map((preset) => renderPresetTile(name, preset, selected === preset.id)).join('')}
+      ${custom}
+    </div>
+  `;
+}
+
+function renderPresetTile<T extends object>(name: string, preset: WaterPreset<T>, selected: boolean): string {
+  return `
+    <label class="machine-preset ${selected ? 'active' : ''}">
+      <input type="radio" name="${escapeAttr(name)}" value="${escapeAttr(preset.id)}" ${selected ? 'checked' : ''} />
+      <span>
+        <strong>${escapeHtml(preset.label)}</strong>
+        <em>${escapeHtml(preset.summary)}</em>
+      </span>
+    </label>
+  `;
+}
+
+function renderMachineNumber(name: string, label: string, value: number | undefined, spec: NumberSpec): string {
+  const disabled = spec.enabled ? '' : ' disabled';
+  const status = spec.enabled ? spec.unit : 'Unavailable';
+  const title = spec.reason ? ` title="${escapeAttr(spec.reason)}"` : '';
+  return `
+    <label class="machine-number ${spec.enabled ? '' : 'disabled'}"${title}>
+      <span>${escapeHtml(label)}<em>${escapeHtml(status)}</em></span>
+      <input
+        type="number"
+        name="${escapeAttr(name)}"
+        min="${spec.min}"
+        max="${spec.max}"
+        step="${spec.step}"
+        value="${escapeAttr(formatMachineValue(value))}"
+        ${disabled}
+      />
+    </label>
+  `;
+}
+
+function machineStatusChip(label: string, value: string): string {
+  return `<span class="machine-status-chip"><em>${escapeHtml(label)}</em><strong>${escapeHtml(value)}</strong></span>`;
+}
+
+function sourceLabel(capabilities: WaterControlCapabilities): string {
+  if (capabilities.source === 'machine') return 'Machine settings';
+  if (capabilities.source === 'demo') return 'Demo';
+  return 'Workflow';
+}
+
+function hardwareLabel(capabilities: string[]): string {
+  if (capabilities.length === 0) return 'DE1';
+  return capabilities.slice(0, 2).map(capitalize).join(' · ');
+}
+
+function steamSettingsFromForm(data: FormData, current: SteamSettings): SteamSettings {
+  const preset = STEAM_PRESETS.find((item) => item.id === String(data.get('steamPreset') ?? ''));
+  if (preset) return { ...DEFAULT_STEAM, ...preset.values };
+  return {
+    ...DEFAULT_STEAM,
+    ...current,
+    flow: numberOrNullInput(data.get('steamFlow')) ?? current.flow ?? DEFAULT_STEAM.flow,
+    targetTemperature:
+      numberOrNullInput(data.get('steamTemp')) ?? current.targetTemperature ?? DEFAULT_STEAM.targetTemperature,
+    duration: numberOrNullInput(data.get('steamDuration')) ?? current.duration ?? DEFAULT_STEAM.duration,
+    stopAtTemperature:
+      numberOrNullInput(data.get('steamStopTemp')) ?? current.stopAtTemperature ?? DEFAULT_STEAM.stopAtTemperature
+  };
+}
+
+function hotWaterFromForm(data: FormData, current: HotWaterData): HotWaterData {
+  const preset = HOT_WATER_PRESETS.find((item) => item.id === String(data.get('waterPreset') ?? ''));
+  if (preset) return { ...DEFAULT_HOT_WATER, ...preset.values };
+  return {
+    ...DEFAULT_HOT_WATER,
+    ...current,
+    targetTemperature:
+      numberOrNullInput(data.get('waterTemp')) ?? current.targetTemperature ?? DEFAULT_HOT_WATER.targetTemperature,
+    flow: numberOrNullInput(data.get('waterFlow')) ?? current.flow ?? DEFAULT_HOT_WATER.flow,
+    volume: numberOrNullInput(data.get('waterVolume')) ?? current.volume ?? DEFAULT_HOT_WATER.volume,
+    duration: numberOrNullInput(data.get('waterDuration')) ?? current.duration ?? DEFAULT_HOT_WATER.duration
+  };
+}
+
+function flushFromForm(data: FormData, current: RinseData): RinseData {
+  const preset = FLUSH_PRESETS.find((item) => item.id === String(data.get('flushPreset') ?? ''));
+  if (preset) return { ...DEFAULT_RINSE, ...preset.values };
+  return {
+    ...DEFAULT_RINSE,
+    ...current,
+    duration: numberOrNullInput(data.get('flushDuration')) ?? current.duration ?? DEFAULT_RINSE.duration,
+    flow: numberOrNullInput(data.get('flushFlow')) ?? current.flow ?? DEFAULT_RINSE.flow,
+    targetTemperature:
+      numberOrNullInput(data.get('flushTemp')) ?? current.targetTemperature ?? DEFAULT_RINSE.targetTemperature
+  };
+}
+
+function machineSettingsFromWorkflow(
+  steam: SteamSettings,
+  water: HotWaterData,
+  flush: RinseData,
+  current: De1MachineSettings | null
+): De1MachineSettings {
+  return {
+    ...(current ?? {}),
+    steamFlow: steam.flow,
+    hotWaterFlow: water.flow,
+    flushTemp: flush.targetTemperature,
+    flushFlow: flush.flow,
+    flushTimeout: flush.duration
+  };
+}
+
+function formatMachineValue(value: number | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '';
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
 }
 
 function topStat(label: string, value: string, id?: string): string {

@@ -36,6 +36,22 @@ export interface MachineSnapshot {
   steamTemperature: number;
 }
 
+export interface MachineCapabilities {
+  capabilities: string[];
+}
+
+export interface De1MachineSettings {
+  usb?: boolean | null;
+  fan?: number | null;
+  flushTemp?: number | null;
+  flushFlow?: number | null;
+  flushTimeout?: number | null;
+  hotWaterFlow?: number | null;
+  steamFlow?: number | null;
+  tankTemp?: number | null;
+  steamPurgeMode?: number | null;
+}
+
 export interface ScaleSnapshot {
   timestamp: string;
   weight: number;
