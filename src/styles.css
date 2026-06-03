@@ -684,7 +684,7 @@ p {
 .shot-item-info {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(96px, auto) auto minmax(24px, 1fr);
+  grid-template-columns: minmax(96px, auto) auto 24px;
   align-items: center;
   column-gap: 8px;
   overflow: hidden;
@@ -716,6 +716,10 @@ p {
   display: grid;
   place-items: center;
   text-align: center;
+}
+
+.shot-item .enjoyment-badge.empty {
+  visibility: hidden;
 }
 
 .shot-item .enjoyment-badge strong {

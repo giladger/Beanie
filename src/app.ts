@@ -4434,7 +4434,10 @@ function promoteBean(beans: Bean[], beanId: string): Bean[] {
 
 function enjoymentBadge(shot: ShotRecord, size: 'row' | 'detail' = 'row'): string {
   const value = shot.annotations?.enjoyment;
-  if (value == null) return '';
+  if (value == null) {
+    if (size === 'row') return '<span class="enjoyment-badge empty" aria-hidden="true"><strong></strong></span>';
+    return '';
+  }
   const score = scoreOptionForValue(value);
   const formatted = score ? score.label : Number.isInteger(value) ? value.toString() : value.toFixed(1);
   const iconText = score?.icon ?? formatted;
