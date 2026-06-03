@@ -1151,14 +1151,14 @@ export class BeanieApp {
   private updateTopbarStats(): void {
     const machine = this.state.machine;
     const scale = this.state.scale;
-    const ready = machine?.state?.state ?? (this.state.loading ? 'loading' : 'idle');
     const set = (id: string, value: string) => {
       const el = this.root.querySelector<HTMLElement>(`#${id}`);
       if (el) el.textContent = value;
     };
-    set('stat-machine', capitalize(ready));
+    set('stat-machine', machineStatus(machine, this.state.loading));
     set('stat-group', temp(machine?.groupTemperature));
     set('stat-steam', temp(machine?.steamTemperature));
+    set('stat-water', water(machine?.waterLevel));
     set('stat-scale', scale?.status === 'disconnected' ? 'offline' : `${formatNumber(scale?.weight, 1)} g`);
   }
 
@@ -3089,7 +3089,6 @@ export class BeanieApp {
   }
 
   private renderTopbar(): string {
-    const ready = this.state.machine?.state?.state ?? (this.state.loading ? 'loading' : 'idle');
     const machine = this.state.machine;
     const scale = this.state.scale;
     const machineCommands = this.renderMachineCommands();
@@ -3097,9 +3096,10 @@ export class BeanieApp {
       <header class="topbar">
         <div class="top-inline">
           <div class="top-stats" aria-label="Machine metrics">
-            ${topStat('Machine', capitalize(ready), 'stat-machine')}
+            ${topStat('Status', machineStatus(machine, this.state.loading), 'stat-machine')}
             ${topStat('Group', temp(machine?.groupTemperature), 'stat-group')}
             ${topStat('Steam', temp(machine?.steamTemperature), 'stat-steam')}
+            ${topStat('Water', water(machine?.waterLevel), 'stat-water')}
             ${topStat('Scale', scale?.status === 'disconnected' ? 'offline' : `${formatNumber(scale?.weight, 1)} g`, 'stat-scale')}
           </div>
           ${machineCommands}
@@ -5393,7 +5393,52 @@ function applyShotUpdate(shot: ShotRecord, update: ShotUpdate): ShotRecord {
 }
 
 function temp(value: number | null | undefined): string {
-  return value == null ? '--' : `${value.toFixed(1)} C`;
+  return value == null ? '--' : `${Math.round(value)}°C`;
+}
+
+function water(value: number | null | undefined): string {
+  return value == null ? '--' : `${Math.round(value)} ml`;
+}
+
+// A friendly readiness label instead of the raw machine state. Heating shows
+// while warming up (including idle-but-below-target); otherwise "Ready".
+function machineStatus(machine: MachineSnapshot | null, loading: boolean): string {
+  if (!machine) return loading ? 'Connecting…' : 'Offline';
+  switch (machine.state?.state) {
+    case 'heating':
+    case 'preheating':
+      return 'Heating';
+    case 'sleeping':
+      return 'Asleep';
+    case 'schedIdle':
+      return 'Scheduled';
+    case 'espresso':
+      return 'Brewing';
+    case 'steam':
+      return 'Steaming';
+    case 'steamRinse':
+      return 'Steam rinse';
+    case 'hotWater':
+      return 'Hot water';
+    case 'flush':
+      return 'Flushing';
+    case 'needsWater':
+      return 'Add water';
+    case 'cleaning':
+      return 'Cleaning';
+    case 'descaling':
+      return 'Descaling';
+    case 'booting':
+      return 'Booting';
+    case 'error':
+      return 'Error';
+    default: {
+      const t = machine.groupTemperature;
+      const target = machine.targetGroupTemperature;
+      if (t != null && target != null && target > 0 && t < target - 2) return 'Heating';
+      return 'Ready';
+    }
+  }
 }
 
 function formatNumber(value: number | null | undefined, digits: number): string {
