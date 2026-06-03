@@ -2,6 +2,8 @@ import type { ShotRecord } from '../api/types';
 import { buildShotGraphModel, type ShotGraphModel, type ShotGraphSeries } from './shotGraphModel';
 
 const DEBUG_VERTICAL_STROKE_WIDTH = 5;
+const TARGET_JUMP_MIN_DELTA = 0.5;
+const TARGET_JUMP_MAX_SECONDS = 0.35;
 
 interface GraphOptions {
   detailed?: boolean;
@@ -14,6 +16,13 @@ interface PlotArea {
   y: number;
   width: number;
   height: number;
+}
+
+interface ProjectedSample {
+  t: number;
+  value: number;
+  x: number;
+  y: number;
 }
 
 export function renderShotGraph(shot: ShotRecord | null, options: GraphOptions = {}): string {
@@ -91,13 +100,17 @@ function renderDashedTrace(
     const x2 = xFor(current.t);
     const y1 = yFor(previous.value);
     const y2 = yFor(current.value);
-    const vertical = isVisuallyVertical({ x: x1, y: y1 }, { x: x2, y: y2 });
-    if (vertical) {
+    const previousPoint = projectedSample(previous.t, previous.value, x1, y1);
+    const currentPoint = projectedSample(current.t, current.value, x2, y2);
+    if (isTargetJump(previousPoint, currentPoint)) {
+      if (run.length === 0) run.push({ x: x1, y: y1 });
+      run.push({ x: x2, y: y1 });
       segments.push(renderDashedRun(series, run));
       run.length = 0;
       segments.push(
-        `<line class="trace ${series.className}" x1="${snapSvgPixel((x1 + x2) / 2)}" y1="${y1.toFixed(1)}" x2="${snapSvgPixel((x1 + x2) / 2)}" y2="${y2.toFixed(1)}" stroke="${series.color}" stroke-width="${DEBUG_VERTICAL_STROKE_WIDTH}" stroke-linecap="butt" />`
+        `<line class="trace ${series.className}" x1="${snapSvgPixel(x2)}" y1="${y1.toFixed(1)}" x2="${snapSvgPixel(x2)}" y2="${y2.toFixed(1)}" stroke="${series.color}" stroke-width="${DEBUG_VERTICAL_STROKE_WIDTH}" stroke-linecap="butt" />`
       );
+      run.push({ x: x2, y: y2 });
       continue;
     }
     if (run.length === 0) run.push({ x: x1, y: y1 });
@@ -105,6 +118,17 @@ function renderDashedTrace(
   }
   segments.push(renderDashedRun(series, run));
   return segments.join('');
+}
+
+function projectedSample(t: number, value: number, x: number, y: number): ProjectedSample {
+  return { t, value, x, y };
+}
+
+function isTargetJump(previous: ProjectedSample, current: ProjectedSample): boolean {
+  const valueDelta = Math.abs(previous.value - current.value);
+  const timeDelta = Math.abs(current.t - previous.t);
+  if (valueDelta < TARGET_JUMP_MIN_DELTA) return false;
+  return timeDelta <= TARGET_JUMP_MAX_SECONDS || isVisuallyVertical(previous, current);
 }
 
 function isVisuallyVertical(previous: { x: number; y: number }, current: { x: number; y: number }): boolean {

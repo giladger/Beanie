@@ -77,6 +77,17 @@ run('renders dashed target traces and profile markers in the SVG chart', () => {
   includes(svg, 'chart-step-marker');
 });
 
+run('renders abrupt target jumps as horizontal runs plus vertical connectors', () => {
+  const svg = renderShotGraph(targetJumpShot(), { detailed: true });
+
+  includes(svg, 'points="42.0,250.0 127.6,250.0" stroke="#7fcf9f" stroke-dasharray="6 5"');
+  includes(
+    svg,
+    'x1="128.5" y1="250.0" x2="128.5" y2="94.0" stroke="#7fcf9f" stroke-width="5"'
+  );
+  notIncludes(svg, 'points="42.0,250.0 127.6,94.0"');
+});
+
 function richShot(): ShotRecord {
   return {
     id: 'rich-shot',
@@ -91,6 +102,17 @@ function richShot(): ShotRecord {
       richMeasurement('2026-06-01T10:00:00.000Z', 0, 0, 0, 0, 0),
       richMeasurement('2026-06-01T10:00:01.000Z', 1, 5, 2, 20, 1),
       richMeasurement('2026-06-01T10:00:02.000Z', 2, 8, 1.5, 32, 2)
+    ]
+  } as unknown as ShotRecord;
+}
+
+function targetJumpShot(): ShotRecord {
+  return {
+    id: 'target-jump-shot',
+    timestamp: '2026-06-01T10:00:00Z',
+    measurements: [
+      targetJumpMeasurement('2026-06-01T10:00:00.000Z', 2),
+      targetJumpMeasurement('2026-06-01T10:00:00.100Z', 8)
     ]
   } as unknown as ShotRecord;
 }
@@ -119,6 +141,18 @@ function richMeasurement(
       timestamp,
       weight,
       weightFlow: second === 0 ? 0 : 1.2
+    }
+  };
+}
+
+function targetJumpMeasurement(timestamp: string, targetPressure: number): unknown {
+  return {
+    machine: {
+      timestamp,
+      state: { substate: 'pouring' },
+      pressure: 0,
+      flow: 0,
+      targetPressure
     }
   };
 }
@@ -163,5 +197,11 @@ function arrayEqual<T>(actual: T[], expected: T[]): void {
 function includes(value: string, expected: string): void {
   if (!value.includes(expected)) {
     throw new Error(`Expected output to include ${expected}`);
+  }
+}
+
+function notIncludes(value: string, expected: string): void {
+  if (value.includes(expected)) {
+    throw new Error(`Expected output not to include ${expected}`);
   }
 }

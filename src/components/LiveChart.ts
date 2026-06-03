@@ -13,6 +13,13 @@ export interface PlotArea {
   height: number;
 }
 
+interface ProjectedPoint {
+  t: number;
+  value: number;
+  x: number;
+  y: number;
+}
+
 export interface LiveChartOptions {
   detailed?: boolean;
   hideMaxTimeLabel?: boolean;
@@ -28,6 +35,8 @@ const TEXT_COLOR = 'rgba(245,247,248,0.82)';
 const MUTED_TEXT = 'rgba(255,255,255,0.5)';
 const NODATA_LINE = 'rgba(255,255,255,0.18)';
 const DEBUG_VERTICAL_STROKE_WIDTH = 5;
+const TARGET_JUMP_MIN_DELTA = 0.5;
+const TARGET_JUMP_MAX_SECONDS = 0.35;
 
 export function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -279,6 +288,8 @@ export class LiveChart {
     }
 
     const xy = points.map((point) => ({
+      t: point.t,
+      value: point.value,
       x: projectX(point.t, maxTime, plot),
       y: projectY(point.value, maxY, plot)
     }));
@@ -365,20 +376,22 @@ function drawVerticalDash(
 
 function drawDashedSegments(
   ctx: CanvasRenderingContext2D,
-  points: Array<{ x: number; y: number }>,
+  points: ProjectedPoint[],
   pattern: number[]
 ): void {
   const lineDash = pattern.length > 0 ? pattern : [6, 5];
-  const run: Array<{ x: number; y: number }> = [];
+  const run: ProjectedPoint[] = [];
   ctx.setLineDash([]);
   for (let i = 1; i < points.length; i += 1) {
     const previous = points[i - 1]!;
     const current = points[i]!;
-    const vertical = isVisuallyVertical(previous, current);
-    if (vertical) {
+    if (isTargetJump(previous, current)) {
+      if (run.length === 0) run.push(previous);
+      run.push({ ...previous, t: current.t, x: current.x });
       strokeDashedRun(ctx, run, lineDash);
       run.length = 0;
-      strokeSolidConnector(ctx, snapPixel((previous.x + current.x) / 2), previous.y, current.y);
+      strokeSolidConnector(ctx, snapPixel(current.x), previous.y, current.y);
+      run.push(current);
       continue;
     }
     if (run.length === 0) run.push(previous);
@@ -388,7 +401,14 @@ function drawDashedSegments(
   ctx.setLineDash([]);
 }
 
-function isVisuallyVertical(previous: { x: number; y: number }, current: { x: number; y: number }): boolean {
+function isTargetJump(previous: ProjectedPoint, current: ProjectedPoint): boolean {
+  const valueDelta = Math.abs(previous.value - current.value);
+  const timeDelta = Math.abs(current.t - previous.t);
+  if (valueDelta < TARGET_JUMP_MIN_DELTA) return false;
+  return timeDelta <= TARGET_JUMP_MAX_SECONDS || isVisuallyVertical(previous, current);
+}
+
+function isVisuallyVertical(previous: ProjectedPoint, current: ProjectedPoint): boolean {
   const dx = Math.abs(previous.x - current.x);
   const dy = Math.abs(previous.y - current.y);
   return dx < 0.75 || (dx <= 14 && dy >= dx * 2);
@@ -407,7 +427,7 @@ function strokeSolidConnector(ctx: CanvasRenderingContext2D, x: number, y1: numb
 
 function strokeDashedRun(
   ctx: CanvasRenderingContext2D,
-  points: Array<{ x: number; y: number }>,
+  points: ProjectedPoint[],
   lineDash: number[]
 ): void {
   if (points.length < 2) return;
