@@ -283,7 +283,7 @@ export class LiveChart {
     }));
 
     if (dashed) {
-      drawDashedSegments(ctx, xy, parseDashArray(series.dashArray!), plot.y);
+      drawDashedSegments(ctx, xy, parseDashArray(series.dashArray!));
       ctx.lineCap = 'round';
       return;
     }
@@ -365,12 +365,9 @@ function drawVerticalDash(
 function drawDashedSegments(
   ctx: CanvasRenderingContext2D,
   points: Array<{ x: number; y: number }>,
-  pattern: number[],
-  anchorY: number
+  pattern: number[]
 ): void {
-  const dash = pattern[0] ?? 6;
-  const gap = pattern[1] ?? 5;
-  const lineDash = pattern.length > 0 ? pattern : [dash, gap];
+  const lineDash = pattern.length > 0 ? pattern : [6, 5];
   const run: Array<{ x: number; y: number }> = [];
   ctx.setLineDash([]);
   for (let i = 1; i < points.length; i += 1) {
@@ -380,15 +377,7 @@ function drawDashedSegments(
     if (vertical) {
       strokeDashedRun(ctx, run, lineDash);
       run.length = 0;
-      drawVerticalDash(
-        ctx,
-        snapPixel((previous.x + current.x) / 2),
-        previous.y,
-        current.y,
-        dash,
-        gap,
-        anchorY
-      );
+      strokeSolidConnector(ctx, snapPixel((previous.x + current.x) / 2), previous.y, current.y);
       continue;
     }
     if (run.length === 0) run.push(previous);
@@ -396,6 +385,14 @@ function drawDashedSegments(
   }
   strokeDashedRun(ctx, run, lineDash);
   ctx.setLineDash([]);
+}
+
+function strokeSolidConnector(ctx: CanvasRenderingContext2D, x: number, y1: number, y2: number): void {
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.moveTo(x, y1);
+  ctx.lineTo(x, y2);
+  ctx.stroke();
 }
 
 function strokeDashedRun(

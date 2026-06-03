@@ -43,7 +43,7 @@ export function renderShotGraph(shot: ShotRecord | null, options: GraphOptions =
   const grid = detailed ? renderGrid(height, plot, model.maxTime, model.maxY, xFor, yFor) : '';
   const markers = renderStepMarkers(model, plot, detailed, xFor);
   const traces = model.series
-    .map((series) => renderTrace(series, plot, xFor, yFor))
+    .map((series) => renderTrace(series, xFor, yFor))
     .join('');
   const legend = detailed ? renderLegend(width, model.series) : '';
   const missing = detailed ? renderMissingNotice(model, plot) : '';
@@ -59,7 +59,6 @@ export function renderShotGraph(shot: ShotRecord | null, options: GraphOptions =
 
 function renderTrace(
   series: ShotGraphSeries,
-  plot: PlotArea,
   xFor: (value: number) => number,
   yFor: (value: number) => number
 ): string {
@@ -68,7 +67,7 @@ function renderTrace(
     const sample = series.samples[0]!;
     return `<circle class="trace-point ${series.className}" cx="${xFor(sample.t).toFixed(1)}" cy="${yFor(sample.value).toFixed(1)}" r="2.4" ${strokeAttrs} fill="${series.color}" />`;
   }
-  if (series.dashArray != null) return renderDashedTrace(series, plot, xFor, yFor);
+  if (series.dashArray != null) return renderDashedTrace(series, xFor, yFor);
 
   const points = series.samples
     .map((sample) => `${xFor(sample.t).toFixed(1)},${yFor(sample.value).toFixed(1)}`)
@@ -78,12 +77,10 @@ function renderTrace(
 
 function renderDashedTrace(
   series: ShotGraphSeries,
-  plot: PlotArea,
   xFor: (value: number) => number,
   yFor: (value: number) => number
 ): string {
   const segments: string[] = [];
-  const [dash = 6, gap = 5] = dashValues(series.dashArray);
   const run: Array<{ x: number; y: number }> = [];
   for (let i = 1; i < series.samples.length; i += 1) {
     const previous = series.samples[i - 1]!;
@@ -97,7 +94,7 @@ function renderDashedTrace(
       segments.push(renderDashedRun(series, run));
       run.length = 0;
       segments.push(
-        `<path class="trace ${series.className}" d="${verticalDashPath((x1 + x2) / 2, y1, y2, dash, gap, plot.y)}" stroke="${series.color}" fill="none" stroke-linecap="butt" />`
+        `<line class="trace ${series.className}" x1="${snapSvgPixel((x1 + x2) / 2)}" y1="${y1.toFixed(1)}" x2="${snapSvgPixel((x1 + x2) / 2)}" y2="${y2.toFixed(1)}" stroke="${series.color}" stroke-linecap="butt" />`
       );
       continue;
     }
@@ -166,15 +163,6 @@ function verticalDashPath(
     commands.push(`M${roundedX} ${segmentStart}L${roundedX} ${segmentEnd}`);
   }
   return commands.join(' ');
-}
-
-function dashValues(dashArray: string | undefined): [number, number] {
-  if (!dashArray) return [6, 5];
-  const parts = dashArray
-    .split(/[\s,]+/)
-    .map((part) => Number.parseFloat(part))
-    .filter((part) => Number.isFinite(part));
-  return [parts[0] ?? 6, parts[1] ?? 5];
 }
 
 function snapSvgPixel(value: number): string {
