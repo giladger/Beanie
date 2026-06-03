@@ -3483,17 +3483,9 @@ function renderMachinePresetTile<T extends object>(
 
 function renderMachineGraphic(tone: MachineLaneOptions<object>['tone']): string {
   const iconName = tone === 'steam' ? 'waves' : tone === 'water' ? 'droplets' : 'refresh-cw';
-  const label = tone === 'steam' ? 'Steam' : tone === 'water' ? 'Water' : 'Flush';
-  const bars = tone === 'steam'
-    ? '<span style="height: 34%"></span><span style="height: 72%"></span><span style="height: 52%"></span>'
-    : tone === 'water'
-      ? '<span style="height: 42%"></span><span style="height: 58%"></span><span style="height: 78%"></span>'
-      : '<span style="height: 72%"></span><span style="height: 46%"></span><span style="height: 62%"></span>';
   return `
     <div class="machine-graphic" aria-hidden="true">
-      <div class="machine-graphic-icon">${icon(iconName)}</div>
-      <div class="machine-graphic-bars">${bars}</div>
-      <strong>${escapeHtml(label)}</strong>
+      ${icon(iconName)}
     </div>
   `;
 }
