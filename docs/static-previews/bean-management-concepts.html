@@ -1,0 +1,846 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bean Management Concepts</title>
+  <style>
+    :root {
+      --bg: #07090b;
+      --panel: #11171c;
+      --panel-2: #171e24;
+      --panel-3: #222b32;
+      --ink: #f5f7f8;
+      --soft: #d4dde2;
+      --muted: #93a0a8;
+      --line: rgba(255, 255, 255, 0.12);
+      --line-strong: rgba(255, 255, 255, 0.22);
+      --teal: #5bd8c8;
+      --green: #87de81;
+      --red: #ff7468;
+      --blue: #7aa8ff;
+      --amber: #ffc260;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: dark;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      letter-spacing: 0;
+    }
+
+    .page {
+      display: grid;
+      gap: 22px;
+      padding: 18px;
+    }
+
+    .label {
+      width: 1024px;
+      max-width: 100%;
+      margin: 0 auto -12px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .frame {
+      position: relative;
+      width: 1024px;
+      height: 768px;
+      max-width: 100%;
+      margin: 0 auto;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background:
+        linear-gradient(120deg, rgba(91, 216, 200, 0.08), transparent 46%),
+        linear-gradient(250deg, rgba(122, 168, 255, 0.08), transparent 48%),
+        var(--bg);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+    }
+
+    .topbar {
+      height: 54px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 7px 12px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(7, 9, 11, 0.94);
+    }
+
+    .stats,
+    .tools,
+    .compact-actions,
+    .batch-row,
+    .pill-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+    }
+
+    .stat {
+      min-width: 0;
+      height: 38px;
+      display: grid;
+      grid-template-columns: auto auto;
+      align-content: center;
+      gap: 6px;
+      padding: 0 13px;
+      border-right: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .stat:first-child {
+      padding-left: 0;
+    }
+
+    .stat span,
+    .eyebrow,
+    .field label,
+    .row small,
+    .tiny {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .stat strong {
+      font-size: 15px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .icon,
+    .button,
+    .seg button,
+    .chip {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+      color: var(--soft);
+      font: inherit;
+      font-weight: 900;
+    }
+
+    .icon {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      flex: none;
+    }
+
+    .button {
+      height: 36px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 0 12px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .button.primary {
+      border-color: var(--ink);
+      background: var(--ink);
+      color: #071015;
+    }
+
+    .button.danger {
+      border-color: rgba(255, 116, 104, 0.45);
+      color: var(--red);
+    }
+
+    .workbench {
+      height: calc(100% - 54px);
+      display: grid;
+      grid-template-rows: 52px 62px minmax(0, 1fr);
+      gap: 8px;
+      padding: 8px 10px 10px;
+    }
+
+    .panel {
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      padding: 0 12px;
+    }
+
+    .title-button {
+      min-width: 0;
+      height: 38px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--ink);
+      font-size: 25px;
+      font-weight: 950;
+      line-height: 1;
+    }
+
+    .title-button span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .recipe-grid {
+      display: grid;
+      grid-template-columns: 1.55fr repeat(5, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .control {
+      display: grid;
+      align-content: center;
+      gap: 7px;
+      padding: 0 10px;
+      border-left: 1px solid var(--line);
+    }
+
+    .control:first-child {
+      border-left: 0;
+    }
+
+    .control strong {
+      overflow: hidden;
+      font-size: 21px;
+      line-height: 1;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .history {
+      display: grid;
+      grid-template-columns: 300px minmax(0, 1fr);
+    }
+
+    .shot-list {
+      border-right: 1px solid var(--line);
+      overflow: hidden;
+    }
+
+    .shot {
+      min-height: 57px;
+      display: grid;
+      align-content: center;
+      gap: 4px;
+      padding: 7px 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .shot.active {
+      background: rgba(91, 216, 200, 0.13);
+      box-shadow: inset 3px 0 0 var(--teal);
+    }
+
+    .shot-line {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 34px 24px;
+      gap: 8px;
+      align-items: center;
+      font-weight: 950;
+    }
+
+    .shot-line span:first-child,
+    .shot small {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .shot small {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .chart-pane {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) 62px;
+      gap: 10px;
+      padding: 12px;
+    }
+
+    .chart-head {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      min-width: 0;
+      font-weight: 950;
+    }
+
+    .chart-head strong {
+      font-size: 19px;
+    }
+
+    .chart {
+      position: relative;
+      min-height: 0;
+      border-radius: 8px;
+      background: #252d33;
+      overflow: hidden;
+    }
+
+    .chart svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .notes {
+      display: grid;
+      align-content: center;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--muted);
+      font-weight: 900;
+    }
+
+    .overlay {
+      height: calc(100% - 54px);
+      display: grid;
+      place-items: center;
+      padding: 8px;
+      background: rgba(0, 0, 0, 0.64);
+    }
+
+    .modal {
+      width: min(940px, 100%);
+      height: 100%;
+      display: grid;
+      gap: 8px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .modal-head {
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .modal-head h2 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1;
+    }
+
+    .search {
+      height: 38px;
+      display: grid;
+      grid-template-columns: 22px 1fr;
+      align-items: center;
+      gap: 7px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.045);
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 800;
+    }
+
+    .layout-a {
+      grid-template-rows: auto auto minmax(0, 1fr);
+    }
+
+    .picker-inspector {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 322px minmax(0, 1fr);
+      gap: 8px;
+    }
+
+    .list {
+      min-height: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.1);
+    }
+
+    .row {
+      min-height: 58px;
+      display: grid;
+      align-content: center;
+      gap: 2px;
+      padding: 7px 11px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .row.active {
+      background: rgba(91, 216, 200, 0.13);
+      box-shadow: inset 3px 0 0 var(--teal);
+    }
+
+    .row b,
+    .row strong,
+    .row small {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .row b {
+      color: var(--soft);
+      font-size: 13px;
+    }
+
+    .row strong {
+      font-size: 15px;
+    }
+
+    .inspector {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr) auto;
+      gap: 8px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.035);
+    }
+
+    .inspector-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .inspector-title h3 {
+      margin: 0;
+      overflow: hidden;
+      font-size: 24px;
+      line-height: 1;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .field-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .field {
+      min-width: 0;
+      display: grid;
+      gap: 5px;
+    }
+
+    .box {
+      min-width: 0;
+      min-height: 44px;
+      display: grid;
+      align-content: center;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+      overflow: hidden;
+      color: var(--ink);
+      font-weight: 900;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .batch-panel {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 7px;
+      overflow: hidden;
+    }
+
+    .batch-card {
+      min-height: 46px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 9px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+    }
+
+    .batch-card.active {
+      border-color: rgba(91, 216, 200, 0.6);
+      background: rgba(91, 216, 200, 0.12);
+    }
+
+    .batch-card strong,
+    .batch-card small {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .batch-card small {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 850;
+    }
+
+    .layout-b {
+      grid-template-rows: auto auto minmax(0, 1fr);
+    }
+
+    .expanded-list {
+      min-height: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.1);
+    }
+
+    .expanded-row {
+      display: grid;
+      grid-template-columns: 250px minmax(0, 1fr) auto;
+      gap: 10px;
+      min-height: 64px;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--line);
+      align-items: center;
+    }
+
+    .expanded-row.selected {
+      min-height: 238px;
+      align-items: start;
+      background: rgba(91, 216, 200, 0.11);
+      box-shadow: inset 3px 0 0 var(--teal);
+    }
+
+    .mini-form {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .mini-batches {
+      display: grid;
+      grid-column: 1 / -1;
+      gap: 6px;
+      margin-top: 2px;
+    }
+
+    .chip {
+      min-height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 0 9px;
+      overflow: hidden;
+      font-size: 12px;
+    }
+
+    .chip.active {
+      border-color: rgba(91, 216, 200, 0.58);
+      background: rgba(91, 216, 200, 0.13);
+      color: var(--ink);
+    }
+
+    .sheet {
+      width: min(940px, 100%);
+      height: calc(100% - 12px);
+      align-self: end;
+      display: grid;
+      grid-template-rows: auto auto auto minmax(0, 1fr);
+      gap: 8px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px 8px 0 0;
+      background: var(--panel);
+      box-shadow: 0 -22px 70px rgba(0, 0, 0, 0.42);
+    }
+
+    .sheet-overlay {
+      position: absolute;
+      inset: 54px 0 0;
+      z-index: 5;
+      display: grid;
+      align-items: end;
+      justify-items: center;
+      padding: 8px;
+      background: rgba(0, 0, 0, 0.64);
+    }
+
+    .current-compact {
+      display: grid;
+      grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+      padding: 8px;
+      border: 1px solid rgba(91, 216, 200, 0.35);
+      border-radius: 8px;
+      background: rgba(91, 216, 200, 0.1);
+    }
+
+    .current-compact h3 {
+      margin: 0;
+      overflow: hidden;
+      font-size: 22px;
+      line-height: 1;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .quick-edit {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .switch-list {
+      min-height: 0;
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-content: start;
+      gap: 8px;
+    }
+
+    .compact-card {
+      min-height: 72px;
+      display: grid;
+      align-content: center;
+      gap: 3px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.035);
+    }
+
+    .compact-card.active {
+      border-color: rgba(91, 216, 200, 0.58);
+      background: rgba(91, 216, 200, 0.13);
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <p class="label">Concept A - picker plus inspector</p>
+    <section class="frame" id="concept-a">
+      <div class="topbar">
+        <div class="stats">
+          <div class="stat"><span>Machine</span><strong>Idle</strong></div>
+          <div class="stat"><span>Group</span><strong>90.0 C</strong></div>
+          <div class="stat"><span>Steam</span><strong>150.0 C</strong></div>
+          <div class="stat"><span>Scale</span><strong>offline</strong></div>
+        </div>
+        <div class="tools"><div class="icon">d</div><div class="icon">g</div><div class="icon">p</div></div>
+      </div>
+      <div class="overlay">
+        <div class="modal layout-a">
+          <div class="modal-head">
+            <div><span class="eyebrow">Beans</span><h2>Pick a bag</h2></div>
+            <div class="compact-actions"><div class="icon">r</div><div class="icon">+</div><div class="icon">x</div></div>
+          </div>
+          <div class="search">Q <span>Search beans, roasters, origins</span></div>
+          <div class="picker-inspector">
+            <div class="list">
+              <div class="row active"><small>Ethiopia</small><b>April</b><strong>Ethiopia Nano Genji</strong></div>
+              <div class="row"><small>Honduras</small><b>Tim Wendelboe</b><strong>Caballero</strong></div>
+              <div class="row"><small>Blend</small><b>Onyx</b><strong>Monarch</strong></div>
+              <div class="row"><small>Costa Rica</small><b>Calendar</b><strong>La Danta</strong></div>
+              <div class="row"><small>Colombia</small><b>Friedhats</b><strong>El Diviso Sidra</strong></div>
+              <div class="row"><small>Kenya</small><b>Nomad</b><strong>Kenya Kamwangi</strong></div>
+              <div class="row"><small>Rwanda</small><b>Square Mile</b><strong>Sweetshop</strong></div>
+              <div class="row"><small>Ethiopia</small><b>Tsukcafe</b><strong>Tore Badiya Anaerobic</strong></div>
+            </div>
+            <div class="inspector">
+              <div class="inspector-title">
+                <h3>April Ethiopia Nano Genji</h3>
+                <div class="compact-actions"><div class="button primary">Select</div><div class="button danger">Archive</div></div>
+              </div>
+              <div class="field-grid">
+                <div class="field"><label>Roaster</label><div class="box">April</div></div>
+                <div class="field"><label>Bean</label><div class="box">Ethiopia Nano Genji</div></div>
+                <div class="field"><label>Origin</label><div class="box">Ethiopia</div></div>
+                <div class="field"><label>Region</label><div class="box">Gera, Jimma</div></div>
+                <div class="field"><label>Process</label><div class="box">Washed</div></div>
+                <div class="field"><label>Notes</label><div class="box">bergamot, peach</div></div>
+              </div>
+              <div class="batch-panel">
+                <div class="batch-row">
+                  <span class="eyebrow">Batches</span>
+                  <div class="button">+ Batch</div>
+                </div>
+                <div>
+                  <div class="batch-card active"><div><strong>16 May</strong><small>200g opened, 64g left</small></div><span class="tiny">Current</span><div class="button">Edit</div></div>
+                  <div class="batch-card"><div><strong>2 May</strong><small>200g finished</small></div><span class="tiny">Done</span><div class="button">Edit</div></div>
+                  <div class="batch-card"><div><strong>12 Apr</strong><small>100g sample</small></div><span class="tiny">Archived</span><div class="button">Edit</div></div>
+                </div>
+              </div>
+              <div class="compact-actions"><div class="button">Duplicate bean</div><div class="button">Rename batch</div><div class="button primary">Done</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <p class="label">Concept B - expandable bean rows</p>
+    <section class="frame" id="concept-b">
+      <div class="topbar">
+        <div class="stats">
+          <div class="stat"><span>Machine</span><strong>Idle</strong></div>
+          <div class="stat"><span>Group</span><strong>90.0 C</strong></div>
+          <div class="stat"><span>Steam</span><strong>150.0 C</strong></div>
+          <div class="stat"><span>Scale</span><strong>offline</strong></div>
+        </div>
+        <div class="tools"><div class="icon">d</div><div class="icon">g</div><div class="icon">p</div></div>
+      </div>
+      <div class="overlay">
+        <div class="modal layout-b">
+          <div class="modal-head">
+            <div><span class="eyebrow">Beans</span><h2>Pick or edit in place</h2></div>
+            <div class="compact-actions"><div class="icon">r</div><div class="icon">+</div><div class="icon">x</div></div>
+          </div>
+          <div class="search">Q <span>Search beans</span></div>
+          <div class="expanded-list">
+            <div class="expanded-row selected">
+              <div class="row active"><small>Ethiopia</small><b>April</b><strong>Ethiopia Nano Genji</strong></div>
+              <div class="mini-form">
+                <div class="field"><label>Roaster</label><div class="box">April</div></div>
+                <div class="field"><label>Name</label><div class="box">Ethiopia Nano Genji</div></div>
+                <div class="field"><label>Origin</label><div class="box">Ethiopia</div></div>
+                <div class="field"><label>Process</label><div class="box">Washed</div></div>
+                <div class="field"><label>Notes</label><div class="box">bergamot, peach</div></div>
+                <div class="field"><label>Region</label><div class="box">Gera</div></div>
+                <div class="mini-batches">
+                  <div class="pill-row">
+                    <div class="chip active">16 May - 200g <span>current</span></div>
+                    <div class="chip">2 May - 200g <span>done</span></div>
+                    <div class="chip">+ Batch</div>
+                  </div>
+                </div>
+              </div>
+              <div class="compact-actions" style="align-self:start"><div class="button primary">Select</div><div class="button">Done</div></div>
+            </div>
+            <div class="expanded-row"><div class="row"><small>Honduras</small><b>Tim Wendelboe</b><strong>Caballero</strong></div><div class="pill-row"><div class="chip active">22 May - 250g</div><div class="chip">+ Batch</div></div><div class="button">Edit</div></div>
+            <div class="expanded-row"><div class="row"><small>Blend</small><b>Onyx</b><strong>Monarch</strong></div><div class="pill-row"><div class="chip active">Open - 300g</div><div class="chip">+ Batch</div></div><div class="button">Edit</div></div>
+            <div class="expanded-row"><div class="row"><small>Costa Rica</small><b>Calendar</b><strong>La Danta</strong></div><div class="pill-row"><div class="chip">12 Apr - finished</div><div class="chip">+ Batch</div></div><div class="button">Edit</div></div>
+            <div class="expanded-row"><div class="row"><small>Colombia</small><b>Friedhats</b><strong>El Diviso Sidra</strong></div><div class="pill-row"><div class="chip active">Open - 100g</div><div class="chip">+ Batch</div></div><div class="button">Edit</div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <p class="label">Concept D - current bag command sheet</p>
+    <section class="frame" id="concept-d">
+      <div class="topbar">
+        <div class="stats">
+          <div class="stat"><span>Machine</span><strong>Idle</strong></div>
+          <div class="stat"><span>Group</span><strong>90.0 C</strong></div>
+          <div class="stat"><span>Steam</span><strong>150.0 C</strong></div>
+          <div class="stat"><span>Scale</span><strong>offline</strong></div>
+        </div>
+        <div class="tools"><div class="icon">d</div><div class="icon">g</div><div class="icon">p</div></div>
+      </div>
+      <div class="workbench">
+        <div class="hero panel">
+          <div class="title-button"><span>April Ethiopia Nano Genji</span><span>v</span></div>
+          <div class="compact-actions"><div class="button">Adaptive v2</div><div class="button">16 May - 200g</div></div>
+        </div>
+        <div class="recipe-grid panel">
+          <div class="control"><label>Profile</label><strong>Adaptive v2</strong></div>
+          <div class="control"><label>Dose</label><strong>17.8</strong></div>
+          <div class="control"><label>Yield</label><strong>42.2</strong></div>
+          <div class="control"><label>Ratio</label><strong>1:2.37</strong></div>
+          <div class="control"><label>Grind</label><strong>5.83</strong></div>
+          <div class="control"><label>Temp</label><strong>0.0</strong></div>
+        </div>
+        <div class="history panel">
+          <div class="shot-list">
+            <div class="shot active"><div class="shot-line"><span>17.8g - 42.2g</span><span>12s</span><span></span></div><small>Blooming Allonge</small></div>
+            <div class="shot"><div class="shot-line"><span>17.8g - 42.2g</span><span>23s</span><span>:)</span></div><small>Blooming Allonge</small></div>
+            <div class="shot"><div class="shot-line"><span>18g - 43.4g</span><span>24s</span><span>:D</span></div><small>Blooming Allonge</small></div>
+            <div class="shot"><div class="shot-line"><span>18.2g - 44.6g</span><span>24s</span><span>:)</span></div><small>Blooming Allonge</small></div>
+            <div class="shot"><div class="shot-line"><span>17.8g - 45.8g</span><span>26s</span><span></span></div><small>Blooming Allonge</small></div>
+          </div>
+          <div class="chart-pane">
+            <div class="chart-head"><strong>2 Jun at 10:06</strong><span>17.8g - 42.2g</span><span>grind 5.83</span><span>12s</span></div>
+            <div class="chart"><svg viewBox="0 0 640 280" preserveAspectRatio="none"><path d="M20 132 C70 50 150 55 250 30 L410 30 C430 34 430 120 440 140 L620 140" fill="none" stroke="#58cc8b" stroke-width="4"/><path d="M20 178 C160 176 240 178 330 184 S470 202 620 222" fill="none" stroke="#7aa8ff" stroke-width="4"/><path d="M20 140 L620 140" fill="none" stroke="#ff6578" stroke-width="4"/><path d="M20 218 C120 210 230 230 340 205 S500 190 620 204" fill="none" stroke="#63d4c8" stroke-width="4"/><path d="M20 40 H620 M20 140 H620 M20 240 H620 M190 20 V260 M430 20 V260" stroke="rgba(255,255,255,.13)" stroke-width="1"/></svg></div>
+            <div class="notes">No tasting notes</div>
+          </div>
+        </div>
+      </div>
+      <div class="sheet-overlay">
+        <div class="sheet">
+          <div class="modal-head">
+            <div><span class="eyebrow">Current bag</span><h2>Manage and switch</h2></div>
+            <div class="compact-actions"><div class="icon">r</div><div class="icon">+</div><div class="icon">x</div></div>
+          </div>
+          <div class="current-compact">
+            <div><span class="eyebrow">Selected</span><h3>April Ethiopia Nano Genji</h3></div>
+            <div class="batch-row"><div class="chip active">16 May - 200g</div><div class="chip">+ Batch</div></div>
+            <div class="button primary">Use</div>
+          </div>
+          <div class="quick-edit">
+            <div class="field"><label>Roaster</label><div class="box">April</div></div>
+            <div class="field"><label>Bean</label><div class="box">Ethiopia Nano Genji</div></div>
+            <div class="field"><label>Origin</label><div class="box">Ethiopia</div></div>
+            <div class="field"><label>Notes</label><div class="box">bergamot, peach</div></div>
+            <div class="field"><label>Actions</label><div class="box">Edit / Archive</div></div>
+          </div>
+          <div class="search">Q <span>Search to switch bags</span></div>
+          <div class="switch-list">
+            <div class="compact-card active"><span class="eyebrow">Ethiopia</span><strong>April</strong><span>Ethiopia Nano Genji</span></div>
+            <div class="compact-card"><span class="eyebrow">Honduras</span><strong>Tim Wendelboe</strong><span>Caballero</span></div>
+            <div class="compact-card"><span class="eyebrow">Blend</span><strong>Onyx</strong><span>Monarch</span></div>
+            <div class="compact-card"><span class="eyebrow">Costa Rica</span><strong>Calendar</strong><span>La Danta</span></div>
+            <div class="compact-card"><span class="eyebrow">Colombia</span><strong>Friedhats</strong><span>El Diviso Sidra</span></div>
+            <div class="compact-card"><span class="eyebrow">Kenya</span><strong>Nomad</strong><span>Kenya Kamwangi</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script>
+    const only = new URLSearchParams(location.search).get('only');
+    if (only) {
+      for (const frame of document.querySelectorAll('.frame')) {
+        const keep = frame.id === `concept-${only}`;
+        const label = frame.previousElementSibling;
+        frame.hidden = !keep;
+        if (label?.classList.contains('label')) label.hidden = !keep;
+      }
+    }
+  </script>
+</body>
+</html>
