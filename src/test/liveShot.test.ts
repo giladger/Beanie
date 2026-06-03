@@ -88,9 +88,9 @@ run('model can begin with a preset x-axis duration', () => {
   const session = new LiveShotSession();
   session.ingest(pourFrame(0, { pressure: 6 }));
 
-  equal(session.model({ minTime: 10 }).maxTime, 10);
-  session.ingest(pourFrame(11000, { pressure: 7 }));
-  equal(session.model({ minTime: 10 }).maxTime, 11);
+  equal(session.model({ minTime: 30 }).maxTime, 30);
+  session.ingest(pourFrame(31000, { pressure: 7 }));
+  equal(session.model({ minTime: 30 }).maxTime, 31);
 });
 
 run('model only includes series that have points', () => {

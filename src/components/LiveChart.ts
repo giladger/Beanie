@@ -361,24 +361,38 @@ function drawDashedSegments(
   const dash = pattern[0] ?? 6;
   const gap = pattern[1] ?? 5;
   const lineDash = pattern.length > 0 ? pattern : [dash, gap];
+  const run: Array<{ x: number; y: number }> = [];
   ctx.setLineDash([]);
   for (let i = 1; i < points.length; i += 1) {
     const previous = points[i - 1]!;
     const current = points[i]!;
     const vertical = Math.abs(previous.x - current.x) < 0.75;
-    const horizontal = Math.abs(previous.y - current.y) < 0.75;
     if (vertical) {
+      strokeDashedRun(ctx, run, lineDash);
+      run.length = 0;
       drawVerticalDash(ctx, snapPixel((previous.x + current.x) / 2), previous.y, current.y, dash, gap);
       continue;
     }
-    const y1 = horizontal ? snapPixel((previous.y + current.y) / 2) : previous.y;
-    const y2 = horizontal ? y1 : current.y;
-    ctx.setLineDash(lineDash);
-    ctx.beginPath();
-    ctx.moveTo(previous.x, y1);
-    ctx.lineTo(current.x, y2);
-    ctx.stroke();
+    if (run.length === 0) run.push(previous);
+    run.push(current);
   }
+  strokeDashedRun(ctx, run, lineDash);
+  ctx.setLineDash([]);
+}
+
+function strokeDashedRun(
+  ctx: CanvasRenderingContext2D,
+  points: Array<{ x: number; y: number }>,
+  lineDash: number[]
+): void {
+  if (points.length < 2) return;
+  ctx.setLineDash(lineDash);
+  ctx.beginPath();
+  ctx.moveTo(points[0]!.x, points[0]!.y);
+  for (let i = 1; i < points.length; i += 1) {
+    ctx.lineTo(points[i]!.x, points[i]!.y);
+  }
+  ctx.stroke();
   ctx.setLineDash([]);
 }
 

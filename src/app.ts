@@ -147,7 +147,7 @@ import {
 type Modal = 'edit-number' | 'edit-shot' | null;
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
 type ApplyState = 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
-type LiveChartMode = 'preset10' | 'auto';
+type LiveChartMode = 'preset30' | 'auto';
 type View =
   | 'workbench'
   | 'settings'
@@ -280,7 +280,7 @@ export class BeanieApp {
     machine: null,
     scale: null,
     liveActive: false,
-    liveChartMode: 'preset10',
+    liveChartMode: 'preset30',
     asleep: false,
     applyState: 'idle',
     appliedSignature: null
@@ -1010,7 +1010,7 @@ export class BeanieApp {
         break;
       case 'toggle-live-chart-mode':
         this.setState({
-          liveChartMode: this.state.liveChartMode === 'preset10' ? 'auto' : 'preset10'
+          liveChartMode: this.state.liveChartMode === 'preset30' ? 'auto' : 'preset30'
         });
         break;
       case 'stop':
@@ -2246,7 +2246,7 @@ export class BeanieApp {
 
   private renderLivePanel(): string {
     if (!this.state.liveActive) return '';
-    const preset10 = this.state.liveChartMode === 'preset10';
+    const preset30 = this.state.liveChartMode === 'preset30';
     return `
       <div class="live-panel">
         <div class="live-card panel">
@@ -2254,14 +2254,14 @@ export class BeanieApp {
             <div class="live-title-row">
               <span class="eyebrow">Live shot</span>
               <button
-                class="live-chart-toggle ${preset10 ? 'active' : ''}"
+                class="live-chart-toggle ${preset30 ? 'active' : ''}"
                 data-action="toggle-live-chart-mode"
-                aria-pressed="${preset10 ? 'true' : 'false'}"
-                aria-label="${preset10 ? '10 second chart preset' : 'Auto chart scale'}"
-                title="${preset10 ? '10 second chart preset' : 'Auto chart scale'}"
+                aria-pressed="${preset30 ? 'true' : 'false'}"
+                aria-label="${preset30 ? '30 second chart preset' : 'Auto chart scale'}"
+                title="${preset30 ? '30 second chart preset' : 'Auto chart scale'}"
               >
                 ${icon('timer')}
-                <span>${preset10 ? '10s' : 'Auto'}</span>
+                <span>${preset30 ? '30s' : 'Auto'}</span>
               </button>
               <button
                 class="live-stop-button"
@@ -3712,11 +3712,11 @@ function machineCommandsAvailable(demo: boolean, info: MachineInfo | null): bool
 }
 
 function liveChartModelOptions(mode: LiveChartMode): { minTime?: number } {
-  return mode === 'preset10' ? { minTime: 10 } : {};
+  return mode === 'preset30' ? { minTime: 30 } : {};
 }
 
 function liveChartHideMaxTimeLabel(mode: LiveChartMode, maxTime: number): boolean {
-  return mode === 'auto' || maxTime > 10;
+  return mode === 'auto' || maxTime > 30;
 }
 
 function hasGroupHeadController(info: MachineInfo): boolean | null {

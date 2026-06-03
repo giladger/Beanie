@@ -82,6 +82,7 @@ function renderDashedTrace(
 ): string {
   const segments: string[] = [];
   const [dash = 6, gap = 5] = dashValues(series.dashArray);
+  const run: Array<{ x: number; y: number }> = [];
   for (let i = 1; i < series.samples.length; i += 1) {
     const previous = series.samples[i - 1]!;
     const current = series.samples[i]!;
@@ -90,20 +91,25 @@ function renderDashedTrace(
     const y1 = yFor(previous.value);
     const y2 = yFor(current.value);
     const vertical = Math.abs(x1 - x2) < 0.75;
-    const horizontal = Math.abs(y1 - y2) < 0.75;
     if (vertical) {
+      segments.push(renderDashedRun(series, run));
+      run.length = 0;
       segments.push(
         `<path class="trace ${series.className}" d="${verticalDashPath((x1 + x2) / 2, y1, y2, dash, gap)}" stroke="${series.color}" fill="none" stroke-linecap="butt" />`
       );
       continue;
     }
-    const renderedY1 = horizontal ? snapSvgPixel((y1 + y2) / 2) : y1.toFixed(1);
-    const renderedY2 = horizontal ? renderedY1 : y2.toFixed(1);
-    segments.push(
-      `<line class="trace ${series.className}" x1="${x1.toFixed(1)}" y1="${renderedY1}" x2="${x2.toFixed(1)}" y2="${renderedY2}" stroke="${series.color}" stroke-dasharray="${escapeAttr(series.dashArray!)}" />`
-    );
+    if (run.length === 0) run.push({ x: x1, y: y1 });
+    run.push({ x: x2, y: y2 });
   }
+  segments.push(renderDashedRun(series, run));
   return segments.join('');
+}
+
+function renderDashedRun(series: ShotGraphSeries, points: Array<{ x: number; y: number }>): string {
+  if (points.length < 2) return '';
+  const pointList = points.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' ');
+  return `<polyline class="trace ${series.className}" points="${pointList}" stroke="${series.color}" stroke-dasharray="${escapeAttr(series.dashArray!)}" />`;
 }
 
 function traceStrokeAttrs(series: ShotGraphSeries): string {
