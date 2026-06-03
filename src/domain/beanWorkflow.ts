@@ -211,7 +211,14 @@ export function formatRatio(ratio: number | null | undefined): string {
 // with the next shot reflects the new target without a full profile editor.
 export function profileBaseTemperature(profile: Profile | null | undefined): number | null {
   if (!profile) return null;
-  if (typeof profile.tank_temperature === 'number' && Number.isFinite(profile.tank_temperature)) {
+  // A tank_temperature of 0 (or less) means tank preheat is OFF, not a 0 °C
+  // brew target — fall back to the step temperatures in that case so the
+  // dial-in surface shows the real brew temperature.
+  if (
+    typeof profile.tank_temperature === 'number' &&
+    Number.isFinite(profile.tank_temperature) &&
+    profile.tank_temperature > 0
+  ) {
     return profile.tank_temperature;
   }
   const temps = stepTemperatures(profile);
@@ -228,8 +235,10 @@ export function withProfileTemperature(profile: Profile, targetBase: number): Pr
   const steps = Array.isArray(profile.steps)
     ? profile.steps.map((step) => shiftStepTemperature(step, delta))
     : profile.steps;
-  const tank =
-    typeof profile.tank_temperature === 'number' ? profile.tank_temperature + delta : targetBase;
+  // Shift a real preheat target along with the brew temp, but leave an
+  // off tank (0) off — don't silently enable preheat at a nonsense value.
+  const t = profile.tank_temperature;
+  const tank = typeof t === 'number' ? (t > 0 ? t + delta : t) : targetBase;
   return { ...profile, tank_temperature: tank, steps };
 }
 

@@ -154,6 +154,22 @@ run('shifts every profile temperature by the same delta', () => {
   equal(steps[1]!.temperature, 95);
 });
 
+run('treats tank_temperature 0 as off and uses step temps as the base', () => {
+  const profile: Profile = {
+    title: 'Tank off',
+    tank_temperature: 0,
+    steps: [{ temperature: 90 }, { temperature: 90 }] as unknown[]
+  };
+  // 0 means preheat off, so the base is the brew (step) temperature, not 0.
+  equal(profileBaseTemperature(profile), 90);
+  const shifted = withProfileTemperature(profile, 92);
+  // Steps move with the new target; the off tank stays off (still 0).
+  equal(shifted.tank_temperature, 0);
+  const steps = shifted.steps as Array<{ temperature: number }>;
+  equal(steps[0]!.temperature, 92);
+  equal(steps[1]!.temperature, 92);
+});
+
 function run(name: string, fn: () => void): void {
   try {
     fn();
