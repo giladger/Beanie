@@ -13,6 +13,7 @@ import type {
   RinseData,
   ScaleSnapshot,
   ShotAnnotations,
+  ShotMeasurement,
   ShotRecord,
   ShotSummary,
   ShotUpdate,
@@ -119,7 +120,7 @@ import {
 } from './components/profileEditor';
 import { LiveChart } from './components/LiveChart';
 import { chartModelFromShot } from './components/liveChartModel';
-import { LiveShotSession, simulateShotFrames, type LiveFrame } from './domain/liveShot';
+import { LiveShotSession, simulateShotFrames, type LiveFrame, type LiveShotState } from './domain/liveShot';
 import { beanieCache } from './domain/cache';
 import {
   applySettingsPreferences,
@@ -1165,18 +1166,32 @@ export class BeanieApp {
 
   private onShotEnded(): void {
     const shotWindow = this.liveShot.snapshot;
+    const bean = this.selectedBean();
+    const optimisticShot = bean
+      ? optimisticShotFromLive(
+          bean,
+          this.selectedBatch(),
+          this.state.workflow,
+          normalizeDraft(this.state.draft, this.state.profiles, this.state.grinders),
+          shotWindow
+        )
+      : null;
     const refreshContext = {
       previousShotIds: new Set(this.state.shots.map((shot) => shot.id)),
       startedAtMs: shotWindow.startMs,
-      endedAtMs: shotWindow.lastActiveMs ?? Date.now()
+      endedAtMs: shotWindow.lastActiveMs ?? Date.now(),
+      optimisticShot
     };
     const reason = this.liveShot.completionReason;
     this.setState({
       liveActive: false,
+      beans: bean ? promoteBean(this.state.beans, bean.id) : this.state.beans,
+      shots: optimisticShot ? includeShotInHistory(this.state.shots, optimisticShot, this.shotPageSize) : this.state.shots,
+      shotsTotal: optimisticShot ? Math.max(this.state.shotsTotal, this.state.shots.length + 1) : this.state.shotsTotal,
+      detailShotId: optimisticShot?.id ?? this.state.detailShotId,
       status: reason ? `Shot complete (${reason})` : 'Shot complete'
     });
     this.liveShot.reset();
-    const bean = this.selectedBean();
     if (bean && !this.state.demo) {
       void this.refreshShotsAfterLiveShot(bean, refreshContext);
     }
@@ -1184,7 +1199,12 @@ export class BeanieApp {
 
   private async refreshShotsAfterLiveShot(
     bean: Bean,
-    context: { previousShotIds: Set<string>; startedAtMs: number | null; endedAtMs: number | null }
+    context: {
+      previousShotIds: Set<string>;
+      startedAtMs: number | null;
+      endedAtMs: number | null;
+      optimisticShot: ShotRecord | null;
+    }
   ): Promise<void> {
     const delays = [0, 1000, 2000, 4000, 8000];
     let lastRecords: ShotRecord[] = [];
@@ -1221,11 +1241,14 @@ export class BeanieApp {
     }
 
     if (this.selectedBean()?.id !== bean.id) return;
+    const visibleRecords = context.optimisticShot
+      ? includeShotInHistory(lastRecords, context.optimisticShot, this.shotPageSize)
+      : lastRecords;
     this.setState({
-      shots: lastRecords,
-      shotsTotal: lastTotal,
+      shots: visibleRecords,
+      shotsTotal: Math.max(lastTotal, visibleRecords.length),
       shotsLoadingMore: false,
-      detailShotId: lastRecords[0]?.id ?? this.state.detailShotId,
+      detailShotId: context.optimisticShot?.id ?? lastRecords[0]?.id ?? this.state.detailShotId,
       status: 'Shot list updated'
     });
   }
@@ -2666,7 +2689,7 @@ export class BeanieApp {
     if (!canvas) return;
     const shot = this.selectedHistoryShot();
     if (!shot) return;
-    const chart = new LiveChart(canvas, { detailed: true, pixelScale: 2 });
+    const chart = new LiveChart(canvas, { detailed: true, pixelScale: 3 });
     chart.setModel(chartModelFromShot(shot));
     // Draw after layout so the canvas has its CSS box for DPR sizing.
     window.requestAnimationFrame(() => {
@@ -4344,6 +4367,69 @@ function shotMatchesLiveWindow(
 function includeShotInHistory(records: ShotRecord[], shot: ShotRecord, limit: number): ShotRecord[] {
   const withoutDuplicate = records.filter((item) => item.id !== shot.id);
   return [shot, ...withoutDuplicate].slice(0, Math.max(1, limit));
+}
+
+function optimisticShotFromLive(
+  bean: Bean,
+  batch: BeanBatch | null,
+  workflow: Workflow | null,
+  draft: RecipeDraft,
+  liveState: LiveShotState
+): ShotRecord | null {
+  if (liveState.startMs == null) return null;
+  const shotWorkflow = buildWorkflowUpdate(bean, batch, draft, draft.profile, workflow);
+  return {
+    id: `pending-live-${liveState.startMs}`,
+    timestamp: new Date(liveState.startMs).toISOString(),
+    workflow: shotWorkflow,
+    annotations: {
+      actualDoseWeight: draft.dose ?? shotWorkflow.context?.targetDoseWeight ?? null,
+      actualYield: liveState.latest.weight ?? draft.yield ?? shotWorkflow.context?.targetYield ?? null
+    },
+    metadata: { pendingLiveShot: true },
+    measurements: measurementsFromLiveShot(liveState)
+  };
+}
+
+function measurementsFromLiveShot(liveState: LiveShotState): ShotMeasurement[] {
+  if (liveState.startMs == null) return [];
+  const byMs = new Map<number, { machine: Record<string, unknown>; scale: Record<string, unknown> }>();
+  const frameFor = (t: number) => {
+    const tMs = liveState.startMs! + Math.round(t * 1000);
+    let frame = byMs.get(tMs);
+    if (!frame) {
+      const timestamp = new Date(tMs).toISOString();
+      frame = {
+        machine: { timestamp, state: { state: 'espresso', substate: 'pouring' } },
+        scale: { timestamp }
+      };
+      byMs.set(tMs, frame);
+    }
+    return frame;
+  };
+
+  for (const series of liveState.series) {
+    for (const point of series.points) {
+      const frame = frameFor(point.t);
+      if (series.key === 'pressure') frame.machine.pressure = point.value;
+      if (series.key === 'flow') frame.machine.flow = point.value;
+      if (series.key === 'targetPressure') frame.machine.targetPressure = point.value;
+      if (series.key === 'targetFlow') frame.machine.targetFlow = point.value;
+      if (series.key === 'groupTemperature') frame.machine.groupTemperature = point.value * 10;
+      if (series.key === 'targetTemperature') frame.machine.targetGroupTemperature = point.value * 10;
+      if (series.key === 'weightFlow') frame.scale.weightFlow = point.value;
+    }
+  }
+
+  return [...byMs.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, frame]) => ({ machine: frame.machine, scale: frame.scale }) as ShotMeasurement);
+}
+
+function promoteBean(beans: Bean[], beanId: string): Bean[] {
+  const bean = beans.find((item) => item.id === beanId);
+  if (!bean) return beans;
+  return [bean, ...beans.filter((item) => item.id !== beanId)];
 }
 
 function enjoymentBadge(shot: ShotRecord, size: 'row' | 'detail' = 'row'): string {
