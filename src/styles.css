@@ -1480,8 +1480,18 @@ p {
 }
 
 .profile-editor {
-  display: grid;
-  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* the main content region of each editor mode fills the remaining height */
+.pe-main-grid,
+.pe-simple-stages {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .pe-simple-editor {
@@ -2245,7 +2255,7 @@ p {
 
 .pe-left-rail {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) 230px;
+  grid-template-rows: minmax(0, 1fr) 190px;
   gap: 10px;
 }
 
@@ -2441,7 +2451,16 @@ p {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
-  margin-bottom: 16px;
+  margin-bottom: 10px;
+}
+
+/* compact stacking of the step-detail groups so they fit without scroll */
+.pe-step-detail .pe-ctl-group {
+  margin: 0 0 6px;
+}
+
+.pe-step-detail .pe-ctl-group:last-child {
+  margin-bottom: 0;
 }
 
 .pe-ctl-group {
@@ -2450,7 +2469,7 @@ p {
 
 .pe-ctl-group-title {
   display: block;
-  margin: 0 2px 9px;
+  margin: 0 2px 7px;
   color: var(--muted);
   font-size: 10px;
   font-weight: 800;
@@ -2468,8 +2487,8 @@ p {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 7px;
-  padding: 13px 11px 12px;
+  gap: 6px;
+  padding: 10px 10px 11px;
   border-radius: 12px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent),
@@ -2481,9 +2500,9 @@ p {
 .pe-ctl-face {
   display: grid;
   place-items: center;
-  width: 46px;
-  height: 46px;
-  border-radius: 13px;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
   background: color-mix(in srgb, var(--panel) 70%, transparent);
   color: var(--soft);
@@ -2492,8 +2511,8 @@ p {
 }
 
 .pe-ctl-face .icon {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   stroke-width: 1.8;
 }
 
@@ -3630,6 +3649,9 @@ p {
 
 .profile-editor-page {
   width: min(1240px, 100%);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .pager {
