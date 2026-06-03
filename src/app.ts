@@ -848,6 +848,7 @@ export class BeanieApp {
       this.setState({
         busy: false,
         machine: optimisticMachineSnapshot(this.state.machine, state),
+        view: machineServiceState(state) ? 'machine' : this.state.view,
         liveActive: state === 'espresso' ? this.state.liveActive : false,
         asleep: state === 'sleeping',
         status: machineActionStatus(state, 'demo')
@@ -861,6 +862,7 @@ export class BeanieApp {
       this.setState({
         busy: false,
         machine: optimisticMachineSnapshot(this.state.machine, state),
+        view: machineServiceState(state) ? 'machine' : this.state.view,
         asleep: state === 'sleeping',
         status: machineActionStatus(state, 'sent')
       });
@@ -923,6 +925,7 @@ export class BeanieApp {
     scale: ScaleSnapshot | null,
     tMs: number
   ): void {
+    const previousService = machineServiceState(this.state.machine?.state?.state);
     if (machine) {
       this.state.machine = machine;
       this.trackMachineServiceState(machine.state.state, tMs);
@@ -956,7 +959,16 @@ export class BeanieApp {
       this.setState({ asleep: sleeping });
       return;
     }
-    if (this.state.view === 'machine' && machineServiceState(this.state.machine?.state?.state)) {
+    const currentService = machineServiceState(this.state.machine?.state?.state);
+    if (currentService && this.state.view !== 'machine') {
+      this.setState({ view: 'machine' });
+      return;
+    }
+    if (this.state.view === 'machine' && currentService) {
+      this.setState({});
+      return;
+    }
+    if (previousService && !currentService && this.state.view === 'machine') {
       this.setState({});
       return;
     }
