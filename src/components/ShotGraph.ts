@@ -91,7 +91,7 @@ function renderDashedTrace(
     const x2 = xFor(current.t);
     const y1 = yFor(previous.value);
     const y2 = yFor(current.value);
-    const vertical = Math.abs(x1 - x2) < 0.75;
+    const vertical = isVisuallyVertical({ x: x1, y: y1 }, { x: x2, y: y2 });
     if (vertical) {
       segments.push(renderDashedRun(series, run));
       run.length = 0;
@@ -105,6 +105,12 @@ function renderDashedTrace(
   }
   segments.push(renderDashedRun(series, run));
   return segments.join('');
+}
+
+function isVisuallyVertical(previous: { x: number; y: number }, current: { x: number; y: number }): boolean {
+  const dx = Math.abs(previous.x - current.x);
+  const dy = Math.abs(previous.y - current.y);
+  return dx < 0.75 || (dx <= 14 && dy >= dx * 2);
 }
 
 function renderDashedRun(series: ShotGraphSeries, points: Array<{ x: number; y: number }>): string {

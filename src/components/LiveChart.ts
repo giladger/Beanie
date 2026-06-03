@@ -374,7 +374,7 @@ function drawDashedSegments(
   for (let i = 1; i < points.length; i += 1) {
     const previous = points[i - 1]!;
     const current = points[i]!;
-    const vertical = Math.abs(previous.x - current.x) < 0.75;
+    const vertical = isVisuallyVertical(previous, current);
     if (vertical) {
       strokeDashedRun(ctx, run, lineDash);
       run.length = 0;
@@ -386,6 +386,12 @@ function drawDashedSegments(
   }
   strokeDashedRun(ctx, run, lineDash);
   ctx.setLineDash([]);
+}
+
+function isVisuallyVertical(previous: { x: number; y: number }, current: { x: number; y: number }): boolean {
+  const dx = Math.abs(previous.x - current.x);
+  const dy = Math.abs(previous.y - current.y);
+  return dx < 0.75 || (dx <= 14 && dy >= dx * 2);
 }
 
 function strokeSolidConnector(ctx: CanvasRenderingContext2D, x: number, y1: number, y2: number): void {
