@@ -684,14 +684,16 @@ p {
 .shot-item-info {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(96px, auto) auto 24px;
+  grid-template-columns: minmax(0, 1fr) 34px 24px;
   align-items: center;
   column-gap: 8px;
   overflow: hidden;
 }
 
 .shot-item-recipe {
-  flex: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 13px;
   font-weight: 800;
   color: var(--ink);
@@ -699,7 +701,10 @@ p {
 }
 
 .shot-item-dur {
-  flex: none;
+  width: 34px;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: clip;
   font-size: 11px;
   font-weight: 800;
   color: var(--muted);
@@ -719,6 +724,10 @@ p {
 }
 
 .shot-item .enjoyment-badge.empty {
+  min-height: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
   visibility: hidden;
 }
 
