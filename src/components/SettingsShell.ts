@@ -4,6 +4,14 @@ import type {
   ThemePreference,
   UIScalePreference
 } from '../domain/settings';
+import {
+  SETTINGS_SPEC,
+  fieldValue,
+  minutesToTime,
+  type SettingsBundle,
+  type SettingsField,
+  type SettingsSpecSection
+} from '../domain/settingsModel';
 import { icon } from './icons';
 
 interface SettingsSection {
@@ -13,8 +21,12 @@ interface SettingsSection {
   html: string;
 }
 
-export function renderSettingsShell(model: SettingsShellModel, activeSection: string): string {
-  const sections = settingsSections(model);
+export function renderSettingsShell(
+  model: SettingsShellModel,
+  activeSection: string,
+  bundle: SettingsBundle | null
+): string {
+  const sections = settingsSections(model, bundle);
   const active = sections.find((section) => section.id === activeSection) ?? sections[0]!;
 
   return `
@@ -34,8 +46,8 @@ export function renderSettingsShell(model: SettingsShellModel, activeSection: st
   `;
 }
 
-function settingsSections(model: SettingsShellModel): SettingsSection[] {
-  return [
+function settingsSections(model: SettingsShellModel, bundle: SettingsBundle | null): SettingsSection[] {
+  const sections: SettingsSection[] = [
     {
       id: 'gateway',
       title: 'Gateway',
@@ -47,7 +59,15 @@ function settingsSections(model: SettingsShellModel): SettingsSection[] {
       title: 'Appearance',
       terms: 'theme ui scale display compact standard large light dark',
       html: renderSection('Appearance', renderAppearanceRows(model.preferences))
-    },
+    }
+  ];
+  // reaprime-backed sections (only when settings have loaded from the gateway/demo)
+  if (bundle) {
+    for (const spec of SETTINGS_SPEC) {
+      sections.push({ id: spec.id, title: spec.title, terms: spec.terms, html: renderSpecSection(spec, bundle) });
+    }
+  }
+  sections.push(
     {
       id: 'workflow',
       title: 'Workflow',
@@ -66,7 +86,46 @@ function settingsSections(model: SettingsShellModel): SettingsSection[] {
       terms: 'version build commit default skin about',
       html: renderSection('About', renderAboutRows(model))
     }
-  ];
+  );
+  return sections;
+}
+
+function renderSpecSection(section: SettingsSpecSection, bundle: SettingsBundle): string {
+  const rows = section.fields.map((field) => renderSettingsField(field, bundle)).join('');
+  const extra = section.id === 'machine-advanced'
+    ? settingControlRow(
+        'Reset machine settings',
+        'Restore DE1 fan, heater, refill, calibration, and purge defaults',
+        `<button type="button" class="text-button" data-action="settings-reset-machine">${icon('rotate-ccw')}<span>Reset</span></button>`
+      )
+    : '';
+  return renderSection(section.title, rows + extra);
+}
+
+function renderSettingsField(field: SettingsField, bundle: SettingsBundle): string {
+  const value = fieldValue(bundle, field);
+  const base = `data-action="settings-field" data-group="${field.group}" data-key="${escapeAttr(field.key)}" data-type="${field.type}"`;
+  let control = '';
+  if (field.type === 'toggle') {
+    control = `<label class="settings-toggle"><input type="checkbox" ${base} ${value === true ? 'checked' : ''} /><span></span></label>`;
+  } else if (field.type === 'select') {
+    const current = String(value ?? '');
+    control = `<select class="settings-select" ${base}>${(field.options ?? [])
+      .map((o) => `<option value="${escapeAttr(o.value)}" ${o.value === current ? 'selected' : ''}>${escapeHtml(o.label)}</option>`)
+      .join('')}</select>`;
+  } else if (field.type === 'time') {
+    control = `<input class="settings-input" type="time" ${base} value="${minutesToTime(typeof value === 'number' ? value : null)}" />`;
+  } else {
+    const num = typeof value === 'number' ? String(value) : '';
+    const unit = field.unit ? `<span class="settings-unit">${escapeHtml(field.unit)}</span>` : '';
+    const bounds = [
+      field.min != null ? `min="${field.min}"` : '',
+      field.max != null ? `max="${field.max}"` : '',
+      field.step != null ? `step="${field.step}"` : ''
+    ].join(' ');
+    control = `<span class="settings-number"><input class="settings-input" type="number" ${base} ${bounds} value="${escapeAttr(num)}" />${unit}</span>`;
+  }
+  return settingControlRow(field.label, field.help ?? '', control);
 }
 
 function renderGatewayRows(model: SettingsShellModel): string {

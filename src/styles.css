@@ -2930,6 +2930,43 @@ p {
   color: var(--muted);
 }
 
+/* reaprime-backed field controls (select / number / time) */
+.settings-select,
+.settings-input {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.settings-select {
+  min-width: 132px;
+  cursor: pointer;
+}
+
+.settings-input {
+  width: 96px;
+  text-align: right;
+}
+
+.settings-number {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-unit {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 .settings-segmented {
   min-width: 0;
   display: inline-flex;

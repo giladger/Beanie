@@ -64,6 +64,19 @@ import {
   typeInputDialogKey
 } from './components/InputDialog';
 import { renderSettingsShell } from './components/SettingsShell';
+import {
+  SETTINGS_SPEC,
+  coerceFieldValue,
+  demoSettingsBundle,
+  setBundleField,
+  type SettingsBundle
+} from './domain/settingsModel';
+import type {
+  De1AdvancedSettingsPatch,
+  De1SettingsPatch,
+  PresenceSettingsPatch,
+  ReaSettingsPatch
+} from './api/settings';
 import { renderProfilePreview } from './components/profilePreview';
 import {
   addStep,
@@ -177,6 +190,8 @@ interface AppState {
   status: string;
   view: View;
   settingsSection: string;
+  settingsBundle: SettingsBundle | null;
+  settingsSource: 'gateway' | 'demo' | null;
   modal: Modal;
   editingBeanId: string | null;
   profileEditor: ProfileEditorState | null;
@@ -227,6 +242,8 @@ export class BeanieApp {
     status: 'Starting',
     view: 'workbench',
     settingsSection: 'gateway',
+    settingsBundle: null,
+    settingsSource: null,
     modal: null,
     editingBeanId: null,
     profileEditor: null,
@@ -801,9 +818,13 @@ export class BeanieApp {
         break;
       case 'open-settings':
         this.setState({ view: 'settings' });
+        void this.loadReaSettings();
         break;
       case 'settings-section':
         if (value) this.setState({ settingsSection: value });
+        break;
+      case 'settings-reset-machine':
+        await this.resetMachineSettings();
         break;
       case 'settings-theme':
         if (isThemePreference(el.dataset.value)) {
@@ -1211,6 +1232,11 @@ export class BeanieApp {
     const target = event.target as HTMLInputElement | HTMLSelectElement;
     if (target.dataset.action?.startsWith('pe-')) {
       this.applyEditorEvent(target);
+      return;
+    }
+    if (target.dataset.action === 'settings-field') {
+      const raw = target instanceof HTMLInputElement && target.type === 'checkbox' ? target.checked : target.value;
+      void this.onSettingsField(target.dataset.group ?? '', target.dataset.key ?? '', raw);
       return;
     }
     const field = target.dataset.field;
@@ -2223,7 +2249,7 @@ export class BeanieApp {
   private renderSettingsPage(): string {
     return `
       ${this.pageHeader('Settings', 'workbench', `<button class="icon-button" data-action="refresh" aria-label="Sync" title="Sync">${icon('refresh-cw')}</button>`)}
-      ${renderSettingsShell(this.settingsShellModel(), this.state.settingsSection)}
+      ${renderSettingsShell(this.settingsShellModel(), this.state.settingsSection, this.state.settingsBundle)}
     `;
   }
 
@@ -2430,6 +2456,88 @@ export class BeanieApp {
   private grinderBigStep(): number {
     const grinder = this.state.grinders.find((item) => item.id === this.grinderIdForDraft());
     return grinder?.settingBigStep ?? 1;
+  }
+
+  // Load the reaprime-backed settings bundle when the Settings view opens.
+  // Each endpoint falls back to a demo default so a missing machine/battery
+  // never blanks the screen; in demo mode the whole bundle is local.
+  private async loadReaSettings(): Promise<void> {
+    if (this.state.settingsBundle) return;
+    if (this.state.demo) {
+      this.setState({ settingsBundle: demoSettingsBundle(), settingsSource: 'demo' });
+      return;
+    }
+    const fallback = demoSettingsBundle();
+    let source: 'gateway' | 'demo' = 'gateway';
+    const [rea, de1, advanced, calibration, presence, skins] = await Promise.all([
+      gateway.settings().catch(() => {
+        source = 'demo';
+        return fallback.rea;
+      }),
+      gateway.machineSettings().catch(() => fallback.de1),
+      gateway.machineAdvancedSettings().catch(() => fallback.advanced),
+      gateway.calibration().catch(() => fallback.calibration),
+      gateway.presenceSettings().catch(() => fallback.presence),
+      gateway.skins().catch(() => fallback.skins)
+    ]);
+    this.setState({
+      settingsBundle: { rea, de1, advanced, calibration, presence, skins },
+      settingsSource: source,
+      status: source === 'gateway' ? this.state.status : 'Settings unavailable — showing defaults'
+    });
+  }
+
+  private async onSettingsField(group: string, key: string, raw: string | boolean): Promise<void> {
+    const bundle = this.state.settingsBundle;
+    if (!bundle) return;
+    const field = SETTINGS_SPEC.flatMap((section) => section.fields).find(
+      (candidate) => candidate.group === group && candidate.key === key
+    );
+    if (!field) return;
+    const value = coerceFieldValue(field, raw);
+    this.setState({ settingsBundle: setBundleField(bundle, field, value), status: 'Setting updated' });
+    if (this.state.demo || this.state.settingsSource === 'demo') return; // local-only without a gateway
+    try {
+      await this.persistSetting(field.group, key, value);
+    } catch (error) {
+      console.error('[Beanie] Update setting failed', error);
+      this.setState({ status: 'Setting update failed' });
+    }
+  }
+
+  private persistSetting(group: string, key: string, value: string | number | boolean | null): Promise<void> {
+    const patch = { [key]: value };
+    if (group === 'rea') return gateway.updateSettings(patch as unknown as ReaSettingsPatch);
+    if (group === 'de1') return gateway.updateMachineSettings(patch as unknown as De1SettingsPatch);
+    if (group === 'advanced') return gateway.updateMachineAdvancedSettings(patch as unknown as De1AdvancedSettingsPatch);
+    if (group === 'calibration') return gateway.updateCalibration(Number(value));
+    if (group === 'presence') return gateway.updatePresenceSettings(patch as unknown as PresenceSettingsPatch);
+    return Promise.resolve();
+  }
+
+  private async resetMachineSettings(): Promise<void> {
+    const bundle = this.state.settingsBundle;
+    if (!bundle) return;
+    if (this.state.demo || this.state.settingsSource === 'demo') {
+      const fallback = demoSettingsBundle();
+      this.setState({
+        settingsBundle: { ...bundle, de1: fallback.de1, advanced: fallback.advanced, calibration: fallback.calibration },
+        status: 'Machine settings reset (demo)'
+      });
+      return;
+    }
+    try {
+      await gateway.resetMachineSettings();
+      const [de1, advanced, calibration] = await Promise.all([
+        gateway.machineSettings(),
+        gateway.machineAdvancedSettings(),
+        gateway.calibration()
+      ]);
+      this.setState({ settingsBundle: { ...bundle, de1, advanced, calibration }, status: 'Machine settings reset' });
+    } catch (error) {
+      console.error('[Beanie] Reset machine settings failed', error);
+      this.setState({ status: 'Reset failed' });
+    }
   }
 
   private updateSettingsPreferences(next: Partial<SettingsPreferences>): void {
