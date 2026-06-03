@@ -3817,6 +3817,13 @@ p {
 
 .machine-page {
   width: min(1120px, 100%);
+  padding: 8px 12px 10px;
+  gap: 8px;
+}
+
+.machine-lanes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -3828,8 +3835,8 @@ p {
 
 .machine-status-chip {
   min-width: 0;
-  min-height: 44px;
-  padding: 8px 10px;
+  min-height: 34px;
+  padding: 5px 9px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel-2);
@@ -3858,6 +3865,109 @@ p {
   color: var(--ink);
   font-size: 13px;
   font-weight: 950;
+}
+
+.machine-lane {
+  --accent: var(--teal);
+  min-width: 0;
+  min-height: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  display: grid;
+  grid-template-rows: auto 108px auto auto auto;
+  gap: 8px;
+}
+
+.machine-lane.steam {
+  --accent: #79cbd6;
+}
+
+.machine-lane.water {
+  --accent: #8baee8;
+}
+
+.machine-lane.flush {
+  --accent: var(--green);
+}
+
+.machine-lane-title {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.machine-lane-title h2 {
+  margin: 2px 0 0;
+  color: var(--ink);
+  font-size: 24px;
+  line-height: 0.95;
+}
+
+.machine-state-pill {
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-2));
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.machine-graphic {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  position: relative;
+  overflow: hidden;
+}
+
+.machine-graphic::before,
+.machine-graphic::after {
+  content: "";
+  position: absolute;
+}
+
+.machine-lane.steam .machine-graphic::before {
+  left: 29%;
+  top: 13%;
+  width: 14%;
+  height: 76%;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 42px 20px 0 rgba(121, 203, 214, 0.55);
+}
+
+.machine-lane.water .machine-graphic::before {
+  left: 24%;
+  right: 24%;
+  bottom: 18%;
+  height: 42%;
+  border-radius: 0 0 38px 38px;
+  background: var(--accent);
+}
+
+.machine-lane.water .machine-graphic::after {
+  left: 47%;
+  top: 11%;
+  width: 10%;
+  height: 62%;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.machine-lane.flush .machine-graphic::before {
+  inset: 28px 42px;
+  border: 13px solid var(--accent);
+  border-right-color: transparent;
+  border-radius: 50%;
 }
 
 .machine-card {
@@ -3893,13 +4003,19 @@ p {
 
 .machine-presets {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+
+.machine-hidden-radio {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .machine-preset {
   min-width: 0;
-  min-height: 64px;
+  min-height: 54px;
   padding: 0;
   cursor: pointer;
 }
@@ -3911,20 +4027,20 @@ p {
 }
 
 .machine-preset span {
-  min-height: 64px;
-  padding: 10px 12px;
+  min-height: 54px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel-2);
   display: grid;
   align-content: center;
-  gap: 5px;
+  gap: 4px;
 }
 
 .machine-preset input:checked + span,
 .machine-preset.active span {
-  border-color: color-mix(in srgb, var(--green) 55%, var(--line));
-  background: color-mix(in srgb, var(--green) 12%, var(--panel-2));
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--line));
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel-2));
   box-shadow: inset 0 0 0 1px rgba(135, 222, 129, 0.16);
 }
 
@@ -3988,6 +4104,98 @@ p {
 
 .machine-number.disabled input {
   cursor: not-allowed;
+}
+
+.machine-action-button {
+  min-height: 68px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 44%, var(--line));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 11%, var(--panel-2));
+  color: var(--ink);
+  text-align: left;
+  font: inherit;
+}
+
+.machine-action-button strong,
+.machine-action-button em {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.machine-action-button strong {
+  font-size: 16px;
+  font-weight: 950;
+}
+
+.machine-action-button em {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.machine-values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  align-content: start;
+}
+
+.machine-value-tile {
+  min-width: 0;
+  min-height: 66px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #151b1f;
+  color: var(--ink);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.machine-value-tile:not(.disabled) {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
+}
+
+.machine-value-tile.disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
+.machine-value-label,
+.machine-value-tile em {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.machine-value-tile strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.machine-value-tile em {
+  margin-top: 3px;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .settings-page {
@@ -4310,13 +4518,14 @@ p {
 
 @media (max-width: 900px) {
   .machine-status-strip,
+  .machine-lanes,
   .machine-custom-grid,
   .machine-custom-grid.flush-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .machine-presets {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .machine-card-head {
@@ -4331,7 +4540,9 @@ p {
 
 @media (max-width: 560px) {
   .machine-status-strip,
+  .machine-lanes,
   .machine-presets,
+  .machine-values,
   .machine-custom-grid,
   .machine-custom-grid.flush-grid {
     grid-template-columns: minmax(0, 1fr);
