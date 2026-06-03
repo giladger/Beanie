@@ -3416,6 +3416,80 @@ p {
   gap: 10px;
 }
 
+/* --- plugin configuration panel --- */
+.settings-plugin-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-plugin-config {
+  margin: 2px 0 12px;
+  padding: 10px 14px 12px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--panel-2) 70%, transparent);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.settings-plugin-help {
+  margin: 2px 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.settings-plugin-fields {
+  display: grid;
+}
+
+.settings-plugin-fields .settings-line small {
+  white-space: normal;
+}
+
+.settings-input.settings-plugin-text {
+  width: min(240px, 48vw);
+  text-align: left;
+}
+
+.settings-plugin-config-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.settings-plugin-verify {
+  margin-right: auto;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.settings-plugin-verify.good {
+  color: var(--green);
+}
+
+.settings-plugin-verify.warn {
+  color: var(--amber);
+}
+
+.settings-plugin-verify.muted {
+  color: var(--muted);
+}
+
+.settings-plugin-buttons {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.text-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .text-button.primary {
   border-color: var(--teal);
   background: color-mix(in srgb, var(--teal) 18%, transparent);

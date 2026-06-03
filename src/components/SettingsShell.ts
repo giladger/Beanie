@@ -12,6 +12,13 @@ import {
   type SettingsField,
   type SettingsSpecSection
 } from '../domain/settingsModel';
+import {
+  pluginSettingsSpec,
+  type PluginConfigState,
+  type PluginSettingField,
+  type PluginSettingsSpec
+} from '../domain/pluginSettings';
+import type { PluginInfo } from '../api/settings';
 import { icon } from './icons';
 
 interface SettingsSection {
@@ -24,9 +31,10 @@ interface SettingsSection {
 export function renderSettingsShell(
   model: SettingsShellModel,
   activeSection: string,
-  bundle: SettingsBundle | null
+  bundle: SettingsBundle | null,
+  pluginConfig: PluginConfigState | null
 ): string {
-  const sections = settingsSections(model, bundle);
+  const sections = settingsSections(model, bundle, pluginConfig);
   const active = sections.find((section) => section.id === activeSection) ?? sections[0]!;
 
   return `
@@ -46,7 +54,11 @@ export function renderSettingsShell(
   `;
 }
 
-function settingsSections(model: SettingsShellModel, bundle: SettingsBundle | null): SettingsSection[] {
+function settingsSections(
+  model: SettingsShellModel,
+  bundle: SettingsBundle | null,
+  pluginConfig: PluginConfigState | null
+): SettingsSection[] {
   const sections: SettingsSection[] = [
     {
       id: 'gateway',
@@ -82,8 +94,8 @@ function settingsSections(model: SettingsShellModel, bundle: SettingsBundle | nu
       {
         id: 'plugins',
         title: 'Plugins',
-        terms: 'plugins visualizer extensions enable disable',
-        html: renderPluginsSection(bundle)
+        terms: 'plugins visualizer extensions enable disable configure credentials',
+        html: renderPluginsSection(bundle, pluginConfig)
       }
     );
   }
@@ -163,18 +175,98 @@ function renderMaintenanceSection(): string {
   ].join(''));
 }
 
-function renderPluginsSection(bundle: SettingsBundle): string {
+function renderPluginsSection(bundle: SettingsBundle, pluginConfig: PluginConfigState | null): string {
   if (!bundle.plugins.length) return renderSection('Plugins', `<p class="settings-empty">No plugins installed.</p>`);
-  const rows = bundle.plugins
-    .map((plugin) =>
-      settingControlRow(
-        plugin.name,
-        [plugin.author, plugin.version ? `v${plugin.version}` : ''].filter(Boolean).join(' · '),
-        `<label class="settings-toggle"><input type="checkbox" data-action="settings-plugin-toggle" data-id="${escapeAttr(plugin.id)}" ${plugin.loaded ? 'checked' : ''} /><span></span></label>`
-      )
-    )
-    .join('');
+  const rows = bundle.plugins.map((plugin) => renderPluginRow(plugin, pluginConfig)).join('');
   return renderSection('Plugins', rows);
+}
+
+function renderPluginRow(plugin: PluginInfo, pluginConfig: PluginConfigState | null): string {
+  const spec = pluginSettingsSpec(plugin.id);
+  const expanded = pluginConfig?.id === plugin.id;
+  const configure = spec
+    ? `<button type="button" class="text-button" data-action="settings-plugin-config" data-id="${escapeAttr(plugin.id)}" aria-expanded="${expanded}">${icon('sliders-horizontal')}<span>${expanded ? 'Close' : 'Configure'}</span></button>`
+    : '';
+  const toggle = `<label class="settings-toggle"><input type="checkbox" data-action="settings-plugin-toggle" data-id="${escapeAttr(plugin.id)}" ${plugin.loaded ? 'checked' : ''} /><span></span></label>`;
+  const row = `
+    <div class="settings-line">
+      <div>
+        <span>${escapeHtml(plugin.name)}</span>
+        <small>${escapeHtml([plugin.author, plugin.version ? `v${plugin.version}` : ''].filter(Boolean).join(' · '))}</small>
+      </div>
+      <span class="settings-plugin-actions">${configure}${toggle}</span>
+    </div>`;
+  const panel = expanded && spec && pluginConfig ? renderPluginConfig(spec, pluginConfig) : '';
+  return row + panel;
+}
+
+function renderPluginConfig(spec: PluginSettingsSpec, config: PluginConfigState): string {
+  const help = spec.help ? `<p class="settings-plugin-help">${escapeHtml(spec.help)}</p>` : '';
+  const fields = spec.fields.map((field) => renderPluginField(field, config)).join('');
+  const verifyMsg = config.verify
+    ? `<span class="settings-plugin-verify ${config.verify.tone}">${escapeHtml(config.verify.message)}</span>`
+    : '';
+  const verifyBtn = spec.supportsVerify
+    ? `<button type="button" class="text-button" data-action="settings-plugin-verify" data-id="${escapeAttr(spec.id)}">${icon('refresh-cw')}<span>Verify</span></button>`
+    : '';
+  const saveDisabled = config.dirty && !config.saving ? '' : 'disabled';
+  const saveBtn = `<button type="button" class="text-button primary" data-action="settings-plugin-save" data-id="${escapeAttr(spec.id)}" ${saveDisabled}>${icon('save')}<span>${config.saving ? 'Saving…' : 'Save'}</span></button>`;
+  return `
+    <div class="settings-plugin-config">
+      ${help}
+      <div class="settings-plugin-fields">${fields}</div>
+      <div class="settings-plugin-config-actions">
+        ${verifyMsg}
+        <span class="settings-plugin-buttons">${verifyBtn}${saveBtn}</span>
+      </div>
+    </div>`;
+}
+
+function renderPluginField(field: PluginSettingField, config: PluginConfigState): string {
+  const base = `data-action="settings-plugin-field" data-key="${escapeAttr(field.key)}" data-type="${field.type}"`;
+  const draftVal = config.draft[field.key];
+  let control: string;
+  if (field.type === 'toggle') {
+    control = `<label class="settings-toggle"><input type="checkbox" ${base} ${draftVal === true ? 'checked' : ''} /><span></span></label>`;
+  } else if (field.type === 'select') {
+    const current = String(draftVal ?? '');
+    control = `<select class="settings-select" ${base}>${(field.options ?? [])
+      .map((o) => `<option value="${escapeAttr(o.value)}" ${o.value === current ? 'selected' : ''}>${escapeHtml(o.label)}</option>`)
+      .join('')}</select>`;
+  } else if (field.type === 'number') {
+    const bounds = [
+      field.min != null ? `min="${field.min}"` : '',
+      field.max != null ? `max="${field.max}"` : '',
+      field.step != null ? `step="${field.step}"` : ''
+    ].join(' ');
+    const unit = `<span class="settings-unit">${field.unit ? escapeHtml(field.unit) : ''}</span>`;
+    control = `<span class="settings-number"><input class="settings-input" type="number" ${base} ${bounds} value="${escapeAttr(String(draftVal ?? ''))}" />${unit}</span>`;
+  } else {
+    // text / password
+    const inputType = field.type === 'password' ? 'password' : 'text';
+    const savedValue = config.settings.values[field.key];
+    const isSet = field.secret
+      ? config.settings.secretsSet[field.key] === true || (savedValue != null && String(savedValue) !== '')
+      : false;
+    const placeholder = field.secret
+      ? isSet
+        ? '•••••••• (saved)'
+        : 'Not set'
+      : field.placeholder ?? '';
+    // Secret fields are write-only: the box starts empty and the gateway never
+    // echoes the value back, so a blank box means "keep the saved secret".
+    const val = field.secret ? '' : escapeAttr(String(draftVal ?? ''));
+    control = `<input class="settings-input settings-plugin-text" type="${inputType}" ${base} value="${val}" placeholder="${escapeAttr(placeholder)}" autocomplete="off" spellcheck="false" />`;
+  }
+  const help = field.help ? `<small>${escapeHtml(field.help)}</small>` : '';
+  return `
+    <div class="settings-line">
+      <div>
+        <span>${escapeHtml(field.label)}</span>
+        ${help}
+      </div>
+      ${control}
+    </div>`;
 }
 
 function renderWakeSchedules(bundle: SettingsBundle): string {

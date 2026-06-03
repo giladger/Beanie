@@ -387,3 +387,52 @@ export function demoPlugins(): PluginInfo[] {
     { id: 'time-to-ready', name: 'Time to ready', author: 'Decent', version: '1.0.0', loaded: false, autoLoad: false }
   ];
 }
+
+// Per-plugin configuration. `values` carries the non-secret settings; `secretsSet`
+// flags which secret fields (e.g. a password) currently have a value on the
+// gateway — the secret itself is never sent to the browser.
+export interface PluginSettings {
+  values: Record<string, string | number | boolean>;
+  secretsSet: Record<string, boolean>;
+}
+
+export interface PluginVerifyResult {
+  ok: boolean;
+  message: string;
+}
+
+export function readPluginSettings(value: unknown): PluginSettings {
+  const r = rec(value);
+  // Accept either an envelope ({ values, secretsSet }) or a flat settings map —
+  // reaprime returns the bare settings object, so default to treating the top
+  // level as the values.
+  const hasEnvelope = typeof r.values === 'object' && r.values !== null && !Array.isArray(r.values);
+  const rawValues = hasEnvelope ? rec(r.values) : r;
+  const values: Record<string, string | number | boolean> = {};
+  for (const [key, entry] of Object.entries(rawValues)) {
+    if (key === 'values' || key === 'secretsSet') continue;
+    if (typeof entry === 'string' || typeof entry === 'number' || typeof entry === 'boolean') {
+      values[key] = entry;
+    }
+  }
+  const rawSecrets = rec(r.secretsSet);
+  const secretsSet: Record<string, boolean> = {};
+  for (const [key, entry] of Object.entries(rawSecrets)) secretsSet[key] = entry === true;
+  return { values, secretsSet };
+}
+
+export function readPluginVerify(value: unknown): PluginVerifyResult {
+  const r = rec(value);
+  const ok = r.ok === true;
+  return { ok, message: str(r.message, ok ? 'Credentials verified' : 'Verification failed') };
+}
+
+export function demoPluginSettings(id: string): PluginSettings {
+  if (id.replace(/\.reaplugin$/i, '').toLowerCase() === 'visualizer') {
+    return {
+      values: { username: 'demo@visualizer.coffee', autoUpload: true, visibility: 'unlisted', minUploadSeconds: 6 },
+      secretsSet: { password: true }
+    };
+  }
+  return { values: {}, secretsSet: {} };
+}

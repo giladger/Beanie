@@ -43,6 +43,8 @@ import {
   readDe1Calibration,
   readDevices,
   readPlugins,
+  readPluginSettings,
+  readPluginVerify,
   readPresenceSettings,
   readReaSettings,
   readSkins,
@@ -52,6 +54,8 @@ import {
   type De1Calibration,
   type DeviceInfo,
   type PluginInfo,
+  type PluginSettings,
+  type PluginVerifyResult,
   type PresenceSettings,
   type PresenceSettingsPatch,
   type ReaSettings,
@@ -306,6 +310,12 @@ export const gateway = {
     fetchEmpty('settings', `/api/v1/plugins/${encodeURIComponent(id)}/enable`, { method: 'POST' }),
   disablePlugin: (id: string) =>
     fetchEmpty('settings', `/api/v1/plugins/${encodeURIComponent(id)}/disable`, { method: 'POST' }),
+  pluginSettings: (id: string) =>
+    fetchJson<PluginSettings>('settings', `/api/v1/plugins/${encodeURIComponent(id)}/settings`, readPluginSettings),
+  updatePluginSettings: (id: string, values: Record<string, string | number | boolean>) =>
+    fetchEmpty('settings', `/api/v1/plugins/${encodeURIComponent(id)}/settings`, { ...jsonPost(values), method: 'PUT' }),
+  verifyPlugin: (id: string) =>
+    fetchJson<PluginVerifyResult>('settings', `/api/v1/plugins/${encodeURIComponent(id)}/verify`, readPluginVerify, jsonPost({})),
   shots: (query: URLSearchParams) =>
     fetchJson<PaginatedShots>('shots', `/api/v1/shots?${query.toString()}`, readPaginatedShots),
   shot: (id: string) =>

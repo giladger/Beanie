@@ -77,11 +77,18 @@ import {
   setBundleField,
   type SettingsBundle
 } from './domain/settingsModel';
+import { demoPluginSettings } from './api/settings';
 import type {
   De1AdvancedSettingsPatch,
+  PluginSettings,
   PresenceSettingsPatch,
   ReaSettingsPatch
 } from './api/settings';
+import {
+  pluginFieldDefault,
+  pluginSettingsSpec,
+  type PluginConfigState
+} from './domain/pluginSettings';
 import { renderProfilePreview } from './components/profilePreview';
 import {
   addStep,
@@ -280,6 +287,7 @@ interface AppState {
   settingsSection: string;
   settingsBundle: SettingsBundle | null;
   settingsSource: 'gateway' | 'demo' | null;
+  pluginConfig: PluginConfigState | null;
   modal: Modal;
   editingBeanId: string | null;
   editingGrinderId: string | null;
@@ -343,6 +351,7 @@ export class BeanieApp {
     settingsSection: 'gateway',
     settingsBundle: null,
     settingsSource: null,
+    pluginConfig: null,
     modal: null,
     editingBeanId: null,
     editingGrinderId: null,
@@ -1238,6 +1247,15 @@ export class BeanieApp {
       case 'settings-reset-machine':
         await this.resetMachineSettings();
         break;
+      case 'settings-plugin-config':
+        if (id) await this.togglePluginConfig(id);
+        break;
+      case 'settings-plugin-save':
+        if (id) await this.savePluginConfig(id);
+        break;
+      case 'settings-plugin-verify':
+        if (id) await this.verifyPluginConfig(id);
+        break;
       case 'settings-scan-devices':
         await this.scanDevices();
         break;
@@ -1694,6 +1712,11 @@ export class BeanieApp {
     }
     if (target.dataset.action === 'settings-plugin-toggle') {
       void this.togglePlugin(target.dataset.id ?? '', (target as HTMLInputElement).checked);
+      return;
+    }
+    if (target.dataset.action === 'settings-plugin-field') {
+      const raw = target instanceof HTMLInputElement && target.type === 'checkbox' ? target.checked : target.value;
+      this.updatePluginField(target.dataset.key ?? '', raw);
       return;
     }
     if (target.dataset.action === 'settings-schedule-toggle') {
@@ -3038,7 +3061,7 @@ export class BeanieApp {
   private renderSettingsPage(): string {
     return `
       ${this.pageHeader('Settings', 'workbench', `<button class="icon-button" data-action="refresh" aria-label="Sync" title="Sync">${icon('refresh-cw')}</button>`)}
-      ${renderSettingsShell(this.settingsShellModel(), this.state.settingsSection, this.state.settingsBundle)}
+      ${renderSettingsShell(this.settingsShellModel(), this.state.settingsSection, this.state.settingsBundle, this.state.pluginConfig)}
     `;
   }
 
@@ -3662,6 +3685,120 @@ export class BeanieApp {
     } catch (error) {
       console.error('[Beanie] Plugin toggle failed', error);
       this.setState({ status: 'Plugin change failed' });
+    }
+  }
+
+  private async togglePluginConfig(id: string): Promise<void> {
+    if (this.state.pluginConfig?.id === id) {
+      this.setState({ pluginConfig: null });
+      return;
+    }
+    if (!pluginSettingsSpec(id)) return;
+    let settings: PluginSettings;
+    if (this.settingsLocal) {
+      settings = demoPluginSettings(id);
+    } else {
+      settings = await gateway.pluginSettings(id).catch((error) => {
+        console.error('[Beanie] Load plugin settings failed', error);
+        return demoPluginSettings(id);
+      });
+    }
+    this.setState({ pluginConfig: this.makePluginConfig(id, settings) });
+  }
+
+  private makePluginConfig(id: string, settings: PluginSettings): PluginConfigState {
+    const spec = pluginSettingsSpec(id);
+    const draft: Record<string, string | number | boolean> = {};
+    for (const field of spec?.fields ?? []) {
+      draft[field.key] = field.secret ? '' : settings.values[field.key] ?? pluginFieldDefault(field);
+    }
+    return { id, settings, draft, secretEdited: {}, dirty: false, saving: false, verify: null };
+  }
+
+  private updatePluginField(key: string, raw: string | boolean): void {
+    const config = this.state.pluginConfig;
+    if (!config) return;
+    const field = pluginSettingsSpec(config.id)?.fields.find((candidate) => candidate.key === key);
+    if (!field) return;
+    let value: string | number | boolean;
+    if (field.type === 'toggle') {
+      value = raw === true;
+    } else if (field.type === 'number') {
+      const parsed = Number(raw);
+      value = Number.isFinite(parsed) ? parsed : field.min ?? 0;
+    } else {
+      value = String(raw);
+    }
+    const draft = { ...config.draft, [key]: value };
+    const secretEdited = field.secret ? { ...config.secretEdited, [key]: String(value) !== '' } : config.secretEdited;
+    this.setState({ pluginConfig: { ...config, draft, secretEdited, dirty: true, verify: null } });
+  }
+
+  private async savePluginConfig(id: string): Promise<void> {
+    const config = this.state.pluginConfig;
+    if (!config || config.id !== id) return;
+    const spec = pluginSettingsSpec(id);
+    if (!spec) return;
+    // Build the payload + optimistic next state. Secret fields are only sent (and
+    // only marked "set") when the user actually typed a new value this session.
+    const payload: Record<string, string | number | boolean> = {};
+    const nextValues = { ...config.settings.values };
+    const nextSecretsSet = { ...config.settings.secretsSet };
+    for (const field of spec.fields) {
+      if (field.secret) {
+        if (config.secretEdited[field.key] && String(config.draft[field.key] ?? '') !== '') {
+          payload[field.key] = config.draft[field.key];
+          nextSecretsSet[field.key] = true;
+        }
+      } else {
+        payload[field.key] = config.draft[field.key];
+        nextValues[field.key] = config.draft[field.key];
+      }
+    }
+    const nextSettings: PluginSettings = { values: nextValues, secretsSet: nextSecretsSet };
+    if (this.settingsLocal) {
+      this.setState({ pluginConfig: this.makePluginConfig(id, nextSettings), status: 'Plugin settings saved (demo)' });
+      return;
+    }
+    this.setState({ pluginConfig: { ...config, saving: true } });
+    try {
+      await gateway.updatePluginSettings(id, payload);
+      this.setState({ pluginConfig: this.makePluginConfig(id, nextSettings), status: 'Plugin settings saved' });
+    } catch (error) {
+      console.error('[Beanie] Save plugin settings failed', error);
+      this.setState({ pluginConfig: { ...config, saving: false }, status: 'Plugin settings save failed' });
+    }
+  }
+
+  private async verifyPluginConfig(id: string): Promise<void> {
+    const config = this.state.pluginConfig;
+    if (!config || config.id !== id) return;
+    if (config.dirty) {
+      this.setState({ pluginConfig: { ...config, verify: { tone: 'warn', message: 'Save your changes before verifying.' } } });
+      return;
+    }
+    this.setState({ pluginConfig: { ...config, verify: { tone: 'muted', message: 'Verifying…' } } });
+    if (this.settingsLocal) {
+      const hasUser = String(config.settings.values.username ?? '') !== '';
+      const ok = hasUser && config.settings.secretsSet.password === true;
+      this.setState({
+        pluginConfig: {
+          ...config,
+          verify: { tone: ok ? 'good' : 'warn', message: ok ? 'Credentials look valid (demo).' : 'Add an email and password first.' }
+        }
+      });
+      return;
+    }
+    try {
+      const result = await gateway.verifyPlugin(id);
+      const current = this.state.pluginConfig;
+      if (!current || current.id !== id) return;
+      this.setState({ pluginConfig: { ...current, verify: { tone: result.ok ? 'good' : 'warn', message: result.message } } });
+    } catch (error) {
+      console.error('[Beanie] Verify plugin failed', error);
+      const current = this.state.pluginConfig;
+      if (!current || current.id !== id) return;
+      this.setState({ pluginConfig: { ...current, verify: { tone: 'warn', message: 'Verification failed.' } } });
     }
   }
 

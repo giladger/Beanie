@@ -10,3 +10,4 @@ import './waterSettings.test';
 import './cache.test';
 import './gateway.test';
 import './settings.test';
+import './pluginSettings.test';
