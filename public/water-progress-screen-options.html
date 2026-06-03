@@ -1,0 +1,816 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Beanie Water Progress Screen Options</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #070b0f;
+      --panel: #0d1419;
+      --panel-2: #131b22;
+      --line: #2a333b;
+      --line-soft: #1d252c;
+      --ink: #f4f7f8;
+      --soft: #b7c1c8;
+      --muted: #87949d;
+      --flush: #8ee38b;
+      --water: #93b7ef;
+      --steam: #8bd8df;
+      --stop: #ff655e;
+      --amber: #ffc452;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-weight: 800;
+    }
+
+    .board {
+      min-height: 100vh;
+      display: grid;
+      gap: 28px;
+      padding: 24px;
+    }
+
+    .board-head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 24px;
+      max-width: 1320px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 30px;
+      line-height: 1;
+    }
+
+    .board-head p {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 850;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .tabs a {
+      height: 40px;
+      padding: 0 14px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel);
+      color: var(--soft);
+      display: inline-flex;
+      align-items: center;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 950;
+    }
+
+    .option {
+      max-width: 1320px;
+      width: 100%;
+      margin: 0 auto;
+      display: grid;
+      gap: 10px;
+    }
+
+    .option-title {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      padding: 0 4px;
+    }
+
+    .option-title h2 {
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    .option-title span {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+
+    .screen {
+      width: 100%;
+      min-height: 620px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #091015;
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: 72px minmax(0, 1fr);
+      box-shadow: 0 18px 70px rgba(0, 0, 0, 0.24);
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 0 20px;
+      border-bottom: 1px solid var(--line);
+      background: #0b1217;
+    }
+
+    .back {
+      height: 44px;
+      padding: 0 18px 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #121a21;
+      color: var(--soft);
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 18px;
+    }
+
+    .topbar strong {
+      font-size: 22px;
+      line-height: 1;
+    }
+
+    .topbar .state-pill {
+      margin-left: auto;
+      height: 40px;
+      padding: 0 14px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 99px;
+      background: var(--flush);
+      box-shadow: 0 0 0 4px rgba(142, 227, 139, 0.12);
+    }
+
+    .icon {
+      width: 150px;
+      height: 150px;
+      color: var(--flush);
+      fill: none;
+      stroke: currentColor;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-width: 7;
+    }
+
+    .icon.water {
+      color: var(--water);
+    }
+
+    .icon.steam {
+      color: var(--steam);
+    }
+
+    .stop {
+      border: 1px solid color-mix(in srgb, var(--stop) 68%, var(--line));
+      border-radius: 8px;
+      background: #361e21;
+      color: var(--ink);
+      display: grid;
+      place-items: center;
+      font: inherit;
+      font-size: 28px;
+      font-weight: 950;
+    }
+
+    .stop:before {
+      content: "";
+      width: 28px;
+      height: 28px;
+      border: 4px solid var(--stop);
+      border-radius: 7px;
+      margin-bottom: 10px;
+    }
+
+    .meter {
+      height: 18px;
+      border: 1px solid var(--line);
+      border-radius: 99px;
+      background: #101820;
+      overflow: hidden;
+    }
+
+    .meter span {
+      display: block;
+      width: 62%;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--flush);
+    }
+
+    .stat {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+      display: grid;
+      align-content: center;
+      gap: 4px;
+      padding: 14px;
+    }
+
+    .stat span {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+
+    .stat strong {
+      font-size: 34px;
+      line-height: 0.95;
+    }
+
+    .stat em {
+      color: var(--soft);
+      font-style: normal;
+      font-size: 13px;
+    }
+
+    .option-a .content {
+      min-height: 0;
+      padding: 34px;
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) auto;
+      gap: 26px;
+    }
+
+    .focus-main {
+      display: grid;
+      place-items: center;
+      gap: 22px;
+      text-align: center;
+    }
+
+    .timer-ring {
+      width: 310px;
+      height: 310px;
+      border-radius: 999px;
+      background:
+        radial-gradient(circle at center, #091015 0 62%, transparent 63%),
+        conic-gradient(var(--flush) 0 224deg, #182129 224deg 360deg);
+      display: grid;
+      place-items: center;
+      position: relative;
+    }
+
+    .timer-ring:after {
+      content: "";
+      position: absolute;
+      inset: 22px;
+      border: 1px solid var(--line);
+      border-radius: inherit;
+    }
+
+    .timer-center {
+      display: grid;
+      place-items: center;
+      gap: 4px;
+      z-index: 1;
+    }
+
+    .timer-center .icon {
+      width: 96px;
+      height: 96px;
+    }
+
+    .remaining {
+      font-size: 86px;
+      line-height: 0.88;
+    }
+
+    .remaining-label {
+      color: var(--muted);
+      font-size: 14px;
+      text-transform: uppercase;
+    }
+
+    .focus-meta {
+      color: var(--soft);
+      font-size: 22px;
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .focus-actions {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 300px;
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    .focus-actions .stop {
+      min-height: 116px;
+    }
+
+    .status-strip {
+      min-height: 116px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .strip-item {
+      min-width: 0;
+      padding: 18px;
+      display: grid;
+      align-content: center;
+      gap: 6px;
+      border-right: 1px solid var(--line-soft);
+    }
+
+    .strip-item:last-child {
+      border-right: 0;
+    }
+
+    .strip-item span {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+
+    .strip-item strong {
+      font-size: 28px;
+      line-height: 1;
+    }
+
+    .option-b .content {
+      padding: 34px;
+      display: grid;
+      grid-template-columns: 0.85fr 1.25fr 280px;
+      gap: 22px;
+      align-items: center;
+    }
+
+    .appliance-icon {
+      min-height: 360px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      display: grid;
+      place-items: center;
+    }
+
+    .appliance-icon .icon {
+      width: 210px;
+      height: 210px;
+    }
+
+    .appliance-center {
+      min-width: 0;
+      display: grid;
+      gap: 24px;
+    }
+
+    .appliance-title {
+      display: grid;
+      gap: 8px;
+    }
+
+    .appliance-title span,
+    .phase span {
+      color: var(--muted);
+      font-size: 13px;
+      text-transform: uppercase;
+    }
+
+    .appliance-title h3 {
+      font-size: 76px;
+      line-height: 0.9;
+    }
+
+    .count-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .count-box {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+      padding: 18px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .count-box span {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+
+    .count-box strong {
+      font-size: 54px;
+      line-height: 0.9;
+    }
+
+    .appliance-stop {
+      min-height: 360px;
+    }
+
+    .option-c .content {
+      padding: 28px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .mini-screen {
+      min-width: 0;
+      min-height: 520px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 22px;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto auto;
+      gap: 18px;
+    }
+
+    .mini-screen.water {
+      --accent: var(--water);
+    }
+
+    .mini-screen.flush {
+      --accent: var(--flush);
+    }
+
+    .mini-screen.steam {
+      --accent: var(--steam);
+    }
+
+    .mini-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      gap: 12px;
+    }
+
+    .mini-head span {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+
+    .mini-head h3 {
+      margin-top: 4px;
+      font-size: 32px;
+      line-height: 0.95;
+    }
+
+    .mini-chip {
+      height: 34px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 99px;
+      color: var(--soft);
+      display: inline-flex;
+      align-items: center;
+      font-size: 12px;
+    }
+
+    .mini-visual {
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0a1116;
+      color: var(--accent);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .mini-visual .icon {
+      width: 136px;
+      height: 136px;
+      color: var(--accent);
+      z-index: 1;
+    }
+
+    .cup-fill {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 44%;
+      background: color-mix(in srgb, var(--accent) 20%, transparent);
+      border-top: 1px solid color-mix(in srgb, var(--accent) 65%, transparent);
+    }
+
+    .drain-lines {
+      position: absolute;
+      inset: 20px;
+      background: repeating-linear-gradient(90deg, transparent 0 34px, color-mix(in srgb, var(--accent) 16%, transparent) 35px 36px);
+    }
+
+    .steam-lines {
+      position: absolute;
+      inset: 24px;
+      background: repeating-radial-gradient(circle at 50% 100%, transparent 0 22px, color-mix(in srgb, var(--accent) 18%, transparent) 23px 24px);
+    }
+
+    .mini-time {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 12px;
+    }
+
+    .mini-time strong {
+      font-size: 58px;
+      line-height: 0.85;
+    }
+
+    .mini-time span {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+
+    .mini-screen .meter span {
+      background: var(--accent);
+    }
+
+    .mini-stats {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .mini-stat {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+      padding: 10px;
+      display: grid;
+      gap: 4px;
+    }
+
+    .mini-stat span {
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+
+    .mini-stat strong {
+      font-size: 24px;
+      line-height: 1;
+    }
+
+    .mini-stop {
+      min-height: 76px;
+      font-size: 22px;
+    }
+
+    @media (max-width: 900px) {
+      .board {
+        padding: 14px;
+      }
+
+      .board-head {
+        align-items: start;
+        flex-direction: column;
+      }
+
+      .screen {
+        min-height: auto;
+      }
+
+      .option-a .content,
+      .option-b .content,
+      .option-c .content {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .focus-actions {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .status-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .appliance-stop {
+        min-height: 120px;
+      }
+
+      .mini-screen {
+        min-height: 500px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="board">
+    <header class="board-head">
+      <div>
+        <h1>Water Action Progress Screens</h1>
+        <p>Three static layout directions for steam, hot water, and flush run states.</p>
+      </div>
+      <nav class="tabs" aria-label="Options">
+        <a href="#focus">Option 1: Focus</a>
+        <a href="#appliance">Option 2: Appliance</a>
+        <a href="#specific">Option 3: Specific</a>
+      </nav>
+    </header>
+
+    <section class="option option-a" id="focus">
+      <div class="option-title">
+        <h2>Option 1: Focus Mode</h2>
+        <span>Best for quick actions and giant touch targets</span>
+      </div>
+      <div class="screen">
+        <div class="topbar">
+          <div class="back">‹ Back</div>
+          <strong>Flushing</strong>
+          <div class="state-pill"><i class="dot"></i> Running</div>
+        </div>
+        <div class="content">
+          <section class="focus-main">
+            <div class="timer-ring">
+              <div class="timer-center">
+                <svg class="icon" viewBox="0 0 160 160" aria-hidden="true">
+                  <path d="M49 38h62v43H49zM43 89h74M80 99c-13 16-20 25-20 35 0 12 9 21 20 21s20-9 20-21c0-10-7-19-20-35z"/>
+                </svg>
+              </div>
+            </div>
+            <div>
+              <div class="remaining">8.4s</div>
+              <div class="remaining-label">remaining</div>
+            </div>
+            <div class="focus-meta">
+              <span>6.0 ml/s</span>
+              <span>90 C target</span>
+              <span>88 C group</span>
+            </div>
+          </section>
+          <section class="focus-actions">
+            <div class="status-strip">
+              <div class="strip-item"><span>Elapsed</span><strong>1.6s</strong></div>
+              <div class="strip-item"><span>Target</span><strong>10.0s</strong></div>
+              <div class="strip-item"><span>Progress</span><strong>16%</strong></div>
+              <div class="strip-item"><span>State</span><strong>Flush</strong></div>
+            </div>
+            <button class="stop" type="button">Stop</button>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <section class="option option-b" id="appliance">
+      <div class="option-title">
+        <h2>Option 2: Appliance Panel</h2>
+        <span>Balanced control surface, compact but still direct</span>
+      </div>
+      <div class="screen">
+        <div class="topbar">
+          <div class="back">‹ Back</div>
+          <strong>Pouring hot water</strong>
+          <div class="state-pill"><i class="dot" style="background: var(--water); box-shadow: 0 0 0 4px rgba(147, 183, 239, 0.12)"></i> Running</div>
+        </div>
+        <div class="content">
+          <section class="appliance-icon">
+            <svg class="icon water" viewBox="0 0 160 160" aria-hidden="true">
+              <path d="M80 14c14 31 41 46 41 82 0 31-21 53-41 53s-41-22-41-53c0-36 27-51 41-82zm-25 86c4 20 17 31 39 33"/>
+            </svg>
+          </section>
+          <section class="appliance-center">
+            <div class="appliance-title">
+              <span>Hot water</span>
+              <h3>Pouring</h3>
+            </div>
+            <div class="meter"><span style="width: 44%; background: var(--water)"></span></div>
+            <div class="count-row">
+              <div class="count-box"><span>Remaining</span><strong>16.8</strong><span>s</span></div>
+              <div class="count-box"><span>Volume</span><strong>74</strong><span>of 180 ml</span></div>
+            </div>
+            <div class="count-row">
+              <div class="count-box"><span>Flow</span><strong>7.0</strong><span>ml/s</span></div>
+              <div class="count-box"><span>Water temp</span><strong>86</strong><span>C</span></div>
+            </div>
+          </section>
+          <button class="stop appliance-stop" type="button">Stop</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="option option-c" id="specific">
+      <div class="option-title">
+        <h2>Option 3: State-Specific Cards</h2>
+        <span>Same structure, different visual metaphor per action</span>
+      </div>
+      <div class="screen">
+        <div class="topbar">
+          <div class="back">‹ Back</div>
+          <strong>Action Progress Variants</strong>
+          <div class="state-pill">Static comparison</div>
+        </div>
+        <div class="content">
+          <section class="mini-screen water">
+            <div class="mini-head">
+              <div><span>Hot water</span><h3>Filling cup</h3></div>
+              <div class="mini-chip">Tea</div>
+            </div>
+            <div class="mini-visual">
+              <div class="cup-fill"></div>
+              <svg class="icon water" viewBox="0 0 160 160" aria-hidden="true">
+                <path d="M80 14c14 31 41 46 41 82 0 31-21 53-41 53s-41-22-41-53c0-36 27-51 41-82zm-25 86c4 20 17 31 39 33"/>
+              </svg>
+            </div>
+            <div class="mini-time"><div><strong>96</strong><span>ml poured</span></div><span>180 ml target</span></div>
+            <div class="meter"><span style="width: 53%"></span></div>
+            <div class="mini-stats">
+              <div class="mini-stat"><span>Flow</span><strong>7.0</strong></div>
+              <div class="mini-stat"><span>Temp</span><strong>90</strong></div>
+              <div class="mini-stat"><span>Left</span><strong>12s</strong></div>
+            </div>
+            <button class="stop mini-stop" type="button">Stop</button>
+          </section>
+
+          <section class="mini-screen flush">
+            <div class="mini-head">
+              <div><span>Flush</span><h3>Clearing group</h3></div>
+              <div class="mini-chip">Quick</div>
+            </div>
+            <div class="mini-visual">
+              <div class="drain-lines"></div>
+              <svg class="icon" viewBox="0 0 160 160" aria-hidden="true">
+                <path d="M49 38h62v43H49zM43 89h74M80 99c-13 16-20 25-20 35 0 12 9 21 20 21s20-9 20-21c0-10-7-19-20-35z"/>
+              </svg>
+            </div>
+            <div class="mini-time"><div><strong>6.4</strong><span>s remaining</span></div><span>10s target</span></div>
+            <div class="meter"><span style="width: 36%"></span></div>
+            <div class="mini-stats">
+              <div class="mini-stat"><span>Flow</span><strong>6.0</strong></div>
+              <div class="mini-stat"><span>Temp</span><strong>90</strong></div>
+              <div class="mini-stat"><span>Group</span><strong>88</strong></div>
+            </div>
+            <button class="stop mini-stop" type="button">Stop</button>
+          </section>
+
+          <section class="mini-screen steam">
+            <div class="mini-head">
+              <div><span>Steam</span><h3>Texturing milk</h3></div>
+              <div class="mini-chip">Medium</div>
+            </div>
+            <div class="mini-visual">
+              <div class="steam-lines"></div>
+              <svg class="icon steam" viewBox="0 0 160 160" aria-hidden="true">
+                <path d="M43 103c-18-2-31-17-31-35 0-17 12-31 28-34C49 15 67 5 88 5c27 0 49 19 54 45 14 5 24 18 24 34 0 20-16 36-36 36H43zm41-74v92M61 35c18 14 25 28 25 51M107 35c-17 14-24 28-24 51"/>
+              </svg>
+            </div>
+            <div class="mini-time"><div><strong>28</strong><span>s elapsed</span></div><span>no probe stop</span></div>
+            <div class="meter"><span style="width: 56%"></span></div>
+            <div class="mini-stats">
+              <div class="mini-stat"><span>Flow</span><strong>0.8</strong></div>
+              <div class="mini-stat"><span>Steam</span><strong>132</strong></div>
+              <div class="mini-stat"><span>Target</span><strong>150</strong></div>
+            </div>
+            <button class="stop mini-stop" type="button">Stop</button>
+          </section>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
