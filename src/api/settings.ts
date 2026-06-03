@@ -306,3 +306,107 @@ export function demoCalibration(): De1Calibration {
 export function demoPresenceSettings(): PresenceSettings {
   return { userPresenceEnabled: true, sleepTimeoutMinutes: 30, wakeSchedules: [] };
 }
+
+// --- devices · wake schedules · plugins ----------------------------------
+
+export type DeviceState = 'connected' | 'disconnected';
+export type DeviceKind = 'machine' | 'scale' | 'sensor';
+
+export interface DeviceInfo {
+  id: string;
+  name: string;
+  state: DeviceState;
+  type: DeviceKind;
+}
+
+export interface WakeSchedule {
+  id: string;
+  time: string; // "HH:MM"
+  daysOfWeek: number[]; // ISO 1=Mon … 7=Sun; empty = every day
+  enabled: boolean;
+  keepAwakeFor: number | null;
+}
+
+export interface PluginInfo {
+  id: string;
+  name: string;
+  author: string;
+  version: string;
+  loaded: boolean;
+  autoLoad: boolean;
+}
+
+export function readDevices(value: unknown): DeviceInfo[] {
+  const list = Array.isArray(value) ? value : [];
+  return list
+    .map((entry) => {
+      const r = rec(entry);
+      return {
+        id: str(r.id, ''),
+        name: str(r.name, str(r.id, 'Unknown device')),
+        state: r.state === 'connected' ? 'connected' : ('disconnected' as DeviceState),
+        type: enumOr(r.type, ['machine', 'scale', 'sensor'] as DeviceKind[], 'sensor')
+      };
+    })
+    .filter((d) => d.id !== '');
+}
+
+export function readWakeSchedules(value: unknown): WakeSchedule[] {
+  const list = Array.isArray(value) ? value : [];
+  return list
+    .map((entry) => {
+      const r = rec(entry);
+      const hour = num(r.hour, NaN);
+      const minute = num(r.minute, NaN);
+      const time = typeof r.time === 'string'
+        ? r.time
+        : Number.isFinite(hour)
+          ? `${String(hour).padStart(2, '0')}:${String(Number.isFinite(minute) ? minute : 0).padStart(2, '0')}`
+          : '';
+      return {
+        id: str(r.id, ''),
+        time,
+        daysOfWeek: Array.isArray(r.daysOfWeek)
+          ? r.daysOfWeek.map((d) => num(d, 0)).filter((d) => d >= 1 && d <= 7)
+          : [],
+        enabled: bool(r.enabled, true),
+        keepAwakeFor: numOrNull(r.keepAwakeFor)
+      };
+    })
+    .filter((s) => s.id !== '' && s.time !== '');
+}
+
+export function readPlugins(value: unknown): PluginInfo[] {
+  const list = Array.isArray(value) ? value : [];
+  return list
+    .map((entry) => {
+      const r = rec(entry);
+      return {
+        id: str(r.id, ''),
+        name: str(r.name, str(r.id, 'Plugin')),
+        author: str(r.author, ''),
+        version: str(r.version, ''),
+        loaded: bool(r.loaded),
+        autoLoad: bool(r.autoLoad)
+      };
+    })
+    .filter((p) => p.id !== '');
+}
+
+export function demoDevices(): DeviceInfo[] {
+  return [
+    { id: 'MockDe1', name: 'DE1 (simulated)', state: 'connected', type: 'machine' },
+    { id: 'MockScale', name: 'Decent Scale (simulated)', state: 'connected', type: 'scale' }
+  ];
+}
+
+export function demoWakeSchedules(): WakeSchedule[] {
+  return [{ id: 'demo-1', time: '06:30', daysOfWeek: [1, 2, 3, 4, 5], enabled: true, keepAwakeFor: 60 }];
+}
+
+export function demoPlugins(): PluginInfo[] {
+  return [
+    { id: 'visualizer', name: 'Visualizer upload', author: 'Decent', version: '1.0.0', loaded: true, autoLoad: true },
+    { id: 'time-to-ready', name: 'Time to ready', author: 'Decent', version: '1.0.0', loaded: false, autoLoad: false }
+  ];
+}

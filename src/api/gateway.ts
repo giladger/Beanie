@@ -35,19 +35,25 @@ import {
   readDe1AdvancedSettings,
   readDe1Calibration,
   readDe1Settings,
+  readDevices,
+  readPlugins,
   readPresenceSettings,
   readReaSettings,
   readSkins,
+  readWakeSchedules,
   type De1AdvancedSettings,
   type De1AdvancedSettingsPatch,
   type De1Calibration,
   type De1Settings,
   type De1SettingsPatch,
+  type DeviceInfo,
+  type PluginInfo,
   type PresenceSettings,
   type PresenceSettingsPatch,
   type ReaSettings,
   type ReaSettingsPatch,
-  type SkinInfo
+  type SkinInfo,
+  type WakeSchedule
 } from './settings';
 
 function resolveGatewayOrigin(): string {
@@ -254,6 +260,44 @@ export const gateway = {
   updatePresenceSettings: (patch: PresenceSettingsPatch) =>
     fetchEmpty('settings', '/api/v1/presence/settings', jsonPost(patch)),
   skins: () => fetchJson<SkinInfo[]>('settings', '/api/v1/webui/skins', readSkins),
+
+  // --- devices (pairing) ---
+  devices: () => fetchJson<DeviceInfo[]>('settings', '/api/v1/devices', readDevices),
+  scanDevices: async (): Promise<DeviceInfo[]> => {
+    // Scan-only (no auto-connect) so the user explicitly picks a device, then list.
+    await fetchEmpty('settings', '/api/v1/devices/scan?connect=false');
+    return fetchJson<DeviceInfo[]>('settings', '/api/v1/devices', readDevices);
+  },
+  connectDevice: (deviceId: string) =>
+    fetchEmpty('settings', '/api/v1/devices/connect', { ...jsonPost({ deviceId }), method: 'PUT' }),
+  disconnectDevice: (deviceId: string) =>
+    fetchEmpty('settings', '/api/v1/devices/disconnect', { ...jsonPost({ deviceId }), method: 'PUT' }),
+
+  // --- maintenance (machine state) + firmware ---
+  setMachineState: (state: string) =>
+    fetchEmpty('machine', `/api/v1/machine/state/${encodeURIComponent(state)}`, { method: 'PUT' }),
+  uploadFirmware: (bytes: ArrayBuffer) =>
+    fetchEmpty('machine', '/api/v1/machine/firmware', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: bytes
+    }),
+
+  // --- wake schedules ---
+  wakeSchedules: () => fetchJson<WakeSchedule[]>('settings', '/api/v1/presence/schedules', readWakeSchedules),
+  addWakeSchedule: (body: { time: string; daysOfWeek: number[]; enabled: boolean; keepAwakeFor?: number | null }) =>
+    fetchEmpty('settings', '/api/v1/presence/schedules', jsonPost(body)),
+  updateWakeSchedule: (id: string, body: Partial<WakeSchedule>) =>
+    fetchEmpty('settings', `/api/v1/presence/schedules/${encodeURIComponent(id)}`, { ...jsonPost(body), method: 'PUT' }),
+  deleteWakeSchedule: (id: string) =>
+    fetchEmpty('settings', `/api/v1/presence/schedules/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  // --- plugins ---
+  plugins: () => fetchJson<PluginInfo[]>('settings', '/api/v1/plugins', readPlugins),
+  enablePlugin: (id: string) =>
+    fetchEmpty('settings', `/api/v1/plugins/${encodeURIComponent(id)}/enable`, { method: 'POST' }),
+  disablePlugin: (id: string) =>
+    fetchEmpty('settings', `/api/v1/plugins/${encodeURIComponent(id)}/disable`, { method: 'POST' }),
   shots: (query: URLSearchParams) =>
     fetchJson<PaginatedShots>('shots', `/api/v1/shots?${query.toString()}`, readPaginatedShots),
   shot: (id: string) =>

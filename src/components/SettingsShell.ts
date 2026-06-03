@@ -63,9 +63,29 @@ function settingsSections(model: SettingsShellModel, bundle: SettingsBundle | nu
   ];
   // reaprime-backed sections (only when settings have loaded from the gateway/demo)
   if (bundle) {
+    sections.push({
+      id: 'devices',
+      title: 'Devices',
+      terms: 'bluetooth scan connect machine scale pair device',
+      html: renderDevicesSection(bundle)
+    });
     for (const spec of SETTINGS_SPEC) {
       sections.push({ id: spec.id, title: spec.title, terms: spec.terms, html: renderSpecSection(spec, bundle) });
     }
+    sections.push(
+      {
+        id: 'maintenance',
+        title: 'Maintenance',
+        terms: 'descale clean sleep firmware update flush',
+        html: renderMaintenanceSection()
+      },
+      {
+        id: 'plugins',
+        title: 'Plugins',
+        terms: 'plugins visualizer extensions enable disable',
+        html: renderPluginsSection(bundle)
+      }
+    );
   }
   sections.push(
     {
@@ -92,14 +112,98 @@ function settingsSections(model: SettingsShellModel, bundle: SettingsBundle | nu
 
 function renderSpecSection(section: SettingsSpecSection, bundle: SettingsBundle): string {
   const rows = section.fields.map((field) => renderSettingsField(field, bundle)).join('');
-  const extra = section.id === 'machine-advanced'
-    ? settingControlRow(
-        'Reset machine settings',
-        'Restore DE1 fan, heater, refill, calibration, and purge defaults',
-        `<button type="button" class="text-button" data-action="settings-reset-machine">${icon('rotate-ccw')}<span>Reset</span></button>`
-      )
-    : '';
+  let extra = '';
+  if (section.id === 'machine-advanced') {
+    extra = settingControlRow(
+      'Reset machine settings',
+      'Restore DE1 fan, heater, refill, calibration, and purge defaults',
+      `<button type="button" class="text-button" data-action="settings-reset-machine">${icon('rotate-ccw')}<span>Reset</span></button>`
+    );
+  } else if (section.id === 'power') {
+    extra = renderWakeSchedules(bundle);
+  }
   return renderSection(section.title, rows + extra);
+}
+
+function renderDevicesSection(bundle: SettingsBundle): string {
+  const scan = settingControlRow(
+    'Bluetooth devices',
+    'Scan for machines and scales, then connect',
+    `<button type="button" class="text-button" data-action="settings-scan-devices">${icon('refresh-cw')}<span>Scan</span></button>`
+  );
+  const rows = bundle.devices.length
+    ? bundle.devices.map(renderDeviceRow).join('')
+    : `<p class="settings-empty">No devices found yet — tap Scan to search.</p>`;
+  return renderSection('Devices', scan + rows);
+}
+
+function renderDeviceRow(device: SettingsBundle['devices'][number]): string {
+  const connected = device.state === 'connected';
+  const action = connected ? 'settings-disconnect-device' : 'settings-connect-device';
+  const label = connected ? 'Disconnect' : 'Connect';
+  return settingControlRow(
+    device.name,
+    `${device.type} · ${connected ? 'connected' : 'available'}`,
+    `<button type="button" class="text-button ${connected ? '' : 'primary'}" data-action="${action}" data-id="${escapeAttr(device.id)}">${escapeHtml(label)}</button>`
+  );
+}
+
+function renderMaintenanceSection(): string {
+  const stateBtn = (state: string, label: string): string =>
+    `<button type="button" class="text-button" data-action="settings-machine-state" data-value="${state}">${escapeHtml(label)}</button>`;
+  return renderSection('Maintenance', [
+    settingControlRow('Descale', 'Run the descaling cycle on the machine', stateBtn('descaling', 'Start descale')),
+    settingControlRow('Clean', 'Run the cleaning cycle', stateBtn('cleaning', 'Start clean')),
+    settingControlRow('Sleep', 'Put the machine to sleep', stateBtn('sleeping', 'Sleep')),
+    settingControlRow(
+      'Firmware update',
+      'Upload a DE1 firmware file — the machine applies it (this can take a while)',
+      `<label class="text-button"><input type="file" accept=".bin,.fw,.dfu" data-action="settings-firmware" hidden />${icon('save')}<span>Upload…</span></label>`
+    )
+  ].join(''));
+}
+
+function renderPluginsSection(bundle: SettingsBundle): string {
+  if (!bundle.plugins.length) return renderSection('Plugins', `<p class="settings-empty">No plugins installed.</p>`);
+  const rows = bundle.plugins
+    .map((plugin) =>
+      settingControlRow(
+        plugin.name,
+        [plugin.author, plugin.version ? `v${plugin.version}` : ''].filter(Boolean).join(' · '),
+        `<label class="settings-toggle"><input type="checkbox" data-action="settings-plugin-toggle" data-id="${escapeAttr(plugin.id)}" ${plugin.loaded ? 'checked' : ''} /><span></span></label>`
+      )
+    )
+    .join('');
+  return renderSection('Plugins', rows);
+}
+
+function renderWakeSchedules(bundle: SettingsBundle): string {
+  const dayNames = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const fmtDays = (days: number[]): string => (days.length === 0 ? 'Every day' : days.map((d) => dayNames[d] ?? '').join(' '));
+  const rows = bundle.schedules
+    .map(
+      (schedule) => `
+        <div class="settings-line">
+          <div>
+            <span>${escapeHtml(schedule.time)}</span>
+            <small>${escapeHtml(fmtDays(schedule.daysOfWeek))}${schedule.keepAwakeFor ? ` · keep awake ${schedule.keepAwakeFor}m` : ''}</small>
+          </div>
+          <span class="settings-schedule-actions">
+            <label class="settings-toggle"><input type="checkbox" data-action="settings-schedule-toggle" data-id="${escapeAttr(schedule.id)}" ${schedule.enabled ? 'checked' : ''} /><span></span></label>
+            <button type="button" class="text-button" data-action="settings-schedule-delete" data-id="${escapeAttr(schedule.id)}" aria-label="Delete schedule">${icon('x')}</button>
+          </span>
+        </div>`
+    )
+    .join('');
+  const add = `
+    <div class="settings-line">
+      <div><span>Add wake schedule</span><small>Wakes daily at the chosen time</small></div>
+      <span class="settings-schedule-add">
+        <input class="settings-input" type="time" data-action="settings-schedule-time" value="06:30" />
+        <button type="button" class="text-button primary" data-action="settings-schedule-add">${icon('plus')}<span>Add</span></button>
+      </span>
+    </div>`;
+  return `<div class="settings-subsection"><h4>Wake schedules</h4>${rows}${add}</div>`;
 }
 
 function renderSettingsField(field: SettingsField, bundle: SettingsBundle): string {

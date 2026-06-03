@@ -12,14 +12,20 @@ import {
   demoCalibration,
   demoDe1AdvancedSettings,
   demoDe1Settings,
+  demoDevices,
+  demoPlugins,
   demoPresenceSettings,
   demoReaSettings,
+  demoWakeSchedules,
   type De1AdvancedSettings,
   type De1Calibration,
   type De1Settings,
+  type DeviceInfo,
+  type PluginInfo,
   type PresenceSettings,
   type ReaSettings,
-  type SkinInfo
+  type SkinInfo,
+  type WakeSchedule
 } from '../api/settings';
 
 export interface SettingsBundle {
@@ -29,6 +35,9 @@ export interface SettingsBundle {
   calibration: De1Calibration;
   presence: PresenceSettings;
   skins: SkinInfo[];
+  devices: DeviceInfo[];
+  plugins: PluginInfo[];
+  schedules: WakeSchedule[];
 }
 
 export type SettingsGroup = 'rea' | 'de1' | 'advanced' | 'calibration' | 'presence';
@@ -176,7 +185,10 @@ export function demoSettingsBundle(): SettingsBundle {
       { id: 'beanie', name: 'Beanie' },
       { id: 'streamline.js', name: 'streamline.js' },
       { id: 'decent.baseline', name: 'decent.baseline' }
-    ]
+    ],
+    devices: demoDevices(),
+    plugins: demoPlugins(),
+    schedules: demoWakeSchedules()
   };
 }
 

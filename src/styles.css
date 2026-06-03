@@ -2967,6 +2967,41 @@ p {
   text-transform: uppercase;
 }
 
+.settings-empty {
+  margin: 8px 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.settings-subsection {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.settings-subsection h4 {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.settings-schedule-actions,
+.settings-schedule-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.text-button.primary {
+  border-color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 18%, transparent);
+  color: var(--ink);
+}
+
 .settings-segmented {
   min-width: 0;
   display: inline-flex;
