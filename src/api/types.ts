@@ -34,8 +34,6 @@ export interface MachineSnapshot {
   targetGroupTemperature: number;
   profileFrame: number;
   steamTemperature: number;
-  /** Tank water level in ml, when the machine reports it. */
-  waterLevel?: number | null;
 }
 
 export interface MachineCapabilities {

@@ -318,6 +318,7 @@ interface AppState {
   machineSettings: De1MachineSettings | null;
   machine: MachineSnapshot | null;
   scale: ScaleSnapshot | null;
+  waterLevel: number | null;
   liveActive: boolean;
   liveChartMode: LiveChartMode;
   asleep: boolean;
@@ -385,6 +386,7 @@ export class BeanieApp {
     machineSettings: null,
     machine: null,
     scale: null,
+    waterLevel: null,
     liveActive: false,
     liveChartMode: 'preset30',
     asleep: false,
@@ -395,8 +397,10 @@ export class BeanieApp {
   private applyTimer: number | null = null;
   private machineRetryTimer: number | null = null;
   private scaleRetryTimer: number | null = null;
+  private waterRetryTimer: number | null = null;
   private machineSocket: WebSocket | null = null;
   private scaleSocket: WebSocket | null = null;
+  private waterSocket: WebSocket | null = null;
 
   private readonly liveShot = new LiveShotSession();
   private liveChart: LiveChart | null = null;
@@ -437,10 +441,12 @@ export class BeanieApp {
     if (this.applyTimer != null) window.clearTimeout(this.applyTimer);
     if (this.machineRetryTimer != null) window.clearTimeout(this.machineRetryTimer);
     if (this.scaleRetryTimer != null) window.clearTimeout(this.scaleRetryTimer);
+    if (this.waterRetryTimer != null) window.clearTimeout(this.waterRetryTimer);
     if (this.simTimer != null) window.clearTimeout(this.simTimer);
     if (this.liveRaf != null) window.cancelAnimationFrame(this.liveRaf);
     this.machineSocket?.close();
     this.scaleSocket?.close();
+    this.waterSocket?.close();
   }
 
   private async load(): Promise<void> {
@@ -484,6 +490,7 @@ export class BeanieApp {
       void this.loadMachineControlState();
       this.connectMachineSocket();
       this.connectScaleSocket();
+      this.connectWaterLevelSocket();
     } catch (error) {
       console.warn('[Beanie] Gateway unavailable; using demo data', error);
       this.loadDemo();
@@ -1045,6 +1052,33 @@ export class BeanieApp {
     };
   }
 
+  // The DE1 tank level arrives on its own socket (separate from the snapshot).
+  // It changes slowly, so patch the top-bar readout by reference rather than
+  // re-rendering the whole app on every frame.
+  private connectWaterLevelSocket(): void {
+    if (this.state.demo) return;
+    this.waterSocket?.close();
+    const ws = new WebSocket(`${gatewayWsOrigin()}/ws/v1/machine/waterLevels`);
+    this.waterSocket = ws;
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data) as { currentLevel?: unknown };
+        const level = typeof data.currentLevel === 'number' && Number.isFinite(data.currentLevel) ? data.currentLevel : null;
+        if (level === this.state.waterLevel) return;
+        this.state.waterLevel = level;
+        const el = this.root.querySelector<HTMLElement>('#stat-water');
+        if (el) el.textContent = water(level);
+      } catch (error) {
+        console.warn('[Beanie] Bad water level frame', error);
+      }
+    };
+    ws.onclose = () => {
+      if (this.waterSocket !== ws) return;
+      if (this.waterRetryTimer != null) window.clearTimeout(this.waterRetryTimer);
+      this.waterRetryTimer = window.setTimeout(() => this.connectWaterLevelSocket(), 3000);
+    };
+  }
+
   // Feed one telemetry frame (from either socket, or the demo simulator) into the
   // live-shot session. The hot path deliberately avoids a full re-render: while a
   // shot is active we only redraw the canvas and patch readout text by reference.
@@ -1158,7 +1192,7 @@ export class BeanieApp {
     set('stat-machine', machineStatus(machine, this.state.loading));
     set('stat-group', temp(machine?.groupTemperature));
     set('stat-steam', temp(machine?.steamTemperature));
-    set('stat-water', water(machine?.waterLevel));
+    set('stat-water', water(this.state.waterLevel));
     set('stat-scale', scale?.status === 'disconnected' ? 'offline' : `${formatNumber(scale?.weight, 1)} g`);
   }
 
@@ -3099,7 +3133,7 @@ export class BeanieApp {
             ${topStat('Status', machineStatus(machine, this.state.loading), 'stat-machine')}
             ${topStat('Group', temp(machine?.groupTemperature), 'stat-group')}
             ${topStat('Steam', temp(machine?.steamTemperature), 'stat-steam')}
-            ${topStat('Water', water(machine?.waterLevel), 'stat-water')}
+            ${topStat('Water', water(this.state.waterLevel), 'stat-water')}
             ${topStat('Scale', scale?.status === 'disconnected' ? 'offline' : `${formatNumber(scale?.weight, 1)} g`, 'stat-scale')}
           </div>
           ${machineCommands}
@@ -5397,7 +5431,8 @@ function temp(value: number | null | undefined): string {
 }
 
 function water(value: number | null | undefined): string {
-  return value == null ? '--' : `${Math.round(value)} ml`;
+  // The DE1 reports tank level as a height in millimetres (same as Streamline).
+  return value == null ? '--' : `${Math.round(value)} mm`;
 }
 
 // A friendly readiness label instead of the raw machine state. Heating shows
