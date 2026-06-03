@@ -2799,7 +2799,7 @@ export class BeanieApp {
           </div>
           ${machineCommands}
           <div class="top-icons" role="toolbar" aria-label="Skin actions">
-            <button class="icon-tool" data-action="open-machine-settings" aria-label="Machine settings" title="Machine settings">${icon('sliders-horizontal')}</button>
+            <button class="icon-tool" data-action="open-machine-settings" aria-label="Machine settings" title="Machine settings">${icon('droplet')}</button>
             <button class="icon-tool" data-action="open-settings" aria-label="Settings" title="Settings">${icon('settings')}</button>
             <button class="icon-tool" data-action="sleep" aria-label="Sleep" title="Sleep">${icon('power')}</button>
           </div>
