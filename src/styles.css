@@ -1904,10 +1904,38 @@ p {
   stroke-linejoin: round;
 }
 
+.pe-de1-main-line.pressure {
+  stroke: #47e098;
+}
+
+.pe-de1-main-line.flow {
+  stroke: #98c5ff;
+}
+
+.pe-de1-main-fill {
+  opacity: 0.16;
+}
+
+.pe-de1-main-fill.pressure {
+  fill: #47e098;
+}
+
+.pe-de1-main-fill.flow {
+  fill: #98c5ff;
+}
+
 .pe-de1-node {
   fill: #a8adb7;
   stroke: var(--panel-2);
   stroke-width: 3;
+}
+
+.pe-de1-node.pressure {
+  fill: #47e098;
+}
+
+.pe-de1-node.flow {
+  fill: #98c5ff;
 }
 
 .pe-temperature-rail {
@@ -2196,7 +2224,7 @@ p {
 .pe-main-grid {
   min-height: 0;
   display: grid;
-  grid-template-columns: 360px minmax(0, 1fr);
+  grid-template-columns: 280px minmax(0, 1fr);
   gap: 10px;
 }
 
@@ -2432,7 +2460,7 @@ p {
 
 .pe-ctl-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(134px, 1fr));
   gap: 9px;
 }
 
@@ -2503,7 +2531,8 @@ p {
   font-size: 15px;
   font-weight: 800;
   line-height: 1;
-  padding: 7px 4px;
+  padding: 7px 2px;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -2514,9 +2543,9 @@ p {
 }
 
 .pe-ctl-value em {
-  margin-left: 2px;
+  margin-left: 1px;
   font-style: normal;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   color: var(--muted);
 }
@@ -2529,7 +2558,7 @@ p {
 .pe-ctl-stepper {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   width: 100%;
   margin-top: 1px;
 }
@@ -2538,8 +2567,8 @@ p {
   flex: 0 0 auto;
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: 1px solid var(--line);
   border-radius: 50%;
