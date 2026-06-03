@@ -1253,6 +1253,15 @@ p {
   grid-template-columns: 1fr 1fr;
 }
 
+.shot-edit-actions .command {
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 13px;
+}
+
 .shot-edit-value {
   width: 100%;
   min-width: 0;
@@ -1333,6 +1342,10 @@ p {
   padding: 12px;
 }
 
+.shot-field-dialog .shot-edit-actions .command {
+  min-height: 50px;
+}
+
 .shot-field-input {
   display: grid;
   gap: 6px;
@@ -1376,6 +1389,32 @@ p {
   color: var(--muted);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.commit-action {
+  min-height: 42px;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--teal);
+  color: #071015;
+  font: inherit;
+  font-weight: 900;
+}
+
+.commit-action .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.page-head-actions .commit-action {
+  min-height: 38px;
+  padding: 0 18px;
 }
 
 .hero-title-row {

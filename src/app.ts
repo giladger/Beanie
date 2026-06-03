@@ -787,7 +787,7 @@ export class BeanieApp {
   private applyShotEditField(field: ShotEditField, value: string): void {
     const draft = this.state.shotEdit;
     if (!draft) return;
-    const next = updateShotEditDraftField(draft, field, value, this.state.grinders, (batchId) =>
+    const next = updateShotEditDraftField(draft, field, value, this.state.grinders, this.state.beans, (batchId) =>
       this.batchAndBeanForId(batchId)
     );
     this.setState({ shotEdit: next, shotEditField: null, status: 'Shot draft changed' });
@@ -3007,7 +3007,7 @@ export class BeanieApp {
         <button class="page-back" type="button" data-action="go-view" data-value="profiles" aria-label="Back">${icon('chevron-left')}<span>Back</span></button>
         ${renderEditorModeBar(pe)}
         <div class="page-head-actions">
-          <button type="button" class="pe-save" data-action="save-profile">${icon('save')}<span>Save</span></button>
+          <button type="button" class="pe-save commit-action" data-action="save-profile">${icon('check')}<span>Save</span></button>
         </div>
       </header>
       <main class="page-body profile-editor-page">
@@ -3088,7 +3088,7 @@ export class BeanieApp {
     const v = (value: string | null | undefined) => escapeAttr(value ?? '');
     const actions = `
       ${editing ? `<button type="button" class="command danger" data-action="archive-bean" data-id="${escapeAttr(editing.id)}">${icon('archive')}<span>Archive</span></button>` : ''}
-      <button class="command primary" type="submit" form="bean-form">${icon('save')}<span>${editing ? 'Save' : 'Add'}</span></button>
+      <button class="command primary commit-action" type="submit" form="bean-form">${icon(editing ? 'check' : 'plus')}<span>${editing ? 'Save' : 'Add'}</span></button>
     `;
     return `
       ${this.pageHeader(editing ? 'Edit Bean' : 'Add Bean', 'workbench', actions)}
@@ -3107,7 +3107,7 @@ export class BeanieApp {
 
   private renderBatchEditorPage(): string {
     const bean = this.selectedBean();
-    const actions = `<button class="command primary" type="submit" form="batch-form" ${bean ? '' : 'disabled'}>${icon('save')}<span>Add batch</span></button>`;
+    const actions = `<button class="command primary commit-action" type="submit" form="batch-form" ${bean ? '' : 'disabled'}>${icon('plus')}<span>Add batch</span></button>`;
     return `
       ${this.pageHeader('Add Batch', 'workbench', actions)}
       <form id="batch-form" class="page-body form-page" data-form="batch-editor">
@@ -3130,7 +3130,7 @@ export class BeanieApp {
       ? this.state.grinders.find((grinder) => grinder.id === this.state.editingGrinderId) ?? null
       : null;
     const actionLabel = editing ? 'Save grinder' : 'Add grinder';
-    const actions = `<button class="command primary" type="submit" form="grinder-form">${icon('save')}<span>${actionLabel}</span></button>`;
+    const actions = `<button class="command primary commit-action" type="submit" form="grinder-form">${icon(editing ? 'check' : 'plus')}<span>${actionLabel}</span></button>`;
     return `
       ${this.pageHeader(editing ? 'Edit Grinder' : 'Add Grinder', 'workbench', actions)}
       <form id="grinder-form" class="page-body form-page" data-form="grinder-editor">
@@ -3276,7 +3276,7 @@ export class BeanieApp {
 
           <div class="modal-actions shot-edit-actions">
             <button type="button" class="command" data-action="close-modal">Cancel</button>
-            <button type="submit" class="command primary">${icon('save')}<span>Save</span></button>
+            <button type="submit" class="command primary commit-action">${icon('check')}<span>Save</span></button>
           </div>
         </form>
         ${this.renderShotFieldDialog(draft)}
@@ -3287,7 +3287,14 @@ export class BeanieApp {
   private renderShotFieldDialog(draft: ShotEditDraft): string {
     const field = this.state.shotEditField;
     if (!field) return '';
-    const spec = shotFieldSpec(field, draft, this.state.grinders, this.state.beans, this.state.batchesByBean);
+    const spec = shotFieldSpec(
+      field,
+      draft,
+      this.state.grinders,
+      this.state.beans,
+      this.state.batchesByBean,
+      this.state.shots
+    );
     const input =
       spec.kind === 'textarea'
         ? `<textarea name="value" rows="5" spellcheck="true">${escapeHtml(spec.value)}</textarea>`
@@ -3986,6 +3993,7 @@ function updateShotEditDraftField(
   field: ShotEditField,
   value: string,
   grinders: Grinder[],
+  beans: Bean[],
   batchForId: (batchId: string | null) => { batch: BeanBatch; bean: Bean } | null
 ): ShotEditDraft {
   const text = textOrNull(value);
@@ -3998,6 +4006,14 @@ function updateShotEditDraftField(
       beanBatchId: text,
       coffeeName: match?.bean.name ?? draft.coffeeName,
       coffeeRoaster: match?.bean.roaster ?? draft.coffeeRoaster
+    };
+  }
+  if (field === 'coffeeName') {
+    const bean = text ? beans.find((item) => optionKey(item.name) === optionKey(text)) : null;
+    return {
+      ...draft,
+      coffeeName: text,
+      coffeeRoaster: bean?.roaster ?? draft.coffeeRoaster
     };
   }
   if (field === 'grinderId') {
@@ -4016,7 +4032,8 @@ function shotFieldSpec(
   draft: ShotEditDraft,
   grinders: Grinder[],
   beans: Bean[],
-  batchesByBean: Record<string, BeanBatch[]>
+  batchesByBean: Record<string, BeanBatch[]>,
+  shots: ShotRecord[]
 ): ShotFieldSpec {
   const label = shotFieldLabel(field);
   if (field === 'beanBatchId') {
@@ -4060,7 +4077,7 @@ function shotFieldSpec(
       options: numericShotFieldOptions(field)
     };
   }
-  return { label, kind: 'text', value: inputValue(value), options: textShotFieldOptions(field) };
+  return { label, kind: 'text', value: inputValue(value), options: textShotFieldOptions(field, beans, shots, grinders) };
 }
 
 function batchFieldOptions(beans: Bean[], batchesByBean: Record<string, BeanBatch[]>): ShotFieldOption[] {
@@ -4085,27 +4102,94 @@ function numericShotFieldOptions(field: ShotEditField): ShotFieldOption[] {
   return [{ label: 'Clear', value: '' }, ...values.map((item) => ({ label: inputValue(item), value: String(item) }))];
 }
 
-function textShotFieldOptions(field: ShotEditField): ShotFieldOption[] {
+function textShotFieldOptions(
+  field: ShotEditField,
+  beans: Bean[],
+  shots: ShotRecord[],
+  grinders: Grinder[]
+): ShotFieldOption[] {
+  if (field === 'coffeeRoaster') {
+    return uniqueTextOptions([
+      ...beans.map((bean) => ({ label: bean.roaster, value: bean.roaster, detail: bean.name })),
+      ...shots.map((shot) => ({
+        label: shot.workflow?.context?.coffeeRoaster ?? '',
+        value: shot.workflow?.context?.coffeeRoaster ?? '',
+        detail: shot.workflow?.context?.coffeeName ?? ''
+      }))
+    ]);
+  }
+  if (field === 'coffeeName') {
+    return uniqueTextOptions([
+      ...beans.map((bean) => ({ label: bean.name, value: bean.name, detail: bean.roaster })),
+      ...shots.map((shot) => ({
+        label: shot.workflow?.context?.coffeeName ?? '',
+        value: shot.workflow?.context?.coffeeName ?? '',
+        detail: shot.workflow?.context?.coffeeRoaster ?? ''
+      }))
+    ]);
+  }
   if (field === 'finalBeverageType') {
-    return [
+    return uniqueTextOptions([
       { label: 'Espresso', value: 'espresso' },
       { label: 'Americano', value: 'americano' },
       { label: 'Cortado', value: 'cortado' },
       { label: 'Cappuccino', value: 'cappuccino' },
       { label: 'Iced', value: 'iced' },
-      { label: 'Clear', value: '' }
-    ];
+      ...shots.map((shot) => ({
+        label: shot.workflow?.context?.finalBeverageType ?? '',
+        value: shot.workflow?.context?.finalBeverageType ?? ''
+      }))
+    ]);
+  }
+  if (field === 'baristaName' || field === 'drinkerName') {
+    return uniqueTextOptions(
+      shots.map((shot) => {
+        const value = shot.workflow?.context?.[field] ?? '';
+        return { label: value, value };
+      })
+    );
+  }
+  if (field === 'grinderModel') {
+    return uniqueTextOptions([
+      ...grinders.map((grinder) => ({ label: grinder.model, value: grinder.model, detail: grinder.burrs ?? '' })),
+      ...shots.map((shot) => ({
+        label: shot.workflow?.context?.grinderModel ?? '',
+        value: shot.workflow?.context?.grinderModel ?? ''
+      }))
+    ]);
   }
   if (field === 'grinderSetting') {
-    return [
+    return uniqueTextOptions([
+      ...shots.map((shot) => {
+        const value = inputValue(shot.workflow?.context?.grinderSetting);
+        return { label: value, value, detail: shot.workflow?.context?.grinderModel ?? '' };
+      }),
       { label: '5.0', value: '5.0' },
       { label: '5.5', value: '5.5' },
       { label: '6.0', value: '6.0' },
-      { label: '6.5', value: '6.5' },
-      { label: 'Clear', value: '' }
-    ];
+      { label: '6.5', value: '6.5' }
+    ]);
   }
   return [{ label: 'Clear', value: '' }];
+}
+
+function uniqueTextOptions(items: ShotFieldOption[]): ShotFieldOption[] {
+  const options: ShotFieldOption[] = [{ label: 'Clear', value: '' }];
+  const seen = new Set<string>();
+  for (const item of items) {
+    const value = item.value.trim();
+    const label = item.label.trim();
+    if (!value || !label) continue;
+    const key = optionKey(value);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    options.push({ label, value, detail: item.detail?.trim() || undefined });
+  }
+  return options;
+}
+
+function optionKey(value: string): string {
+  return value.trim().toLocaleLowerCase();
 }
 
 function shotFieldLabel(field: ShotEditField): string {

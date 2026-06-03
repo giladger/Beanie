@@ -158,7 +158,7 @@ function renderMaintenanceSection(): string {
     settingControlRow(
       'Firmware update',
       'Upload a DE1 firmware file — the machine applies it (this can take a while)',
-      `<label class="text-button"><input type="file" accept=".bin,.fw,.dfu" data-action="settings-firmware" hidden />${icon('save')}<span>Upload…</span></label>`
+      `<label class="text-button"><input type="file" accept=".bin,.fw,.dfu" data-action="settings-firmware" hidden />${icon('upload')}<span>Upload…</span></label>`
     )
   ].join(''));
 }

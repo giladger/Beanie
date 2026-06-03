@@ -6,6 +6,7 @@ import {
   ArrowUpToLine,
   Beaker,
   ChevronLeft,
+  Check,
   Coffee,
   Copy,
   Delete,
@@ -20,7 +21,6 @@ import {
   Power,
   RefreshCw,
   RotateCcw,
-  Save,
   Scale,
   Search,
   Settings,
@@ -29,6 +29,7 @@ import {
   Thermometer,
   Trash2,
   Timer,
+  Upload,
   Waves,
   X,
   createIcons
@@ -44,6 +45,7 @@ export function refreshIcons(): void {
       ArrowUpToLine,
       Beaker,
       ChevronLeft,
+      Check,
       Coffee,
       Copy,
       Delete,
@@ -58,7 +60,6 @@ export function refreshIcons(): void {
       Power,
       RefreshCw,
       RotateCcw,
-      Save,
       Scale,
       Search,
       Settings,
@@ -67,6 +68,7 @@ export function refreshIcons(): void {
       Thermometer,
       Trash2,
       Timer,
+      Upload,
       Waves,
       X
     }
