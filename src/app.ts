@@ -3607,34 +3607,20 @@ function renderMachineGraphic(tone: MachineLaneOptions<object>['tone']): string 
 }
 
 function machineGraphicIcon(tone: MachineLaneOptions<object>['tone']): string {
-  if (tone === 'water') {
-    return `
-      <svg class="machine-graphic-svg" viewBox="0 0 64 64" role="img" aria-label="Water">
-        <path d="M32 7C24.3 17 17 25.4 17 37.2C17 45.4 23.7 52 32 52C40.3 52 47 45.4 47 37.2C47 25.4 39.7 17 32 7Z" />
-        <path d="M24.7 37.5C26 42 29.3 44.9 34 45.2" />
-      </svg>
-    `;
-  }
-
-  if (tone === 'flush') {
-    return `
-      <svg class="machine-graphic-svg" viewBox="0 0 64 64" role="img" aria-label="Flush">
-        <path d="M20 25V20.5C20 15.2 24.2 11 29.5 11H34.5C39.8 11 44 15.2 44 20.5V25" />
-        <path d="M16.5 25H47.5" />
-        <path d="M23 31H41" />
-        <path d="M32 36C28.5 40.3 26.8 43.5 26.8 46C26.8 49.2 29.1 52 32 52C34.9 52 37.2 49.2 37.2 46C37.2 43.5 35.5 40.3 32 36Z" />
-      </svg>
-    `;
-  }
-
+  const streamlineGlyphs: Record<MachineLaneOptions<object>['tone'], string> = {
+    steam: '&#xe917;',
+    water: '&#xe918;',
+    flush: '&#xe916;'
+  };
   return `
-    <svg class="machine-graphic-svg steam-graphic-svg" viewBox="0 0 64 64" role="img" aria-label="Steam">
-      <path d="M15.2 47.5H46.8C53.7 47.5 58.5 42.8 58.5 36.5C58.5 30.7 54.2 26.2 48.5 25.5C46.1 15.9 37.6 9.5 27.8 9.5C19.1 9.5 11.8 15 9.4 23C4.3 25.1 1.5 29.8 1.5 35.3C1.5 42.4 7.2 47.5 15.2 47.5Z" />
-      <path d="M37 29.5V57.5" />
-      <path d="M23.4 27.7C29.2 31.2 32.1 36.2 32.1 43.2" />
-      <path d="M45.2 43.2C45.4 36.4 48.4 31.4 53.4 28" />
-    </svg>
+    <span class="machine-graphic-streamline" role="img" aria-label="${toneLabel(tone)}">${streamlineGlyphs[tone]}</span>
   `;
+}
+
+function toneLabel(tone: MachineLaneOptions<object>['tone']): string {
+  if (tone === 'water') return 'Water';
+  if (tone === 'flush') return 'Flush';
+  return 'Steam';
 }
 
 function machineValueTile(name: string, label: string, value: number | undefined, spec: NumberSpec): MachineValueTile {
