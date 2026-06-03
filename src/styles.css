@@ -3448,9 +3448,34 @@ p {
   white-space: normal;
 }
 
+/* Uniform, right-aligned control column so every field's box shares one right
+   edge and width (the number input flexes inside its unit wrapper instead of
+   being pushed left by the trailing unit). */
+.settings-plugin-fields .settings-input.settings-plugin-text,
+.settings-plugin-fields .settings-select,
+.settings-plugin-fields .settings-number {
+  width: min(220px, 46vw);
+}
+
 .settings-input.settings-plugin-text {
-  width: min(240px, 48vw);
   text-align: left;
+}
+
+.settings-plugin-fields .settings-number {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-plugin-fields .settings-number .settings-input {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.settings-plugin-fields .settings-unit {
+  flex: 0 0 auto;
+  min-width: 0;
 }
 
 .settings-plugin-config-actions {
