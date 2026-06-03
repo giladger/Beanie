@@ -165,6 +165,7 @@ type ShotEditField =
   | 'espressoNotes';
 type ApplyState = 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
 type LiveChartMode = 'preset30' | 'auto';
+type MachineServiceState = 'steam' | 'flush' | 'hotWater';
 type View =
   | 'workbench'
   | 'settings'
@@ -381,6 +382,8 @@ export class BeanieApp {
   private liveRaf: number | null = null;
   private liveDirty = false;
   private simTimer: number | null = null;
+  private machineServiceState: MachineServiceState | null = null;
+  private machineServiceStartedAtMs: number | null = null;
 
   private readonly handleClick = (event: Event) => void this.onClick(event);
   private readonly handleInput = (event: Event) => this.onInput(event);
@@ -841,6 +844,7 @@ export class BeanieApp {
     this.setState({ busy: true, status: machineActionStatus(state, 'sending') });
     if (this.state.demo) {
       if (state !== 'espresso') this.stopSimulatedShot();
+      this.trackMachineServiceState(state);
       this.setState({
         busy: false,
         machine: optimisticMachineSnapshot(this.state.machine, state),
@@ -853,6 +857,7 @@ export class BeanieApp {
     }
     try {
       await gateway.requestState(state);
+      this.trackMachineServiceState(state);
       this.setState({
         busy: false,
         machine: optimisticMachineSnapshot(this.state.machine, state),
@@ -918,7 +923,10 @@ export class BeanieApp {
     scale: ScaleSnapshot | null,
     tMs: number
   ): void {
-    if (machine) this.state.machine = machine;
+    if (machine) {
+      this.state.machine = machine;
+      this.trackMachineServiceState(machine.state.state, tMs);
+    }
     if (scale) this.state.scale = scale;
 
     const wasActive = this.state.liveActive;
@@ -948,7 +956,24 @@ export class BeanieApp {
       this.setState({ asleep: sleeping });
       return;
     }
+    if (this.state.view === 'machine' && machineServiceState(this.state.machine?.state?.state)) {
+      this.setState({});
+      return;
+    }
     this.updateTopbarStats();
+  }
+
+  private trackMachineServiceState(state: MachineState | undefined, nowMs = Date.now()): void {
+    const service = machineServiceState(state);
+    if (!service) {
+      this.machineServiceState = null;
+      this.machineServiceStartedAtMs = null;
+      return;
+    }
+    if (this.machineServiceState !== service || this.machineServiceStartedAtMs == null) {
+      this.machineServiceState = service;
+      this.machineServiceStartedAtMs = nowMs;
+    }
   }
 
   private updateTopbarStats(): void {
@@ -3017,6 +3042,8 @@ export class BeanieApp {
   }
 
   private renderMachinePage(): string {
+    const service = machineServiceState(this.state.machine?.state?.state);
+    if (service) return this.renderMachineProgressPage(service);
     const capabilities = this.machineCapabilitiesForControls();
     const steam = this.currentSteamSettings();
     const water = this.currentHotWaterData();
@@ -3077,6 +3104,52 @@ export class BeanieApp {
             ]
           })}
         </div>
+      </main>
+    `;
+  }
+
+  private renderMachineProgressPage(service: MachineServiceState): string {
+    const tone = machineServiceTone(service);
+    const steam = this.currentSteamSettings();
+    const water = this.currentHotWaterData();
+    const flush = this.currentRinseData();
+    const targetSeconds = machineServiceTargetSeconds(service, steam, water, flush);
+    const elapsedSeconds = this.machineServiceStartedAtMs == null
+      ? 0
+      : Math.max(0, (Date.now() - this.machineServiceStartedAtMs) / 1000);
+    const progress = targetSeconds && targetSeconds > 0
+      ? Math.min(100, Math.max(0, (elapsedSeconds / targetSeconds) * 100))
+      : 0;
+    const machine = this.state.machine;
+    const stats = machineServiceStats(service, steam, water, flush, machine, elapsedSeconds, targetSeconds);
+    return `
+      ${this.pageHeader(machineServiceVerb(service))}
+      <main class="page-body machine-page machine-progress-page">
+        <section class="machine-progress ${tone}">
+          <div class="machine-progress-hero">
+            <div class="machine-progress-graphic">${machineGraphicIcon(tone)}</div>
+            <div class="machine-progress-title">
+              <span>${escapeHtml(machineServiceLabel(service))}</span>
+              <h2>${escapeHtml(machineServiceVerb(service))}</h2>
+            </div>
+            <button type="button" class="machine-progress-stop" data-action="stop" ${this.state.busy ? 'disabled' : ''}>
+              ${icon('square')}
+              <span>Stop</span>
+            </button>
+          </div>
+          <div class="machine-progress-meter" aria-label="Progress">
+            <span style="width: ${progress.toFixed(1)}%"></span>
+          </div>
+          <div class="machine-progress-stats">
+            ${stats.map((stat) => `
+              <div class="machine-progress-stat">
+                <span>${escapeHtml(stat.label)}</span>
+                <strong>${escapeHtml(stat.value)}</strong>
+                <em>${escapeHtml(stat.unit)}</em>
+              </div>
+            `).join('')}
+          </div>
+        </section>
       </main>
     `;
   }
@@ -4380,6 +4453,92 @@ function isShotEditField(value: string | undefined): value is ShotEditField {
 
 function isMachineCommand(value: string | undefined): value is MachineState {
   return value === 'espresso' || value === 'steam' || value === 'flush' || value === 'hotWater';
+}
+
+function machineServiceState(state: MachineState | undefined): MachineServiceState | null {
+  if (state === 'steam' || state === 'flush' || state === 'hotWater') return state;
+  return null;
+}
+
+function machineServiceTone(service: MachineServiceState): MachineLaneOptions<object>['tone'] {
+  if (service === 'hotWater') return 'water';
+  return service;
+}
+
+function machineServiceLabel(service: MachineServiceState): string {
+  if (service === 'hotWater') return 'Hot water';
+  if (service === 'flush') return 'Flush';
+  return 'Steam';
+}
+
+function machineServiceVerb(service: MachineServiceState): string {
+  if (service === 'hotWater') return 'Pouring hot water';
+  if (service === 'flush') return 'Flushing';
+  return 'Steaming';
+}
+
+function machineServiceTargetSeconds(
+  service: MachineServiceState,
+  steam: SteamSettings,
+  water: HotWaterData,
+  flush: RinseData
+): number | null {
+  if (service === 'steam') return positiveNumber(steam.duration);
+  if (service === 'flush') return positiveNumber(flush.duration);
+  return positiveNumber(water.duration) ?? hotWaterVolumeSeconds(water);
+}
+
+function hotWaterVolumeSeconds(water: HotWaterData): number | null {
+  const volume = positiveNumber(water.volume);
+  const flow = positiveNumber(water.flow);
+  if (volume == null || flow == null) return null;
+  return volume / flow;
+}
+
+function machineServiceStats(
+  service: MachineServiceState,
+  steam: SteamSettings,
+  water: HotWaterData,
+  flush: RinseData,
+  machine: MachineSnapshot | null,
+  elapsedSeconds: number,
+  targetSeconds: number | null
+): Array<{ label: string; value: string; unit: string }> {
+  const stats = [
+    { label: 'Elapsed', value: formatSecondsValue(elapsedSeconds), unit: 's' },
+    { label: 'Target', value: targetSeconds == null ? '--' : formatSecondsValue(targetSeconds), unit: 's' }
+  ];
+
+  if (service === 'steam') {
+    stats.push(
+      { label: 'Flow', value: formatNumber(steam.flow, 1), unit: 'ml/s' },
+      { label: 'Target temp', value: formatNumber(steam.targetTemperature, 0), unit: 'C' },
+      { label: 'Steam temp', value: formatNumber(machine?.steamTemperature, 0), unit: 'C' }
+    );
+  } else if (service === 'hotWater') {
+    stats.push(
+      { label: 'Flow', value: formatNumber(water.flow, 1), unit: 'ml/s' },
+      { label: 'Volume', value: formatNumber(water.volume, 0), unit: 'ml' },
+      { label: 'Target temp', value: formatNumber(water.targetTemperature, 0), unit: 'C' },
+      { label: 'Water temp', value: formatNumber(machine?.mixTemperature, 0), unit: 'C' }
+    );
+  } else {
+    stats.push(
+      { label: 'Flow', value: formatNumber(flush.flow, 1), unit: 'ml/s' },
+      { label: 'Target temp', value: formatNumber(flush.targetTemperature, 0), unit: 'C' },
+      { label: 'Group temp', value: formatNumber(machine?.groupTemperature, 0), unit: 'C' }
+    );
+  }
+  return stats;
+}
+
+function positiveNumber(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function formatSecondsValue(value: number): string {
+  if (!Number.isFinite(value)) return '--';
+  return value >= 100 ? value.toFixed(0) : value.toFixed(1);
 }
 
 function machineCommandsAvailable(demo: boolean, info: MachineInfo | null): boolean {
