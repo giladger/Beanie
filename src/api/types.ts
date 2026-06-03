@@ -52,6 +52,15 @@ export interface De1MachineSettings {
   steamPurgeMode?: number | null;
 }
 
+export interface MachineInfo {
+  version?: string;
+  model?: string;
+  serialNumber?: string;
+  GHC?: boolean;
+  groupHeadControllerPresent?: boolean;
+  extra?: Record<string, unknown>;
+}
+
 export interface ScaleSnapshot {
   timestamp: string;
   weight: number;

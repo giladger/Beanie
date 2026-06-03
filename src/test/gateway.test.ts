@@ -1,4 +1,4 @@
-import { ApiValidationError, readBeans, readPaginatedShots } from '../api/guards';
+import { ApiValidationError, readBeans, readMachineInfo, readPaginatedShots } from '../api/guards';
 import {
   GatewayRequestError,
   createDemoStartupSnapshot,
@@ -48,6 +48,19 @@ await run('guards preserve valid bean responses', () => {
 
   equal(guarded[0]?.id, 'bean-extra');
   equal((guarded[0] as { unknownGatewayField?: string } | undefined)?.unknownGatewayField, 'kept');
+});
+
+await run('guards preserve machine info group-head-controller flag', () => {
+  const info = readMachineInfo({
+    version: '1337',
+    model: 'MockDe1',
+    serialNumber: 'mock-de1',
+    GHC: false,
+    extra: { simulated: true }
+  });
+
+  equal(info.GHC, false);
+  equal(info.extra?.simulated, true);
 });
 
 await run('guards reject malformed bean responses', () => {

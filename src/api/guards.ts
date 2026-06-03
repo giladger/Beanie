@@ -4,6 +4,7 @@ import type {
   De1MachineSettings,
   Grinder,
   MachineCapabilities,
+  MachineInfo,
   PaginatedShots,
   ProfileRecord,
   ShotRecord,
@@ -77,6 +78,10 @@ export function readMachineCapabilities(value: unknown): MachineCapabilities {
 
 export function readDe1MachineSettings(value: unknown): De1MachineSettings {
   return checked('De1MachineSettings', value, validateDe1MachineSettings);
+}
+
+export function readMachineInfo(value: unknown): MachineInfo {
+  return checked('MachineInfo', value, validateMachineInfo);
 }
 
 export function readPaginatedShots(value: unknown): PaginatedShots {
@@ -200,6 +205,18 @@ function validateDe1MachineSettings(
   optionalNumber(obj, 'steamFlow', path, issues, true);
   optionalNumber(obj, 'tankTemp', path, issues, true);
   optionalNumber(obj, 'steamPurgeMode', path, issues, true);
+}
+
+function validateMachineInfo(value: unknown, path: string, issues: ValidationIssue[]): void {
+  const obj = expectRecord(value, path, issues);
+  if (!obj) return;
+
+  optionalString(obj, 'version', path, issues);
+  optionalString(obj, 'model', path, issues);
+  optionalString(obj, 'serialNumber', path, issues);
+  optionalBoolean(obj, 'GHC', path, issues);
+  optionalBoolean(obj, 'groupHeadControllerPresent', path, issues);
+  optionalRecord(obj, 'extra', path, issues);
 }
 
 function validateWorkflowContext(

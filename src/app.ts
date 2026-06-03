@@ -5,6 +5,7 @@ import type {
   Grinder,
   HotWaterData,
   MachineCapabilities,
+  MachineInfo,
   MachineSnapshot,
   MachineState,
   ProfileRecord,
@@ -207,6 +208,7 @@ interface AppState {
   editDialog: InputDialogState | null;
   profileEdit: ProfileEditTarget | null;
   detailShotId: string | null;
+  machineInfo: MachineInfo | null;
   machineCapabilities: MachineCapabilities | null;
   machineSettings: De1MachineSettings | null;
   machine: MachineSnapshot | null;
@@ -261,6 +263,7 @@ export class BeanieApp {
     editDialog: null,
     profileEdit: null,
     detailShotId: null,
+    machineInfo: null,
     machineCapabilities: null,
     machineSettings: null,
     machine: null,
@@ -328,12 +331,17 @@ export class BeanieApp {
         gateway.profiles(),
         gateway.shots(latestShotQuery)
       ]);
+      const machineInfo = await gateway.machineInfo().catch((error) => {
+        console.warn('[Beanie] Could not load machine info', error);
+        return null;
+      });
 
       this.setState({
         workflow,
         beans,
         grinders,
         profiles,
+        machineInfo,
         demo: false,
         loading: false,
         status: 'Connected'
@@ -365,6 +373,13 @@ export class BeanieApp {
       batchesByBean: demoBatches,
       grinders: demoGrinders,
       profiles: demoProfiles,
+      machineInfo: {
+        version: 'demo',
+        model: 'Beanie demo',
+        serialNumber: 'demo',
+        GHC: false,
+        extra: { simulated: true }
+      },
       machine: demoMachine,
       machineCapabilities: { capabilities: [] },
       machineSettings: {
@@ -681,18 +696,36 @@ export class BeanieApp {
   }
 
   private async machineAction(state: MachineState): Promise<void> {
-    this.setState({ busy: true, status: `Sending ${state}` });
+    this.setState({ busy: true, status: machineActionStatus(state, 'sending') });
     if (this.state.demo) {
-      this.setState({ busy: false, status: `Demo ${state}` });
+      if (state !== 'espresso') this.stopSimulatedShot();
+      this.setState({
+        busy: false,
+        machine: optimisticMachineSnapshot(this.state.machine, state),
+        liveActive: state === 'espresso' ? this.state.liveActive : false,
+        asleep: state === 'sleeping',
+        status: machineActionStatus(state, 'demo')
+      });
+      if (state === 'espresso') this.startSimulatedShot();
       return;
     }
     try {
       await gateway.requestState(state);
-      this.setState({ busy: false, status: `Sent ${state}` });
+      this.setState({
+        busy: false,
+        machine: optimisticMachineSnapshot(this.state.machine, state),
+        asleep: state === 'sleeping',
+        status: machineActionStatus(state, 'sent')
+      });
     } catch (error) {
       console.error('[Beanie] Machine action failed', error);
       this.setState({ busy: false, status: 'Machine command failed' });
     }
+  }
+
+  private async toggleMachineCommand(state: MachineState): Promise<void> {
+    const active = this.state.machine?.state?.state === state;
+    await this.machineAction(active ? 'idle' : state);
   }
 
   private connectMachineSocket(): void {
@@ -884,6 +917,19 @@ export class BeanieApp {
     pump();
   }
 
+  private stopSimulatedShot(): void {
+    if (this.simTimer != null) {
+      window.clearTimeout(this.simTimer);
+      this.simTimer = null;
+    }
+    if (this.liveRaf != null) {
+      window.cancelAnimationFrame(this.liveRaf);
+      this.liveRaf = null;
+    }
+    this.liveDirty = false;
+    this.liveShot.reset();
+  }
+
   private async onClick(event: Event): Promise<void> {
     const target = event.target as HTMLElement;
     const el = target.closest<HTMLElement>('[data-action]');
@@ -936,6 +982,9 @@ export class BeanieApp {
         break;
       case 'edit-shot':
         this.openShotEditor();
+        break;
+      case 'machine-command':
+        if (isMachineCommand(value)) await this.toggleMachineCommand(value);
         break;
       case 'stop':
         await this.machineAction('idle');
@@ -2061,6 +2110,7 @@ export class BeanieApp {
     const ready = this.state.machine?.state?.state ?? (this.state.loading ? 'loading' : 'idle');
     const machine = this.state.machine;
     const scale = this.state.scale;
+    const machineCommands = this.renderMachineCommands();
     return `
       <header class="topbar">
         <div class="top-inline">
@@ -2070,14 +2120,50 @@ export class BeanieApp {
             ${topStat('Steam', temp(machine?.steamTemperature), 'stat-steam')}
             ${topStat('Scale', scale?.status === 'disconnected' ? 'offline' : `${formatNumber(scale?.weight, 1)} g`, 'stat-scale')}
           </div>
+          ${machineCommands}
           <div class="top-icons" role="toolbar" aria-label="Skin actions">
-            ${this.state.demo ? `<button class="icon-tool" data-action="simulate-shot" aria-label="Simulate shot" title="Simulate shot">${icon('play')}</button>` : ''}
-            <button class="icon-tool" data-action="open-machine-settings" aria-label="Steam, water and flush" title="Steam, water and flush">${icon('droplets')}</button>
+            <button class="icon-tool" data-action="open-machine-settings" aria-label="Machine settings" title="Machine settings">${icon('sliders-horizontal')}</button>
             <button class="icon-tool" data-action="open-settings" aria-label="Settings" title="Settings">${icon('settings')}</button>
             <button class="icon-tool" data-action="sleep" aria-label="Sleep" title="Sleep">${icon('power')}</button>
           </div>
         </div>
       </header>
+    `;
+  }
+
+  private renderMachineCommands(): string {
+    if (!machineCommandsAvailable(this.state.demo, this.state.machineInfo)) return '';
+    const current = this.state.machine?.state?.state ?? 'idle';
+    const disabled = this.state.busy ? ' disabled' : '';
+    const commands: Array<{ state: MachineState; label: string; icon: string }> = [
+      { state: 'espresso', label: 'Shot', icon: 'coffee' },
+      { state: 'steam', label: 'Steam', icon: 'waves' },
+      { state: 'flush', label: 'Flush', icon: 'refresh-cw' },
+      { state: 'hotWater', label: 'Water', icon: 'droplets' }
+    ];
+    return `
+      <div class="top-machine-actions" role="toolbar" aria-label="Machine commands">
+        ${commands
+          .map(({ state, label, icon: iconName }) => {
+            const active = current === state;
+            const title = active ? `Stop ${label.toLowerCase()}` : label;
+            return `
+              <button
+                class="machine-command ${active ? 'active' : ''}"
+                data-action="machine-command"
+                data-value="${escapeAttr(state)}"
+                aria-pressed="${active ? 'true' : 'false'}"
+                aria-label="${escapeAttr(title)}"
+                title="${escapeAttr(title)}"
+                ${disabled}
+              >
+                ${icon(iconName)}
+                <span>${escapeHtml(label)}</span>
+              </button>
+            `;
+          })
+          .join('')}
+      </div>
     `;
   }
 
@@ -3351,6 +3437,73 @@ function isEditField(value: string | undefined): value is EditField {
     value === 'grinderSetting' ||
     value === 'temperature'
   );
+}
+
+function isMachineCommand(value: string | undefined): value is MachineState {
+  return value === 'espresso' || value === 'steam' || value === 'flush' || value === 'hotWater';
+}
+
+function machineCommandsAvailable(demo: boolean, info: MachineInfo | null): boolean {
+  if (demo) return true;
+  if (!info) return false;
+  return isSimulatorMachine(info) || hasGroupHeadController(info) === false;
+}
+
+function hasGroupHeadController(info: MachineInfo): boolean | null {
+  if (typeof info.GHC === 'boolean') return info.GHC;
+  if (typeof info.groupHeadControllerPresent === 'boolean') return info.groupHeadControllerPresent;
+  return null;
+}
+
+function isSimulatorMachine(info: MachineInfo): boolean {
+  const text = [info.model, info.serialNumber, info.version]
+    .filter((part): part is string => typeof part === 'string')
+    .join(' ')
+    .toLowerCase();
+  if (text.includes('mock') || text.includes('simulator') || text.includes('simulated')) return true;
+  return info.extra?.simulated === true || info.extra?.simulation === true;
+}
+
+function optimisticMachineSnapshot(
+  machine: MachineSnapshot | null,
+  state: MachineState
+): MachineSnapshot {
+  const now = new Date().toISOString();
+  return {
+    timestamp: now,
+    state: { state },
+    flow: machine?.flow ?? 0,
+    pressure: machine?.pressure ?? 0,
+    targetFlow: machine?.targetFlow ?? 0,
+    targetPressure: machine?.targetPressure ?? 0,
+    mixTemperature: machine?.mixTemperature ?? 0,
+    groupTemperature: machine?.groupTemperature ?? 0,
+    targetMixTemperature: machine?.targetMixTemperature ?? 0,
+    targetGroupTemperature: machine?.targetGroupTemperature ?? 0,
+    profileFrame: machine?.profileFrame ?? 0,
+    steamTemperature: machine?.steamTemperature ?? 0
+  };
+}
+
+function machineActionStatus(
+  state: MachineState,
+  phase: 'sending' | 'sent' | 'demo'
+): string {
+  const label = machineStateLabel(state);
+  if (phase === 'sending') return state === 'idle' ? 'Stopping machine' : `Starting ${label}`;
+  if (phase === 'demo') return state === 'idle' ? 'Demo stopped' : `Demo ${label}`;
+  return state === 'idle' ? 'Machine stopped' : `${label} started`;
+}
+
+function machineStateLabel(state: MachineState): string {
+  switch (state) {
+    case 'espresso':
+      return 'shot';
+    case 'hotWater':
+      return 'water';
+    default:
+      return state;
+  }
 }
 
 function draftSignature(draft: RecipeDraft): string {

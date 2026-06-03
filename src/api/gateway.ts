@@ -10,6 +10,7 @@ import type {
   GatewayStartupSnapshot,
   Grinder,
   MachineCapabilities,
+  MachineInfo,
   MachineState,
   PaginatedShots,
   Profile,
@@ -28,6 +29,7 @@ import {
   readGrinder,
   readGrinders,
   readMachineCapabilities,
+  readMachineInfo,
   readPaginatedShots,
   readProfile,
   readProfiles,
@@ -174,6 +176,8 @@ function jsonPost(body: unknown): RequestInit {
 }
 
 export const gateway = {
+  machineInfo: () => fetchJson<MachineInfo>('machine', '/api/v1/machine/info', readMachineInfo),
+
   workflow: () => fetchJson<Workflow>('workflow', '/api/v1/workflow', readWorkflow),
   updateWorkflow: (body: Workflow) =>
     fetchJson<Workflow>('workflow', '/api/v1/workflow', readWorkflow, {
