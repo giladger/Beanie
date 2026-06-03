@@ -3430,10 +3430,13 @@ p {
 }
 
 /* --- plugin configuration panel --- */
-.settings-plugin-actions {
+/* Scoped under .settings-line to beat `.settings-line span { display: block }`,
+   which would otherwise drop the button below the toggle's centre. */
+.settings-line .settings-plugin-actions {
   display: inline-flex;
   align-items: center;
   gap: 10px;
+  overflow: visible;
 }
 
 .settings-plugin-config {

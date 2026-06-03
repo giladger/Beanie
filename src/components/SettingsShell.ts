@@ -185,7 +185,7 @@ function renderPluginRow(plugin: PluginInfo, pluginConfig: PluginConfigState | n
   const spec = pluginSettingsSpec(plugin.id);
   const expanded = pluginConfig?.id === plugin.id;
   const configure = spec
-    ? `<button type="button" class="text-button" data-action="settings-plugin-config" data-id="${escapeAttr(plugin.id)}" aria-expanded="${expanded}">${icon('sliders-horizontal')}<span>${expanded ? 'Close' : 'Configure'}</span></button>`
+    ? `<button type="button" class="text-button" data-action="settings-plugin-config" data-id="${escapeAttr(plugin.id)}" aria-expanded="${expanded}">${icon(expanded ? 'x' : 'sliders-horizontal')}<span>${expanded ? 'Close' : 'Configure'}</span></button>`
     : '';
   const toggle = `<label class="settings-toggle"><input type="checkbox" data-action="settings-plugin-toggle" data-id="${escapeAttr(plugin.id)}" ${plugin.loaded ? 'checked' : ''} /><span></span></label>`;
   const row = `
