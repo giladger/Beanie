@@ -631,6 +631,21 @@ export class BeanieApp {
     this.setState({ shots, shotsLoadingMore: false, status: `${shots.length} shots` });
   }
 
+  private async loadLatestShotCandidates(limit = 6): Promise<ShotRecord[]> {
+    const query = new URLSearchParams({ limit: String(limit), offset: '0', order: 'desc' });
+    try {
+      const page = await gateway.shots(query);
+      void beanieCache.putShotPage(query, page);
+      void beanieCache.putShotSummaries(page.items);
+      return Promise.all(page.items.map((shot) => this.loadFullShot(shot)));
+    } catch (error) {
+      console.warn('[Beanie] Could not load latest shot candidates', error);
+      const cached = await beanieCache.getShotPage(query).catch(() => null);
+      if (!cached) return [];
+      return Promise.all(cached.items.map((shot) => this.loadFullShot(shot)));
+    }
+  }
+
   private async applyDraft(): Promise<void> {
     const bean = this.selectedBean();
     if (!bean) return;
@@ -1153,7 +1168,7 @@ export class BeanieApp {
     bean: Bean,
     context: { previousShotIds: Set<string>; startedAtMs: number | null; endedAtMs: number | null }
   ): Promise<void> {
-    const delays = [0, 500, 1000, 2000];
+    const delays = [0, 1000, 2000, 4000, 8000];
     let lastRecords: ShotRecord[] = [];
     let lastTotal = this.state.shotsTotal;
 
@@ -1163,18 +1178,25 @@ export class BeanieApp {
       if (this.selectedBean()?.id !== bean.id) return;
 
       await beanieCache.invalidateShotMutation().catch(() => {});
-      const { records, total } = await this.loadFirstShots(bean);
+      const [{ records, total }, latestRecords] = await Promise.all([
+        this.loadFirstShots(bean),
+        this.loadLatestShotCandidates()
+      ]);
       lastRecords = records;
       lastTotal = total;
 
-      const shotId = completedLiveShotId(records, context, attempt === delays.length - 1);
-      if (!shotId) continue;
+      const completedShot =
+        completedLiveShot(records, context, false) ??
+        completedLiveShot(latestRecords, context, attempt === delays.length - 1);
+      if (!completedShot) continue;
+
+      const visibleRecords = includeShotInHistory(records, completedShot, this.shotPageSize);
 
       this.setState({
-        shots: records,
-        shotsTotal: total,
+        shots: visibleRecords,
+        shotsTotal: Math.max(total, visibleRecords.length),
         shotsLoadingMore: false,
-        detailShotId: shotId,
+        detailShotId: completedShot.id,
         status: 'Shot list updated'
       });
       return;
@@ -4269,25 +4291,41 @@ function shotDurationLabel(shot: ShotRecord): string | null {
   return `${Math.round((last - first) / 1000)}s`;
 }
 
-function completedLiveShotId(
+function completedLiveShot(
   records: ShotRecord[],
   context: { previousShotIds: Set<string>; startedAtMs: number | null; endedAtMs: number | null },
   allowFallback: boolean
-): string | null {
-  const newShot = records.find((shot) => !context.previousShotIds.has(shot.id));
-  if (newShot) return newShot.id;
+): ShotRecord | null {
+  const newShot = records.find(
+    (shot) => !context.previousShotIds.has(shot.id) && shotMatchesLiveWindow(shot, context)
+  );
+  if (newShot) return newShot;
 
-  const start = context.startedAtMs != null ? context.startedAtMs - 10_000 : null;
-  const end = (context.endedAtMs ?? Date.now()) + 60_000;
-  if (start != null) {
-    const timeMatch = records.find((shot) => {
-      const timestamp = Date.parse(shot.timestamp);
-      return Number.isFinite(timestamp) && timestamp >= start && timestamp <= end;
-    });
-    if (timeMatch) return timeMatch.id;
-  }
+  const timeMatch = records.find((shot) => shotMatchesLiveWindow(shot, context));
+  if (timeMatch) return timeMatch;
 
-  return allowFallback ? records[0]?.id ?? null : null;
+  if (!allowFallback) return null;
+  const newest = records[0] ?? null;
+  if (!newest || context.previousShotIds.has(newest.id)) return null;
+  const timestamp = Date.parse(newest.timestamp);
+  return context.startedAtMs == null || !Number.isFinite(timestamp) ? newest : null;
+}
+
+function shotMatchesLiveWindow(
+  shot: ShotRecord,
+  context: { startedAtMs: number | null; endedAtMs: number | null }
+): boolean {
+  if (context.startedAtMs == null) return false;
+  const timestamp = Date.parse(shot.timestamp);
+  if (!Number.isFinite(timestamp)) return false;
+  const start = context.startedAtMs - 10_000;
+  const end = (context.endedAtMs ?? Date.now()) + 90_000;
+  return timestamp >= start && timestamp <= end;
+}
+
+function includeShotInHistory(records: ShotRecord[], shot: ShotRecord, limit: number): ShotRecord[] {
+  const withoutDuplicate = records.filter((item) => item.id !== shot.id);
+  return [shot, ...withoutDuplicate].slice(0, Math.max(1, limit));
 }
 
 function enjoymentBadge(shot: ShotRecord, size: 'row' | 'detail' = 'row'): string {
