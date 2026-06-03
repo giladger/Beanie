@@ -645,6 +645,7 @@ function renderSimpleProfileEditor(state: ProfileEditorState): string {
       ${renderIdentityMeta(state)}
       <div class="pe-kind-row">${renderSimpleTypeToggle(type)}</div>
       <div class="pe-simple-chart">${renderDe1ExplanationChart(state)}</div>
+      <div class="pe-simple-stages">
       <div class="pe-ctl-group">
         <span class="pe-ctl-group-title">1 · Preinfuse</span>
         <div class="pe-ctl-grid">
@@ -674,6 +675,7 @@ function renderSimpleProfileEditor(state: ProfileEditorState): string {
           ${renderSimpleControl('stop_volume', 'stop at volume', stopVolume, 'ml', 0, 100, 1, 'beaker', 'blue', true)}
           ${renderSimpleControl('temperature', 'temperature', knobs.temperature, '°C', 1, 105, 0.5, 'thermometer', 'red')}
         </div>
+      </div>
       </div>
     </div>
   `;
@@ -720,14 +722,6 @@ function renderIdentityMeta(state: ProfileEditorState): string {
       <label class="pe-field">
         <span>Author</span>
         <input type="text" data-action="pe-meta" data-key="author" value="${escapeAttr(state.author)}" />
-      </label>
-      <label class="pe-field">
-        <span>Type</span>
-        <select data-action="pe-meta" data-key="type">
-          ${PROFILE_TYPES.map((type) => `
-            <option value="${escapeAttr(type)}" ${type === state.type ? 'selected' : ''}>${escapeHtml(displayType(type))}</option>
-          `).join('')}
-        </select>
       </label>
       <label class="pe-field">
         <span>Beverage</span>
@@ -1021,8 +1015,6 @@ function renderDe1ExplanationChart(state: ProfileEditorState): string {
           const x = plot.x + plot.w * tick;
           return `<line class="pe-de1-grid x" x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${plot.y}" y2="${plot.y + plot.h}"></line>`;
         }).join('')}
-        <text class="pe-de1-axis-title" transform="translate(24 ${plot.y + plot.h / 2}) rotate(-90)">${escapeHtml(axisTitle)}</text>
-        ${selectedStepBand(model, state.selectedStep, plot)}
         <path class="pe-de1-main-line" d="${mainLine}" fill="none"></path>
         ${nodes.map((point) => `
           <circle class="pe-de1-node" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="6"></circle>

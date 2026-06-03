@@ -2169,8 +2169,8 @@ p {
 
 .pe-meta {
   display: grid;
-  grid-template-columns: minmax(220px, 1.7fr) repeat(7, minmax(86px, 1fr)) minmax(160px, 1.2fr);
-  gap: 6px;
+  grid-template-columns: minmax(200px, 1.6fr) minmax(130px, 1fr) minmax(140px, 1fr) minmax(200px, 1.6fr);
+  gap: 8px;
   padding: 8px;
   border-radius: 8px;
   background: var(--panel);
@@ -3872,9 +3872,32 @@ p {
 .pe-simple-chart .pe-de1-chart {
   width: 100%;
   height: auto;
-  max-height: 200px;
+  max-height: 150px;
 }
 
 .profile-editor .pe-ctl-group {
   margin: 16px;
+}
+
+/* Basic editor: lay the stages across the width (de1app-style), cards stacked
+   within each stage column. */
+.pe-simple-stages {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px;
+  align-items: start;
+  margin: 6px 16px 16px;
+}
+
+.pe-simple-stages .pe-ctl-group {
+  margin: 0;
+}
+
+.pe-simple-stages .pe-ctl-grid {
+  grid-template-columns: 1fr;
+}
+
+/* keep the value + unit on one line so the unit never clips */
+.pe-ctl-value {
+  white-space: nowrap;
 }
