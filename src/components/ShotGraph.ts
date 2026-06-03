@@ -67,11 +67,43 @@ function renderTrace(
     const sample = series.samples[0]!;
     return `<circle class="trace-point ${series.className}" cx="${xFor(sample.t).toFixed(1)}" cy="${yFor(sample.value).toFixed(1)}" r="2.4" ${strokeAttrs} fill="${series.color}" />`;
   }
+  if (series.dashArray != null) return renderDashedTrace(series, xFor, yFor);
 
   const points = series.samples
     .map((sample) => `${xFor(sample.t).toFixed(1)},${yFor(sample.value).toFixed(1)}`)
     .join(' ');
   return `<polyline class="trace ${series.className}" ${strokeAttrs} points="${points}" />`;
+}
+
+function renderDashedTrace(
+  series: ShotGraphSeries,
+  xFor: (value: number) => number,
+  yFor: (value: number) => number
+): string {
+  const segments: string[] = [];
+  const [dash = 6, gap = 5] = dashValues(series.dashArray);
+  for (let i = 1; i < series.samples.length; i += 1) {
+    const previous = series.samples[i - 1]!;
+    const current = series.samples[i]!;
+    const x1 = xFor(previous.t);
+    const x2 = xFor(current.t);
+    const y1 = yFor(previous.value);
+    const y2 = yFor(current.value);
+    const vertical = Math.abs(x1 - x2) < 0.75;
+    const horizontal = Math.abs(y1 - y2) < 0.75;
+    if (vertical) {
+      segments.push(
+        `<path class="trace ${series.className}" d="${verticalDashPath((x1 + x2) / 2, y1, y2, dash, gap)}" stroke="${series.color}" fill="none" stroke-linecap="butt" />`
+      );
+      continue;
+    }
+    const renderedY1 = horizontal ? snapSvgPixel((y1 + y2) / 2) : y1.toFixed(1);
+    const renderedY2 = horizontal ? renderedY1 : y2.toFixed(1);
+    segments.push(
+      `<line class="trace ${series.className}" x1="${x1.toFixed(1)}" y1="${renderedY1}" x2="${x2.toFixed(1)}" y2="${renderedY2}" stroke="${series.color}" stroke-dasharray="${escapeAttr(series.dashArray!)}" />`
+    );
+  }
+  return segments.join('');
 }
 
 function traceStrokeAttrs(series: ShotGraphSeries): string {
@@ -103,14 +135,27 @@ function renderStepMarkers(
 }
 
 function verticalDashPath(x: number, y1: number, y2: number, dash = 5, gap = 5): string {
-  const start = Math.round(y1);
-  const end = Math.round(y2);
-  const roundedX = (Math.round(x) + 0.5).toFixed(1);
+  const start = Math.round(Math.min(y1, y2));
+  const end = Math.round(Math.max(y1, y2));
+  const roundedX = snapSvgPixel(x);
   const commands: string[] = [];
   for (let y = start; y < end; y += dash + gap) {
     commands.push(`M${roundedX} ${y}L${roundedX} ${Math.min(y + dash, end)}`);
   }
   return commands.join(' ');
+}
+
+function dashValues(dashArray: string | undefined): [number, number] {
+  if (!dashArray) return [6, 5];
+  const parts = dashArray
+    .split(/[\s,]+/)
+    .map((part) => Number.parseFloat(part))
+    .filter((part) => Number.isFinite(part));
+  return [parts[0] ?? 6, parts[1] ?? 5];
+}
+
+function snapSvgPixel(value: number): string {
+  return (Math.round(value) + 0.5).toFixed(1);
 }
 
 function renderGrid(

@@ -251,11 +251,6 @@ p {
   box-shadow: inset 0 0 0 1px rgba(91, 216, 200, 0.16);
 }
 
-.machine-command.stop:not(:disabled) {
-  border-color: rgba(255, 116, 104, 0.42);
-  color: var(--red);
-}
-
 .command,
 .text-button,
 .icon-button,
@@ -887,9 +882,11 @@ p {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
-.live-chart-toggle {
+.live-chart-toggle,
+.live-stop-button {
   height: 30px;
   min-width: 62px;
   display: inline-flex;
@@ -909,6 +906,11 @@ p {
 .live-chart-toggle.active {
   border-color: color-mix(in srgb, var(--teal) 70%, var(--line));
   color: var(--ink);
+}
+
+.live-stop-button:not(:disabled) {
+  border-color: rgba(255, 116, 104, 0.46);
+  color: var(--red);
 }
 
 .live-readouts {

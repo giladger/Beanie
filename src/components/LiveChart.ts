@@ -261,8 +261,8 @@ export class LiveChart {
     ctx.strokeStyle = series.color;
     ctx.lineWidth = dashed ? 1.5 : 2.6;
     ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.setLineDash(dashed ? parseDashArray(series.dashArray!) : []);
+    ctx.lineCap = dashed ? 'butt' : 'round';
+    ctx.setLineDash([]);
 
     if (points.length === 1) {
       const point = points[0]!;
@@ -273,6 +273,7 @@ export class LiveChart {
       ctx.arc(x, y, 2.4, 0, Math.PI * 2);
       ctx.fill();
       ctx.setLineDash([]);
+      ctx.lineCap = 'round';
       return;
     }
 
@@ -280,6 +281,12 @@ export class LiveChart {
       x: projectX(point.t, maxTime, plot),
       y: projectY(point.value, maxY, plot)
     }));
+
+    if (dashed) {
+      drawDashedSegments(ctx, xy, parseDashArray(series.dashArray!));
+      ctx.lineCap = 'round';
+      return;
+    }
 
     ctx.beginPath();
     ctx.moveTo(xy[0]!.x, xy[0]!.y);
@@ -336,14 +343,43 @@ function drawVerticalDash(
   dash = 5,
   gap = 5
 ): void {
-  const start = Math.round(y1);
-  const end = Math.round(y2);
+  const start = Math.round(Math.min(y1, y2));
+  const end = Math.round(Math.max(y1, y2));
   ctx.beginPath();
   for (let y = start; y < end; y += dash + gap) {
     ctx.moveTo(x, y);
     ctx.lineTo(x, Math.min(y + dash, end));
   }
   ctx.stroke();
+}
+
+function drawDashedSegments(
+  ctx: CanvasRenderingContext2D,
+  points: Array<{ x: number; y: number }>,
+  pattern: number[]
+): void {
+  const dash = pattern[0] ?? 6;
+  const gap = pattern[1] ?? 5;
+  const lineDash = pattern.length > 0 ? pattern : [dash, gap];
+  ctx.setLineDash([]);
+  for (let i = 1; i < points.length; i += 1) {
+    const previous = points[i - 1]!;
+    const current = points[i]!;
+    const vertical = Math.abs(previous.x - current.x) < 0.75;
+    const horizontal = Math.abs(previous.y - current.y) < 0.75;
+    if (vertical) {
+      drawVerticalDash(ctx, snapPixel((previous.x + current.x) / 2), previous.y, current.y, dash, gap);
+      continue;
+    }
+    const y1 = horizontal ? snapPixel((previous.y + current.y) / 2) : previous.y;
+    const y2 = horizontal ? y1 : current.y;
+    ctx.setLineDash(lineDash);
+    ctx.beginPath();
+    ctx.moveTo(previous.x, y1);
+    ctx.lineTo(current.x, y2);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
 }
 
 function snapPixel(value: number): number {
