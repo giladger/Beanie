@@ -3304,9 +3304,10 @@ p {
 }
 
 .input-dialog {
-  width: min(680px, calc(100vw - 32px));
+  width: min(960px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 10px;
   padding: 14px;
 }
@@ -3318,13 +3319,16 @@ p {
 .input-dialog-body {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 220px;
-  gap: 10px;
+  grid-template-columns: minmax(360px, 1fr) 220px;
+  align-items: start;
+  gap: 12px;
 }
 
 .input-dialog-main {
   min-width: 0;
+  min-height: 0;
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   align-content: start;
   gap: 8px;
 }
@@ -3417,12 +3421,18 @@ p {
 }
 
 .input-dialog-choices {
-  max-height: 178px;
+  min-height: 0;
+  max-height: min(300px, calc(100vh - 440px));
   overflow: auto;
+  padding-right: 2px;
+}
+
+.input-dialog-choices button,
+.input-dialog-choice {
+  min-height: 36px;
 }
 
 .input-dialog-choices button {
-  min-height: 36px;
   display: grid;
   justify-items: start;
   gap: 2px;
@@ -3430,7 +3440,36 @@ p {
   text-align: left;
 }
 
-.input-dialog-choices button.active {
+.input-dialog-choice {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  overflow: hidden;
+}
+
+.input-dialog-choice > button {
+  min-height: 52px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.input-dialog-choice-edit {
+  place-items: center;
+  border-left: 1px solid var(--line) !important;
+  color: var(--muted) !important;
+}
+
+.input-dialog-choice-edit .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.input-dialog-choices button.active,
+.input-dialog-choice.active {
   border-color: rgba(91, 216, 200, 0.55);
   background: rgba(91, 216, 200, 0.12);
 }
@@ -3452,6 +3491,7 @@ p {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 7px;
+  align-self: start;
 }
 
 .input-dialog-keypad button {

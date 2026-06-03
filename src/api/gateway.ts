@@ -224,6 +224,12 @@ export const gateway = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(grinder)
     }),
+  updateGrinder: (id: string, grinder: Partial<Grinder>) =>
+    fetchJson<Grinder>('grinders', `/api/v1/grinders/${encodeURIComponent(id)}`, readGrinder, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(grinder)
+    }),
   profiles: () =>
     fetchJson<ProfileRecord[]>(
       'profiles',

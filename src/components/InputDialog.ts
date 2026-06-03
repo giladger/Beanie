@@ -325,10 +325,15 @@ function renderChoices(dialog: InputDialogState): string {
       <span>${escapeHtml(dialog.choiceTitle ?? 'Choices')}</span>
       <button type="button" class="${noneActive ? 'active' : ''}" data-action="dialog-choice" data-id="">No grinder</button>
       ${dialog.choices.map((choice) => `
-        <button type="button" class="${choice.id === dialog.selectedChoiceId ? 'active' : ''}" data-action="dialog-choice" data-id="${escapeAttr(choice.id)}">
-          <strong>${escapeHtml(choice.label)}</strong>
-          ${choice.detail ? `<small>${escapeHtml(choice.detail)}</small>` : ''}
-        </button>
+        <span class="input-dialog-choice ${choice.id === dialog.selectedChoiceId ? 'active' : ''}">
+          <button type="button" class="input-dialog-choice-select" data-action="dialog-choice" data-id="${escapeAttr(choice.id)}">
+            <strong>${escapeHtml(choice.label)}</strong>
+            ${choice.detail ? `<small>${escapeHtml(choice.detail)}</small>` : ''}
+          </button>
+          <button type="button" class="input-dialog-choice-edit" data-action="open-edit-grinder" data-id="${escapeAttr(choice.id)}" aria-label="Edit ${escapeAttr(choice.label)}" title="Edit grinder">
+            ${icon('pencil')}
+          </button>
+        </span>
       `).join('')}
       <button type="button" class="input-dialog-add-choice" data-action="open-add-grinder">${icon('plus')}<span>Add grinder</span></button>
     </div>

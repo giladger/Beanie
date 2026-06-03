@@ -217,6 +217,7 @@ interface AppState {
   settingsSource: 'gateway' | 'demo' | null;
   modal: Modal;
   editingBeanId: string | null;
+  editingGrinderId: string | null;
   profileEditor: ProfileEditorState | null;
   editingProfileId: string | null;
   editDialog: InputDialogState | null;
@@ -277,6 +278,7 @@ export class BeanieApp {
     settingsSource: null,
     modal: null,
     editingBeanId: null,
+    editingGrinderId: null,
     profileEditor: null,
     editingProfileId: null,
     editDialog: null,
@@ -1109,7 +1111,10 @@ export class BeanieApp {
         this.setState({ view: 'batch-editor' });
         break;
       case 'open-add-grinder':
-        this.setState({ view: 'grinder-editor', modal: null, editDialog: null });
+        this.setState({ view: 'grinder-editor', editingGrinderId: null, modal: null, editDialog: null });
+        break;
+      case 'open-edit-grinder':
+        if (id) this.setState({ view: 'grinder-editor', editingGrinderId: id, modal: null, editDialog: null });
         break;
       case 'open-profile-picker':
         this.setState({
@@ -1714,12 +1719,14 @@ export class BeanieApp {
       settingBigStep: numberOrNullInput(data.get('settingBigStep'))
     };
 
-    this.setState({ busy: true, status: 'Adding grinder' });
-    const selectGrinder = (grinder: Grinder, status: string) => {
+    const editingId = this.state.editingGrinderId;
+    this.setState({ busy: true, status: editingId ? 'Saving grinder' : 'Adding grinder' });
+    const selectGrinder = (grinder: Grinder, status: string, grinders?: Grinder[]) => {
       this.setState({
-        grinders: [grinder, ...this.state.grinders],
+        grinders: grinders ?? [grinder, ...this.state.grinders],
         draft: { ...this.state.draft, grinderId: grinder.id, grinderModel: grinder.model },
         view: 'workbench',
+        editingGrinderId: null,
         editDialog: null,
         busy: false,
         status
@@ -1728,17 +1735,30 @@ export class BeanieApp {
     };
 
     if (this.state.demo) {
-      const grinder: Grinder = { id: `demo-grinder-${Date.now()}`, ...grinderInput } as Grinder;
-      selectGrinder(grinder, 'Grinder added (demo)');
+      if (editingId) {
+        const previous = this.state.grinders.find((grinder) => grinder.id === editingId);
+        const grinder: Grinder = { ...(previous ?? { id: editingId }), ...grinderInput } as Grinder;
+        const grinders = this.state.grinders.map((item) => (item.id === editingId ? grinder : item));
+        selectGrinder(grinder, 'Grinder saved (demo)', grinders);
+      } else {
+        const grinder: Grinder = { id: `demo-grinder-${Date.now()}`, ...grinderInput } as Grinder;
+        selectGrinder(grinder, 'Grinder added (demo)');
+      }
       return;
     }
 
     try {
-      const grinder = await gateway.createGrinder(grinderInput);
-      selectGrinder(grinder, 'Grinder added');
+      if (editingId) {
+        const grinder = await gateway.updateGrinder(editingId, grinderInput);
+        const grinders = this.state.grinders.map((item) => (item.id === editingId ? grinder : item));
+        selectGrinder(grinder, 'Grinder saved', grinders);
+      } else {
+        const grinder = await gateway.createGrinder(grinderInput);
+        selectGrinder(grinder, 'Grinder added');
+      }
     } catch (error) {
-      console.error('[Beanie] Add grinder failed', error);
-      this.setState({ busy: false, status: 'Add grinder failed' });
+      console.error('[Beanie] Save grinder failed', error);
+      this.setState({ busy: false, status: 'Save grinder failed' });
     }
   }
 
@@ -2951,21 +2971,25 @@ export class BeanieApp {
   }
 
   private renderGrinderEditorPage(): string {
-    const actions = `<button class="command primary" type="submit" form="grinder-form">${icon('save')}<span>Add grinder</span></button>`;
+    const editing = this.state.editingGrinderId
+      ? this.state.grinders.find((grinder) => grinder.id === this.state.editingGrinderId) ?? null
+      : null;
+    const actionLabel = editing ? 'Save grinder' : 'Add grinder';
+    const actions = `<button class="command primary" type="submit" form="grinder-form">${icon('save')}<span>${actionLabel}</span></button>`;
     return `
-      ${this.pageHeader('Add Grinder', 'workbench', actions)}
+      ${this.pageHeader(editing ? 'Edit Grinder' : 'Add Grinder', 'workbench', actions)}
       <form id="grinder-form" class="page-body form-page" data-form="grinder-editor">
-        <label>Model<input name="model" required autocomplete="off" /></label>
-        <label>Burrs<input name="burrs" autocomplete="off" /></label>
+        <label>Model<input name="model" required autocomplete="off" value="${escapeAttr(editing?.model ?? '')}" /></label>
+        <label>Burrs<input name="burrs" autocomplete="off" value="${escapeAttr(editing?.burrs ?? '')}" /></label>
         <label>Setting type
           <select name="settingType">
-            <option value="numeric">Numeric</option>
-            <option value="preset">Preset</option>
+            <option value="numeric" ${editing?.settingType === 'numeric' || !editing?.settingType ? 'selected' : ''}>Numeric</option>
+            <option value="preset" ${editing?.settingType === 'preset' ? 'selected' : ''}>Preset</option>
           </select>
         </label>
         <div class="field-row">
-          <label>Small step<input type="number" name="settingSmallStep" min="0" step="0.01" value="0.1" /></label>
-          <label>Big step<input type="number" name="settingBigStep" min="0" step="0.1" value="1" /></label>
+          <label>Small step<input type="number" name="settingSmallStep" min="0" step="0.01" value="${escapeAttr(String(editing?.settingSmallStep ?? 0.1))}" /></label>
+          <label>Big step<input type="number" name="settingBigStep" min="0" step="0.1" value="${escapeAttr(String(editing?.settingBigStep ?? 1))}" /></label>
         </div>
       </form>
     `;
