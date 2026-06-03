@@ -442,7 +442,12 @@ export function nudgeSimpleProfileField(
 
 /** Switch the editor surface. Basic is refused unless the steps pass the guard. */
 export function setEditorMode(state: ProfileEditorState, mode: EditorMode): ProfileEditorState {
-  if (mode === 'basic' && !canEditAsBasic(state.steps)) return state;
+  // Switching to Basic when the steps aren't already a canonical simple shape
+  // (a brand-new profile, or any advanced profile) compiles a simple template —
+  // keeping the knobs where the steps already parse, else sensible defaults.
+  if (mode === 'basic' && !canEditAsBasic(state.steps)) {
+    return setSimpleProfileType(state, simpleStateType(state));
+  }
   return { ...state, editorMode: mode };
 }
 
@@ -606,13 +611,9 @@ export function renderProfileEditor(state: ProfileEditorState): string {
 }
 
 export function renderEditorModeBar(state: ProfileEditorState): string {
-  const canBasic = canEditAsBasic(state.steps);
-  const basicAttrs = canBasic
-    ? ''
-    : 'disabled title="These steps are too detailed for the basic editor — edit them in Advanced."';
   return `
     <div class="pe-mode-bar" role="group" aria-label="Editor mode">
-      <button type="button" class="pe-mode-btn ${state.editorMode === 'basic' ? 'active' : ''}" data-action="pe-set-mode" data-value="basic" ${basicAttrs}>Basic</button>
+      <button type="button" class="pe-mode-btn ${state.editorMode === 'basic' ? 'active' : ''}" data-action="pe-set-mode" data-value="basic">Basic</button>
       <button type="button" class="pe-mode-btn ${state.editorMode === 'advanced' ? 'active' : ''}" data-action="pe-set-mode" data-value="advanced">Advanced</button>
     </div>
   `;

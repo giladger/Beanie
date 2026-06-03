@@ -15,6 +15,7 @@ import {
   setStepPump,
   PROFILE_BEVERAGE_TYPES
 } from '../components/profileEditor';
+import { canEditAsBasic } from '../domain/simpleProfile';
 
 run('reads de1app Tcl-derived metadata, steps, and flat exit conditions', () => {
   const state = createProfileEditorState(tclDerivedProfile());
@@ -214,9 +215,17 @@ run('opens a canonical simple profile in basic mode, advanced otherwise', () => 
   equal(createProfileEditorState(sampleProfile()).editorMode, 'advanced');
 });
 
-run('basic mode is refused for steps that fail the guard', () => {
+run('switching to basic converts a non-simple profile into a simple one', () => {
   const advanced = createProfileEditorState(sampleProfile());
-  equal(setEditorMode(advanced, 'basic').editorMode, 'advanced'); // refused, stays advanced
+  const next = setEditorMode(advanced, 'basic');
+  equal(next.editorMode, 'basic');
+  equal(canEditAsBasic(next.steps), true); // now a canonical simple profile
+
+  // a brand-new (1-step) profile can go basic too
+  const fresh = setEditorMode(createProfileEditorState(null), 'basic');
+  equal(fresh.editorMode, 'basic');
+  equal(canEditAsBasic(fresh.steps), true);
+
   // a basic profile can always drop to advanced
   equal(setEditorMode(createProfileEditorState(pressureProfile()), 'advanced').editorMode, 'advanced');
 });
