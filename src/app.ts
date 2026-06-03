@@ -1912,11 +1912,10 @@ export class BeanieApp {
   }
 
   private async applyMachinePreset(name: string, presetId: string): Promise<void> {
-    const workflow = this.state.workflow ?? {};
     const capabilities = this.machineCapabilitiesForControls();
-    let steamSettings = steamValues(workflow, this.state.machineSettings);
-    let hotWaterData = hotWaterValues(workflow, this.state.machineSettings);
-    let rinseData = flushValues(workflow, this.state.machineSettings);
+    let steamSettings = this.currentSteamSettings();
+    let hotWaterData = this.currentHotWaterData();
+    let rinseData = this.currentRinseData();
 
     if (name === 'steamPreset') {
       const preset = STEAM_PRESETS.find((item) => item.id === presetId);
@@ -1939,11 +1938,10 @@ export class BeanieApp {
 
   private async applyMachineValue(name: string, value: number | null): Promise<void> {
     if (value == null) return;
-    const workflow = this.state.workflow ?? {};
     const capabilities = this.machineCapabilitiesForControls();
-    const steamSettings = steamValues(workflow, this.state.machineSettings);
-    const hotWaterData = hotWaterValues(workflow, this.state.machineSettings);
-    const rinseData = flushValues(workflow, this.state.machineSettings);
+    const steamSettings = this.currentSteamSettings();
+    const hotWaterData = this.currentHotWaterData();
+    const rinseData = this.currentRinseData();
 
     if (name === 'steamFlow') steamSettings.flow = value;
     if (name === 'steamTemp') steamSettings.targetTemperature = value;
@@ -1989,25 +1987,26 @@ export class BeanieApp {
       this.setState({ busy: false, status: `${status} (demo)` });
       return;
     }
-    const [workflowResult, settingsResult] = await Promise.allSettled([
-      gateway.updateWorkflow(workflow),
-      gateway.updateMachineSettings(machinePatch)
-    ]);
-    if (workflowResult.status === 'fulfilled') {
+    try {
+      const saved = await gateway.updateWorkflow(workflow);
+      let directMachineSaved = true;
+      try {
+        await gateway.updateMachineSettings(machinePatch);
+      } catch (error) {
+        directMachineSaved = false;
+        console.error('[Beanie] Direct machine settings update failed', error);
+      }
       this.setState({
-        workflow: workflowResult.value,
+        workflow: { ...saved, steamSettings, hotWaterData, rinseData },
         machineSettings,
         busy: false,
-        status: settingsResult.status === 'fulfilled' ? status : `${status}; direct machine update failed`
+        status: directMachineSaved ? status : `${status}; direct machine update failed`
       });
-      if (settingsResult.status === 'fulfilled') void this.loadMachineControlState();
-      return;
+      if (directMachineSaved) void this.loadMachineControlState();
+    } catch (error) {
+      console.error('[Beanie] Save machine settings failed', error);
+      this.setState({ busy: false, status: 'Machine settings save failed' });
     }
-    console.error('[Beanie] Save machine settings failed', workflowResult.reason);
-    if (settingsResult.status === 'rejected') {
-      console.error('[Beanie] Direct machine settings update failed', settingsResult.reason);
-    }
-    this.setState({ busy: false, status: 'Machine settings save failed' });
   }
 
   private machineCapabilitiesForControls(): WaterControlCapabilities {
@@ -2016,6 +2015,21 @@ export class BeanieApp {
       settings: this.state.machineSettings,
       demo: this.state.demo
     });
+  }
+
+  private currentSteamSettings(): SteamSettings {
+    if (this.state.workflow?.steamSettings) return steamValues(this.state.workflow, null);
+    return steamValues(this.state.workflow, this.state.machineSettings);
+  }
+
+  private currentHotWaterData(): HotWaterData {
+    if (this.state.workflow?.hotWaterData) return hotWaterValues(this.state.workflow, null);
+    return hotWaterValues(this.state.workflow, this.state.machineSettings);
+  }
+
+  private currentRinseData(): RinseData {
+    if (this.state.workflow?.rinseData) return flushValues(this.state.workflow, null);
+    return flushValues(this.state.workflow, this.state.machineSettings);
   }
 
   private adjustDialogValue(delta: number): void {
@@ -2766,20 +2780,15 @@ export class BeanieApp {
 
   private renderMachinePage(): string {
     const capabilities = this.machineCapabilitiesForControls();
-    const steam = steamValues(this.state.workflow, this.state.machineSettings);
-    const water = hotWaterValues(this.state.workflow, this.state.machineSettings);
-    const flush = flushValues(this.state.workflow, this.state.machineSettings);
+    const steam = this.currentSteamSettings();
+    const water = this.currentHotWaterData();
+    const flush = this.currentRinseData();
     const steamPreset = matchingPreset(steam, STEAM_PRESETS);
     const waterPreset = matchingPreset(water, HOT_WATER_PRESETS);
     const flushPreset = matchingPreset(flush, FLUSH_PRESETS);
     return `
       ${this.pageHeader('Steam · Water · Flush')}
       <main class="page-body machine-page">
-        <div class="machine-status-strip">
-          ${machineStatusChip('Source', sourceLabel(capabilities))}
-          ${machineStatusChip('Machine', this.state.machine?.state?.state ? capitalize(this.state.machine.state.state) : 'Waiting')}
-          ${machineStatusChip('Hardware', hardwareLabel(capabilities.hardware))}
-        </div>
         <div class="machine-lanes">
           ${renderMachineLane({
             tone: 'steam',
@@ -3519,19 +3528,10 @@ function renderMachineValueTile(tile: MachineValueTile): string {
   `;
 }
 
-function machineStatusChip(label: string, value: string): string {
-  return `<span class="machine-status-chip"><em>${escapeHtml(label)}</em><strong>${escapeHtml(value)}</strong></span>`;
-}
-
 function sourceLabel(capabilities: WaterControlCapabilities): string {
   if (capabilities.source === 'machine') return 'Machine settings';
   if (capabilities.source === 'demo') return 'Demo';
   return 'Workflow';
-}
-
-function hardwareLabel(capabilities: string[]): string {
-  if (capabilities.length === 0) return 'DE1';
-  return capabilities.slice(0, 2).map(capitalize).join(' · ');
 }
 
 function machineSettingsFromWorkflow(

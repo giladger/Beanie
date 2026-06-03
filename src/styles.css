@@ -1121,15 +1121,54 @@ p {
 }
 
 .machine-label-modal {
-  width: min(380px, calc(100vw - 24px));
+  width: min(340px, calc(100vw - 24px));
+  gap: 10px;
+  padding: 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.38);
 }
 
+.machine-label-modal .modal-head {
+  gap: 10px;
+}
+
+.machine-label-modal .modal-head h2 {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.machine-label-modal .icon-button {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+}
+
 .machine-label-input {
+  height: 44px;
   font-weight: 850;
+  font-size: 20px;
+}
+
+.machine-label-modal .modal-actions {
+  grid-template-columns: 1fr 1fr;
+}
+
+.machine-label-modal .text-button,
+.machine-label-modal .command {
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.machine-label-modal .command .icon {
+  width: 15px;
+  height: 15px;
 }
 
 .shot-edit-modal {
@@ -3874,25 +3913,6 @@ p {
   gap: 12px;
 }
 
-.machine-status-strip {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.machine-status-chip {
-  min-width: 0;
-  min-height: 34px;
-  padding: 5px 9px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel-2);
-  display: grid;
-  align-content: center;
-  gap: 3px;
-}
-
-.machine-status-chip em,
 .machine-card .eyebrow,
 .machine-preset em,
 .machine-number em {
@@ -3902,16 +3922,6 @@ p {
   font-weight: 950;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-}
-
-.machine-status-chip strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--ink);
-  font-size: 13px;
-  font-weight: 950;
 }
 
 .machine-lane {
@@ -4532,7 +4542,6 @@ p {
 }
 
 @media (max-width: 900px) {
-  .machine-status-strip,
   .machine-lanes,
   .machine-custom-grid,
   .machine-custom-grid.flush-grid {
@@ -4554,7 +4563,6 @@ p {
 }
 
 @media (max-width: 560px) {
-  .machine-status-strip,
   .machine-lanes,
   .machine-presets,
   .machine-values,
