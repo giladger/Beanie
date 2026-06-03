@@ -393,6 +393,7 @@ export class BeanieApp {
   private simTimer: number | null = null;
   private machineServiceState: MachineServiceState | null = null;
   private machineServiceStartedAtMs: number | null = null;
+  private machineProgressReturnView: View | null = null;
   private machineStopRequestedFor: MachineServiceState | null = null;
   private machineStopRequestedAtMs: number | null = null;
   private machineStopFeedbackTimer: number | null = null;
@@ -870,14 +871,16 @@ export class BeanieApp {
   }
 
   private async machineAction(state: MachineState): Promise<void> {
+    const service = machineServiceState(state);
     this.setState({ busy: true, status: machineActionStatus(state, 'sending') });
     if (this.state.demo) {
       if (state !== 'espresso') this.stopSimulatedShot();
+      this.rememberMachineProgressReturnView(service);
       this.trackMachineServiceState(state);
       this.setState({
         busy: false,
         machine: optimisticMachineSnapshot(this.state.machine, state),
-        view: machineServiceState(state) ? 'machine' : this.state.view,
+        view: service ? 'machine' : this.state.view,
         liveActive: state === 'espresso' ? this.state.liveActive : false,
         asleep: state === 'sleeping',
         status: machineActionStatus(state, 'demo')
@@ -887,11 +890,12 @@ export class BeanieApp {
     }
     try {
       await gateway.requestState(state);
+      this.rememberMachineProgressReturnView(service);
       this.trackMachineServiceState(state);
       this.setState({
         busy: false,
         machine: optimisticMachineSnapshot(this.state.machine, state),
-        view: machineServiceState(state) ? 'machine' : this.state.view,
+        view: service ? 'machine' : this.state.view,
         asleep: state === 'sleeping',
         status: machineActionStatus(state, 'sent')
       });
@@ -917,11 +921,13 @@ export class BeanieApp {
     this.machineStopRequestedAtMs = Date.now();
     this.setState({ busy: true, status: 'Stopping machine' });
     if (this.state.demo) {
+      const returnView = this.consumeMachineProgressReturnView();
       this.clearMachineStopRequest();
       this.trackMachineServiceState('idle');
       this.setState({
         busy: false,
         machine: optimisticMachineSnapshot(this.state.machine, 'idle'),
+        view: returnView,
         status: 'Demo stopped'
       });
       return;
@@ -1022,6 +1028,7 @@ export class BeanieApp {
     }
     const currentService = machineServiceState(this.state.machine?.state?.state);
     if (currentService && this.state.view !== 'machine') {
+      this.rememberMachineProgressReturnView(currentService);
       this.setState({ view: 'machine' });
       return;
     }
@@ -1030,10 +1037,21 @@ export class BeanieApp {
       return;
     }
     if (previousService && !currentService && this.state.view === 'machine') {
-      this.setState({});
+      this.setState({ view: this.consumeMachineProgressReturnView() });
       return;
     }
     this.updateTopbarStats();
+  }
+
+  private rememberMachineProgressReturnView(service: MachineServiceState | null): void {
+    if (!service || this.machineProgressReturnView != null) return;
+    this.machineProgressReturnView = this.state.view;
+  }
+
+  private consumeMachineProgressReturnView(): View {
+    const view = this.machineProgressReturnView ?? 'workbench';
+    this.machineProgressReturnView = null;
+    return view;
   }
 
   private trackMachineServiceState(state: MachineState | undefined, nowMs = Date.now()): void {
