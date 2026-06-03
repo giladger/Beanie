@@ -3482,11 +3482,41 @@ function renderMachinePresetTile<T extends object>(
 }
 
 function renderMachineGraphic(tone: MachineLaneOptions<object>['tone']): string {
-  const iconName = tone === 'steam' ? 'waves' : tone === 'water' ? 'droplets' : 'refresh-cw';
   return `
     <div class="machine-graphic" aria-hidden="true">
-      ${icon(iconName)}
+      ${machineGraphicIcon(tone)}
     </div>
+  `;
+}
+
+function machineGraphicIcon(tone: MachineLaneOptions<object>['tone']): string {
+  if (tone === 'water') {
+    return `
+      <svg class="machine-graphic-svg" viewBox="0 0 64 64" role="img" aria-label="Water">
+        <path d="M32 7C24.3 17 17 25.4 17 37.2C17 45.4 23.7 52 32 52C40.3 52 47 45.4 47 37.2C47 25.4 39.7 17 32 7Z" />
+        <path d="M24.7 37.5C26 42 29.3 44.9 34 45.2" />
+      </svg>
+    `;
+  }
+
+  if (tone === 'flush') {
+    return `
+      <svg class="machine-graphic-svg" viewBox="0 0 64 64" role="img" aria-label="Flush">
+        <path d="M20 25V20.5C20 15.2 24.2 11 29.5 11H34.5C39.8 11 44 15.2 44 20.5V25" />
+        <path d="M16.5 25H47.5" />
+        <path d="M23 31H41" />
+        <path d="M32 36C28.5 40.3 26.8 43.5 26.8 46C26.8 49.2 29.1 52 32 52C34.9 52 37.2 49.2 37.2 46C37.2 43.5 35.5 40.3 32 36Z" />
+      </svg>
+    `;
+  }
+
+  return `
+    <svg class="machine-graphic-svg" viewBox="0 0 64 64" role="img" aria-label="Steam">
+      <path d="M20.6 46C14.5 46 10 41.8 10 36.4C10 31.2 14.1 27 19.5 26.7C22.2 19.2 29.3 15.1 36.6 16.8C43.2 18.3 47.4 24 47.4 30.6C51.4 31.7 54 34.8 54 38.7C54 43 50.5 46 45.8 46H20.6Z" />
+      <path d="M32 20V49" />
+      <path d="M40.8 24.8C37.2 28.3 35.4 32.3 35.4 37" />
+      <path d="M23.2 28C26.4 31.3 28.2 35 28.2 39.2" />
+    </svg>
   `;
 }
 

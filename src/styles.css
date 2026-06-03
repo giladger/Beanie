@@ -3976,10 +3976,14 @@ p {
   padding: 12px;
 }
 
-.machine-graphic .icon {
-  width: 74px;
-  height: 74px;
-  stroke-width: 1.65;
+.machine-graphic-svg {
+  width: 86px;
+  height: 86px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .machine-card {
