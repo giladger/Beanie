@@ -43,7 +43,7 @@ export function renderShotGraph(shot: ShotRecord | null, options: GraphOptions =
   const grid = detailed ? renderGrid(height, plot, model.maxTime, model.maxY, xFor, yFor) : '';
   const markers = renderStepMarkers(model, plot, detailed, xFor);
   const traces = model.series
-    .map((series) => renderTrace(series, xFor, yFor))
+    .map((series) => renderTrace(series, plot, xFor, yFor))
     .join('');
   const legend = detailed ? renderLegend(width, model.series) : '';
   const missing = detailed ? renderMissingNotice(model, plot) : '';
@@ -59,6 +59,7 @@ export function renderShotGraph(shot: ShotRecord | null, options: GraphOptions =
 
 function renderTrace(
   series: ShotGraphSeries,
+  plot: PlotArea,
   xFor: (value: number) => number,
   yFor: (value: number) => number
 ): string {
@@ -67,7 +68,7 @@ function renderTrace(
     const sample = series.samples[0]!;
     return `<circle class="trace-point ${series.className}" cx="${xFor(sample.t).toFixed(1)}" cy="${yFor(sample.value).toFixed(1)}" r="2.4" ${strokeAttrs} fill="${series.color}" />`;
   }
-  if (series.dashArray != null) return renderDashedTrace(series, xFor, yFor);
+  if (series.dashArray != null) return renderDashedTrace(series, plot, xFor, yFor);
 
   const points = series.samples
     .map((sample) => `${xFor(sample.t).toFixed(1)},${yFor(sample.value).toFixed(1)}`)
@@ -77,6 +78,7 @@ function renderTrace(
 
 function renderDashedTrace(
   series: ShotGraphSeries,
+  plot: PlotArea,
   xFor: (value: number) => number,
   yFor: (value: number) => number
 ): string {
@@ -95,7 +97,7 @@ function renderDashedTrace(
       segments.push(renderDashedRun(series, run));
       run.length = 0;
       segments.push(
-        `<path class="trace ${series.className}" d="${verticalDashPath((x1 + x2) / 2, y1, y2, dash, gap)}" stroke="${series.color}" fill="none" stroke-linecap="butt" />`
+        `<path class="trace ${series.className}" d="${verticalDashPath((x1 + x2) / 2, y1, y2, dash, gap, plot.y)}" stroke="${series.color}" fill="none" stroke-linecap="butt" />`
       );
       continue;
     }
@@ -133,20 +135,35 @@ function renderStepMarkers(
           detailed && index < labelLimit
             ? `<text class="chart-axis-label" x="${(x + 4).toFixed(1)}" y="${(plot.y + 13 + (index % 2) * 14).toFixed(1)}">${escapeHtml(marker.label)}</text>`
             : '';
-        return `<path class="chart-step-marker" d="${verticalDashPath(x, plot.y, plot.y + plot.height)}" stroke="rgba(255,255,255,0.44)" stroke-width="${detailed ? 1.4 : 1}" fill="none" />
+        return `<path class="chart-step-marker" d="${verticalDashPath(x, plot.y, plot.y + plot.height, 5, 5, plot.y)}" stroke="rgba(255,255,255,0.44)" stroke-width="${detailed ? 1.4 : 1}" fill="none" />
           ${label}`;
       })
       .join('')}
   </g>`;
 }
 
-function verticalDashPath(x: number, y1: number, y2: number, dash = 5, gap = 5): string {
-  const start = Math.round(Math.min(y1, y2));
-  const end = Math.round(Math.max(y1, y2));
+function verticalDashPath(
+  x: number,
+  y1: number,
+  y2: number,
+  dash = 5,
+  gap = 5,
+  anchorY = Math.min(y1, y2)
+): string {
+  const visibleStart = Math.round(Math.min(y1, y2));
+  const visibleEnd = Math.round(Math.max(y1, y2));
+  const step = dash + gap;
   const roundedX = snapSvgPixel(x);
   const commands: string[] = [];
-  for (let y = start; y < end; y += dash + gap) {
-    commands.push(`M${roundedX} ${y}L${roundedX} ${Math.min(y + dash, end)}`);
+  let y = Math.round(anchorY);
+  while (y > visibleStart) y -= step;
+  while (y + dash <= visibleStart) y += step;
+
+  for (; y < visibleEnd; y += step) {
+    const segmentStart = Math.max(y, visibleStart);
+    const segmentEnd = Math.min(y + dash, visibleEnd);
+    if (segmentEnd <= segmentStart) continue;
+    commands.push(`M${roundedX} ${segmentStart}L${roundedX} ${segmentEnd}`);
   }
   return commands.join(' ');
 }

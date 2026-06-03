@@ -233,7 +233,7 @@ export class LiveChart {
     ctx.setLineDash([]);
     for (let i = 0; i < model.markers.length; i += 1) {
       const x = snapPixel(projectX(model.markers[i]!.t, model.maxTime, plot));
-      drawVerticalDash(ctx, x, plot.y, plot.y + plot.height);
+      drawVerticalDash(ctx, x, plot.y, plot.y + plot.height, 5, 5, plot.y);
     }
     ctx.setLineDash([]);
     ctx.lineCap = 'round';
@@ -283,7 +283,7 @@ export class LiveChart {
     }));
 
     if (dashed) {
-      drawDashedSegments(ctx, xy, parseDashArray(series.dashArray!));
+      drawDashedSegments(ctx, xy, parseDashArray(series.dashArray!), plot.y);
       ctx.lineCap = 'round';
       return;
     }
@@ -341,14 +341,23 @@ function drawVerticalDash(
   y1: number,
   y2: number,
   dash = 5,
-  gap = 5
+  gap = 5,
+  anchorY = Math.min(y1, y2)
 ): void {
-  const start = Math.round(Math.min(y1, y2));
-  const end = Math.round(Math.max(y1, y2));
+  const visibleStart = Math.round(Math.min(y1, y2));
+  const visibleEnd = Math.round(Math.max(y1, y2));
+  const step = dash + gap;
+  let y = Math.round(anchorY);
+  while (y > visibleStart) y -= step;
+  while (y + dash <= visibleStart) y += step;
+
   ctx.beginPath();
-  for (let y = start; y < end; y += dash + gap) {
-    ctx.moveTo(x, y);
-    ctx.lineTo(x, Math.min(y + dash, end));
+  for (; y < visibleEnd; y += step) {
+    const segmentStart = Math.max(y, visibleStart);
+    const segmentEnd = Math.min(y + dash, visibleEnd);
+    if (segmentEnd <= segmentStart) continue;
+    ctx.moveTo(x, segmentStart);
+    ctx.lineTo(x, segmentEnd);
   }
   ctx.stroke();
 }
@@ -356,7 +365,8 @@ function drawVerticalDash(
 function drawDashedSegments(
   ctx: CanvasRenderingContext2D,
   points: Array<{ x: number; y: number }>,
-  pattern: number[]
+  pattern: number[],
+  anchorY: number
 ): void {
   const dash = pattern[0] ?? 6;
   const gap = pattern[1] ?? 5;
@@ -370,7 +380,15 @@ function drawDashedSegments(
     if (vertical) {
       strokeDashedRun(ctx, run, lineDash);
       run.length = 0;
-      drawVerticalDash(ctx, snapPixel((previous.x + current.x) / 2), previous.y, current.y, dash, gap);
+      drawVerticalDash(
+        ctx,
+        snapPixel((previous.x + current.x) / 2),
+        previous.y,
+        current.y,
+        dash,
+        gap,
+        anchorY
+      );
       continue;
     }
     if (run.length === 0) run.push(previous);
