@@ -322,7 +322,7 @@ function renderChoices(dialog: InputDialogState): string {
   const noneActive = !dialog.selectedChoiceId;
   return `
     <div class="input-dialog-choices" role="listbox" aria-label="${escapeAttr(dialog.choiceTitle ?? 'Choices')}">
-      <span>${escapeHtml(dialog.choiceTitle ?? 'Choices')}</span>
+      <span class="input-dialog-choices-title">${escapeHtml(dialog.choiceTitle ?? 'Choices')}</span>
       <button type="button" class="${noneActive ? 'active' : ''}" data-action="dialog-choice" data-id="">No grinder</button>
       ${dialog.choices.map((choice) => `
         <span class="input-dialog-choice ${choice.id === dialog.selectedChoiceId ? 'active' : ''}">

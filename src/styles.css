@@ -4182,7 +4182,7 @@ p {
 }
 
 .input-dialog-recents > span,
-.input-dialog-choices > span {
+.input-dialog-choices-title {
   color: var(--muted);
   font-size: 10px;
   font-weight: 950;
@@ -4250,6 +4250,8 @@ p {
   display: flex;
   align-items: baseline;
   gap: 8px;
+  font-size: inherit;
+  line-height: 1.2;
   white-space: nowrap;
 }
 
@@ -4284,11 +4286,15 @@ p {
 
 .input-dialog-choices small {
   flex: 1 1 auto;
+  color: var(--muted);
+  font-size: inherit;
+  font-weight: 900;
 }
 
-.input-dialog-choices small {
-  color: var(--muted);
-  font-size: 10px;
+.input-dialog-choices .input-dialog-add-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .input-dialog-keypad {
