@@ -3830,11 +3830,12 @@ p {
 }
 
 .settings-line {
+  --settings-control-width: clamp(210px, 30vw, 260px);
   min-height: 46px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) var(--settings-control-width);
   align-items: center;
-  gap: 12px;
+  gap: 16px;
   padding: 7px 0;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
@@ -3855,6 +3856,11 @@ p {
 
 .settings-line div {
   min-width: 0;
+}
+
+.settings-line > :last-child {
+  min-width: 0;
+  justify-self: stretch;
 }
 
 .settings-line span,
@@ -3879,10 +3885,14 @@ p {
 }
 
 .settings-line strong {
-  min-width: 88px;
+  width: 100%;
+  min-width: 0;
   color: var(--soft);
   font-size: 13px;
   text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .settings-line strong.good {
@@ -3900,6 +3910,8 @@ p {
 /* reaprime-backed field controls (select / number / time) */
 .settings-select,
 .settings-input {
+  width: 100%;
+  height: 34px;
   min-height: 34px;
   padding: 0 10px;
   border: 1px solid var(--line);
@@ -3912,12 +3924,11 @@ p {
 }
 
 .settings-select {
-  min-width: 132px;
+  min-width: 0;
   cursor: pointer;
 }
 
 .settings-input {
-  width: 96px;
   text-align: right;
 }
 
@@ -3929,15 +3940,21 @@ p {
    `.settings-line span` (0,1,1) — otherwise the unit span blockifies and
    drops below the input. */
 .settings-line .settings-number {
-  display: inline-flex;
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px;
   align-items: center;
   gap: 6px;
 }
 
+.settings-line .settings-number .settings-input {
+  min-width: 0;
+}
+
 .settings-line .settings-unit {
-  display: inline-block;
+  display: block;
   overflow: visible;
-  min-width: 34px;
+  min-width: 0;
   text-align: left;
   color: var(--muted);
   font-size: 11px;
@@ -3969,8 +3986,11 @@ p {
 
 .settings-schedule-actions,
 .settings-schedule-add {
-  display: inline-flex;
+  width: 100%;
+  height: 34px;
+  display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
 }
 
@@ -3978,8 +3998,11 @@ p {
 /* Scoped under .settings-line to beat `.settings-line span { display: block }`,
    which would otherwise drop the button below the toggle's centre. */
 .settings-line .settings-plugin-actions {
-  display: inline-flex;
+  width: 100%;
+  height: 34px;
+  display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
   overflow: visible;
 }
@@ -4012,26 +4035,52 @@ p {
 /* Uniform, right-aligned control column so every field's box shares one right
    edge and width (the number input flexes inside its unit wrapper instead of
    being pushed left by the trailing unit). */
-.settings-plugin-fields .settings-input.settings-plugin-text,
-.settings-plugin-fields .settings-select,
-.settings-plugin-fields .settings-number {
-  width: min(220px, 46vw);
-}
-
 .settings-input.settings-plugin-text {
   text-align: left;
 }
 
-.settings-plugin-fields .settings-number {
+.settings-line > .text-button,
+.settings-line > label.text-button,
+.settings-line .settings-plugin-actions .text-button,
+.settings-line .settings-schedule-actions .text-button,
+.settings-line .settings-schedule-add .text-button {
+  height: 34px;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  padding: 0 12px;
+  font-size: 12px;
 }
 
-.settings-plugin-fields .settings-number .settings-input {
+.settings-line > .text-button,
+.settings-line > label.text-button {
+  width: 100%;
+}
+
+.settings-line .settings-plugin-actions .text-button {
   flex: 1 1 auto;
-  width: auto;
+}
+
+.settings-line .settings-schedule-actions .text-button {
+  width: 44px;
+  flex: 0 0 44px;
+  padding: 0;
+}
+
+.settings-line .settings-schedule-add .settings-input {
+  flex: 1 1 auto;
   min-width: 0;
+}
+
+.settings-line .settings-schedule-add .text-button {
+  width: 84px;
+  flex: 0 0 84px;
+}
+
+.settings-plugin-fields .settings-number {
+  width: 100%;
 }
 
 .settings-plugin-fields .settings-unit {
@@ -4066,8 +4115,9 @@ p {
 }
 
 .settings-plugin-buttons {
-  display: inline-flex;
+  display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
 }
 
@@ -4083,15 +4133,18 @@ p {
 }
 
 .settings-segmented {
+  width: 100%;
   min-width: 0;
-  display: inline-flex;
+  height: 34px;
+  display: flex;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius);
 }
 
 .settings-segmented button {
-  min-width: 68px;
+  flex: 1 1 0;
+  min-width: 0;
   min-height: 32px;
   border: 0;
   border-left: 1px solid var(--line);
@@ -4114,7 +4167,14 @@ p {
   width: 48px;
   height: 28px;
   position: relative;
+  justify-self: end;
   display: inline-block;
+}
+
+.settings-line > .settings-toggle {
+  width: 100%;
+  height: 34px;
+  justify-self: stretch;
 }
 
 .settings-toggle input {
@@ -4129,6 +4189,11 @@ p {
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--panel-2);
+}
+
+.settings-line > .settings-toggle span {
+  inset: 3px 0 3px auto;
+  width: 48px;
 }
 
 .settings-toggle span::after {
@@ -4660,21 +4725,14 @@ p {
   }
 
   .settings-line {
-    grid-template-columns: 1fr;
-    align-items: stretch;
-    gap: 7px;
+    --settings-control-width: clamp(190px, 38vw, 240px);
+    grid-template-columns: minmax(0, 1fr) var(--settings-control-width);
+    align-items: center;
+    gap: 12px;
   }
 
   .settings-line strong {
-    text-align: left;
-  }
-
-  .settings-segmented {
-    width: 100%;
-  }
-
-  .settings-segmented button {
-    flex: 1 1 0;
+    text-align: right;
   }
 
   .input-dialog-body {
@@ -4698,6 +4756,20 @@ p {
   .shot-edit-fields,
   .shot-field-options {
     grid-template-columns: 1fr;
+  }
+
+  .settings-line {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+    gap: 7px;
+  }
+
+  .settings-line strong {
+    text-align: left;
+  }
+
+  .settings-toggle {
+    justify-self: start;
   }
 }
 
