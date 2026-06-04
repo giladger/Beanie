@@ -3840,8 +3840,7 @@ export class BeanieApp {
     return `
       <button class="shot-item ${active ? 'active' : ''} ${hint ? 'has-second-tap-hint' : ''}" data-action="select-history-shot" data-id="${escapeAttr(shot.id)}">
         <span class="shot-item-info">
-          <span class="shot-item-recipe">${formatGrams(recipe.dose)} → ${formatGrams(recipe.yield)}</span>
-          <span class="shot-item-dur">${duration ? escapeHtml(duration) : ''}</span>
+          <span class="shot-item-recipe">${formatGrams(recipe.dose)} → ${formatGrams(recipe.yield)}${duration ? ` @ ${escapeHtml(duration)}` : ''}</span>
           ${enjoymentBadge(shot)}
         </span>
         <span class="shot-item-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>

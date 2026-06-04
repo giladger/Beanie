@@ -805,7 +805,7 @@ p {
 .shot-item-info {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 34px 46px;
+  grid-template-columns: minmax(0, 1fr) 46px;
   align-items: center;
   column-gap: 8px;
   overflow: hidden;
@@ -818,17 +818,6 @@ p {
   font-size: 13px;
   font-weight: 800;
   color: var(--ink);
-  white-space: nowrap;
-}
-
-.shot-item-dur {
-  width: 34px;
-  overflow: hidden;
-  text-align: left;
-  text-overflow: clip;
-  font-size: 11px;
-  font-weight: 800;
-  color: var(--muted);
   white-space: nowrap;
 }
 
