@@ -308,7 +308,7 @@ interface AppState {
   view: View;
   settingsSection: string;
   settingsBundle: SettingsBundle | null;
-  settingsSource: 'gateway' | 'demo' | null;
+  settingsSource: 'gateway' | 'demo' | 'loading' | null;
   pluginConfig: PluginConfigState | null;
   modal: Modal;
   beanPickerBeanId: string | null;
@@ -1590,7 +1590,15 @@ export class BeanieApp {
         this.startSimulatedShot();
         break;
       case 'open-settings':
-        this.setState({ view: 'settings' });
+        this.setState({
+          view: 'settings',
+          settingsBundle: this.state.settingsBundle ?? demoSettingsBundle(),
+          settingsSource: this.state.settingsBundle
+            ? this.state.settingsSource
+            : this.state.demo
+              ? 'demo'
+              : 'loading'
+        });
         void this.loadReaSettings();
         break;
       case 'settings-section':
@@ -4394,7 +4402,7 @@ export class BeanieApp {
   // Each endpoint falls back to a demo default so a missing machine/battery
   // never blanks the screen; in demo mode the whole bundle is local.
   private async loadReaSettings(): Promise<void> {
-    if (this.state.settingsBundle) return;
+    if (this.state.settingsBundle && this.state.settingsSource !== 'loading') return;
     if (this.state.demo) {
       this.setState({ settingsBundle: demoSettingsBundle(), settingsSource: 'demo' });
       return;

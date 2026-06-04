@@ -1,8 +1,8 @@
 // Declarative spec for the reaprime-backed settings sections. Each field knows
 // its group (which endpoint it belongs to), key, control type, and bounds, so
 // the renderer and the change handler stay generic instead of hand-wiring ~30
-// controls. Skin-local prefs (theme, UI scale, auto-load, cache) live in
-// domain/settings.ts and are rendered separately.
+// controls. Skin-local prefs (theme, UI scale, cache) live in domain/settings.ts
+// and are rendered separately.
 
 import {
   CHARGING_MODES,
