@@ -857,18 +857,6 @@ p {
   min-width: 0;
 }
 
-/* The profile leads the description and is the one element that truncates. */
-.pane-profile {
-  flex: 0 1 auto;
-  min-width: 0;
-  font-size: 14px;
-  font-weight: 900;
-  color: var(--ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .pane-stat {
   flex: none;
   font-size: 12px;
@@ -877,19 +865,37 @@ p {
   white-space: nowrap;
 }
 
-/* Date: small and trailing the description. */
+/* The dose → yield leads the description. */
+.pane-lead {
+  font-size: 14px;
+  font-weight: 900;
+  color: var(--ink);
+}
+
+/* Profile trails the description and is the element that truncates. */
+.pane-profile {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Date — and with it the score + edit controls — align to the right edge. */
 .pane-time {
   flex: none;
+  margin-left: auto;
   font-size: 11px;
   font-weight: 700;
   color: var(--muted);
   white-space: nowrap;
 }
 
-/* Push the score + edit controls to the right edge. */
 .pane-head .enjoyment-badge {
   flex: none;
-  margin-left: auto;
 }
 
 .shot-edit-button {

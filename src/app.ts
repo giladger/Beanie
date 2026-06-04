@@ -3686,10 +3686,10 @@ export class BeanieApp {
         : '';
     return `
       <div class="pane-head">
-        <span class="pane-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
-        <span class="pane-stat">${formatGrams(recipe.dose)} → ${formatGrams(recipe.yield)}</span>
+        <span class="pane-stat pane-lead">${formatGrams(recipe.dose)} → ${formatGrams(recipe.yield)}</span>
         ${duration ? `<span class="pane-stat">@ ${escapeHtml(duration)}</span>` : ''}
         ${grinder ? `<span class="pane-stat">${escapeHtml(grinder)}</span>` : ''}
+        <span class="pane-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
         <span class="pane-time">${escapeHtml(dateLabel)}</span>
         ${shotScoreControl(shot.annotations?.enjoyment ?? null, {
           action: 'set-shot-score',
