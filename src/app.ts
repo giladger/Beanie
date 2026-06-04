@@ -195,11 +195,11 @@ const FOCUSABLE_SEARCH = new Set(['search', 'profile-search', 'settings-search']
 const SCROLL_SELECTORS = ['.bean-picker-list', '.shot-list', '.profile-list', '.page-body'];
 
 const SHOT_SCORE_OPTIONS = [
-  { value: 20, icon: '😞', label: 'Bad' },
-  { value: 40, icon: '😕', label: 'Meh' },
-  { value: 60, icon: '😐', label: 'Okay' },
-  { value: 80, icon: '🙂', label: 'Good' },
-  { value: 100, icon: '😍', label: 'Great' }
+  { value: 20, label: 'Bad', tone: 'bad' },
+  { value: 40, label: 'Meh', tone: 'meh' },
+  { value: 60, label: 'OK', tone: 'ok' },
+  { value: 80, label: 'Good', tone: 'good' },
+  { value: 100, label: 'Great', tone: 'great' }
 ] as const;
 
 type ShotScoreOption = (typeof SHOT_SCORE_OPTIONS)[number];
@@ -4961,13 +4961,13 @@ function promoteBean(beans: Bean[], beanId: string): Bean[] {
 function enjoymentBadge(shot: ShotRecord, size: 'row' | 'detail' = 'row'): string {
   const value = shot.annotations?.enjoyment;
   if (value == null) {
-    if (size === 'row') return '<span class="enjoyment-badge empty" aria-hidden="true"><strong></strong></span>';
+    if (size === 'row') return '<span class="enjoyment-badge empty" aria-hidden="true"></span>';
     return '';
   }
   const score = scoreOptionForValue(value);
-  const formatted = score ? score.label : Number.isInteger(value) ? value.toString() : value.toFixed(1);
-  const iconText = score?.icon ?? formatted;
-  return `<span class="enjoyment-badge ${size === 'detail' ? 'large' : ''}" aria-label="Enjoyment ${escapeAttr(formatted)}"><strong>${escapeHtml(iconText)}</strong></span>`;
+  const label = score ? score.label : Number.isInteger(value) ? value.toString() : value.toFixed(1);
+  const tone = score ? score.tone : 'ok';
+  return `<span class="enjoyment-badge ${tone} ${size === 'detail' ? 'large' : ''}" aria-label="Enjoyment ${escapeAttr(label)}">${escapeHtml(label)}</span>`;
 }
 
 function shotScoreControl(
@@ -4980,7 +4980,7 @@ function shotScoreControl(
     <div class="shot-score-control ${options.variant === 'detail' ? 'compact' : ''}" aria-label="Shot score">
       ${SHOT_SCORE_OPTIONS.map((item) => {
         const active = current?.value === item.value;
-        return `<button type="button" class="${active ? 'active' : ''}" data-action="${options.action}"${idAttr} data-value="${item.value}" aria-label="${escapeAttr(item.label)}" aria-pressed="${active}" title="${escapeAttr(item.label)}">${escapeHtml(item.icon)}</button>`;
+        return `<button type="button" class="shot-score-word ${item.tone} ${active ? 'active' : ''}" data-action="${options.action}"${idAttr} data-value="${item.value}" aria-label="${escapeAttr(item.label)}" aria-pressed="${active}" title="${escapeAttr(item.label)}">${escapeHtml(item.label)}</button>`;
       }).join('')}
     </div>
   `;

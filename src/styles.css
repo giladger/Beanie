@@ -778,7 +778,7 @@ p {
 .shot-item-info {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 34px 24px;
+  grid-template-columns: minmax(0, 1fr) 34px 46px;
   align-items: center;
   column-gap: 8px;
   overflow: hidden;
@@ -808,27 +808,10 @@ p {
 .shot-item .enjoyment-badge {
   justify-self: end;
   align-self: center;
-  width: 24px;
-  height: 24px;
-  min-width: 0;
-  margin-left: 0;
-  display: grid;
-  place-items: center;
-  text-align: center;
 }
 
 .shot-item .enjoyment-badge.empty {
-  min-height: 0;
-  padding: 0;
-  border-radius: 0;
-  background: transparent;
   visibility: hidden;
-}
-
-.shot-item .enjoyment-badge strong {
-  display: block;
-  font-size: 18px;
-  line-height: 1;
 }
 
 .shot-item-profile {
@@ -930,31 +913,40 @@ p {
 }
 
 .enjoyment-badge {
+  --tone: var(--soft);
   flex: 0 0 auto;
-  margin-top: 0;
   display: inline-flex;
-  align-items: baseline;
-  color: var(--green);
-  font-weight: 950;
-  text-shadow: 0 0 16px rgba(135, 222, 129, 0.28);
+  align-items: center;
+  color: var(--tone);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
-.enjoyment-badge::before {
-  content: none;
+.enjoyment-badge.bad {
+  --tone: var(--red);
 }
 
-.enjoyment-badge strong {
-  color: var(--green);
-  font-size: 15px;
-  line-height: 1;
+.enjoyment-badge.meh {
+  --tone: color-mix(in srgb, var(--red) 55%, var(--amber));
+}
+
+.enjoyment-badge.ok {
+  --tone: var(--amber);
+}
+
+.enjoyment-badge.good {
+  --tone: color-mix(in srgb, var(--green) 68%, var(--amber));
+}
+
+.enjoyment-badge.great {
+  --tone: var(--green);
 }
 
 .enjoyment-badge.large {
   justify-self: end;
-}
-
-.enjoyment-badge.large strong {
-  font-size: 24px;
+  font-size: 13px;
 }
 
 .sleep-overlay {
@@ -1788,34 +1780,54 @@ p {
   gap: 6px;
 }
 
-.shot-score-control button {
+.shot-score-word {
+  --tone: var(--soft);
   min-width: 0;
   min-height: 38px;
+  padding: 0 6px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel-2);
-  color: var(--soft);
-  font-size: 17px;
-  font-weight: 950;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 850;
 }
 
-.shot-score-control button.active {
-  border-color: rgba(124, 232, 141, 0.58);
-  background: rgba(124, 232, 141, 0.14);
-  color: var(--green);
-  box-shadow: 0 0 18px rgba(124, 232, 141, 0.12);
+.shot-score-word.bad {
+  --tone: var(--red);
+}
+
+.shot-score-word.meh {
+  --tone: color-mix(in srgb, var(--red) 55%, var(--amber));
+}
+
+.shot-score-word.ok {
+  --tone: var(--amber);
+}
+
+.shot-score-word.good {
+  --tone: color-mix(in srgb, var(--green) 68%, var(--amber));
+}
+
+.shot-score-word.great {
+  --tone: var(--green);
+}
+
+.shot-score-word.active {
+  border-color: color-mix(in srgb, var(--tone) 55%, var(--line));
+  background: color-mix(in srgb, var(--tone) 15%, transparent);
+  color: var(--tone);
 }
 
 .shot-score-control.compact {
-  grid-template-columns: repeat(5, 30px);
+  grid-template-columns: repeat(5, auto);
   gap: 4px;
 }
 
-.shot-score-control.compact button {
+.shot-score-control.compact .shot-score-word {
   min-height: 30px;
-  width: 30px;
-  padding: 0;
-  font-size: 14px;
+  padding: 0 9px;
+  font-size: 12px;
 }
 
 .shot-field-backdrop {
