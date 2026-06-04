@@ -100,8 +100,8 @@ const SERIES_DEFINITIONS: ShotGraphSeriesDefinition[] = [
   },
   {
     key: 'groupTemperature',
-    label: 'Group temp /10',
-    shortLabel: 'Temp',
+    label: 'Temp / 10',
+    shortLabel: 'Temp / 10',
     className: 'trace-temp',
     color: '#ff5a67',
     value: (measurement) =>
@@ -127,7 +127,7 @@ const SERIES_DEFINITIONS: ShotGraphSeriesDefinition[] = [
     label: 'Weight flow',
     shortLabel: 'Weight flow',
     className: 'trace-weight-flow',
-    color: '#5bd8c8',
+    color: '#8a6d1c',
     value: (measurement) => scaleNumber(measurement, 'weightFlow'),
     timestamp: scaleTimestamp
   }

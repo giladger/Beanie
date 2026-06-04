@@ -83,8 +83,8 @@ export const LIVE_SERIES: LiveSeriesDefinition[] = [
   },
   {
     key: 'groupTemperature',
-    label: 'Group temp /10',
-    shortLabel: 'Temp',
+    label: 'Temp / 10',
+    shortLabel: 'Temp / 10',
     color: '#ff5a67',
     value: (machine) => numeric(machine?.groupTemperature) ?? numeric(machine?.mixTemperature),
     scale: (value) => value / 10
@@ -103,7 +103,7 @@ export const LIVE_SERIES: LiveSeriesDefinition[] = [
     key: 'weightFlow',
     label: 'Weight flow',
     shortLabel: 'Weight flow',
-    color: '#5bd8c8',
+    color: '#8a6d1c',
     value: (_machine, scale) => numeric(scale?.weightFlow)
   }
 ];
