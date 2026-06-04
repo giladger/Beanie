@@ -1,5 +1,7 @@
 # Beanie
 
+<img src="public/icon.png" alt="Beanie coffee bean icon" width="240" />
+
 Beanie is a bean-first WebUI skin for Decent.app.
 
 The core workflow:
