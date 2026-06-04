@@ -291,6 +291,7 @@ interface AppState {
   shots: ShotRecord[];
   shotsTotal: number;
   shotsLoadingMore: boolean;
+  beanUsageAt: Record<string, number>;
   draft: RecipeDraft;
   search: string;
   profileSearch: string;
@@ -313,6 +314,7 @@ interface AppState {
   modal: Modal;
   beanPickerBeanId: string | null;
   beanPickerMode: BeanPickerMode;
+  beanPickerAutofocusSearch: boolean;
   editingBeanId: string | null;
   editingGrinderId: string | null;
   profileEditor: ProfileEditorState | null;
@@ -361,6 +363,7 @@ export class BeanieApp {
     shots: [],
     shotsTotal: 0,
     shotsLoadingMore: false,
+    beanUsageAt: {},
     draft: emptyRecipe(),
     search: '',
     profileSearch: '',
@@ -383,6 +386,7 @@ export class BeanieApp {
     modal: null,
     beanPickerBeanId: null,
     beanPickerMode: 'inspect',
+    beanPickerAutofocusSearch: true,
     editingBeanId: null,
     editingGrinderId: null,
     profileEditor: null,
@@ -533,7 +537,7 @@ export class BeanieApp {
     const prevSignature = this.state.appliedSignature;
     this.setState({ loading: true, status: 'Loading Decent.app data' });
     try {
-      const latestShotQuery = new URLSearchParams({ limit: '1', offset: '0', order: 'desc' });
+      const latestShotQuery = new URLSearchParams({ limit: '50', offset: '0', order: 'desc' });
       const [workflow, beans, grinders, profiles, latestShots] = await Promise.all([
         gateway.workflow(),
         gateway.beans(),
@@ -549,6 +553,7 @@ export class BeanieApp {
       this.setState({
         workflow,
         beans,
+        beanUsageAt: this.beanUsageFromShots(beans, latestShots.items),
         grinders,
         profiles,
         machineInfo,
@@ -578,9 +583,11 @@ export class BeanieApp {
   }
 
   private loadDemo(): void {
+    const demoShotUsage = demoBeans.flatMap((bean) => demoShotsForBean(bean));
     this.setState({
       workflow: demoWorkflow,
       beans: demoBeans,
+      beanUsageAt: this.beanUsageFromShots(demoBeans, demoShotUsage),
       batchesByBean: demoBatches,
       grinders: demoGrinders,
       profiles: demoProfiles,
@@ -649,6 +656,10 @@ export class BeanieApp {
       shots,
       shotsTotal,
       shotsLoadingMore: false,
+      beanUsageAt: {
+        ...this.state.beanUsageAt,
+        ...this.beanUsageFromShots(this.state.beans, shots)
+      },
       draft: normalizeDraft(draft, this.state.profiles, this.state.grinders),
       busy: false,
       applyState: 'idle',
@@ -673,16 +684,39 @@ export class BeanieApp {
 
   private async openBeanPicker(
     beanId: string | null,
-    options: { create?: boolean } = {}
+    options: { create?: boolean; autofocusSearch?: boolean } = {}
   ): Promise<void> {
     const id = beanId ?? this.state.selectedBeanId;
     this.setState({
       modal: 'bean-picker',
       search: '',
       beanPickerBeanId: options.create ? null : id,
-      beanPickerMode: options.create ? 'create' : 'inspect'
+      beanPickerMode: options.create ? 'create' : 'inspect',
+      beanPickerAutofocusSearch: options.autofocusSearch ?? true
     });
     if (id && !options.create) await this.ensureBatchesLoaded(id);
+  }
+
+  private beanUsageFromShots(
+    beans: Bean[],
+    shots: Array<ShotSummary | ShotRecord>
+  ): Record<string, number> {
+    const usage: Record<string, number> = {};
+    for (const shot of shots) {
+      const beanId = this.beanIdForContext(shot.workflow?.context, beans);
+      if (!beanId) continue;
+      const timestamp = Date.parse(shot.timestamp);
+      if (!Number.isFinite(timestamp)) continue;
+      usage[beanId] = Math.max(usage[beanId] ?? 0, timestamp);
+    }
+    return usage;
+  }
+
+  private beanIdForContext(ctx: WorkflowContext | null | undefined, beans = this.state.beans): string | null {
+    if (!ctx?.coffeeName && !ctx?.coffeeRoaster) return null;
+    const byName = beans.find((bean) => bean.name === ctx.coffeeName && bean.roaster === ctx.coffeeRoaster);
+    if (byName) return byName.id;
+    return null;
   }
 
   private async inspectBeanInPicker(beanId: string): Promise<void> {
@@ -1661,7 +1695,7 @@ export class BeanieApp {
         }
         break;
       case 'open-edit-bean':
-        await this.openBeanPicker(id ?? this.state.selectedBeanId);
+        await this.openBeanPicker(id ?? this.state.selectedBeanId, { autofocusSearch: false });
         break;
       case 'archive-bean':
         if (id) await this.archiveBean(id);
@@ -3406,9 +3440,10 @@ export class BeanieApp {
 
   private renderBeanPickerModal(): string {
     const query = this.state.search.trim().toLowerCase();
-    const matches = this.state.beans.filter((bean) => beanLabel(bean).toLowerCase().includes(query));
+    const matches = this.sortedBeansForPicker().filter((bean) => beanLabel(bean).toLowerCase().includes(query));
     const focused = this.beanPickerFocusedBean();
     const focusedId = focused?.id ?? null;
+    const autofocus = this.state.beanPickerAutofocusSearch ? ' autofocus' : '';
     return `
       <div class="modal-backdrop bean-picker-backdrop" data-action="close-modal">
         <section class="modal panel bean-picker-modal" role="dialog" aria-modal="true" aria-label="Pick a bag" data-action="noop">
@@ -3427,7 +3462,7 @@ export class BeanieApp {
             <div class="bean-picker-list-panel">
               <label class="search bean-picker-search">
                 ${icon('search')}
-                <input type="search" data-action="search" value="${escapeAttr(this.state.search)}" placeholder="Search beans" autofocus />
+                <input type="search" data-action="search" value="${escapeAttr(this.state.search)}" placeholder="Search beans"${autofocus} />
               </label>
               <div class="bean-picker-list">
                 ${
@@ -3444,6 +3479,19 @@ export class BeanieApp {
     `;
   }
 
+  private sortedBeansForPicker(): Bean[] {
+    const usage = this.state.beanUsageAt;
+    const selectedId = this.state.selectedBeanId;
+    return [...this.state.beans].sort((a, b) => {
+      const au = usage[a.id] ?? (a.id === selectedId ? 1 : 0);
+      const bu = usage[b.id] ?? (b.id === selectedId ? 1 : 0);
+      if (au !== bu) return bu - au;
+      if (a.id === selectedId && b.id !== selectedId) return -1;
+      if (b.id === selectedId && a.id !== selectedId) return 1;
+      return beanLabel(a).localeCompare(beanLabel(b), undefined, { sensitivity: 'base' });
+    });
+  }
+
   private beanPickerFocusedBean(): Bean | null {
     if (this.state.beanPickerMode === 'create') return null;
     const id = this.state.beanPickerBeanId ?? this.state.selectedBeanId;
@@ -3453,10 +3501,11 @@ export class BeanieApp {
   private renderBeanPickerRow(bean: Bean, focused: boolean): string {
     const current = bean.id === this.state.selectedBeanId;
     const hint = this.renderSecondTapHint('bean', bean.id);
+    const origin = bean.country ? `<small>${escapeHtml(bean.country)}</small>` : '';
     return `
       <button class="bean-row ${focused ? 'active' : ''} ${hint ? 'has-second-tap-hint' : ''}" data-action="inspect-bean" data-id="${escapeAttr(bean.id)}">
         <span>
-          <small>${escapeHtml(bean.country ?? 'Recent bean')}</small>
+          ${origin}
           <b>${escapeHtml(bean.roaster)}</b>
           <strong>${escapeHtml(bean.name)}</strong>
         </span>
