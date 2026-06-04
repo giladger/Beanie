@@ -400,6 +400,7 @@ p {
 }
 
 .bean-row {
+  position: relative;
   min-height: 56px;
   padding: 7px 11px;
   border: 0;
@@ -431,6 +432,10 @@ p {
 .bean-row strong {
   margin-top: 1px;
   font-size: 13px;
+}
+
+.bean-row.has-second-tap-hint {
+  padding-right: 118px;
 }
 
 .bean-row em {
@@ -714,6 +719,7 @@ p {
 }
 
 .shot-item {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -734,6 +740,28 @@ p {
 .shot-item.active {
   background: rgba(91, 216, 200, 0.13);
   box-shadow: inset 3px 0 0 var(--teal);
+}
+
+.shot-item.has-second-tap-hint {
+  padding-right: 118px;
+}
+
+.second-tap-tooltip {
+  position: absolute;
+  right: 10px;
+  bottom: 7px;
+  max-width: calc(100% - 20px);
+  padding: 4px 7px;
+  border: 1px solid color-mix(in srgb, var(--teal) 55%, var(--line));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--teal) 18%, var(--panel-2));
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.24);
 }
 
 .shot-item-info {

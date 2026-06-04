@@ -175,6 +175,7 @@ type ApplyState = 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
 type LiveChartMode = 'preset30' | 'auto';
 type MachineServiceState = 'steam' | 'flush' | 'hotWater';
 type BeanPickerMode = 'inspect' | 'create';
+type SecondTapHintKind = 'bean' | 'shot';
 type View =
   | 'workbench'
   | 'settings'
@@ -261,6 +262,11 @@ interface ShotFieldSpec {
   options: ShotFieldOption[];
 }
 
+interface SecondTapHintState {
+  kind: SecondTapHintKind;
+  id: string;
+}
+
 interface AppState {
   beans: Bean[];
   batchesByBean: Record<string, BeanBatch[]>;
@@ -285,6 +291,7 @@ interface AppState {
   loading: boolean;
   busy: boolean;
   status: string;
+  secondTapHint: SecondTapHintState | null;
   view: View;
   settingsSection: string;
   settingsBundle: SettingsBundle | null;
@@ -351,6 +358,7 @@ export class BeanieApp {
     loading: true,
     busy: false,
     status: 'Starting',
+    secondTapHint: null,
     view: 'workbench',
     settingsSection: 'gateway',
     settingsBundle: null,
@@ -593,7 +601,8 @@ export class BeanieApp {
   private async inspectBeanInPicker(beanId: string): Promise<void> {
     this.setState({
       beanPickerBeanId: beanId,
-      beanPickerMode: 'inspect'
+      beanPickerMode: 'inspect',
+      secondTapHint: this.nextSecondTapHint('bean', beanId)
     });
     await this.ensureBatchesLoaded(beanId);
   }
@@ -737,10 +746,12 @@ export class BeanieApp {
   private loadShotRecipe(shotId: string): void {
     const shot = this.state.shots.find((item) => item.id === shotId);
     if (!shot) return;
+    this.completeSecondTapHint();
     this.setState({
       draft: normalizeDraft(recipeFromShot(shot), this.state.profiles, this.state.grinders),
       view: 'workbench',
       detailShotId: shotId,
+      secondTapHint: null,
       status: 'Shot recipe loaded'
     });
     this.scheduleApply();
@@ -751,7 +762,19 @@ export class BeanieApp {
       this.loadShotRecipe(shotId);
       return;
     }
-    this.setState({ detailShotId: shotId, status: 'Shot selected' });
+    this.setState({
+      detailShotId: shotId,
+      secondTapHint: this.nextSecondTapHint('shot', shotId),
+      status: 'Shot selected'
+    });
+  }
+
+  private nextSecondTapHint(kind: SecondTapHintKind, id: string): SecondTapHintState | null {
+    return recordSecondTapHintShown() ? { kind, id } : null;
+  }
+
+  private completeSecondTapHint(): void {
+    markSecondTapHintUsed();
   }
 
   private openShotEditor(): void {
@@ -1339,7 +1362,8 @@ export class BeanieApp {
     switch (action) {
       case 'select-bean':
         if (id) {
-          this.setState({ modal: null });
+          this.completeSecondTapHint();
+          this.setState({ modal: null, secondTapHint: null });
           await this.selectBean(id, { apply: true, preferWorkflow: false });
         }
         break;
@@ -1347,7 +1371,8 @@ export class BeanieApp {
         if (id) {
           const focusedId = this.state.beanPickerBeanId ?? this.state.selectedBeanId;
           if (id === focusedId) {
-            this.setState({ modal: null });
+            this.completeSecondTapHint();
+            this.setState({ modal: null, secondTapHint: null });
             if (id !== this.state.selectedBeanId) {
               await this.selectBean(id, { apply: true, preferWorkflow: false });
             }
@@ -3172,14 +3197,16 @@ export class BeanieApp {
 
   private renderBeanPickerRow(bean: Bean, focused: boolean): string {
     const current = bean.id === this.state.selectedBeanId;
+    const hint = this.renderSecondTapHint('bean', bean.id);
     return `
-      <button class="bean-row ${focused ? 'active' : ''}" data-action="inspect-bean" data-id="${escapeAttr(bean.id)}">
+      <button class="bean-row ${focused ? 'active' : ''} ${hint ? 'has-second-tap-hint' : ''}" data-action="inspect-bean" data-id="${escapeAttr(bean.id)}">
         <span>
           <small>${escapeHtml(bean.country ?? 'Recent bean')}</small>
           <b>${escapeHtml(bean.roaster)}</b>
           <strong>${escapeHtml(bean.name)}</strong>
         </span>
         ${current ? '<em>In use</em>' : ''}
+        ${hint}
       </button>
     `;
   }
@@ -3556,16 +3583,24 @@ export class BeanieApp {
   private renderShotListItem(shot: ShotRecord, active: boolean): string {
     const recipe = recipeFromShot(shot);
     const duration = shotDurationLabel(shot);
+    const hint = this.renderSecondTapHint('shot', shot.id);
     return `
-      <button class="shot-item ${active ? 'active' : ''}" data-action="select-history-shot" data-id="${escapeAttr(shot.id)}">
+      <button class="shot-item ${active ? 'active' : ''} ${hint ? 'has-second-tap-hint' : ''}" data-action="select-history-shot" data-id="${escapeAttr(shot.id)}">
         <span class="shot-item-info">
           <span class="shot-item-recipe">${formatGrams(recipe.dose)} → ${formatGrams(recipe.yield)}</span>
           <span class="shot-item-dur">${duration ? escapeHtml(duration) : ''}</span>
           ${enjoymentBadge(shot)}
         </span>
         <span class="shot-item-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
+        ${hint}
       </button>
     `;
+  }
+
+  private renderSecondTapHint(kind: SecondTapHintKind, id: string): string {
+    const hint = this.state.secondTapHint;
+    if (!hint || hint.kind !== kind || hint.id !== id) return '';
+    return '<span class="second-tap-tooltip">Tap again to load</span>';
   }
 
   private renderShotDetailPane(shot: ShotRecord): string {
@@ -4448,8 +4483,50 @@ export class BeanieApp {
 
 const machinePresetLabelsStorageKey = 'beanie:machine-preset-labels';
 const machinePresetValuesStorageKey = 'beanie:machine-preset-values';
+const secondTapHintStorageKey = 'beanie:second-tap-hint';
+const secondTapHintMaxShows = 3;
 
 type MachinePresetValueOverrides = Record<string, Record<string, number>>;
+
+interface SecondTapHintPrefs {
+  shown: number;
+  used: boolean;
+}
+
+function readSecondTapHintPrefs(): SecondTapHintPrefs {
+  try {
+    const raw = localStorage.getItem(secondTapHintStorageKey);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const shown = typeof parsed?.shown === 'number' && Number.isFinite(parsed.shown) ? parsed.shown : 0;
+    return {
+      shown: Math.max(0, Math.min(secondTapHintMaxShows, shown)),
+      used: parsed?.used === true
+    };
+  } catch {
+    return { shown: 0, used: false };
+  }
+}
+
+function writeSecondTapHintPrefs(prefs: SecondTapHintPrefs): void {
+  try {
+    localStorage.setItem(secondTapHintStorageKey, JSON.stringify(prefs));
+  } catch {
+    // Ignore storage failures; the hint is purely instructional.
+  }
+}
+
+function recordSecondTapHintShown(): boolean {
+  const prefs = readSecondTapHintPrefs();
+  if (prefs.used || prefs.shown >= secondTapHintMaxShows) return false;
+  writeSecondTapHintPrefs({ ...prefs, shown: prefs.shown + 1 });
+  return true;
+}
+
+function markSecondTapHintUsed(): void {
+  const prefs = readSecondTapHintPrefs();
+  if (prefs.used) return;
+  writeSecondTapHintPrefs({ shown: prefs.shown, used: true });
+}
 
 function readMachinePresetLabels(): Record<string, string> {
   try {
