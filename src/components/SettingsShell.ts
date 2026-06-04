@@ -74,9 +74,10 @@ function settingsSections(
     {
       id: 'app',
       title: 'App',
-      terms: 'appearance theme ui skin update diagnostics about version',
+      terms: 'appearance theme ui skin update diagnostics about version brightness screen display',
       html: [
         renderSection('Beanie display', renderAppearanceRows(model.preferences)),
+        bundle ? renderDisplayRuntimeSection(bundle) : '',
         bundle ? renderSpecSectionById('app-skin', bundle) : '',
         renderSection('About', renderAboutRows(model))
       ].join('')
@@ -105,7 +106,6 @@ function settingsSections(
         title: 'Power',
         terms: 'sleep wake charging night battery presence usb scale power',
         html: [
-          renderDisplayRuntimeSection(bundle),
           renderPowerRuntimeSection(bundle),
           renderSpecSectionById('power', bundle)
         ].join('')
