@@ -1551,11 +1551,6 @@ export class BeanieApp {
       case 'machine-command':
         if (isMachineCommand(value)) await this.toggleMachineCommand(value);
         break;
-      case 'toggle-live-chart-mode':
-        this.setState({
-          liveChartMode: this.state.liveChartMode === 'preset30' ? 'auto' : 'preset30'
-        });
-        break;
       case 'stop':
         await this.stopMachineService();
         break;
@@ -3142,23 +3137,12 @@ export class BeanieApp {
 
   private renderLivePanel(): string {
     if (!this.state.liveActive) return '';
-    const preset30 = this.state.liveChartMode === 'preset30';
     return `
       <div class="live-panel">
         <div class="live-card panel">
           <div class="live-head">
             <div class="live-title-row">
               <span class="eyebrow">Live shot</span>
-              <button
-                class="live-chart-toggle ${preset30 ? 'active' : ''}"
-                data-action="toggle-live-chart-mode"
-                aria-pressed="${preset30 ? 'true' : 'false'}"
-                aria-label="${preset30 ? '30 second chart preset' : 'Auto chart scale'}"
-                title="${preset30 ? '30 second chart preset' : 'Auto chart scale'}"
-              >
-                ${icon('timer')}
-                <span>${preset30 ? '30s' : 'Auto'}</span>
-              </button>
               <button
                 class="live-stop-button"
                 data-action="stop"

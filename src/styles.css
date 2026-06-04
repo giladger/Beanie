@@ -999,7 +999,6 @@ p {
   flex-wrap: wrap;
 }
 
-.live-chart-toggle,
 .live-stop-button {
   height: 30px;
   min-width: 62px;
@@ -1015,11 +1014,6 @@ p {
   font-size: 11px;
   font-weight: 900;
   line-height: 1;
-}
-
-.live-chart-toggle.active {
-  border-color: color-mix(in srgb, var(--teal) 70%, var(--line));
-  color: var(--ink);
 }
 
 .live-stop-button:not(:disabled) {
