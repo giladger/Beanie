@@ -293,7 +293,6 @@ interface AppState {
   modal: Modal;
   beanPickerBeanId: string | null;
   beanPickerMode: BeanPickerMode;
-  beanPickerAddingBatch: boolean;
   editingBeanId: string | null;
   editingGrinderId: string | null;
   profileEditor: ProfileEditorState | null;
@@ -360,7 +359,6 @@ export class BeanieApp {
     modal: null,
     beanPickerBeanId: null,
     beanPickerMode: 'inspect',
-    beanPickerAddingBatch: false,
     editingBeanId: null,
     editingGrinderId: null,
     profileEditor: null,
@@ -582,15 +580,14 @@ export class BeanieApp {
 
   private async openBeanPicker(
     beanId: string | null,
-    options: { addingBatch?: boolean; create?: boolean } = {}
+    options: { create?: boolean } = {}
   ): Promise<void> {
     const id = beanId ?? this.state.selectedBeanId;
     this.setState({
       modal: 'bean-picker',
       search: '',
       beanPickerBeanId: options.create ? null : id,
-      beanPickerMode: options.create ? 'create' : 'inspect',
-      beanPickerAddingBatch: options.addingBatch === true
+      beanPickerMode: options.create ? 'create' : 'inspect'
     });
     if (id && !options.create) await this.ensureBatchesLoaded(id);
   }
@@ -598,8 +595,7 @@ export class BeanieApp {
   private async inspectBeanInPicker(beanId: string): Promise<void> {
     this.setState({
       beanPickerBeanId: beanId,
-      beanPickerMode: 'inspect',
-      beanPickerAddingBatch: false
+      beanPickerMode: 'inspect'
     });
     await this.ensureBatchesLoaded(beanId);
   }
@@ -1350,7 +1346,17 @@ export class BeanieApp {
         }
         break;
       case 'inspect-bean':
-        if (id) await this.inspectBeanInPicker(id);
+        if (id) {
+          const focusedId = this.state.beanPickerBeanId ?? this.state.selectedBeanId;
+          if (id === focusedId) {
+            this.setState({ modal: null });
+            if (id !== this.state.selectedBeanId) {
+              await this.selectBean(id, { apply: true, preferWorkflow: false });
+            }
+          } else {
+            await this.inspectBeanInPicker(id);
+          }
+        }
         break;
       case 'select-batch':
         if (id) {
@@ -1515,7 +1521,6 @@ export class BeanieApp {
           this.setState({
             beanPickerBeanId: null,
             beanPickerMode: 'create',
-            beanPickerAddingBatch: false,
             status: 'Adding bean'
           });
         } else {
@@ -1529,13 +1534,14 @@ export class BeanieApp {
         if (id) await this.archiveBean(id);
         break;
       case 'open-add-batch':
-        await this.openBeanPicker(this.state.selectedBeanId, { addingBatch: true });
+        await this.openBeanPicker(this.state.selectedBeanId);
+        await this.createBatchInPicker(this.state.selectedBeanId);
         break;
       case 'bean-picker-add-batch':
-        this.setState({ beanPickerAddingBatch: true });
+        await this.createBatchInPicker(this.state.beanPickerBeanId ?? this.state.selectedBeanId);
         break;
-      case 'bean-picker-cancel-batch':
-        this.setState({ beanPickerAddingBatch: false });
+      case 'delete-batch':
+        if (id) await this.deleteBatchFromPicker(el.dataset.beanId ?? null, id);
         break;
       case 'open-add-grinder':
         this.setState({ view: 'grinder-editor', editingGrinderId: null, modal: null, editDialog: null });
@@ -1967,6 +1973,11 @@ export class BeanieApp {
       if (file) void this.uploadFirmware(file);
       return;
     }
+    if (target.dataset.action === 'bean-picker-batch-field') {
+      const form = target.closest<HTMLFormElement>('[data-form="bean-picker-batch"]');
+      if (form) await this.saveBeanPickerBatch(form);
+      return;
+    }
     const field = target.dataset.field;
     if (!field) return;
 
@@ -2028,7 +2039,7 @@ export class BeanieApp {
       await this.submitBeanPickerBean(form);
       return;
     }
-    if (form.dataset.form === 'bean-picker-batch' || form.dataset.form === 'bean-picker-new-batch') {
+    if (form.dataset.form === 'bean-picker-batch') {
       event.preventDefault();
       await this.submitBeanPickerBatch(form);
       return;
@@ -2115,7 +2126,6 @@ export class BeanieApp {
         batchesByBean: editingId ? this.state.batchesByBean : { ...this.state.batchesByBean, [bean.id]: [] },
         beanPickerBeanId: bean.id,
         beanPickerMode: 'inspect',
-        beanPickerAddingBatch: false,
         busy: false,
         status: editingId ? 'Bean saved (demo)' : 'Bean added (demo)'
       });
@@ -2132,7 +2142,6 @@ export class BeanieApp {
         batchesByBean: editingId ? this.state.batchesByBean : { ...this.state.batchesByBean, [bean.id]: [] },
         beanPickerBeanId: bean.id,
         beanPickerMode: 'inspect',
-        beanPickerAddingBatch: false,
         busy: false,
         status: editingId ? 'Bean saved' : 'Bean added'
       });
@@ -2143,14 +2152,14 @@ export class BeanieApp {
   }
 
   private async archiveBean(id: string): Promise<void> {
-    if (!window.confirm('Archive this bag? It will be hidden from the bean list.')) return;
-    this.setState({ busy: true, status: 'Archiving bag' });
+    if (!window.confirm('Delete this bag? It will be hidden from the bean list.')) return;
+    this.setState({ busy: true, status: 'Deleting bag' });
     if (!this.state.demo) {
       try {
         await gateway.updateBean(id, { archived: true });
       } catch (error) {
-        console.error('[Beanie] Archive bean failed', error);
-        this.setState({ busy: false, status: 'Archive failed' });
+        console.error('[Beanie] Delete bean failed', error);
+        this.setState({ busy: false, status: 'Delete failed' });
         return;
       }
     }
@@ -2161,7 +2170,7 @@ export class BeanieApp {
       editingBeanId: null,
       modal: this.state.modal === 'bean-picker' ? null : this.state.modal,
       busy: false,
-      status: 'Bag archived'
+      status: 'Bag deleted'
     });
     if (this.state.selectedBeanId === id) {
       const next = beans[0];
@@ -2206,6 +2215,124 @@ export class BeanieApp {
     }
   }
 
+  private async createBatchInPicker(beanId: string | null): Promise<void> {
+    if (!beanId) return;
+    const bean = this.state.beans.find((item) => item.id === beanId);
+    if (!bean) return;
+    const current = this.state.batchesByBean[bean.id] ?? [];
+    const latest = latestBatch(current);
+    const batchInput: Partial<BeanBatch> = {
+      beanId: bean.id,
+      roastDate: todayDateInputValue(),
+      roastLevel: latest?.roastLevel ?? null,
+      weight: latest?.weight ?? null,
+      weightRemaining: latest?.weight ?? null,
+      frozen: false
+    };
+
+    this.setState({ status: 'Adding batch' });
+    if (this.state.demo) {
+      const batch: BeanBatch = { id: `demo-batch-${Date.now()}`, ...batchInput } as BeanBatch;
+      const batches = [batch, ...current];
+      this.setState({
+        batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
+        selectedBatchId: bean.id === this.state.selectedBeanId ? batch.id : this.state.selectedBatchId,
+        status: 'Batch added (demo)'
+      });
+      if (bean.id === this.state.selectedBeanId) this.scheduleApply();
+      return;
+    }
+
+    try {
+      const batch = await gateway.createBatch(bean.id, batchInput);
+      const batches = [batch, ...(this.state.batchesByBean[bean.id] ?? [])];
+      this.setState({
+        batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
+        selectedBatchId: bean.id === this.state.selectedBeanId ? batch.id : this.state.selectedBatchId,
+        status: 'Batch added'
+      });
+      if (bean.id === this.state.selectedBeanId) this.scheduleApply();
+    } catch (error) {
+      console.error('[Beanie] Add batch failed', error);
+      this.setState({ status: 'Add batch failed' });
+    }
+  }
+
+  private async saveBeanPickerBatch(form: HTMLFormElement): Promise<void> {
+    const beanId = form.dataset.beanId;
+    const batchId = form.dataset.batchId;
+    if (!beanId || !batchId) return;
+    const bean = this.state.beans.find((item) => item.id === beanId);
+    if (!bean) return;
+    const current = this.state.batchesByBean[bean.id] ?? [];
+    const previous = current.find((item) => item.id === batchId);
+    if (!previous) return;
+    const batchInput = batchFieldsFromForm(new FormData(form), bean.id);
+    const optimistic: BeanBatch = { ...previous, ...batchInput, id: batchId, beanId: bean.id };
+    const optimisticBatches = current.map((item) => (item.id === batchId ? optimistic : item));
+
+    this.setState({
+      batchesByBean: { ...this.state.batchesByBean, [bean.id]: optimisticBatches },
+      status: 'Batch saved'
+    });
+    if (bean.id === this.state.selectedBeanId && batchId === this.state.selectedBatchId) this.scheduleApply();
+    if (this.state.demo) return;
+
+    try {
+      const saved = await gateway.updateBatch(batchId, batchInput);
+      const latest = this.state.batchesByBean[bean.id] ?? [];
+      this.setState({
+        batchesByBean: {
+          ...this.state.batchesByBean,
+          [bean.id]: latest.map((item) => (item.id === batchId ? saved : item))
+        },
+        status: 'Batch saved'
+      });
+    } catch (error) {
+      console.error('[Beanie] Save batch failed', error);
+      this.setState({
+        batchesByBean: { ...this.state.batchesByBean, [bean.id]: current },
+        status: 'Save batch failed'
+      });
+    }
+  }
+
+  private async deleteBatchFromPicker(beanId: string | null, batchId: string): Promise<void> {
+    if (!beanId) return;
+    const bean = this.state.beans.find((item) => item.id === beanId);
+    if (!bean) return;
+    const current = this.state.batchesByBean[bean.id] ?? [];
+    const batch = current.find((item) => item.id === batchId);
+    if (!batch) return;
+    if (!window.confirm(`Delete ${batchOptionLabel(batch)}?`)) return;
+
+    const previousSelectedBatchId = this.state.selectedBatchId;
+    const batches = current.filter((item) => item.id !== batchId);
+    const selectedBatchId =
+      bean.id === this.state.selectedBeanId && previousSelectedBatchId === batchId
+        ? latestBatch(batches)?.id ?? null
+        : previousSelectedBatchId;
+
+    this.setState({
+      batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
+      selectedBatchId,
+      status: 'Batch deleted'
+    });
+    if (bean.id === this.state.selectedBeanId) this.scheduleApply();
+    if (this.state.demo) return;
+
+    try {
+      await gateway.deleteBatch(batchId);
+    } catch (error) {
+      console.error('[Beanie] Delete batch failed', error);
+      this.setState({
+        batchesByBean: { ...this.state.batchesByBean, [bean.id]: current },
+        selectedBatchId: previousSelectedBatchId,
+        status: 'Delete batch failed'
+      });
+    }
+  }
+
   private async submitBeanPickerBatch(form: HTMLFormElement): Promise<void> {
     const beanId = form.dataset.beanId;
     if (!beanId) return;
@@ -2226,7 +2353,6 @@ export class BeanieApp {
       this.setState({
         batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
         selectedBatchId: bean.id === this.state.selectedBeanId && !batchId ? batch.id : this.state.selectedBatchId,
-        beanPickerAddingBatch: false,
         busy: false,
         status: batchId ? 'Batch saved (demo)' : 'Batch added (demo)'
       });
@@ -2244,7 +2370,6 @@ export class BeanieApp {
       this.setState({
         batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
         selectedBatchId: bean.id === this.state.selectedBeanId && !batchId ? batch.id : this.state.selectedBatchId,
-        beanPickerAddingBatch: false,
         busy: false,
         status: batchId ? 'Batch saved' : 'Batch added'
       });
@@ -3090,7 +3215,6 @@ export class BeanieApp {
 
     const batches = this.state.batchesByBean[bean.id] ?? [];
     const selectedBatchId = bean.id === this.state.selectedBeanId ? this.selectedBatch()?.id ?? null : null;
-    const showNewBatch = this.state.beanPickerAddingBatch;
     return `
       <div class="bean-picker-inspector">
         ${this.renderBeanPickerBeanForm(bean)}
@@ -3103,9 +3227,8 @@ export class BeanieApp {
             <button type="button" class="secondary-button compact" data-action="bean-picker-add-batch">${icon('plus')}<span>Batch</span></button>
           </div>
           <div class="bean-picker-batch-list">
-            ${showNewBatch ? this.renderBeanPickerBatchForm(bean, null, false) : ''}
             ${
-              batches.length === 0 && !showNewBatch
+              batches.length === 0
                 ? '<p class="empty-history">No batches yet.</p>'
                 : batches.map((batch) => this.renderBeanPickerBatchForm(bean, batch, batch.id === selectedBatchId)).join('')
             }
@@ -3129,10 +3252,11 @@ export class BeanieApp {
             ${
               editing
                 ? `<button type="button" class="secondary-button compact" data-action="select-bean" data-id="${escapeAttr(bean.id)}">${icon('check')}<span>Use</span></button>
-                   <button type="button" class="icon-button subtle-danger" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Archive bag" title="Archive bag">${icon('archive')}</button>`
+                   <button type="submit" class="primary-button compact">${icon('check')}<span>Save</span></button>
+                   <button type="button" class="icon-button subtle-danger bean-delete-button" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Delete bag" title="Delete bag">${icon('trash-2')}</button>`
                 : `<button type="button" class="secondary-button compact" data-action="close-modal"><span>Cancel</span></button>`
             }
-            <button type="submit" class="primary-button compact">${icon('check')}<span>Save</span></button>
+            ${editing ? '' : `<button type="submit" class="primary-button compact">${icon('check')}<span>Save</span></button>`}
           </div>
         </div>
         <div class="bean-picker-fields">
@@ -3147,33 +3271,28 @@ export class BeanieApp {
     `;
   }
 
-  private renderBeanPickerBatchForm(bean: Bean, batch: BeanBatch | null, active: boolean): string {
-    const dataForm = batch ? 'bean-picker-batch' : 'bean-picker-new-batch';
-    const batchId = batch ? ` data-batch-id="${escapeAttr(batch.id)}"` : '';
-    const title = batch ? batchOptionLabel(batch) : 'New batch';
+  private renderBeanPickerBatchForm(bean: Bean, batch: BeanBatch, active: boolean): string {
+    const activeLabel = active ? 'Using' : 'Use';
     return `
       <form
-        class="bean-picker-batch ${active ? 'active' : ''} ${batch ? '' : 'new'}"
-        data-form="${dataForm}"
-        data-bean-id="${escapeAttr(bean.id)}"${batchId}
+        class="bean-picker-batch ${active ? 'active' : ''}"
+        data-form="bean-picker-batch"
+        data-bean-id="${escapeAttr(bean.id)}"
+        data-batch-id="${escapeAttr(batch.id)}"
       >
         <div class="bean-picker-batch-title">
-          <strong>${escapeHtml(title)}</strong>
-          <small>${escapeHtml(batch?.frozen ? 'Frozen' : batch?.roastLevel ?? 'Batch')}</small>
+          <strong>${escapeHtml(batchOptionLabel(batch))}</strong>
+          <small>${escapeHtml(batch.frozen ? 'Frozen' : batch.roastLevel ?? 'Batch')}</small>
         </div>
-        <label>Date<input type="date" name="roastDate" value="${escapeAttr(dateInputValue(batch?.roastDate))}" /></label>
-        <label>Roast<input name="roastLevel" autocomplete="off" value="${escapeAttr(inputValue(batch?.roastLevel))}" /></label>
-        <label>Bag g<input type="number" name="weight" min="0" step="0.1" inputmode="decimal" value="${escapeAttr(inputValue(batch?.weight))}" /></label>
-        <label>Left g<input type="number" name="weightRemaining" min="0" step="0.1" inputmode="decimal" value="${escapeAttr(inputValue(batch?.weightRemaining))}" /></label>
-        <label class="bean-picker-check"><input type="checkbox" name="frozen" ${batch?.frozen ? 'checked' : ''} /><span>Frozen</span></label>
+        <label>Date<input data-action="bean-picker-batch-field" type="date" name="roastDate" value="${escapeAttr(dateInputValue(batch.roastDate))}" /></label>
+        <label>Roast<input data-action="bean-picker-batch-field" name="roastLevel" autocomplete="off" value="${escapeAttr(inputValue(batch.roastLevel))}" /></label>
+        <label>Bag<input data-action="bean-picker-batch-field" type="number" name="weight" min="0" step="0.1" inputmode="decimal" value="${escapeAttr(inputValue(batch.weight))}" /></label>
+        <label>Left<input data-action="bean-picker-batch-field" type="number" name="weightRemaining" min="0" step="0.1" inputmode="decimal" value="${escapeAttr(inputValue(batch.weightRemaining))}" /></label>
+        <label class="bean-picker-check" title="Frozen"><input data-action="bean-picker-batch-field" type="checkbox" name="frozen" ${batch.frozen ? 'checked' : ''} /><span>Frozen</span></label>
         <div class="bean-picker-batch-actions">
-          ${
-            batch
-              ? `<button type="button" class="secondary-button compact" data-action="select-batch" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}">${active ? 'Using' : 'Use'}</button>`
-              : '<button type="button" class="secondary-button compact" data-action="bean-picker-cancel-batch">Cancel</button>'
-          }
-          <button type="submit" class="primary-button compact">${batch ? 'Save' : 'Add'}</button>
+          <button type="button" class="secondary-button compact" data-action="select-batch" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}">${escapeHtml(activeLabel)}</button>
         </div>
+        <button type="button" class="icon-button danger-icon bean-picker-batch-delete" data-action="delete-batch" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}" aria-label="Delete batch" title="Delete batch">${icon('trash-2')}</button>
       </form>
     `;
   }
@@ -3192,7 +3311,7 @@ export class BeanieApp {
               bean
                 ? `<div class="hero-bean-actions">
                     <button class="icon-button" data-action="open-edit-bean" data-id="${escapeAttr(bean.id)}" aria-label="Edit bean" title="Edit bean">${icon('pencil')}</button>
-                    <button class="icon-button" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Archive bag" title="Archive bag">${icon('archive')}</button>
+                    <button class="icon-button subtle-danger" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Delete bag" title="Delete bag">${icon('trash-2')}</button>
                   </div>`
                 : ''
             }
@@ -3677,7 +3796,7 @@ export class BeanieApp {
       : null;
     const v = (value: string | null | undefined) => escapeAttr(value ?? '');
     const actions = `
-      ${editing ? `<button type="button" class="command danger" data-action="archive-bean" data-id="${escapeAttr(editing.id)}">${icon('archive')}<span>Archive</span></button>` : ''}
+      ${editing ? `<button type="button" class="command danger" data-action="archive-bean" data-id="${escapeAttr(editing.id)}">${icon('trash-2')}<span>Delete</span></button>` : ''}
       <button class="command primary commit-action" type="submit" form="bean-form">${icon(editing ? 'check' : 'plus')}<span>${editing ? 'Save' : 'Add'}</span></button>
     `;
     return `
@@ -5153,6 +5272,12 @@ function dateInputValue(value: string | null | undefined): string {
   if (match) return match[0]!;
   const date = new Date(value);
   return Number.isNaN(date.valueOf()) ? '' : date.toISOString().slice(0, 10);
+}
+
+function todayDateInputValue(): string {
+  const now = new Date();
+  const offsetMs = now.getTimezoneOffset() * 60_000;
+  return new Date(now.getTime() - offsetMs).toISOString().slice(0, 10);
 }
 
 function beanFieldsFromForm(data: FormData): Partial<Bean> {

@@ -308,6 +308,12 @@ p {
   color: var(--red);
 }
 
+.danger-icon {
+  border-color: rgba(255, 116, 104, 0.44);
+  background: color-mix(in srgb, var(--red) 10%, var(--panel-2));
+  color: var(--red);
+}
+
 .command.danger {
   border-color: rgba(255, 116, 104, 0.42);
   color: var(--red);
@@ -1363,13 +1369,12 @@ p {
 .bean-picker-batch {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(150px, 1.05fr) repeat(4, minmax(112px, 0.82fr)) minmax(110px, 0.72fr);
+  grid-template-columns: minmax(136px, 1fr) 82px 128px minmax(132px, 0.8fr) 74px 74px 82px 38px;
   grid-template-areas:
-    "title date roast weight remaining frozen"
-    "title actions actions actions actions actions";
-  gap: 7px;
-  align-items: end;
-  padding: 8px;
+    "title actions date roast weight remaining frozen delete";
+  gap: 6px;
+  align-items: center;
+  padding: 6px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel-2);
@@ -1416,32 +1421,32 @@ p {
 
 .bean-picker-batch-title strong {
   color: var(--ink);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.1;
 }
 
 .bean-picker-batch-title small {
-  margin-top: 3px;
+  margin-top: 2px;
   color: var(--soft);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
 }
 
 .bean-picker-batch label {
-  gap: 4px;
+  gap: 3px;
   font-size: 10px;
 }
 
 .bean-picker-batch input {
-  height: 32px;
+  height: 30px;
   padding: 0 7px;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .bean-picker-check {
   grid-area: frozen;
   align-self: center;
-  min-height: 32px;
+  min-height: 30px;
   display: flex !important;
   flex-direction: row;
   align-items: center;
@@ -1464,12 +1469,22 @@ p {
 .bean-picker-batch-actions {
   grid-area: actions;
   align-self: center;
-  justify-content: flex-end;
+  justify-content: stretch;
 }
 
-.bean-picker-batch-actions .primary-button,
 .bean-picker-batch-actions .secondary-button {
-  min-width: 82px;
+  width: 100%;
+  min-width: 0;
+}
+
+.bean-delete-button {
+  margin-left: 10px;
+}
+
+.bean-picker-batch-delete {
+  grid-area: delete;
+  width: 34px;
+  height: 34px;
 }
 
 @media (max-width: 860px) {
@@ -1493,12 +1508,11 @@ p {
       "date roast"
       "weight remaining"
       "frozen frozen"
-      "actions actions";
+      "actions delete";
     align-items: stretch;
   }
 
-  .bean-picker-batch-title,
-  .bean-picker-batch-actions {
+  .bean-picker-batch-title {
     grid-column: 1 / -1;
   }
 
@@ -1506,9 +1520,13 @@ p {
     justify-content: stretch;
   }
 
-  .bean-picker-batch-actions .primary-button,
   .bean-picker-batch-actions .secondary-button {
     flex: 1;
+  }
+
+  .bean-picker-batch-delete {
+    justify-self: end;
+    width: 34px;
   }
 }
 

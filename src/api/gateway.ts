@@ -226,6 +226,8 @@ export const gateway = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(batch)
     }),
+  deleteBatch: (id: string) =>
+    fetchEmpty('batches', `/api/v1/bean-batches/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   grinders: () =>
     fetchJson<Grinder[]>('grinders', '/api/v1/grinders?includeArchived=false', readGrinders),
   createGrinder: (grinder: Partial<Grinder>) =>
