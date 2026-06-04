@@ -3345,13 +3345,11 @@ export class BeanieApp {
           <div class="hero-title-row">
             <button class="bean-title-button" data-action="open-bean-picker" aria-label="Choose bean" title="Choose bean">
               <span>${escapeHtml(title)}</span>
-              ${icon('chevron-down')}
             </button>
             ${
               bean
                 ? `<div class="hero-bean-actions">
                     <button class="icon-button" data-action="open-edit-bean" data-id="${escapeAttr(bean.id)}" aria-label="Edit bean" title="Edit bean">${icon('pencil')}</button>
-                    <button class="icon-button subtle-danger" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Delete bag" title="Delete bag">${icon('trash-2')}</button>
                   </div>`
                 : ''
             }
