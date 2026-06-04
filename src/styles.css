@@ -853,8 +853,14 @@ p {
 .pane-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 7px;
   min-width: 0;
+}
+
+/* The → glyph renders slightly low; nudge it onto the optical centre. */
+.io-arrow {
+  position: relative;
+  top: -1px;
 }
 
 .pane-stat {

@@ -3686,7 +3686,7 @@ export class BeanieApp {
         : '';
     return `
       <div class="pane-head">
-        <span class="pane-stat pane-lead">${formatGrams(recipe.dose)} → ${formatGrams(recipe.yield)}</span>
+        <span class="pane-stat pane-lead">${formatGrams(recipe.dose)} <span class="io-arrow">→</span> ${formatGrams(recipe.yield)}</span>
         ${duration ? `<span class="pane-stat">@ ${escapeHtml(duration)}</span>` : ''}
         ${grinder ? `<span class="pane-stat">${escapeHtml(grinder)}</span>` : ''}
         <span class="pane-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
