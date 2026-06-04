@@ -3712,7 +3712,7 @@ export class BeanieApp {
     const flushPreset = matchingPreset(flush, flushPresets);
     return `
       ${this.pageHeader('Steam · Water · Flush')}
-      <main class="page-body machine-page">
+      <main class="page-body machine-page no-scroll-page">
         <div class="machine-lanes">
           ${renderMachineLane({
             tone: 'steam',
@@ -3788,7 +3788,7 @@ export class BeanieApp {
       <header class="page-head machine-progress-head">
         <h1 class="page-title">${escapeHtml(machineServiceVerb(service))}</h1>
       </header>
-      <main class="page-body machine-page machine-progress-page">
+      <main class="page-body machine-page machine-progress-page no-scroll-page">
         <section class="machine-progress ${tone}">
           <div class="machine-progress-focus">
             <div class="machine-progress-ring">${machineGraphicIcon(tone)}</div>

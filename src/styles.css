@@ -4655,6 +4655,12 @@ p {
   align-content: start;
 }
 
+.page-body.no-scroll-page {
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: auto;
+}
+
 .form-page label {
   display: grid;
   gap: 6px;
