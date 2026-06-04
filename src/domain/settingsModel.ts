@@ -9,6 +9,7 @@ import {
   GATEWAY_MODES,
   LOG_LEVELS,
   SCALE_POWER_MODES,
+  THEME_MODES,
   demoCalibration,
   demoDe1AdvancedSettings,
   demoDevices,
@@ -84,9 +85,9 @@ function titleCase(value: string): string {
 
 export const SETTINGS_SPEC: SettingsSpecSection[] = [
   {
-    id: 'gateway-app',
-    title: 'App & skin',
-    terms: 'gateway mode control skin update log level',
+    id: 'connection-policy',
+    title: 'Control policy',
+    terms: 'gateway mode control external clients tracking full disabled',
     fields: [
       {
         group: 'rea',
@@ -95,9 +96,17 @@ export const SETTINGS_SPEC: SettingsSpecSection[] = [
         type: 'select',
         options: opts(GATEWAY_MODES),
         help: 'How much control external clients (this skin) have over the machine.'
-      },
+      }
+    ]
+  },
+  {
+    id: 'app-skin',
+    title: 'Skin & diagnostics',
+    terms: 'skin update log theme diagnostics',
+    fields: [
       { group: 'rea', key: 'defaultSkinId', label: 'Active skin', type: 'select', optionsFrom: 'skins', help: 'The skin reaprime serves by default.' },
       { group: 'rea', key: 'automaticUpdateCheck', label: 'Automatic update check', type: 'toggle' },
+      { group: 'rea', key: 'themeMode', label: 'ReaPrime theme', type: 'select', options: opts(THEME_MODES), help: 'Stored ReaPrime app theme preference.' },
       { group: 'rea', key: 'logLevel', label: 'Log level', type: 'select', options: opts(LOG_LEVELS, (v) => v), help: 'Only change while debugging.' }
     ]
   },

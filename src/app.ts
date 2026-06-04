@@ -376,7 +376,7 @@ export class BeanieApp {
     status: 'Starting',
     secondTapHint: null,
     view: 'workbench',
-    settingsSection: 'gateway',
+    settingsSection: 'connection',
     settingsBundle: null,
     settingsSource: null,
     pluginConfig: null,

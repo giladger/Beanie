@@ -61,59 +61,76 @@ function settingsSections(
 ): SettingsSection[] {
   const sections: SettingsSection[] = [
     {
-      id: 'gateway',
-      title: 'Gateway',
-      terms: 'status host machine scale decent app demo connected',
-      html: renderSection('Gateway', renderGatewayRows(model))
+      id: 'connection',
+      title: 'Connection',
+      terms: 'status host gateway devices bluetooth machine scale connect control',
+      html: [
+        renderSection('Status', renderGatewayRows(model)),
+        bundle ? renderConnectionRuntimeSection(bundle) : '',
+        bundle ? renderDevicesSection(bundle) : '',
+        bundle ? renderSpecSectionById('connection-policy', bundle) : ''
+      ].join('')
     },
     {
-      id: 'appearance',
-      title: 'Appearance',
-      terms: 'theme ui scale display compact standard large light dark',
-      html: renderSection('Appearance', renderAppearanceRows(model.preferences))
+      id: 'app',
+      title: 'App',
+      terms: 'appearance theme ui skin update diagnostics cache about version',
+      html: [
+        renderSection('Beanie display', renderAppearanceRows(model.preferences)),
+        bundle ? renderSpecSectionById('app-skin', bundle) : '',
+        bundle ? renderAppRuntimeSection(bundle) : '',
+        renderSection('Local data', renderDataRows(model)),
+        renderSection('About', renderAboutRows(model))
+      ].join('')
     }
   ];
-  // reaprime-backed sections (only when settings have loaded from the gateway/demo)
+  // ReaPrime-backed settings only render after the gateway/demo bundle loads.
   if (bundle) {
-    sections.push({
-      id: 'devices',
-      title: 'Devices',
-      terms: 'bluetooth scan connect machine scale pair device',
-      html: renderDevicesSection(bundle)
-    });
-    for (const spec of SETTINGS_SPEC) {
-      sections.push({ id: spec.id, title: spec.title, terms: spec.terms, html: renderSpecSection(spec, bundle) });
-    }
     sections.push(
       {
-        id: 'maintenance',
-        title: 'Maintenance',
-        terms: 'descale clean sleep flush',
-        html: renderMaintenanceSection()
+        id: 'brew',
+        title: 'Brew',
+        terms: 'shot stopping weight yield volume stop scale target',
+        html: renderSpecSectionById('shot-stopping', bundle)
+      },
+      {
+        id: 'machine',
+        title: 'Machine',
+        terms: 'tank steam flush hot water purge descale clean sleep routine defaults',
+        html: [
+          renderSpecSectionById('machine-outputs', bundle),
+          renderMaintenanceSection()
+        ].join('')
+      },
+      {
+        id: 'power',
+        title: 'Power',
+        terms: 'sleep wake charging night battery presence usb scale power',
+        html: [
+          renderPowerRuntimeSection(bundle),
+          renderSpecSectionById('power', bundle)
+        ].join('')
       },
       {
         id: 'plugins',
         title: 'Plugins',
         terms: 'plugins visualizer extensions enable disable configure credentials',
         html: renderPluginsSection(bundle, pluginConfig)
+      },
+      {
+        id: 'danger',
+        title: 'Danger',
+        terms: 'danger advanced heater voltage refill kit calibration fan firmware reset',
+        html: renderSpecSectionById('danger-zone', bundle)
       }
     );
   }
-  sections.push(
-    {
-      id: 'data',
-      title: 'Demo And Cache',
-      terms: 'demo cache reset local data presets recent values',
-      html: renderSection('Demo And Cache', renderDataRows(model))
-    },
-    {
-      id: 'about',
-      title: 'About',
-      terms: 'version build commit default skin about',
-      html: renderSection('About', renderAboutRows(model))
-    }
-  );
   return sections;
+}
+
+function renderSpecSectionById(id: string, bundle: SettingsBundle): string {
+  const section = SETTINGS_SPEC.find((spec) => spec.id === id);
+  return section ? renderSpecSection(section, bundle) : '';
 }
 
 function renderSpecSection(section: SettingsSpecSection, bundle: SettingsBundle): string {
@@ -133,10 +150,41 @@ function renderDevicesSection(bundle: SettingsBundle): string {
     'Scan for machines and scales, then connect',
     `<button type="button" class="text-button" data-action="settings-scan-devices">${icon('refresh-cw')}<span>Scan</span></button>`
   );
+  const preferred = `
+    ${settingReadout('Preferred machine', compactId(bundle.rea.preferredMachineId), 'Used for automatic machine reconnect', 'muted')}
+    ${settingReadout('Preferred scale', compactId(bundle.rea.preferredScaleId), 'Used for automatic scale reconnect', 'muted')}
+  `;
   const rows = bundle.devices.length
     ? bundle.devices.map(renderDeviceRow).join('')
     : `<p class="settings-empty">No devices found yet — tap Scan to search.</p>`;
-  return renderSection('Devices', scan + rows);
+  return renderSection('Devices', scan + preferred + rows);
+}
+
+function renderConnectionRuntimeSection(bundle: SettingsBundle): string {
+  const simulated = bundle.rea.simulatedDevices.length ? bundle.rea.simulatedDevices.join(', ') : 'None';
+  return renderSection('Runtime', settingReadout('Simulated devices', simulated, 'Simulator mode devices reported by ReaPrime', 'muted'));
+}
+
+function renderAppRuntimeSection(bundle: SettingsBundle): string {
+  return renderSection(
+    'Served skin',
+    settingReadout('Web UI path', bundle.rea.webUiPath ?? 'Default', 'Filesystem path ReaPrime serves for the skin', 'muted')
+  );
+}
+
+function renderPowerRuntimeSection(bundle: SettingsBundle): string {
+  const state = bundle.rea.chargingState;
+  if (!state) return '';
+  const battery = typeof state.batteryPercent === 'number' ? `${Math.round(state.batteryPercent)}%` : 'Unknown';
+  const mode = typeof state.mode === 'string' ? state.mode : 'unknown mode';
+  const phase = typeof state.currentPhase === 'string' ? state.currentPhase : 'unknown phase';
+  const usb = typeof state.usbChargerOn === 'boolean' ? (state.usbChargerOn ? 'charger on' : 'charger off') : 'charger unknown';
+  return renderSection('Battery state', settingReadout('Battery', battery, `${mode} · ${phase} · ${usb}`, 'muted'));
+}
+
+function compactId(value: string | null): string {
+  if (!value) return 'None';
+  return value.length > 18 ? `...${value.slice(-15)}` : value;
 }
 
 function renderDeviceRow(device: SettingsBundle['devices'][number]): string {

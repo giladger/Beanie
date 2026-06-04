@@ -3,6 +3,7 @@ import {
   readReaSettings,
   readSkins
 } from '../api/settings';
+import { SETTINGS_SPEC } from '../domain/settingsModel';
 
 run('readReaSettings coerces wire values and fills defaults', () => {
   const s = readReaSettings({
@@ -42,6 +43,44 @@ run('readSkins normalizes id/name from a few shapes', () => {
   equal(skins[0]!.id, 'beanie');
   equal(skins[1]!.id, 'streamline.js');
   equal(skins[1]!.name, 'streamline.js');
+});
+
+run('settings model exposes every currently editable backend setting', () => {
+  const keys = new Set(SETTINGS_SPEC.flatMap((section) => section.fields.map((field) => `${field.group}.${field.key}`)));
+  [
+    'rea.gatewayMode',
+    'rea.defaultSkinId',
+    'rea.automaticUpdateCheck',
+    'rea.themeMode',
+    'rea.logLevel',
+    'rea.blockOnNoScale',
+    'rea.weightFlowMultiplier',
+    'rea.volumeFlowMultiplier',
+    'rea.scalePowerMode',
+    'rea.chargingMode',
+    'rea.nightModeEnabled',
+    'rea.nightModeSleepTime',
+    'rea.nightModeMorningTime',
+    'rea.lowBatteryBrightnessLimit',
+    'de1.usb',
+    'de1.tankTemp',
+    'de1.steamFlow',
+    'de1.steamPurgeMode',
+    'de1.hotWaterFlow',
+    'de1.flushTemp',
+    'de1.flushFlow',
+    'de1.flushTimeout',
+    'de1.fan',
+    'presence.userPresenceEnabled',
+    'presence.sleepTimeoutMinutes',
+    'advanced.heaterVoltage',
+    'advanced.heaterIdleTemp',
+    'advanced.heaterPh1Flow',
+    'advanced.heaterPh2Flow',
+    'advanced.heaterPh2Timeout',
+    'advanced.refillKitSetting',
+    'calibration.flowMultiplier'
+  ].forEach((key) => equal(keys.has(key), true));
 });
 
 function run(name: string, fn: () => void): void {
