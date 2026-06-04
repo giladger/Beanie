@@ -69,6 +69,9 @@ html,
 body,
 #app {
   min-height: 100%;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {
@@ -120,12 +123,20 @@ p {
 
 .app-shell {
   height: 100vh;
+  overflow: hidden;
+  overscroll-behavior: none;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   background:
     linear-gradient(120deg, rgba(91, 216, 200, 0.08), transparent 45%),
     linear-gradient(250deg, rgba(122, 168, 255, 0.08), transparent 48%),
     var(--bg);
+}
+
+@supports (height: 100dvh) {
+  .app-shell {
+    height: 100dvh;
+  }
 }
 
 .topbar {
@@ -4445,13 +4456,12 @@ p {
 
 @media (max-width: 900px) {
   body {
-    overflow: auto;
+    overflow: hidden;
   }
 
   .app-shell {
-    min-height: 100vh;
-    height: auto;
-    grid-template-rows: auto 1fr;
+    height: 100vh;
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .topbar {

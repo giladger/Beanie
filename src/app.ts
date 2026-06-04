@@ -421,6 +421,10 @@ export class BeanieApp {
   private readonly handleInput = (event: Event) => this.onInput(event);
   private readonly handleChange = (event: Event) => void this.onChange(event);
   private readonly handleSubmit = (event: Event) => void this.onSubmit(event);
+  private readonly handleWheel = (event: WheelEvent) => this.onScrollGesture(event);
+  private readonly handleTouchStart = (event: TouchEvent) => this.onTouchStart(event);
+  private readonly handleTouchMove = (event: TouchEvent) => this.onTouchMove(event);
+  private touchScrollPoint: { x: number; y: number } | null = null;
 
   constructor(private readonly root: HTMLElement) {}
 
@@ -430,6 +434,9 @@ export class BeanieApp {
     this.root.addEventListener('input', this.handleInput);
     this.root.addEventListener('change', this.handleChange);
     this.root.addEventListener('submit', this.handleSubmit);
+    this.root.addEventListener('wheel', this.handleWheel, { passive: false });
+    this.root.addEventListener('touchstart', this.handleTouchStart, { passive: true });
+    this.root.addEventListener('touchmove', this.handleTouchMove, { passive: false });
     this.render();
     void this.load();
   }
@@ -439,6 +446,9 @@ export class BeanieApp {
     this.root.removeEventListener('input', this.handleInput);
     this.root.removeEventListener('change', this.handleChange);
     this.root.removeEventListener('submit', this.handleSubmit);
+    this.root.removeEventListener('wheel', this.handleWheel);
+    this.root.removeEventListener('touchstart', this.handleTouchStart);
+    this.root.removeEventListener('touchmove', this.handleTouchMove);
     if (this.applyTimer != null) window.clearTimeout(this.applyTimer);
     if (this.machineRetryTimer != null) window.clearTimeout(this.machineRetryTimer);
     if (this.scaleRetryTimer != null) window.clearTimeout(this.scaleRetryTimer);
@@ -448,6 +458,59 @@ export class BeanieApp {
     this.machineSocket?.close();
     this.scaleSocket?.close();
     this.waterSocket?.close();
+  }
+
+  private onScrollGesture(event: WheelEvent): void {
+    if (!this.canScrollInsideApp(event.target, event.deltaX, event.deltaY)) {
+      event.preventDefault();
+    }
+  }
+
+  private onTouchStart(event: TouchEvent): void {
+    const touch = event.touches[0];
+    this.touchScrollPoint = touch ? { x: touch.clientX, y: touch.clientY } : null;
+  }
+
+  private onTouchMove(event: TouchEvent): void {
+    const touch = event.touches[0];
+    if (!touch || !this.touchScrollPoint) return;
+
+    const deltaX = this.touchScrollPoint.x - touch.clientX;
+    const deltaY = this.touchScrollPoint.y - touch.clientY;
+    this.touchScrollPoint = { x: touch.clientX, y: touch.clientY };
+
+    if (!this.canScrollInsideApp(event.target, deltaX, deltaY)) {
+      event.preventDefault();
+    }
+  }
+
+  private canScrollInsideApp(target: EventTarget | null, deltaX: number, deltaY: number): boolean {
+    if (!(target instanceof Element)) return false;
+
+    let el: Element | null = target;
+    while (el && el !== this.root) {
+      if (this.elementCanScroll(el, deltaX, deltaY)) return true;
+      el = el.parentElement;
+    }
+    return false;
+  }
+
+  private elementCanScroll(el: Element, deltaX: number, deltaY: number): boolean {
+    const style = window.getComputedStyle(el);
+    const yScrollable = /(auto|scroll)/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 1;
+    const xScrollable = /(auto|scroll)/.test(style.overflowX) && el.scrollWidth > el.clientWidth + 1;
+
+    if (yScrollable && Math.abs(deltaY) >= Math.abs(deltaX)) {
+      const maxTop = el.scrollHeight - el.clientHeight;
+      return deltaY < 0 ? el.scrollTop > 0 : el.scrollTop < maxTop - 1;
+    }
+
+    if (xScrollable && Math.abs(deltaX) > Math.abs(deltaY)) {
+      const maxLeft = el.scrollWidth - el.clientWidth;
+      return deltaX < 0 ? el.scrollLeft > 0 : el.scrollLeft < maxLeft - 1;
+    }
+
+    return false;
   }
 
   private async load(): Promise<void> {
