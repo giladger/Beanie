@@ -2108,10 +2108,9 @@ p {
   min-height: 0;
   display: grid;
   place-items: center;
-  padding: 8px;
-  border-radius: 6px;
-  background: var(--panel-2);
-  box-shadow: inset 0 0 0 1px var(--line);
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .profile-preview-pane .profile-preview-large {
@@ -2135,8 +2134,8 @@ p {
 }
 
 .profile-preview-plot {
-  fill: var(--panel);
-  stroke: var(--line-strong);
+  fill: transparent;
+  stroke: transparent;
 }
 
 .profile-preview-grid {
