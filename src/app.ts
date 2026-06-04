@@ -3492,7 +3492,7 @@ export class BeanieApp {
 
     return `
       ${this.pageHeader('Profiles', 'workbench', actions)}
-      <main class="page-body profiles-page">
+      <main class="page-body profiles-page no-scroll-page">
         <label class="search">
           ${icon('search')}
           <input type="search" data-action="profile-search" value="${escapeAttr(this.state.profileSearch)}" placeholder="Search profiles" />
