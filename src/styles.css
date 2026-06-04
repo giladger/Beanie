@@ -628,6 +628,33 @@ p {
   letter-spacing: 0;
 }
 
+.number-edit-button {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 900;
+  text-align: left;
+  cursor: pointer;
+}
+
+.number-edit-button:disabled {
+  cursor: default;
+}
+
+.number-edit-button em {
+  color: var(--muted);
+  font-size: 0.72em;
+  font-style: normal;
+  font-weight: 900;
+}
+
 .select-control select {
   align-self: center;
   height: 38px;
@@ -1479,6 +1506,14 @@ p {
   width: 100%;
   height: 28px;
   padding: 0 6px;
+  font-size: 12px;
+}
+
+.bean-picker-batch .bean-picker-number {
+  width: 100%;
+  height: 28px;
+  padding: 0 6px;
+  justify-content: space-between;
   font-size: 12px;
 }
 
@@ -3894,6 +3929,10 @@ p {
   text-align: right;
 }
 
+.settings-number-button {
+  justify-content: flex-end;
+}
+
 /* Scoped under .settings-line (0,2,0) so they beat the label rule
    `.settings-line span` (0,1,1) — otherwise the unit span blockifies and
    drops below the input. */
@@ -4757,6 +4796,15 @@ p {
   font-weight: 700;
 }
 
+.form-page .form-number-button {
+  width: 100%;
+  height: 46px;
+  padding: 0 10px;
+  justify-content: space-between;
+  font-size: 16px;
+  text-transform: none;
+}
+
 .form-page textarea {
   height: auto;
   padding: 10px;
@@ -5470,13 +5518,16 @@ p {
   color: var(--muted, #8a8f98);
 }
 
-.pe-limit-field input {
+.pe-limit-field .pe-limit-value {
+  width: 100%;
+  min-height: 42px;
   padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid var(--line, rgba(127, 127, 127, 0.3));
   background: var(--panel-2, #161922);
   color: var(--ink, #fff);
   font: inherit;
+  justify-content: flex-start;
 }
 
 .pe-limit-field.disabled {

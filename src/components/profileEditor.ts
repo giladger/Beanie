@@ -748,21 +748,21 @@ function renderAdvancedTabs(state: ProfileEditorState): string {
 function renderLimitsPanel(state: ProfileEditorState): string {
   const hasLimiter = state.steps.some((step) => step.limiter && step.limiter.value > 0);
   const range = currentLimiterRange(state);
-  const field = (label: string, key: ProfileMetaKey, value: number | null, step: string, max: number) => `
+  const field = (label: string, key: ProfileMetaKey, value: number | null, step: string, max: number, unit = '') => `
     <label class="pe-limit-field">
       <span>${escapeHtml(label)}</span>
-      <input type="number" step="${step}" min="0" max="${max}" data-action="pe-meta" data-key="${key}" value="${escapeAttr(numberText(value))}" />
+      <button type="button" class="number-edit-button pe-limit-value" data-action="pe-edit-value" data-target="meta" data-key="${key}" data-min="0" data-max="${max}" data-step="${step}" data-value="${escapeAttr(numberText(value))}" data-title="${escapeAttr(label)}" data-unit="${escapeAttr(unit)}">${escapeHtml(numberText(value) || '--')}${unit ? `<em>${escapeHtml(unit)}</em>` : ''}</button>
     </label>`;
   return `
     <section class="pe-limits" aria-label="Profile limits">
       <div class="pe-limits-grid">
-        ${field('Tank temperature °C', 'tank_temperature', state.tankTemperature, '1', FIELD_SPECS.tankTemperature.max)}
-        ${field('Stop at weight (g)', 'target_weight', state.targetWeight, '0.1', FIELD_SPECS.targetWeight.max)}
-        ${field('Stop at volume (ml)', 'target_volume', state.targetVolume, '1', FIELD_SPECS.targetVolume.max)}
+        ${field('Tank temperature °C', 'tank_temperature', state.tankTemperature, '1', FIELD_SPECS.tankTemperature.max, '°C')}
+        ${field('Stop at weight (g)', 'target_weight', state.targetWeight, '0.1', FIELD_SPECS.targetWeight.max, 'g')}
+        ${field('Stop at volume (ml)', 'target_volume', state.targetVolume, '1', FIELD_SPECS.targetVolume.max, 'ml')}
         ${field('Preinfusion ends after step', 'target_volume_count_start', state.targetVolumeCountStart, '1', FIELD_SPECS.targetVolumeCountStart.max)}
         <label class="pe-limit-field ${hasLimiter ? '' : 'disabled'}">
           <span>Limiter range</span>
-          <input type="number" step="${FIELD_SPECS.limiterRange.step}" min="${FIELD_SPECS.limiterRange.min}" max="${FIELD_SPECS.limiterRange.max}" data-action="pe-limiter-range" value="${escapeAttr(formatNumber(range))}" ${hasLimiter ? '' : 'disabled'} />
+          <button type="button" class="number-edit-button pe-limit-value" data-action="pe-edit-value" data-target="limiter-range" data-min="${FIELD_SPECS.limiterRange.min}" data-max="${FIELD_SPECS.limiterRange.max}" data-step="${FIELD_SPECS.limiterRange.step}" data-value="${escapeAttr(formatNumber(range))}" data-title="Limiter range" ${hasLimiter ? '' : 'disabled'}>${escapeHtml(formatNumber(range))}</button>
         </label>
       </div>
       <p class="pe-limits-hint">${hasLimiter

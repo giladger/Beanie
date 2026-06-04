@@ -234,13 +234,9 @@ function renderPluginField(field: PluginSettingField, config: PluginConfigState)
       .map((o) => `<option value="${escapeAttr(o.value)}" ${o.value === current ? 'selected' : ''}>${escapeHtml(o.label)}</option>`)
       .join('')}</select>`;
   } else if (field.type === 'number') {
-    const bounds = [
-      field.min != null ? `min="${field.min}"` : '',
-      field.max != null ? `max="${field.max}"` : '',
-      field.step != null ? `step="${field.step}"` : ''
-    ].join(' ');
     const unit = `<span class="settings-unit">${field.unit ? escapeHtml(field.unit) : ''}</span>`;
-    control = `<span class="settings-number"><input class="settings-input" type="number" ${base} ${bounds} value="${escapeAttr(String(draftVal ?? ''))}" />${unit}</span>`;
+    const value = String(draftVal ?? '');
+    control = `<span class="settings-number"><button type="button" class="settings-input number-edit-button settings-number-button" data-action="open-number-edit" data-target="settings-plugin-field" data-key="${escapeAttr(field.key)}" data-title="${escapeAttr(field.label)}" data-value="${escapeAttr(value)}" data-min="${field.min ?? 0}" data-max="${field.max ?? 9999}" data-step="${field.step ?? 1}" data-unit="${escapeAttr(field.unit ?? '')}">${escapeHtml(value || '--')}</button>${unit}</span>`;
   } else {
     // text / password
     const inputType = field.type === 'password' ? 'password' : 'text';
@@ -319,12 +315,7 @@ function renderSettingsField(field: SettingsField, bundle: SettingsBundle): stri
     // Always emit the unit span (empty when unitless) so its fixed-width gutter
     // reserves space and every number input shares the same right edge.
     const unit = `<span class="settings-unit">${field.unit ? escapeHtml(field.unit) : ''}</span>`;
-    const bounds = [
-      field.min != null ? `min="${field.min}"` : '',
-      field.max != null ? `max="${field.max}"` : '',
-      field.step != null ? `step="${field.step}"` : ''
-    ].join(' ');
-    control = `<span class="settings-number"><input class="settings-input" type="number" ${base} ${bounds} value="${escapeAttr(num)}" />${unit}</span>`;
+    control = `<span class="settings-number"><button type="button" class="settings-input number-edit-button settings-number-button" data-action="open-number-edit" data-target="settings-field" data-group="${field.group}" data-key="${escapeAttr(field.key)}" data-title="${escapeAttr(field.label)}" data-value="${escapeAttr(num)}" data-min="${field.min ?? 0}" data-max="${field.max ?? 9999}" data-step="${field.step ?? 1}" data-unit="${escapeAttr(field.unit ?? '')}">${escapeHtml(num || '--')}</button>${unit}</span>`;
   }
   return settingControlRow(field.label, field.help ?? '', control);
 }

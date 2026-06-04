@@ -206,7 +206,7 @@ type ShotScoreOption = (typeof SHOT_SCORE_OPTIONS)[number];
 
 // Which editor field a tap-to-edit numpad dialog is bound to.
 interface ProfileEditTarget {
-  target: 'step-field' | 'simple-field' | 'exit';
+  target: 'step-field' | 'simple-field' | 'exit' | 'meta' | 'limiter-range';
   key?: string;
   index?: number;
   type?: 'pressure' | 'flow';
@@ -224,6 +224,18 @@ interface MachineLabelEditTarget {
   presetName: string;
   presetId: string;
   label: string;
+}
+
+interface NumberEditTarget {
+  target: 'settings-field' | 'settings-plugin-field' | 'bean-picker-batch' | 'shot-edit' | 'form-field';
+  group?: string;
+  key?: string;
+  beanId?: string;
+  batchId?: string;
+  name?: string;
+  formKey?: string;
+  field?: ShotEditField;
+  returnModal?: Modal;
 }
 
 interface ShotEditDraft {
@@ -310,9 +322,11 @@ interface AppState {
   shotEditField: ShotEditField | null;
   profileEdit: ProfileEditTarget | null;
   machineEdit: MachineEditTarget | null;
+  numberEdit: NumberEditTarget | null;
   machineLabelEdit: MachineLabelEditTarget | null;
   machinePresetLabels: Record<string, string>;
   machinePresetValues: MachinePresetValueOverrides;
+  formNumbers: Record<string, string>;
   detailShotId: string | null;
   machineInfo: MachineInfo | null;
   machineCapabilities: MachineCapabilities | null;
@@ -378,9 +392,11 @@ export class BeanieApp {
     shotEditField: null,
     profileEdit: null,
     machineEdit: null,
+    numberEdit: null,
     machineLabelEdit: null,
     machinePresetLabels: readMachinePresetLabels(),
     machinePresetValues: readMachinePresetValues(),
+    formNumbers: {},
     detailShotId: null,
     machineInfo: null,
     machineCapabilities: null,
@@ -1488,6 +1504,9 @@ export class BeanieApp {
       case 'machine-edit-value':
         this.openMachineValueDialog(el);
         break;
+      case 'open-number-edit':
+        this.openNumberEditDialog(el);
+        break;
       case 'machine-preset':
         if (el.dataset.name && value) await this.applyMachinePreset(el.dataset.name, value);
         break;
@@ -1683,14 +1702,16 @@ export class BeanieApp {
         if (id) this.toggleFavoriteProfile(id);
         break;
       case 'close-modal':
-        if (this.state.profileEdit || this.state.machineEdit || this.state.machineLabelEdit) {
+        if (this.state.profileEdit || this.state.machineEdit || this.state.numberEdit || this.state.machineLabelEdit) {
+          const returnModal = this.state.numberEdit?.returnModal ?? null;
           this.setState({
-            modal: null,
+            modal: returnModal,
             editDialog: null,
-            shotEdit: null,
-            shotEditField: null,
+            shotEdit: returnModal === 'edit-shot' ? this.state.shotEdit : null,
+            shotEditField: returnModal === 'edit-shot' ? this.state.shotEditField : null,
             profileEdit: null,
             machineEdit: null,
+            numberEdit: null,
             machineLabelEdit: null
           });
           break;
@@ -1705,6 +1726,7 @@ export class BeanieApp {
           shotEditField: null,
           profileEdit: null,
           machineEdit: null,
+          numberEdit: null,
           machineLabelEdit: null
         });
         break;
@@ -2398,6 +2420,57 @@ export class BeanieApp {
     }
   }
 
+  private async saveBeanPickerBatchValue(
+    beanId: string,
+    batchId: string,
+    name: string,
+    value: string
+  ): Promise<void> {
+    const bean = this.state.beans.find((item) => item.id === beanId);
+    if (!bean) return;
+    const current = this.state.batchesByBean[bean.id] ?? [];
+    const previous = current.find((item) => item.id === batchId);
+    if (!previous) return;
+    const nextValue = numberOrNullInput(value);
+    const batchInput: Partial<BeanBatch> = {
+      beanId: bean.id,
+      roastDate: previous.roastDate,
+      roastLevel: previous.roastLevel,
+      weight: previous.weight,
+      weightRemaining: previous.weightRemaining,
+      frozen: previous.frozen
+    };
+    if (name === 'weight') batchInput.weight = nextValue;
+    if (name === 'weightRemaining') batchInput.weightRemaining = nextValue;
+    const optimistic: BeanBatch = { ...previous, ...batchInput, id: batchId, beanId: bean.id };
+    const optimisticBatches = current.map((item) => (item.id === batchId ? optimistic : item));
+
+    this.setState({
+      batchesByBean: { ...this.state.batchesByBean, [bean.id]: optimisticBatches },
+      status: 'Batch saved'
+    });
+    if (bean.id === this.state.selectedBeanId && latestBatch(optimisticBatches)?.id === batchId) this.scheduleApply();
+    if (this.state.demo) return;
+
+    try {
+      const saved = await gateway.updateBatch(batchId, batchInput);
+      const latest = this.state.batchesByBean[bean.id] ?? [];
+      this.setState({
+        batchesByBean: {
+          ...this.state.batchesByBean,
+          [bean.id]: latest.map((item) => (item.id === batchId ? saved : item))
+        },
+        status: 'Batch saved'
+      });
+    } catch (error) {
+      console.error('[Beanie] Save batch failed', error);
+      this.setState({
+        batchesByBean: { ...this.state.batchesByBean, [bean.id]: current },
+        status: 'Save batch failed'
+      });
+    }
+  }
+
   private async deleteBatchFromPicker(beanId: string | null, batchId: string): Promise<void> {
     if (!beanId) return;
     const bean = this.state.beans.find((item) => item.id === beanId);
@@ -2632,6 +2705,52 @@ export class BeanieApp {
         digits,
         helper: `Between ${min} and ${max}`,
         maxLength: 6,
+        recentValues: []
+      })
+    });
+  }
+
+  private openNumberEditDialog(el: HTMLElement): void {
+    const target = el.dataset.target as NumberEditTarget['target'] | undefined;
+    if (!target) return;
+    const value = el.dataset.value ?? '';
+    const title = el.dataset.title ?? 'Value';
+    const unit = el.dataset.unit ?? '';
+    const min = Number(el.dataset.min ?? '0');
+    const max = Number(el.dataset.max ?? '9999');
+    const step = Number(el.dataset.step ?? '1');
+    const digits = step < 1 ? Math.min(2, decimalPlaces(step)) : 0;
+    const returnModal = el.dataset.returnModal as Modal | undefined;
+
+    this.setState({
+      modal: 'edit-number',
+      profileEdit: null,
+      machineEdit: null,
+      machineLabelEdit: null,
+      numberEdit: {
+        target,
+        group: el.dataset.group,
+        key: el.dataset.key,
+        beanId: el.dataset.beanId,
+        batchId: el.dataset.batchId,
+        name: el.dataset.name,
+        formKey: el.dataset.formKey,
+        field: isShotEditField(el.dataset.field) ? el.dataset.field : undefined,
+        returnModal
+      },
+      editDialog: createInputDialog({
+        field: 'temperature',
+        kind: 'grind',
+        title,
+        value,
+        unit,
+        min,
+        max,
+        step,
+        bigStep: step < 1 ? 1 : Math.max(5, step * 5),
+        digits,
+        helper: `Between ${min} and ${max}`,
+        maxLength: 8,
         recentValues: []
       })
     });
@@ -2949,7 +3068,31 @@ export class BeanieApp {
     if (edit.target === 'exit' && edit.index != null) {
       return setStepExit(pe, edit.index, { type: edit.type, condition: edit.condition, value: Number(value) || 0 });
     }
+    if (edit.target === 'meta' && edit.key != null) {
+      return setProfileMeta(pe, edit.key as ProfileMetaKey, value);
+    }
+    if (edit.target === 'limiter-range') {
+      return setAllLimiterRanges(pe, Number(value) || 0);
+    }
     return pe;
+  }
+
+  private async applyNumberEdit(edit: NumberEditTarget, value: string): Promise<void> {
+    if (edit.target === 'settings-field' && edit.group && edit.key) {
+      await this.onSettingsField(edit.group, edit.key, value);
+      return;
+    }
+    if (edit.target === 'settings-plugin-field' && edit.key) {
+      this.updatePluginField(edit.key, value);
+      return;
+    }
+    if (edit.target === 'bean-picker-batch' && edit.beanId && edit.batchId && edit.name) {
+      await this.saveBeanPickerBatchValue(edit.beanId, edit.batchId, edit.name, value);
+      return;
+    }
+    if (edit.target === 'form-field' && edit.formKey) {
+      this.setState({ formNumbers: { ...this.state.formNumbers, [edit.formKey]: value } });
+    }
   }
 
   private async commitEditDialog(): Promise<void> {
@@ -2979,6 +3122,40 @@ export class BeanieApp {
         profileEdit: null,
         status: 'Profile changed'
       });
+      return;
+    }
+
+    const numberEdit = this.state.numberEdit;
+    if (numberEdit) {
+      const returnModal = numberEdit.returnModal ?? null;
+      if (numberEdit.target === 'shot-edit' && numberEdit.field) {
+        const shotEdit = this.state.shotEdit
+          ? updateShotEditDraftField(
+              this.state.shotEdit,
+              numberEdit.field,
+              value,
+              this.state.grinders,
+              this.state.beans,
+              (batchId) => this.batchAndBeanForId(batchId)
+            )
+          : null;
+        this.setState({
+          modal: returnModal,
+          editDialog: null,
+          numberEdit: null,
+          shotEdit,
+          status: 'Shot changed'
+        });
+        return;
+      }
+
+      this.setState({
+        modal: returnModal,
+        editDialog: null,
+        numberEdit: null,
+        status: 'Value changed'
+      });
+      await this.applyNumberEdit(numberEdit, value);
       return;
     }
 
@@ -3363,6 +3540,26 @@ export class BeanieApp {
   }
 
   private renderBeanPickerBatchForm(bean: Bean, batch: BeanBatch, active: boolean): string {
+    const batchNumber = (name: 'weight' | 'weightRemaining', label: string, value: number | null | undefined) => `
+      <label>${escapeHtml(label)}
+        <button
+          type="button"
+          class="number-edit-button bean-picker-number"
+          data-action="open-number-edit"
+          data-target="bean-picker-batch"
+          data-bean-id="${escapeAttr(bean.id)}"
+          data-batch-id="${escapeAttr(batch.id)}"
+          data-name="${name}"
+          data-title="${escapeAttr(label)}"
+          data-value="${escapeAttr(inputValue(value))}"
+          data-min="0"
+          data-max="5000"
+          data-step="0.1"
+          data-unit="g"
+          data-return-modal="bean-picker"
+        >${escapeHtml(inputValue(value) || '--')}<em>g</em></button>
+      </label>
+    `;
     return `
       <form
         class="bean-picker-batch ${active ? 'current' : ''}"
@@ -3376,8 +3573,8 @@ export class BeanieApp {
         </div>
         <label>Date<input data-action="bean-picker-batch-field" type="date" name="roastDate" value="${escapeAttr(dateInputValue(batch.roastDate))}" /></label>
         <label>Roast<input data-action="bean-picker-batch-field" name="roastLevel" autocomplete="off" value="${escapeAttr(inputValue(batch.roastLevel))}" /></label>
-        <label>Bag<input data-action="bean-picker-batch-field" type="number" name="weight" min="0" step="0.1" inputmode="decimal" value="${escapeAttr(inputValue(batch.weight))}" /></label>
-        <label>Left<input data-action="bean-picker-batch-field" type="number" name="weightRemaining" min="0" step="0.1" inputmode="decimal" value="${escapeAttr(inputValue(batch.weightRemaining))}" /></label>
+        ${batchNumber('weight', 'Bag', batch.weight)}
+        ${batchNumber('weightRemaining', 'Left', batch.weightRemaining)}
         <label class="bean-picker-check" title="Frozen"><input data-action="bean-picker-batch-field" type="checkbox" name="frozen" ${batch.frozen ? 'checked' : ''} /><span>Frozen</span></label>
         <button type="button" class="icon-button danger-icon bean-picker-batch-delete" data-action="delete-batch" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}" aria-label="Delete batch" title="Delete batch">${icon('trash-2')}</button>
       </form>
@@ -3899,6 +4096,16 @@ export class BeanieApp {
   private renderBatchEditorPage(): string {
     const bean = this.selectedBean();
     const actions = `<button class="command primary commit-action" type="submit" form="batch-form" ${bean ? '' : 'disabled'}>${icon('plus')}<span>Add batch</span></button>`;
+    const formNumber = (name: 'weight' | 'weightRemaining', label: string) => {
+      const formKey = `batch-form:${name}`;
+      const value = this.state.formNumbers[formKey] ?? '';
+      return `
+        <label>${escapeHtml(label)}
+          <input type="hidden" name="${name}" value="${escapeAttr(value)}" />
+          <button type="button" class="number-edit-button form-number-button" data-action="open-number-edit" data-target="form-field" data-form-key="${escapeAttr(formKey)}" data-title="${escapeAttr(label)}" data-value="${escapeAttr(value)}" data-min="0" data-max="5000" data-step="1" data-unit="g">${escapeHtml(value || '--')}<em>g</em></button>
+        </label>
+      `;
+    };
     return `
       ${this.pageHeader('Add Batch', 'workbench', actions)}
       <form id="batch-form" class="page-body form-page" data-form="batch-editor">
@@ -3908,8 +4115,8 @@ export class BeanieApp {
           <label>Roast level<input name="roastLevel" autocomplete="off" /></label>
         </div>
         <div class="field-row">
-          <label>Bag weight (g)<input type="number" name="weight" min="0" step="1" /></label>
-          <label>Remaining (g)<input type="number" name="weightRemaining" min="0" step="1" /></label>
+          ${formNumber('weight', 'Bag weight')}
+          ${formNumber('weightRemaining', 'Remaining')}
         </div>
         <label class="switch inline-switch"><input type="checkbox" name="frozen" /><span>Frozen</span></label>
       </form>
@@ -3922,6 +4129,17 @@ export class BeanieApp {
       : null;
     const actionLabel = editing ? 'Save grinder' : 'Add grinder';
     const actions = `<button class="command primary commit-action" type="submit" form="grinder-form">${icon(editing ? 'check' : 'plus')}<span>${actionLabel}</span></button>`;
+    const grinderKey = editing?.id ?? 'new';
+    const formNumber = (name: 'settingSmallStep' | 'settingBigStep', label: string, fallback: number, step: number) => {
+      const formKey = `grinder-form:${grinderKey}:${name}`;
+      const value = this.state.formNumbers[formKey] ?? String(fallback);
+      return `
+        <label>${escapeHtml(label)}
+          <input type="hidden" name="${name}" value="${escapeAttr(value)}" />
+          <button type="button" class="number-edit-button form-number-button" data-action="open-number-edit" data-target="form-field" data-form-key="${escapeAttr(formKey)}" data-title="${escapeAttr(label)}" data-value="${escapeAttr(value)}" data-min="0" data-max="100" data-step="${step}">${escapeHtml(value || '--')}</button>
+        </label>
+      `;
+    };
     return `
       ${this.pageHeader(editing ? 'Edit Grinder' : 'Add Grinder', 'workbench', actions)}
       <form id="grinder-form" class="page-body form-page" data-form="grinder-editor">
@@ -3934,8 +4152,8 @@ export class BeanieApp {
           </select>
         </label>
         <div class="field-row">
-          <label>Small step<input type="number" name="settingSmallStep" min="0" step="0.01" value="${escapeAttr(String(editing?.settingSmallStep ?? 0.1))}" /></label>
-          <label>Big step<input type="number" name="settingBigStep" min="0" step="0.1" value="${escapeAttr(String(editing?.settingBigStep ?? 1))}" /></label>
+          ${formNumber('settingSmallStep', 'Small step', editing?.settingSmallStep ?? 0.1, 0.01)}
+          ${formNumber('settingBigStep', 'Big step', editing?.settingBigStep ?? 1, 0.1)}
         </div>
       </form>
     `;
@@ -3996,17 +4214,19 @@ export class BeanieApp {
     const numberField = (name: Extract<ShotEditField, 'targetDoseWeight' | 'targetYield' | 'actualDoseWeight' | 'actualYield' | 'drinkTds' | 'drinkEy'>, label: string, value: number | null) => `
       <label>
         <span>${escapeHtml(label)}</span>
-        <input
-          class="shot-edit-number"
-          name="${escapeAttr(name)}"
-          type="number"
-          step="${escapeAttr(shotNumberFieldStep(name))}"
-          value="${escapeAttr(inputValue(value))}"
-          inputmode="decimal"
-          autocomplete="off"
-          data-action="shot-edit-number"
+        <button
+          type="button"
+          class="shot-edit-value number-edit-button"
+          data-action="open-number-edit"
+          data-target="shot-edit"
           data-field="${escapeAttr(name)}"
-        />
+          data-title="${escapeAttr(label)}"
+          data-value="${escapeAttr(inputValue(value))}"
+          data-min="0"
+          data-max="9999"
+          data-step="${escapeAttr(shotNumberFieldStep(name))}"
+          data-return-modal="edit-shot"
+        ><strong>${escapeHtml(inputValue(value) || '--')}</strong></button>
       </label>
     `;
 
@@ -4085,7 +4305,7 @@ export class BeanieApp {
       spec.kind === 'textarea'
         ? `<textarea name="value" rows="5" spellcheck="true">${escapeHtml(spec.value)}</textarea>`
         : spec.kind === 'number'
-          ? `<input name="value" type="number" step="${escapeAttr(spec.step ?? '0.1')}" value="${escapeAttr(spec.value)}" inputmode="decimal" autocomplete="off" />`
+          ? `<input name="value" value="${escapeAttr(spec.value)}" inputmode="decimal" autocomplete="off" />`
           : `<input name="value" value="${escapeAttr(spec.value)}" autocomplete="off" />`;
     const options =
       spec.options.length === 0
@@ -5379,6 +5599,12 @@ function numberOrNullInput(value: FormDataEntryValue | null): number | null {
   if (!text) return null;
   const parsed = Number(text);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function decimalPlaces(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const [, fraction = ''] = value.toString().split('.');
+  return fraction.length;
 }
 
 function dateInputValue(value: string | null | undefined): string {
