@@ -3814,6 +3814,18 @@ p {
   text-transform: uppercase;
 }
 
+.settings-section-danger h3 {
+  color: var(--red);
+}
+
+.settings-section-danger {
+  border-bottom-color: color-mix(in srgb, var(--red) 32%, var(--line));
+}
+
+.settings-section-danger .settings-line {
+  border-top-color: color-mix(in srgb, var(--red) 20%, rgba(255, 255, 255, 0.08));
+}
+
 .settings-section-rows {
   display: grid;
 }
@@ -4119,6 +4131,12 @@ p {
   border-color: var(--teal);
   background: color-mix(in srgb, var(--teal) 18%, transparent);
   color: var(--ink);
+}
+
+.text-button.danger {
+  border-color: color-mix(in srgb, var(--red) 70%, var(--line));
+  background: color-mix(in srgb, var(--red) 10%, var(--panel-2));
+  color: var(--red);
 }
 
 .settings-segmented {

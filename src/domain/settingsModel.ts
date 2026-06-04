@@ -61,12 +61,15 @@ export interface SettingsField {
   options?: SettingsOption[];
   /** Populate select options dynamically from the bundle (e.g. installed skins). */
   optionsFrom?: 'skins';
+  /** Label to show when a select value is unknown/unset instead of falling through to the first option. */
+  unknownLabel?: string;
 }
 
 export interface SettingsSpecSection {
   id: string;
   title: string;
   terms: string;
+  tone?: 'danger';
   fields: SettingsField[];
 }
 
@@ -82,8 +85,8 @@ function titleCase(value: string): string {
 export const SETTINGS_SPEC: SettingsSpecSection[] = [
   {
     id: 'gateway-app',
-    title: 'Gateway & app',
-    terms: 'gateway mode control log level skin update',
+    title: 'App & skin',
+    terms: 'gateway mode control skin update log level',
     fields: [
       {
         group: 'rea',
@@ -94,28 +97,25 @@ export const SETTINGS_SPEC: SettingsSpecSection[] = [
         help: 'How much control external clients (this skin) have over the machine.'
       },
       { group: 'rea', key: 'defaultSkinId', label: 'Active skin', type: 'select', optionsFrom: 'skins', help: 'The skin reaprime serves by default.' },
-      { group: 'rea', key: 'logLevel', label: 'Log level', type: 'select', options: opts(LOG_LEVELS, (v) => v) },
-      { group: 'rea', key: 'automaticUpdateCheck', label: 'Automatic update check', type: 'toggle' }
+      { group: 'rea', key: 'automaticUpdateCheck', label: 'Automatic update check', type: 'toggle' },
+      { group: 'rea', key: 'logLevel', label: 'Log level', type: 'select', options: opts(LOG_LEVELS, (v) => v), help: 'Only change while debugging.' }
     ]
   },
   {
-    id: 'scale',
-    title: 'Scale',
-    terms: 'scale weight power block flow multiplier',
+    id: 'shot-stopping',
+    title: 'Shot stopping',
+    terms: 'scale weight target volume stop yield flow multiplier',
     fields: [
-      { group: 'rea', key: 'scalePowerMode', label: 'Scale power mode', type: 'select', options: opts(SCALE_POWER_MODES) },
       { group: 'rea', key: 'blockOnNoScale', label: 'Block shots without a scale', type: 'toggle' },
-      { group: 'rea', key: 'weightFlowMultiplier', label: 'Weight flow multiplier', type: 'number', min: 0, max: 5, step: 0.05 },
-      { group: 'rea', key: 'volumeFlowMultiplier', label: 'Volume flow multiplier', type: 'number', min: 0, max: 2, step: 0.05, unit: 's' }
+      { group: 'rea', key: 'weightFlowMultiplier', label: 'Weight stop lookahead', type: 'number', min: 0, max: 5, step: 0.05, help: 'Higher stops earlier when using stop-at-weight.' },
+      { group: 'rea', key: 'volumeFlowMultiplier', label: 'Volume stop lookahead', type: 'number', min: 0, max: 2, step: 0.05, unit: 's', help: 'Seconds of flow to expect after a volume stop command.' }
     ]
   },
   {
-    id: 'machine',
-    title: 'Machine',
-    terms: 'usb fan tank steam flush hot water purge',
+    id: 'machine-outputs',
+    title: 'Machine outputs',
+    terms: 'tank steam flush hot water purge flow temperature',
     fields: [
-      { group: 'de1', key: 'usb', label: 'USB charger output', type: 'toggle' },
-      { group: 'de1', key: 'fan', label: 'Fan threshold', type: 'number', min: 0, max: 100, step: 1, unit: '°C' },
       { group: 'de1', key: 'tankTemp', label: 'Tank preheat target', type: 'number', min: 0, max: 60, step: 1, unit: '°C', help: '0 = off' },
       { group: 'de1', key: 'steamFlow', label: 'Steam flow', type: 'number', min: 0, max: 5, step: 0.1, unit: 'ml/s' },
       { group: 'de1', key: 'steamPurgeMode', label: 'Steam purge mode', type: 'number', min: 0, max: 4, step: 1 },
@@ -126,24 +126,28 @@ export const SETTINGS_SPEC: SettingsSpecSection[] = [
     ]
   },
   {
-    id: 'machine-advanced',
-    title: 'Machine · advanced',
-    terms: 'heater voltage refill kit calibration flow phase',
+    id: 'danger-zone',
+    title: 'Danger zone',
+    terms: 'danger advanced heater voltage refill kit calibration fan firmware reset',
+    tone: 'danger',
     fields: [
-      { group: 'advanced', key: 'heaterPh1Flow', label: 'Heater phase 1 flow', type: 'number', min: 0, max: 10, step: 0.1, unit: 'ml/s' },
-      { group: 'advanced', key: 'heaterPh2Flow', label: 'Heater phase 2 flow', type: 'number', min: 0, max: 10, step: 0.1, unit: 'ml/s' },
-      { group: 'advanced', key: 'heaterIdleTemp', label: 'Heater idle temperature', type: 'number', min: 0, max: 95, step: 1, unit: '°C' },
-      { group: 'advanced', key: 'heaterPh2Timeout', label: 'Heater phase 2 timeout', type: 'number', min: 0, max: 60, step: 1, unit: 's' },
+      { group: 'de1', key: 'fan', label: 'Fan threshold', type: 'number', min: 0, max: 100, step: 1, unit: '°C', help: 'Machine cooling threshold.' },
       {
         group: 'advanced',
         key: 'heaterVoltage',
-        label: 'Mains voltage',
+        label: 'Mains voltage hint',
         type: 'select',
+        help: 'Nominal heater-voltage region; wrong values affect heater behavior.',
+        unknownLabel: 'Unknown',
         options: [
           { value: '120', label: '110–120 V' },
           { value: '230', label: '220–230 V' }
         ]
       },
+      { group: 'advanced', key: 'heaterIdleTemp', label: 'Heater idle temperature', type: 'number', min: 0, max: 95, step: 1, unit: '°C' },
+      { group: 'advanced', key: 'heaterPh1Flow', label: 'Heater phase 1 flow', type: 'number', min: 0, max: 10, step: 0.1, unit: 'ml/s' },
+      { group: 'advanced', key: 'heaterPh2Flow', label: 'Heater phase 2 flow', type: 'number', min: 0, max: 10, step: 0.1, unit: 'ml/s' },
+      { group: 'advanced', key: 'heaterPh2Timeout', label: 'Heater phase 2 timeout', type: 'number', min: 0, max: 60, step: 1, unit: 's' },
       {
         group: 'advanced',
         key: 'refillKitSetting',
@@ -155,14 +159,16 @@ export const SETTINGS_SPEC: SettingsSpecSection[] = [
           { value: '0', label: 'Force off' }
         ]
       },
-      { group: 'calibration', key: 'flowMultiplier', label: 'Flow estimation multiplier', type: 'number', min: 0.13, max: 2, step: 0.01 }
+      { group: 'calibration', key: 'flowMultiplier', label: 'Flow estimation multiplier', type: 'number', min: 0.13, max: 2, step: 0.01, help: 'DE1 flow-estimation calibration.' }
     ]
   },
   {
     id: 'power',
-    title: 'Power & presence',
-    terms: 'sleep presence wake charging night battery brightness',
+    title: 'Power',
+    terms: 'sleep presence wake charging night battery brightness usb scale power',
     fields: [
+      { group: 'rea', key: 'scalePowerMode', label: 'Scale power mode', type: 'select', options: opts(SCALE_POWER_MODES) },
+      { group: 'de1', key: 'usb', label: 'USB charger output', type: 'toggle' },
       { group: 'presence', key: 'userPresenceEnabled', label: 'Presence detection', type: 'toggle' },
       { group: 'presence', key: 'sleepTimeoutMinutes', label: 'Sleep after', type: 'number', min: 0, max: 180, step: 1, unit: 'min', help: '0 = never' },
       { group: 'rea', key: 'chargingMode', label: 'Smart charging', type: 'select', options: opts(CHARGING_MODES) },

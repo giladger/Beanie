@@ -88,7 +88,7 @@ function settingsSections(
       {
         id: 'maintenance',
         title: 'Maintenance',
-        terms: 'descale clean sleep firmware update flush',
+        terms: 'descale clean sleep flush',
         html: renderMaintenanceSection()
       },
       {
@@ -119,16 +119,12 @@ function settingsSections(
 function renderSpecSection(section: SettingsSpecSection, bundle: SettingsBundle): string {
   const rows = section.fields.map((field) => renderSettingsField(field, bundle)).join('');
   let extra = '';
-  if (section.id === 'machine-advanced') {
-    extra = settingControlRow(
-      'Reset machine settings',
-      'Restore DE1 fan, heater, refill, calibration, and purge defaults',
-      `<button type="button" class="text-button" data-action="settings-reset-machine">${icon('rotate-ccw')}<span>Reset</span></button>`
-    );
+  if (section.id === 'danger-zone') {
+    extra = renderDangerActions();
   } else if (section.id === 'power') {
     extra = renderWakeSchedules(bundle);
   }
-  return renderSection(section.title, rows + extra);
+  return renderSection(section.title, rows + extra, section.tone);
 }
 
 function renderDevicesSection(bundle: SettingsBundle): string {
@@ -160,13 +156,24 @@ function renderMaintenanceSection(): string {
   return renderSection('Maintenance', [
     settingControlRow('Descale', 'Run the descaling cycle on the machine', stateBtn('descaling', 'Start descale')),
     settingControlRow('Clean', 'Run the cleaning cycle', stateBtn('cleaning', 'Start clean')),
-    settingControlRow('Sleep', 'Put the machine to sleep', stateBtn('sleeping', 'Sleep')),
-    settingControlRow(
-      'Firmware update',
-      'Upload a DE1 firmware file — the machine applies it (this can take a while)',
-      `<label class="text-button"><input type="file" accept=".bin,.fw,.dfu" data-action="settings-firmware" hidden />${icon('upload')}<span>Upload…</span></label>`
-    )
+    settingControlRow('Sleep', 'Put the machine to sleep', stateBtn('sleeping', 'Sleep'))
   ].join(''));
+}
+
+function renderDangerActions(): string {
+  return `
+    <div class="settings-subsection settings-danger-actions">
+      ${settingControlRow(
+        'Firmware update',
+        'Upload a DE1 firmware file and let the machine apply it',
+        `<label class="text-button danger"><input type="file" accept=".bin,.fw,.dfu" data-action="settings-firmware" hidden />${icon('upload')}<span>Upload…</span></label>`
+      )}
+      ${settingControlRow(
+        'Reset machine settings',
+        'Restore DE1 fan, heater, refill, calibration, and purge defaults',
+        `<button type="button" class="text-button danger" data-action="settings-reset-machine">${icon('rotate-ccw')}<span>Reset</span></button>`
+      )}
+    </div>`;
 }
 
 function renderPluginsSection(bundle: SettingsBundle, pluginConfig: PluginConfigState | null): string {
@@ -299,7 +306,11 @@ function renderSettingsField(field: SettingsField, bundle: SettingsBundle): stri
     const options = field.optionsFrom === 'skins'
       ? bundle.skins.map((skin) => ({ value: skin.id, label: skin.name }))
       : (field.options ?? []);
-    control = `<select class="settings-select" ${base}>${options
+    const hasCurrent = options.some((option) => option.value === current);
+    const unknown = !hasCurrent && field.unknownLabel && current !== ''
+      ? `<option value="${escapeAttr(current)}" selected disabled>${escapeHtml(field.unknownLabel)}</option>`
+      : '';
+    control = `<select class="settings-select" ${base}>${unknown}${options
       .map((o) => `<option value="${escapeAttr(o.value)}" ${o.value === current ? 'selected' : ''}>${escapeHtml(o.label)}</option>`)
       .join('')}</select>`;
   } else if (field.type === 'time') {
@@ -366,9 +377,10 @@ function renderAboutRows(model: SettingsShellModel): string {
   `;
 }
 
-function renderSection(title: string, body: string): string {
+function renderSection(title: string, body: string, tone?: SettingsSpecSection['tone']): string {
+  const className = ['settings-section', tone ? `settings-section-${tone}` : ''].filter(Boolean).join(' ');
   return `
-    <section class="settings-section">
+    <section class="${className}">
       <h3>${escapeHtml(title)}</h3>
       <div class="settings-section-rows">${body}</div>
     </section>
