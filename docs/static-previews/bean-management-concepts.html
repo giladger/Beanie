@@ -424,7 +424,7 @@
     .inspector {
       min-height: 0;
       display: grid;
-      grid-template-rows: auto auto minmax(0, 1fr) auto;
+      grid-template-rows: auto auto auto minmax(0, 1fr) auto;
       gap: 8px;
       padding: 10px;
       border: 1px solid var(--line);
@@ -474,6 +474,39 @@
       font-weight: 900;
       white-space: nowrap;
       text-overflow: ellipsis;
+    }
+
+    .long-note {
+      min-height: 78px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: start;
+      gap: 10px;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+    }
+
+    .long-note strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .long-note p {
+      display: -webkit-box;
+      margin: 0;
+      overflow: hidden;
+      color: var(--soft);
+      font-size: 13px;
+      font-weight: 750;
+      line-height: 1.28;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 3;
     }
 
     .batch-panel {
@@ -694,7 +727,13 @@
                 <div class="field"><label>Origin</label><div class="box">Ethiopia</div></div>
                 <div class="field"><label>Region</label><div class="box">Gera, Jimma</div></div>
                 <div class="field"><label>Process</label><div class="box">Washed</div></div>
-                <div class="field"><label>Notes</label><div class="box">bergamot, peach</div></div>
+              </div>
+              <div class="long-note">
+                <div>
+                  <strong>Notes</strong>
+                  <p>Elegant washed Ethiopian coffee from Nano Genji, lots of bergamot aromatics, peach candy, black tea, and a long floral finish. I usually write the full roaster description here plus my own dial-in notes, milk drink behavior, and what changed after the bag opened.</p>
+                </div>
+                <div class="button">Open</div>
               </div>
               <div class="batch-panel">
                 <div class="batch-row">
