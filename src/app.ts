@@ -122,6 +122,7 @@ import { LiveChart } from './components/LiveChart';
 import { chartModelFromShot } from './components/liveChartModel';
 import { LiveShotSession, simulateShotFrames, type LiveFrame, type LiveShotState } from './domain/liveShot';
 import { beanieCache } from './domain/cache';
+import { waterTankMlFromMm } from './domain/waterTank';
 import {
   applySettingsPreferences,
   buildSettingsShellModel,
@@ -5431,8 +5432,11 @@ function temp(value: number | null | undefined): string {
 }
 
 function water(value: number | null | undefined): string {
-  // The DE1 reports tank level as a height in millimetres (same as Streamline).
-  return value == null ? '--' : `${Math.round(value)} mm`;
+  // reaprime reports tank level as a height in mm; convert to ml via de1app's
+  // calibration table and round to tens, the way de1app shows it (~X mL).
+  if (value == null) return '--';
+  const ml = Math.round(waterTankMlFromMm(value) / 10) * 10;
+  return `${ml} ml`;
 }
 
 // A friendly readiness label instead of the raw machine state. Heating shows
