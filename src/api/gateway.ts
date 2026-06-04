@@ -220,6 +220,12 @@ export const gateway = {
         body: JSON.stringify(batch)
       }
     ),
+  updateBatch: (id: string, batch: Partial<BeanBatch>) =>
+    fetchJson<BeanBatch>('batches', `/api/v1/bean-batches/${encodeURIComponent(id)}`, readBatch, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(batch)
+    }),
   grinders: () =>
     fetchJson<Grinder[]>('grinders', '/api/v1/grinders?includeArchived=false', readGrinders),
   createGrinder: (grinder: Partial<Grinder>) =>

@@ -254,6 +254,8 @@ p {
 .command,
 .text-button,
 .icon-button,
+.primary-button,
+.secondary-button,
 .icon-tool {
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -272,6 +274,38 @@ p {
   background: var(--ink);
   border-color: var(--ink);
   color: #071015;
+}
+
+.primary-button,
+.secondary-button {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.primary-button {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #071015;
+}
+
+.secondary-button {
+  color: var(--ink);
+}
+
+.primary-button.compact,
+.secondary-button.compact {
+  min-height: 32px;
+  padding: 0 9px;
+}
+
+.subtle-danger {
+  color: var(--red);
 }
 
 .command.danger {
@@ -366,6 +400,7 @@ p {
   border-bottom: 1px solid var(--line);
   background: transparent;
   text-align: left;
+  color: var(--ink);
 }
 
 .bean-row.active {
@@ -390,6 +425,14 @@ p {
 .bean-row strong {
   margin-top: 1px;
   font-size: 13px;
+}
+
+.bean-row em {
+  color: var(--teal);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+  text-transform: uppercase;
 }
 
 .hero {
@@ -1144,9 +1187,9 @@ p {
 }
 
 .bean-picker-modal {
-  width: min(760px, calc(100vw - 16px));
+  width: min(1080px, calc(100vw - 16px));
   height: calc(100vh - 16px);
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 8px;
   padding: 10px;
   border-radius: var(--radius);
@@ -1195,10 +1238,292 @@ p {
 
 .bean-picker-list .bean-row {
   width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
 }
 
-.bean-picker-current {
-  border-bottom: 2px solid var(--line);
+.bean-picker-body {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 0.36fr) minmax(0, 0.64fr);
+  gap: 8px;
+}
+
+.bean-picker-list-panel,
+.bean-picker-inspector,
+.bean-picker-batches {
+  min-height: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.bean-picker-list-panel {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.bean-picker-inspector {
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.bean-picker-bean-form,
+.bean-picker-batches {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.bean-picker-section-head {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.bean-picker-section-head > div {
+  min-width: 0;
+}
+
+.bean-picker-section-head strong {
+  display: block;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bean-picker-actions,
+.bean-picker-batch-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bean-picker-fields {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.bean-picker-fields input,
+.bean-picker-fields textarea,
+.bean-picker-batch input {
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.bean-picker-fields input {
+  height: 38px;
+}
+
+.bean-picker-notes {
+  grid-column: 1 / -1;
+}
+
+.bean-picker-notes textarea {
+  height: 96px;
+  resize: vertical;
+  overflow: auto;
+  line-height: 1.25;
+}
+
+.bean-picker-hint {
+  align-self: start;
+  padding: 10px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  color: var(--soft);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.bean-picker-batches {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.bean-picker-batch-list {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+
+.bean-picker-batch {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(98px, 1fr) 92px minmax(80px, 0.85fr) 76px 76px 82px auto;
+  gap: 6px;
+  align-items: end;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+
+.bean-picker-batch.active {
+  border-color: color-mix(in srgb, var(--teal) 62%, var(--line));
+  background: color-mix(in srgb, var(--teal) 13%, var(--panel-2));
+}
+
+.bean-picker-batch.new {
+  border-style: dashed;
+}
+
+.bean-picker-batch-title {
+  min-width: 0;
+  align-self: center;
+}
+
+.bean-picker-batch-title strong,
+.bean-picker-batch-title small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bean-picker-batch-title strong {
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.1;
+}
+
+.bean-picker-batch-title small {
+  margin-top: 3px;
+  color: var(--soft);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.bean-picker-batch label {
+  gap: 4px;
+  font-size: 10px;
+}
+
+.bean-picker-batch input {
+  height: 32px;
+  padding: 0 7px;
+}
+
+.bean-picker-check {
+  align-self: center;
+  min-height: 32px;
+  display: flex !important;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px !important;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--soft) !important;
+  text-transform: none !important;
+}
+
+.bean-picker-check input {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  accent-color: var(--teal);
+}
+
+.bean-picker-batch-actions {
+  align-self: center;
+  justify-content: flex-end;
+}
+
+@media (max-width: 860px) {
+  .bean-picker-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(150px, 0.42fr) minmax(0, 0.58fr);
+  }
+
+  .bean-picker-inspector {
+    min-height: 0;
+  }
+
+  .bean-picker-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .bean-picker-batch {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+  }
+
+  .bean-picker-batch-title,
+  .bean-picker-batch-actions {
+    grid-column: 1 / -1;
+  }
+
+  .bean-picker-batch-actions {
+    justify-content: stretch;
+  }
+
+  .bean-picker-batch-actions .primary-button,
+  .bean-picker-batch-actions .secondary-button {
+    flex: 1;
+  }
+}
+
+@media (max-width: 560px) {
+  .bean-picker-modal {
+    width: calc(100vw - 16px);
+  }
+
+  .bean-picker-section-head {
+    align-items: flex-start;
+  }
+
+  .bean-picker-inspector {
+    grid-template-rows: auto auto;
+    align-content: start;
+    overflow: auto;
+  }
+
+  .bean-picker-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .bean-picker-actions .primary-button,
+  .bean-picker-actions .secondary-button {
+    flex: 1 1 auto;
+  }
+
+  .bean-picker-actions .icon-button {
+    flex: 0 0 36px;
+    width: 36px;
+    height: 32px;
+  }
+
+  .bean-picker-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bean-picker-notes textarea {
+    height: 84px;
+  }
+
+  .bean-picker-batches {
+    min-height: 220px;
+  }
+
+  .bean-picker-batch-list {
+    overflow: visible;
+  }
 }
 
 .machine-label-modal {

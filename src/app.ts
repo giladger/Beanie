@@ -174,6 +174,7 @@ type ShotEditField =
 type ApplyState = 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
 type LiveChartMode = 'preset30' | 'auto';
 type MachineServiceState = 'steam' | 'flush' | 'hotWater';
+type BeanPickerMode = 'inspect' | 'create';
 type View =
   | 'workbench'
   | 'settings'
@@ -290,6 +291,9 @@ interface AppState {
   settingsSource: 'gateway' | 'demo' | null;
   pluginConfig: PluginConfigState | null;
   modal: Modal;
+  beanPickerBeanId: string | null;
+  beanPickerMode: BeanPickerMode;
+  beanPickerAddingBatch: boolean;
   editingBeanId: string | null;
   editingGrinderId: string | null;
   profileEditor: ProfileEditorState | null;
@@ -354,6 +358,9 @@ export class BeanieApp {
     settingsSource: null,
     pluginConfig: null,
     modal: null,
+    beanPickerBeanId: null,
+    beanPickerMode: 'inspect',
+    beanPickerAddingBatch: false,
     editingBeanId: null,
     editingGrinderId: null,
     profileEditor: null,
@@ -571,6 +578,42 @@ export class BeanieApp {
       console.warn('[Beanie] Could not load batches', error);
       return [];
     }
+  }
+
+  private async openBeanPicker(
+    beanId: string | null,
+    options: { addingBatch?: boolean; create?: boolean } = {}
+  ): Promise<void> {
+    const id = beanId ?? this.state.selectedBeanId;
+    this.setState({
+      modal: 'bean-picker',
+      search: '',
+      beanPickerBeanId: options.create ? null : id,
+      beanPickerMode: options.create ? 'create' : 'inspect',
+      beanPickerAddingBatch: options.addingBatch === true
+    });
+    if (id && !options.create) await this.ensureBatchesLoaded(id);
+  }
+
+  private async inspectBeanInPicker(beanId: string): Promise<void> {
+    this.setState({
+      beanPickerBeanId: beanId,
+      beanPickerMode: 'inspect',
+      beanPickerAddingBatch: false
+    });
+    await this.ensureBatchesLoaded(beanId);
+  }
+
+  private async ensureBatchesLoaded(beanId: string): Promise<void> {
+    if (this.state.batchesByBean[beanId]) return;
+    const bean = this.state.beans.find((item) => item.id === beanId);
+    if (!bean) return;
+    this.setState({ status: 'Loading batches' });
+    const batches = await this.loadBatches(bean);
+    this.setState({
+      batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
+      status: 'Batches loaded'
+    });
   }
 
   private readonly shotPageSize = 12;
@@ -1306,6 +1349,19 @@ export class BeanieApp {
           await this.selectBean(id, { apply: true, preferWorkflow: false });
         }
         break;
+      case 'inspect-bean':
+        if (id) await this.inspectBeanInPicker(id);
+        break;
+      case 'select-batch':
+        if (id) {
+          const beanId = el.dataset.beanId;
+          if (beanId && beanId !== this.state.selectedBeanId) {
+            await this.selectBean(beanId, { apply: false, preferWorkflow: false });
+          }
+          this.setState({ selectedBatchId: id, status: 'Batch selected' });
+          this.scheduleApply();
+        }
+        break;
       case 'adjust':
         if (field) this.adjustField(field, Number(el.dataset.delta ?? '0'));
         break;
@@ -1455,16 +1511,31 @@ export class BeanieApp {
         await this.resetLocalCache();
         break;
       case 'open-add-bean':
-        this.setState({ view: 'bean-editor', editingBeanId: null, modal: null });
+        if (this.state.modal === 'bean-picker') {
+          this.setState({
+            beanPickerBeanId: null,
+            beanPickerMode: 'create',
+            beanPickerAddingBatch: false,
+            status: 'Adding bean'
+          });
+        } else {
+          await this.openBeanPicker(null, { create: true });
+        }
         break;
       case 'open-edit-bean':
-        this.setState({ view: 'bean-editor', editingBeanId: id ?? this.state.selectedBeanId, modal: null });
+        await this.openBeanPicker(id ?? this.state.selectedBeanId);
         break;
       case 'archive-bean':
         if (id) await this.archiveBean(id);
         break;
       case 'open-add-batch':
-        this.setState({ view: 'batch-editor' });
+        await this.openBeanPicker(this.state.selectedBeanId, { addingBatch: true });
+        break;
+      case 'bean-picker-add-batch':
+        this.setState({ beanPickerAddingBatch: true });
+        break;
+      case 'bean-picker-cancel-batch':
+        this.setState({ beanPickerAddingBatch: false });
         break;
       case 'open-add-grinder':
         this.setState({ view: 'grinder-editor', editingGrinderId: null, modal: null, editDialog: null });
@@ -1481,7 +1552,7 @@ export class BeanieApp {
         });
         break;
       case 'open-bean-picker':
-        this.setState({ modal: 'bean-picker', search: '' });
+        await this.openBeanPicker(this.state.selectedBeanId);
         break;
       case 'profiles-page':
         if (value) this.setState({ profilePage: Number(value) });
@@ -1952,6 +2023,16 @@ export class BeanieApp {
       await this.submitBeanEditor(form);
       return;
     }
+    if (form.dataset.form === 'bean-picker-bean') {
+      event.preventDefault();
+      await this.submitBeanPickerBean(form);
+      return;
+    }
+    if (form.dataset.form === 'bean-picker-batch' || form.dataset.form === 'bean-picker-new-batch') {
+      event.preventDefault();
+      await this.submitBeanPickerBatch(form);
+      return;
+    }
     if (form.dataset.form === 'batch-editor') {
       event.preventDefault();
       await this.submitBatchEditor(form);
@@ -1966,14 +2047,7 @@ export class BeanieApp {
 
   private async submitBeanEditor(form: HTMLFormElement): Promise<void> {
     const data = new FormData(form);
-    const fields: Partial<Bean> = {
-      roaster: String(data.get('roaster') ?? '').trim(),
-      name: String(data.get('name') ?? '').trim(),
-      country: textOrNull(data.get('country')),
-      region: textOrNull(data.get('region')),
-      processing: textOrNull(data.get('processing')),
-      notes: textOrNull(data.get('notes'))
-    };
+    const fields = beanFieldsFromForm(data);
     if (!fields.roaster || !fields.name) return;
 
     const editingId = this.state.editingBeanId;
@@ -2021,6 +2095,53 @@ export class BeanieApp {
     }
   }
 
+  private async submitBeanPickerBean(form: HTMLFormElement): Promise<void> {
+    const data = new FormData(form);
+    const fields = beanFieldsFromForm(data);
+    if (!fields.roaster || !fields.name) return;
+
+    const editingId = form.dataset.id || null;
+    this.setState({ busy: true, status: editingId ? 'Saving bean' : 'Adding bean' });
+
+    if (this.state.demo) {
+      const bean: Bean = editingId
+        ? { ...(this.state.beans.find((item) => item.id === editingId) as Bean), ...fields }
+        : ({ id: `demo-${Date.now()}`, ...fields } as Bean);
+      const beans = editingId
+        ? this.state.beans.map((item) => (item.id === editingId ? bean : item))
+        : [bean, ...this.state.beans];
+      this.setState({
+        beans,
+        batchesByBean: editingId ? this.state.batchesByBean : { ...this.state.batchesByBean, [bean.id]: [] },
+        beanPickerBeanId: bean.id,
+        beanPickerMode: 'inspect',
+        beanPickerAddingBatch: false,
+        busy: false,
+        status: editingId ? 'Bean saved (demo)' : 'Bean added (demo)'
+      });
+      return;
+    }
+
+    try {
+      const bean = editingId ? await gateway.updateBean(editingId, fields) : await gateway.createBean(fields);
+      const beans = editingId
+        ? this.state.beans.map((item) => (item.id === editingId ? bean : item))
+        : [bean, ...this.state.beans];
+      this.setState({
+        beans,
+        batchesByBean: editingId ? this.state.batchesByBean : { ...this.state.batchesByBean, [bean.id]: [] },
+        beanPickerBeanId: bean.id,
+        beanPickerMode: 'inspect',
+        beanPickerAddingBatch: false,
+        busy: false,
+        status: editingId ? 'Bean saved' : 'Bean added'
+      });
+    } catch (error) {
+      console.error('[Beanie] Save bean failed', error);
+      this.setState({ busy: false, status: 'Save bean failed' });
+    }
+  }
+
   private async archiveBean(id: string): Promise<void> {
     if (!window.confirm('Archive this bag? It will be hidden from the bean list.')) return;
     this.setState({ busy: true, status: 'Archiving bag' });
@@ -2034,7 +2155,14 @@ export class BeanieApp {
       }
     }
     const beans = this.state.beans.filter((bean) => bean.id !== id);
-    this.setState({ beans, view: 'workbench', editingBeanId: null, busy: false, status: 'Bag archived' });
+    this.setState({
+      beans,
+      view: 'workbench',
+      editingBeanId: null,
+      modal: this.state.modal === 'bean-picker' ? null : this.state.modal,
+      busy: false,
+      status: 'Bag archived'
+    });
     if (this.state.selectedBeanId === id) {
       const next = beans[0];
       if (next) await this.selectBean(next.id, { apply: false, preferWorkflow: false });
@@ -2046,14 +2174,7 @@ export class BeanieApp {
     const bean = this.selectedBean();
     if (!bean) return;
     const data = new FormData(form);
-    const batchInput: Partial<BeanBatch> = {
-      beanId: bean.id,
-      roastDate: textOrNull(data.get('roastDate')),
-      roastLevel: textOrNull(data.get('roastLevel')),
-      weight: numberOrNullInput(data.get('weight')),
-      weightRemaining: numberOrNullInput(data.get('weightRemaining')),
-      frozen: data.get('frozen') === 'on'
-    };
+    const batchInput = batchFieldsFromForm(data, bean.id);
 
     this.setState({ busy: true, status: 'Adding batch' });
     if (this.state.demo) {
@@ -2082,6 +2203,54 @@ export class BeanieApp {
     } catch (error) {
       console.error('[Beanie] Add batch failed', error);
       this.setState({ busy: false, status: 'Add batch failed' });
+    }
+  }
+
+  private async submitBeanPickerBatch(form: HTMLFormElement): Promise<void> {
+    const beanId = form.dataset.beanId;
+    if (!beanId) return;
+    const bean = this.state.beans.find((item) => item.id === beanId);
+    if (!bean) return;
+    const batchId = form.dataset.batchId || null;
+    const batchInput = batchFieldsFromForm(new FormData(form), bean.id);
+
+    this.setState({ busy: true, status: batchId ? 'Saving batch' : 'Adding batch' });
+    if (this.state.demo) {
+      const current = this.state.batchesByBean[bean.id] ?? [];
+      const batch: BeanBatch = batchId
+        ? { ...(current.find((item) => item.id === batchId) as BeanBatch), ...batchInput, id: batchId }
+        : ({ id: `demo-batch-${Date.now()}`, ...batchInput } as BeanBatch);
+      const batches = batchId
+        ? current.map((item) => (item.id === batchId ? batch : item))
+        : [batch, ...current];
+      this.setState({
+        batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
+        selectedBatchId: bean.id === this.state.selectedBeanId && !batchId ? batch.id : this.state.selectedBatchId,
+        beanPickerAddingBatch: false,
+        busy: false,
+        status: batchId ? 'Batch saved (demo)' : 'Batch added (demo)'
+      });
+      return;
+    }
+
+    try {
+      const batch = batchId
+        ? await gateway.updateBatch(batchId, batchInput)
+        : await gateway.createBatch(bean.id, batchInput);
+      const current = this.state.batchesByBean[bean.id] ?? [];
+      const batches = batchId
+        ? current.map((item) => (item.id === batchId ? batch : item))
+        : [batch, ...current];
+      this.setState({
+        batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
+        selectedBatchId: bean.id === this.state.selectedBeanId && !batchId ? batch.id : this.state.selectedBatchId,
+        beanPickerAddingBatch: false,
+        busy: false,
+        status: batchId ? 'Batch saved' : 'Batch added'
+      });
+    } catch (error) {
+      console.error('[Beanie] Save batch failed', error);
+      this.setState({ busy: false, status: batchId ? 'Save batch failed' : 'Add batch failed' });
     }
   }
 
@@ -2851,9 +3020,9 @@ export class BeanieApp {
 
   private renderBeanPickerModal(): string {
     const query = this.state.search.trim().toLowerCase();
-    const selected = this.selectedBean();
     const matches = this.state.beans.filter((bean) => beanLabel(bean).toLowerCase().includes(query));
-    const rows = matches.filter((bean) => bean.id !== selected?.id);
+    const focused = this.beanPickerFocusedBean();
+    const focusedId = focused?.id ?? null;
     return `
       <div class="modal-backdrop bean-picker-backdrop" data-action="close-modal">
         <section class="modal panel bean-picker-modal" role="dialog" aria-modal="true" aria-label="Pick a bag" data-action="noop">
@@ -2868,27 +3037,144 @@ export class BeanieApp {
               <button class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
             </div>
           </div>
-          <label class="search bean-picker-search">
-            ${icon('search')}
-            <input type="search" data-action="search" value="${escapeAttr(this.state.search)}" placeholder="Search beans" autofocus />
-          </label>
-          <div class="bean-picker-list">
-            ${selected ? `<div class="bean-picker-current">${this.renderBeanButton(selected)}</div>` : ''}
-            ${rows.length === 0 ? '<p class="empty-history">No beans found.</p>' : rows.map((bean) => this.renderBeanButton(bean)).join('')}
+          <div class="bean-picker-body">
+            <div class="bean-picker-list-panel">
+              <label class="search bean-picker-search">
+                ${icon('search')}
+                <input type="search" data-action="search" value="${escapeAttr(this.state.search)}" placeholder="Search beans" autofocus />
+              </label>
+              <div class="bean-picker-list">
+                ${
+                  matches.length === 0
+                    ? '<p class="empty-history">No beans found.</p>'
+                    : matches.map((bean) => this.renderBeanPickerRow(bean, bean.id === focusedId)).join('')
+                }
+              </div>
+            </div>
+            ${this.renderBeanPickerInspector(focused)}
           </div>
         </section>
       </div>
     `;
   }
 
-  private renderBeanButton(bean: Bean): string {
-    const active = bean.id === this.state.selectedBeanId;
+  private beanPickerFocusedBean(): Bean | null {
+    if (this.state.beanPickerMode === 'create') return null;
+    const id = this.state.beanPickerBeanId ?? this.state.selectedBeanId;
+    return this.state.beans.find((bean) => bean.id === id) ?? this.selectedBean();
+  }
+
+  private renderBeanPickerRow(bean: Bean, focused: boolean): string {
+    const current = bean.id === this.state.selectedBeanId;
     return `
-      <button class="bean-row ${active ? 'active' : ''}" data-action="select-bean" data-id="${escapeAttr(bean.id)}">
-        <small>${escapeHtml(bean.country ?? 'Recent bean')}</small>
-        <b>${escapeHtml(bean.roaster)}</b>
-        <strong>${escapeHtml(bean.name)}</strong>
+      <button class="bean-row ${focused ? 'active' : ''}" data-action="inspect-bean" data-id="${escapeAttr(bean.id)}">
+        <span>
+          <small>${escapeHtml(bean.country ?? 'Recent bean')}</small>
+          <b>${escapeHtml(bean.roaster)}</b>
+          <strong>${escapeHtml(bean.name)}</strong>
+        </span>
+        ${current ? '<em>In use</em>' : ''}
       </button>
+    `;
+  }
+
+  private renderBeanPickerInspector(bean: Bean | null): string {
+    if (this.state.beanPickerMode === 'create' || !bean) {
+      return `
+        <div class="bean-picker-inspector">
+          ${this.renderBeanPickerBeanForm(null)}
+          <p class="bean-picker-hint">Save the bag first, then add roast batches.</p>
+        </div>
+      `;
+    }
+
+    const batches = this.state.batchesByBean[bean.id] ?? [];
+    const selectedBatchId = bean.id === this.state.selectedBeanId ? this.selectedBatch()?.id ?? null : null;
+    const showNewBatch = this.state.beanPickerAddingBatch;
+    return `
+      <div class="bean-picker-inspector">
+        ${this.renderBeanPickerBeanForm(bean)}
+        <div class="bean-picker-batches">
+          <div class="bean-picker-section-head">
+            <div>
+              <span class="eyebrow">Batches</span>
+              <strong>${escapeHtml(String(batches.length))}</strong>
+            </div>
+            <button type="button" class="secondary-button compact" data-action="bean-picker-add-batch">${icon('plus')}<span>Batch</span></button>
+          </div>
+          <div class="bean-picker-batch-list">
+            ${showNewBatch ? this.renderBeanPickerBatchForm(bean, null, false) : ''}
+            ${
+              batches.length === 0 && !showNewBatch
+                ? '<p class="empty-history">No batches yet.</p>'
+                : batches.map((batch) => this.renderBeanPickerBatchForm(bean, batch, batch.id === selectedBatchId)).join('')
+            }
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  private renderBeanPickerBeanForm(bean: Bean | null): string {
+    const editing = bean != null;
+    const dataId = editing ? ` data-id="${escapeAttr(bean.id)}"` : '';
+    return `
+      <form class="bean-picker-bean-form" data-form="bean-picker-bean"${dataId}>
+        <div class="bean-picker-section-head">
+          <div>
+            <span class="eyebrow">${editing ? 'Bean' : 'New bean'}</span>
+            <strong>${escapeHtml(editing ? beanLabel(bean) : 'Add a bag')}</strong>
+          </div>
+          <div class="bean-picker-actions">
+            ${
+              editing
+                ? `<button type="button" class="secondary-button compact" data-action="select-bean" data-id="${escapeAttr(bean.id)}">${icon('check')}<span>Use</span></button>
+                   <button type="button" class="icon-button subtle-danger" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Archive bag" title="Archive bag">${icon('archive')}</button>`
+                : `<button type="button" class="secondary-button compact" data-action="close-modal"><span>Cancel</span></button>`
+            }
+            <button type="submit" class="primary-button compact">${icon('check')}<span>Save</span></button>
+          </div>
+        </div>
+        <div class="bean-picker-fields">
+          <label>Roaster<input name="roaster" required autocomplete="off" value="${escapeAttr(editing ? bean.roaster : '')}" /></label>
+          <label>Bean<input name="name" required autocomplete="off" value="${escapeAttr(editing ? bean.name : '')}" /></label>
+          <label>Country<input name="country" autocomplete="off" value="${escapeAttr(inputValue(editing ? bean.country : ''))}" /></label>
+          <label>Region<input name="region" autocomplete="off" value="${escapeAttr(inputValue(editing ? bean.region : ''))}" /></label>
+          <label>Process<input name="processing" autocomplete="off" value="${escapeAttr(inputValue(editing ? bean.processing : ''))}" /></label>
+          <label class="bean-picker-notes">Notes<textarea name="notes" rows="4" autocomplete="off">${escapeHtml(inputValue(editing ? bean.notes : ''))}</textarea></label>
+        </div>
+      </form>
+    `;
+  }
+
+  private renderBeanPickerBatchForm(bean: Bean, batch: BeanBatch | null, active: boolean): string {
+    const dataForm = batch ? 'bean-picker-batch' : 'bean-picker-new-batch';
+    const batchId = batch ? ` data-batch-id="${escapeAttr(batch.id)}"` : '';
+    const title = batch ? batchOptionLabel(batch) : 'New batch';
+    return `
+      <form
+        class="bean-picker-batch ${active ? 'active' : ''} ${batch ? '' : 'new'}"
+        data-form="${dataForm}"
+        data-bean-id="${escapeAttr(bean.id)}"${batchId}
+      >
+        <div class="bean-picker-batch-title">
+          <strong>${escapeHtml(title)}</strong>
+          <small>${escapeHtml(batch?.frozen ? 'Frozen' : batch?.roastLevel ?? 'Batch')}</small>
+        </div>
+        <label>Date<input type="date" name="roastDate" value="${escapeAttr(dateInputValue(batch?.roastDate))}" /></label>
+        <label>Roast<input name="roastLevel" autocomplete="off" value="${escapeAttr(inputValue(batch?.roastLevel))}" /></label>
+        <label>Bag g<input type="number" name="weight" min="0" step="0.1" inputmode="decimal" value="${escapeAttr(inputValue(batch?.weight))}" /></label>
+        <label>Left g<input type="number" name="weightRemaining" min="0" step="0.1" inputmode="decimal" value="${escapeAttr(inputValue(batch?.weightRemaining))}" /></label>
+        <label class="bean-picker-check"><input type="checkbox" name="frozen" ${batch?.frozen ? 'checked' : ''} /><span>Frozen</span></label>
+        <div class="bean-picker-batch-actions">
+          ${
+            batch
+              ? `<button type="button" class="secondary-button compact" data-action="select-batch" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}">${active ? 'Using' : 'Use'}</button>`
+              : '<button type="button" class="secondary-button compact" data-action="bean-picker-cancel-batch">Cancel</button>'
+          }
+          <button type="submit" class="primary-button compact">${batch ? 'Save' : 'Add'}</button>
+        </div>
+      </form>
     `;
   }
 
@@ -4859,6 +5145,36 @@ function numberOrNullInput(value: FormDataEntryValue | null): number | null {
   if (!text) return null;
   const parsed = Number(text);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function dateInputValue(value: string | null | undefined): string {
+  if (!value) return '';
+  const match = value.match(/^\d{4}-\d{2}-\d{2}/);
+  if (match) return match[0]!;
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? '' : date.toISOString().slice(0, 10);
+}
+
+function beanFieldsFromForm(data: FormData): Partial<Bean> {
+  return {
+    roaster: String(data.get('roaster') ?? '').trim(),
+    name: String(data.get('name') ?? '').trim(),
+    country: textOrNull(data.get('country')),
+    region: textOrNull(data.get('region')),
+    processing: textOrNull(data.get('processing')),
+    notes: textOrNull(data.get('notes'))
+  };
+}
+
+function batchFieldsFromForm(data: FormData, beanId: string): Partial<BeanBatch> {
+  return {
+    beanId,
+    roastDate: textOrNull(data.get('roastDate')),
+    roastLevel: textOrNull(data.get('roastLevel')),
+    weight: numberOrNullInput(data.get('weight')),
+    weightRemaining: numberOrNullInput(data.get('weightRemaining')),
+    frozen: data.get('frozen') === 'on'
+  };
 }
 
 function inputValue(value: unknown): string {
