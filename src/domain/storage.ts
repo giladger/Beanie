@@ -1,7 +1,6 @@
 import type { BeanPreset } from '../api/types';
 
 const lastBeanKey = 'beanie:last-bean-id';
-const autoLoadKey = 'beanie:auto-load';
 
 export function readLastBeanId(): string | null {
   return localStorage.getItem(lastBeanKey);
@@ -9,15 +8,6 @@ export function readLastBeanId(): string | null {
 
 export function writeLastBeanId(beanId: string): void {
   localStorage.setItem(lastBeanKey, beanId);
-}
-
-export function readAutoLoad(): boolean {
-  const stored = localStorage.getItem(autoLoadKey);
-  return stored == null ? true : stored === '1';
-}
-
-export function writeAutoLoad(enabled: boolean): void {
-  localStorage.setItem(autoLoadKey, enabled ? '1' : '0');
 }
 
 export function readPresets(beanId: string): BeanPreset[] {

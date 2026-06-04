@@ -101,12 +101,6 @@ function settingsSections(
   }
   sections.push(
     {
-      id: 'workflow',
-      title: 'Workflow',
-      terms: 'auto load bean change workflow recipe',
-      html: renderSection('Workflow', renderWorkflowRows(model.preferences))
-    },
-    {
       id: 'data',
       title: 'Demo And Cache',
       terms: 'demo cache reset local data presets recent values',
@@ -352,28 +346,13 @@ function renderAppearanceRows(preferences: SettingsPreferences): string {
   `;
 }
 
-function renderWorkflowRows(preferences: SettingsPreferences): string {
-  return `
-    ${settingControlRow(
-      'Auto-load bean recipe',
-      'Load the selected bean workflow on bean change',
-      `<label class="settings-toggle"><input type="checkbox" data-field="autoLoad" ${preferences.autoLoad ? 'checked' : ''} /><span></span></label>`
-    )}
-    ${settingControlRow(
-      'Visualizer upload',
-      'Preference placeholder for the ReaPrime visualizer integration',
-      `<label class="settings-toggle"><input type="checkbox" data-field="visualizerUpload" ${preferences.visualizerUpload ? 'checked' : ''} /><span></span></label>`
-    )}
-  `;
-}
-
 function renderDataRows(model: SettingsShellModel): string {
   const count = model.cacheKeyCount === 1 ? '1 local key' : `${model.cacheKeyCount} local keys`;
   return `
     ${settingReadout('Mode', model.gateway.label, model.gateway.detail, model.gateway.tone)}
     ${settingControlRow(
       'Demo/cache reset',
-      `${count} can be cleared; theme, scale, and auto-load are kept`,
+      `${count} can be cleared; theme and scale are kept`,
       `<button type="button" class="text-button" data-action="settings-reset-cache">${icon('rotate-ccw')}<span>Reset</span></button>`
     )}
   `;

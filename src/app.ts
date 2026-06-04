@@ -367,7 +367,7 @@ export class BeanieApp {
     profilePage: 0,
     profileFocusId: null,
     favoriteProfiles: readFavoriteProfiles(),
-    autoLoad: initialSettingsPreferences.autoLoad,
+    autoLoad: true,
     settingsPreferences: initialSettingsPreferences,
     settingsSearch: '',
     demo: false,
@@ -2108,18 +2108,6 @@ export class BeanieApp {
     }
     const field = target.dataset.field;
     if (!field) return;
-
-    if (field === 'autoLoad') {
-      const enabled = (target as HTMLInputElement).checked;
-      this.updateSettingsPreferences({ autoLoad: enabled });
-      return;
-    }
-
-    if (field === 'visualizerUpload') {
-      const enabled = (target as HTMLInputElement).checked;
-      this.updateSettingsPreferences({ visualizerUpload: enabled });
-      return;
-    }
 
     const draft = { ...this.state.draft };
     if (field === 'dose') draft.dose = parseNumberInput(target.value);
@@ -4349,7 +4337,7 @@ export class BeanieApp {
   private settingsShellModel() {
     return buildSettingsShellModel({
       query: this.state.settingsSearch,
-      preferences: { ...this.state.settingsPreferences, autoLoad: this.state.autoLoad },
+      preferences: this.state.settingsPreferences,
       demo: this.state.demo,
       loading: this.state.loading,
       status: this.state.status,
@@ -4735,7 +4723,7 @@ export class BeanieApp {
     applySettingsPreferences(settingsPreferences);
     this.setState({
       settingsPreferences,
-      autoLoad: settingsPreferences.autoLoad,
+      autoLoad: true,
       status: 'Settings changed'
     });
   }

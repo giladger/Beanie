@@ -1,5 +1,4 @@
 import type { MachineSnapshot, ScaleSnapshot } from '../api/types';
-import { readAutoLoad, writeAutoLoad } from './storage';
 
 export type ThemePreference = 'system' | 'dark' | 'light';
 export type UIScalePreference = 'compact' | 'standard' | 'large';
@@ -7,8 +6,6 @@ export type UIScalePreference = 'compact' | 'standard' | 'large';
 export interface SettingsPreferences {
   theme: ThemePreference;
   uiScale: UIScalePreference;
-  autoLoad: boolean;
-  visualizerUpload: boolean;
 }
 
 export interface GatewayStatusModel {
@@ -48,28 +45,21 @@ export interface BuildSettingsShellModelOptions {
 
 const themeKey = 'beanie:settings:theme';
 const uiScaleKey = 'beanie:settings:ui-scale';
-const visualizerUploadKey = 'beanie:settings:visualizer-upload';
 const preservedResetKeys = new Set([
-  'beanie:auto-load',
   themeKey,
-  uiScaleKey,
-  visualizerUploadKey
+  uiScaleKey
 ]);
 
-export function readSettingsPreferences(autoLoad = readAutoLoad()): SettingsPreferences {
+export function readSettingsPreferences(): SettingsPreferences {
   return {
     theme: readEnum(themeKey, ['system', 'dark', 'light'], 'dark'),
-    uiScale: readEnum(uiScaleKey, ['compact', 'standard', 'large'], 'standard'),
-    autoLoad,
-    visualizerUpload: localStorage.getItem(visualizerUploadKey) === '1'
+    uiScale: readEnum(uiScaleKey, ['compact', 'standard', 'large'], 'standard')
   };
 }
 
 export function writeSettingsPreferences(next: SettingsPreferences): void {
   localStorage.setItem(themeKey, next.theme);
   localStorage.setItem(uiScaleKey, next.uiScale);
-  localStorage.setItem(visualizerUploadKey, next.visualizerUpload ? '1' : '0');
-  writeAutoLoad(next.autoLoad);
 }
 
 export function applySettingsPreferences(preferences: SettingsPreferences): void {
