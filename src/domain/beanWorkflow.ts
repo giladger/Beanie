@@ -202,7 +202,7 @@ export function yieldForRatio(dose: number | null | undefined, ratio: number): n
 
 export function formatRatio(ratio: number | null | undefined): string {
   if (ratio == null || !Number.isFinite(ratio)) return '--';
-  return `1:${ratio.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}`;
+  return `1:${ratio.toFixed(1)}`;
 }
 
 // Brew temperature lives in the profile, not the workflow context. We surface the

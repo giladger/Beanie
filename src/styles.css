@@ -831,7 +831,7 @@ p {
 
 .shot-detail-pane {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 10px;
   min-width: 0;
   min-height: 0;
@@ -3660,12 +3660,6 @@ p {
   text-overflow: ellipsis;
 }
 
-.profile-row-author {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--muted);
-}
-
 .profile-preview {
   width: 132px;
   height: 40px;
@@ -4230,10 +4224,16 @@ p {
 }
 
 .input-dialog-choice > button {
-  min-height: 52px;
+  min-height: 40px;
   border: 0;
   border-radius: 0;
   background: transparent;
+}
+
+.input-dialog-choice-select {
+  display: flex !important;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .input-dialog-choice-edit {
@@ -4255,6 +4255,7 @@ p {
 
 .input-dialog-choices strong,
 .input-dialog-choices small {
+  min-width: 0;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4313,8 +4314,7 @@ p {
   min-height: 38px;
 }
 
-.detail-profile,
-.detail-notes {
+.detail-profile {
   min-width: 0;
   color: var(--soft);
   font-size: 13px;
@@ -4322,7 +4322,6 @@ p {
 }
 
 .detail-profile,
-.detail-notes,
 .detail-chart {
   overflow: hidden;
 }
@@ -4343,31 +4342,6 @@ p {
 .load-more {
   width: 100%;
   margin-top: 8px;
-}
-
-.detail-notes {
-  color: var(--muted);
-}
-
-.detail-notes-panel {
-  display: grid;
-  align-content: start;
-  gap: 5px;
-  min-height: 64px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel-2);
-}
-
-.detail-notes-panel p {
-  color: var(--soft);
-  font-size: 15px;
-  font-weight: 800;
-  line-height: 1.25;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .number-modal {

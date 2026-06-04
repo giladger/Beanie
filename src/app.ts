@@ -192,7 +192,7 @@ const initialSettingsPreferences = readSettingsPreferences();
 const FOCUSABLE_SEARCH = new Set(['search', 'profile-search', 'settings-search']);
 
 // Scrollable containers whose scroll position must survive a re-render.
-const SCROLL_SELECTORS = ['.bean-picker-list', '.shot-list', '.page-body'];
+const SCROLL_SELECTORS = ['.bean-picker-list', '.shot-list', '.profile-list', '.page-body'];
 
 const SHOT_SCORE_OPTIONS = [
   { value: 20, icon: '😞', label: 'Bad' },
@@ -2485,7 +2485,7 @@ export class BeanieApp {
     }
     if (field === 'ratio') {
       const current = ratioFor(draft.dose, draft.yield) ?? 2;
-      const nextYield = yieldForRatio(draft.dose, round(current + delta, 2));
+      const nextYield = yieldForRatio(draft.dose, round(current + delta, 1));
       if (nextYield != null) draft.yield = nextYield;
     }
     if (field === 'temperature') {
@@ -2506,7 +2506,7 @@ export class BeanieApp {
           : field === 'yield'
             ? draft.yield?.toString() ?? ''
             : field === 'ratio'
-              ? ratioFor(draft.dose, draft.yield)?.toFixed(2) ?? ''
+              ? ratioFor(draft.dose, draft.yield)?.toFixed(1) ?? ''
               : this.brewTempValue()?.toFixed(1) ?? '';
     const step =
       field === 'dose'
@@ -3489,23 +3489,17 @@ export class BeanieApp {
       const group = this.profileGroupLabel(record, favorites);
       const header = group !== lastGroup ? `<div class="profile-group-header">${escapeHtml(group)}</div>` : '';
       lastGroup = group;
-      return `${header}${this.renderProfileRow(record, favorites.has(record.id), record.id === selectedId, group, record.id === focusId)}`;
+      return `${header}${this.renderProfileRow(record, favorites.has(record.id), record.id === selectedId, record.id === focusId)}`;
     }).join('');
   }
 
-  private renderProfileRow(record: ProfileRecord, favorite: boolean, active: boolean, group: string, focused = false): string {
+  private renderProfileRow(record: ProfileRecord, favorite: boolean, active: boolean, focused = false): string {
     const title = record.profile.title ?? record.id;
     const shortTitle = profileShortTitle(title);
-    const author = (record.profile.author ?? '').trim();
-    // The group header already conveys the author/folder, so only surface the
-    // author here when it adds something the header doesn't (avoids "Decent"
-    // under a "DECENT" header).
-    const showAuthor = author !== '' && author.toLowerCase() !== group.toLowerCase();
     return `
       <div class="profile-row ${active ? 'active' : ''} ${focused ? 'focused' : ''}">
         <button type="button" class="profile-pick" data-action="focus-profile" data-id="${escapeAttr(record.id)}">
           <span class="profile-row-title">${favorite ? '<span class="profile-row-fav">★</span> ' : ''}${escapeHtml(shortTitle)}</span>
-          ${showAuthor ? `<span class="profile-row-author">${escapeHtml(author)}</span>` : ''}
         </button>
         ${active ? '<span class="profile-selected-dot">Selected</span>' : ''}
       </div>
@@ -3641,7 +3635,6 @@ export class BeanieApp {
   private renderShotDetailPane(shot: ShotRecord): string {
     const recipe = recipeFromShot(shot);
     const date = new Date(shot.timestamp);
-    const notes = shot.annotations?.espressoNotes ?? shot.shotNotes ?? '';
     const title = Number.isNaN(date.valueOf())
       ? shot.timestamp
       : date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -3663,10 +3656,6 @@ export class BeanieApp {
       <div class="detail-chart">
         <canvas id="detail-canvas" class="live-canvas detail-canvas"></canvas>
       </div>
-      <section class="detail-notes-panel" aria-label="Tasting notes">
-        <span class="eyebrow">Tasting notes</span>
-        <p>${escapeHtml(notes || 'No tasting notes')}</p>
-      </section>
     `;
   }
 

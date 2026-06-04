@@ -256,7 +256,7 @@ export function grinderChoicesFromGrinders(grinders: Grinder[]): InputDialogChoi
     return {
       id: grinder.id,
       label: grinder.model,
-      detail: parts.join(' / ')
+      detail: parts.join(' · ')
     };
   });
 }
