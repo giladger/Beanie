@@ -1614,9 +1614,6 @@ export class BeanieApp {
         this.setState({ asleep: false });
         await this.machineAction('idle');
         break;
-      case 'refresh':
-        await this.load();
-        break;
       case 'load-more-shots':
         await this.loadMoreShots();
         break;
@@ -3453,7 +3450,6 @@ export class BeanieApp {
               <h2>Pick a bag</h2>
             </div>
             <div class="modal-head-actions">
-              <button class="icon-button" data-action="refresh" aria-label="Sync beans" title="Sync beans">${icon('refresh-cw')}</button>
               <button class="icon-button" data-action="open-add-bean" aria-label="Add bean" title="Add bean">${icon('plus')}</button>
               <button class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
             </div>
@@ -3965,7 +3961,7 @@ export class BeanieApp {
 
   private renderSettingsPage(): string {
     return `
-      ${this.pageHeader('Settings', 'workbench', `<button class="icon-button" data-action="refresh" aria-label="Sync" title="Sync">${icon('refresh-cw')}</button>`)}
+      ${this.pageHeader('Settings', 'workbench')}
       ${renderSettingsShell(this.settingsShellModel(), this.state.settingsSection, this.state.settingsBundle, this.state.pluginConfig)}
     `;
   }
