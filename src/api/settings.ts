@@ -96,6 +96,20 @@ export interface PresenceSettings {
 
 export type PresenceSettingsPatch = Partial<Pick<PresenceSettings, 'userPresenceEnabled' | 'sleepTimeoutMinutes'>>;
 
+export interface DisplayPlatformSupport {
+  brightness: boolean;
+  wakeLock: boolean;
+}
+
+export interface DisplayState {
+  wakeLockEnabled: boolean;
+  wakeLockOverride: boolean;
+  brightness: number;
+  requestedBrightness: number;
+  lowBatteryBrightnessActive: boolean;
+  platformSupported: DisplayPlatformSupport;
+}
+
 export interface SkinInfo {
   id: string;
   name: string;
@@ -143,6 +157,10 @@ function strOrNull(value: unknown): string | null {
 
 function enumOr<T extends string>(value: unknown, allowed: T[], fallback: T): T {
   return typeof value === 'string' && (allowed as string[]).includes(value) ? (value as T) : fallback;
+}
+
+function intInRange(value: unknown, fallback: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, Math.round(num(value, fallback))));
 }
 
 // --- readers --------------------------------------------------------------
@@ -198,6 +216,22 @@ export function readPresenceSettings(value: unknown): PresenceSettings {
     userPresenceEnabled: bool(r.userPresenceEnabled, true),
     sleepTimeoutMinutes: num(r.sleepTimeoutMinutes, 30),
     wakeSchedules: Array.isArray(r.wakeSchedules) ? r.wakeSchedules : []
+  };
+}
+
+export function readDisplayState(value: unknown): DisplayState {
+  const r = rec(value);
+  const platform = rec(r.platformSupported);
+  return {
+    wakeLockEnabled: bool(r.wakeLockEnabled),
+    wakeLockOverride: bool(r.wakeLockOverride),
+    brightness: intInRange(r.brightness, 100, 0, 100),
+    requestedBrightness: intInRange(r.requestedBrightness, 100, 0, 100),
+    lowBatteryBrightnessActive: bool(r.lowBatteryBrightnessActive),
+    platformSupported: {
+      brightness: bool(platform.brightness, true),
+      wakeLock: bool(platform.wakeLock, true)
+    }
   };
 }
 
@@ -282,6 +316,17 @@ export function demoCalibration(): De1Calibration {
 
 export function demoPresenceSettings(): PresenceSettings {
   return { userPresenceEnabled: true, sleepTimeoutMinutes: 30, wakeSchedules: [] };
+}
+
+export function demoDisplayState(): DisplayState {
+  return readDisplayState({
+    wakeLockEnabled: true,
+    wakeLockOverride: false,
+    brightness: 100,
+    requestedBrightness: 100,
+    lowBatteryBrightnessActive: false,
+    platformSupported: { brightness: true, wakeLock: true }
+  });
 }
 
 // --- devices · wake schedules · plugins ----------------------------------

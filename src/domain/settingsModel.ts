@@ -13,6 +13,7 @@ import {
   demoCalibration,
   demoDe1AdvancedSettings,
   demoDevices,
+  demoDisplayState,
   demoMachineSettings,
   demoPlugins,
   demoPresenceSettings,
@@ -21,6 +22,7 @@ import {
   type De1AdvancedSettings,
   type De1Calibration,
   type DeviceInfo,
+  type DisplayState,
   type PluginInfo,
   type PresenceSettings,
   type ReaSettings,
@@ -35,6 +37,7 @@ export interface SettingsBundle {
   advanced: De1AdvancedSettings;
   calibration: De1Calibration;
   presence: PresenceSettings;
+  display: DisplayState;
   skins: SkinInfo[];
   devices: DeviceInfo[];
   plugins: PluginInfo[];
@@ -196,6 +199,7 @@ export function demoSettingsBundle(): SettingsBundle {
     advanced: demoDe1AdvancedSettings(),
     calibration: demoCalibration(),
     presence: demoPresenceSettings(),
+    display: demoDisplayState(),
     skins: [
       { id: 'beanie', name: 'Beanie' },
       { id: 'streamline.js', name: 'streamline.js' },
@@ -246,7 +250,8 @@ export function setBundleField(
     de1: { ...bundle.de1 },
     advanced: { ...bundle.advanced },
     calibration: { ...bundle.calibration },
-    presence: { ...bundle.presence }
+    presence: { ...bundle.presence },
+    display: { ...bundle.display }
   };
   (next[field.group] as unknown as Record<string, unknown>)[field.key] = value;
   return next;

@@ -105,6 +105,7 @@ function settingsSections(
         title: 'Power',
         terms: 'sleep wake charging night battery presence usb scale power',
         html: [
+          renderDisplayRuntimeSection(bundle),
           renderPowerRuntimeSection(bundle),
           renderSpecSectionById('power', bundle)
         ].join('')
@@ -177,6 +178,34 @@ function renderPowerRuntimeSection(bundle: SettingsBundle): string {
   const phase = typeof state.currentPhase === 'string' ? state.currentPhase : 'unknown phase';
   const usb = typeof state.usbChargerOn === 'boolean' ? (state.usbChargerOn ? 'charger on' : 'charger off') : 'charger unknown';
   return renderSection('Battery state', settingReadout('Battery', battery, `${mode} · ${phase} · ${usb}`, 'muted'));
+}
+
+function renderDisplayRuntimeSection(bundle: SettingsBundle): string {
+  const display = bundle.display;
+  const supported = display.platformSupported.brightness;
+  const requested = String(display.requestedBrightness);
+  const detail = supported
+    ? display.lowBatteryBrightnessActive
+      ? `Actual ${display.brightness}% · low battery cap`
+      : `Actual ${display.brightness}% · 100 = auto`
+    : 'Brightness control is not available on this host';
+  const control = `
+    <button
+      type="button"
+      class="settings-input number-edit-button settings-number-button"
+      data-action="open-number-edit"
+      data-target="display-brightness"
+      data-title="Screen brightness"
+      data-value="${escapeAttr(requested)}"
+      data-min="0"
+      data-max="100"
+      data-step="5"
+      data-unit="%"
+      ${supported ? '' : 'disabled'}
+    >
+      <span>${escapeHtml(requested)}</span><em class="settings-unit">%</em>
+    </button>`;
+  return renderSection('Display', settingControlRow('Screen brightness', detail, control));
 }
 
 function compactId(value: string | null): string {

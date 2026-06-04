@@ -227,7 +227,13 @@ interface MachineLabelEditTarget {
 }
 
 interface NumberEditTarget {
-  target: 'settings-field' | 'settings-plugin-field' | 'bean-picker-batch' | 'shot-edit' | 'form-field';
+  target:
+    | 'settings-field'
+    | 'settings-plugin-field'
+    | 'display-brightness'
+    | 'bean-picker-batch'
+    | 'shot-edit'
+    | 'form-field';
   group?: string;
   key?: string;
   beanId?: string;
@@ -436,6 +442,8 @@ export class BeanieApp {
   private machineStopRequestedFor: MachineServiceState | null = null;
   private machineStopRequestedAtMs: number | null = null;
   private machineStopFeedbackTimer: number | null = null;
+  private sleepBrightnessTimer: number | null = null;
+  private sleepBrightnessZeroed = false;
 
   private readonly handleClick = (event: Event) => void this.onClick(event);
   private readonly handleInput = (event: Event) => this.onInput(event);
@@ -474,6 +482,7 @@ export class BeanieApp {
     if (this.scaleRetryTimer != null) window.clearTimeout(this.scaleRetryTimer);
     if (this.waterRetryTimer != null) window.clearTimeout(this.waterRetryTimer);
     if (this.simTimer != null) window.clearTimeout(this.simTimer);
+    if (this.sleepBrightnessTimer != null) window.clearTimeout(this.sleepBrightnessTimer);
     if (this.liveRaf != null) window.cancelAnimationFrame(this.liveRaf);
     this.machineSocket?.close();
     this.scaleSocket?.close();
@@ -1081,6 +1090,8 @@ export class BeanieApp {
         asleep: state === 'sleeping',
         status: machineActionStatus(state, 'sent')
       });
+      if (state === 'sleeping') this.scheduleSleepBrightnessZero(1000);
+      else this.observeSleepBrightnessState(false);
     } catch (error) {
       console.error('[Beanie] Machine action failed', error);
       this.setState({ busy: false, status: 'Machine command failed' });
@@ -1090,6 +1101,55 @@ export class BeanieApp {
   private async toggleMachineCommand(state: MachineState): Promise<void> {
     const active = this.state.machine?.state?.state === state;
     await this.machineAction(active ? 'idle' : state);
+  }
+
+  private observeSleepBrightnessState(sleeping: boolean): void {
+    if (sleeping) {
+      this.scheduleSleepBrightnessZero(0);
+      return;
+    }
+    const hadSleepDim = this.sleepBrightnessZeroed || this.sleepBrightnessTimer != null;
+    this.clearSleepBrightnessTimer();
+    this.sleepBrightnessZeroed = false;
+    if (hadSleepDim) void this.refreshDisplayStateSilently();
+  }
+
+  private scheduleSleepBrightnessZero(delayMs: number): void {
+    if (this.state.demo || this.sleepBrightnessZeroed) return;
+    if (this.sleepBrightnessTimer != null) {
+      if (delayMs > 0) return;
+      this.clearSleepBrightnessTimer();
+    }
+    this.sleepBrightnessTimer = window.setTimeout(() => {
+      this.sleepBrightnessTimer = null;
+      void this.zeroDisplayForSleep();
+    }, delayMs);
+  }
+
+  private clearSleepBrightnessTimer(): void {
+    if (this.sleepBrightnessTimer == null) return;
+    window.clearTimeout(this.sleepBrightnessTimer);
+    this.sleepBrightnessTimer = null;
+  }
+
+  private async zeroDisplayForSleep(): Promise<void> {
+    if (this.state.demo || this.sleepBrightnessZeroed) return;
+    this.sleepBrightnessZeroed = true;
+    try {
+      const display = await gateway.setDisplayBrightness(0);
+      this.patchBundle({ display });
+    } catch (error) {
+      console.warn('[Beanie] Sleep brightness dim failed', error);
+    }
+  }
+
+  private async refreshDisplayStateSilently(): Promise<void> {
+    if (this.state.demo) return;
+    try {
+      this.patchBundle({ display: await gateway.displayState() });
+    } catch {
+      // Display state is best-effort; machine controls should stay quiet.
+    }
   }
 
   private async stopMachineService(): Promise<void> {
@@ -1205,6 +1265,7 @@ export class BeanieApp {
     if (machine) {
       this.state.machine = machine;
       this.trackMachineServiceState(machine.state.state, tMs);
+      this.observeSleepBrightnessState(machine.state.state === 'sleeping');
     }
     if (scale) this.state.scale = scale;
 
@@ -3113,6 +3174,10 @@ export class BeanieApp {
       this.updatePluginField(edit.key, value);
       return;
     }
+    if (edit.target === 'display-brightness') {
+      await this.setDisplayBrightness(value);
+      return;
+    }
     if (edit.target === 'bean-picker-batch' && edit.beanId && edit.batchId && edit.name) {
       await this.saveBeanPickerBatchValue(edit.beanId, edit.batchId, edit.name, value);
       return;
@@ -4454,7 +4519,7 @@ export class BeanieApp {
     }
     const fallback = demoSettingsBundle();
     let source: 'gateway' | 'demo' = 'gateway';
-    const [rea, de1, advanced, calibration, presence, skins, devices, plugins, schedules] = await Promise.all([
+    const [rea, de1, advanced, calibration, presence, display, skins, devices, plugins, schedules] = await Promise.all([
       gateway.settings().catch(() => {
         source = 'demo';
         return fallback.rea;
@@ -4463,13 +4528,14 @@ export class BeanieApp {
       gateway.machineAdvancedSettings().catch(() => fallback.advanced),
       gateway.calibration().catch(() => fallback.calibration),
       gateway.presenceSettings().catch(() => fallback.presence),
+      gateway.displayState().catch(() => fallback.display),
       gateway.skins().catch(() => fallback.skins),
       gateway.devices().catch(() => fallback.devices),
       gateway.plugins().catch(() => fallback.plugins),
       gateway.wakeSchedules().catch(() => fallback.schedules)
     ]);
     this.setState({
-      settingsBundle: { rea, de1, advanced, calibration, presence, skins, devices, plugins, schedules },
+      settingsBundle: { rea, de1, advanced, calibration, presence, display, skins, devices, plugins, schedules },
       settingsSource: source,
       status: source === 'gateway' ? this.state.status : 'Settings unavailable — showing defaults'
     });
@@ -4513,6 +4579,36 @@ export class BeanieApp {
     }
   }
 
+  private async setDisplayBrightness(raw: string): Promise<void> {
+    const parsed = parseNumberInput(raw);
+    if (parsed == null) return;
+    const brightness = Math.max(0, Math.min(100, Math.round(parsed)));
+    const current = this.state.settingsBundle?.display ?? demoSettingsBundle().display;
+    this.patchBundle({
+      display: {
+        ...current,
+        brightness,
+        requestedBrightness: brightness,
+        lowBatteryBrightnessActive: false
+      }
+    });
+    if (brightness !== 0) this.sleepBrightnessZeroed = false;
+    if (this.settingsLocal) {
+      this.setState({ status: 'Brightness saved (demo)' });
+      return;
+    }
+
+    try {
+      const display = await gateway.setDisplayBrightness(brightness);
+      this.patchBundle({ display });
+      this.setState({ status: 'Brightness saved' });
+    } catch (error) {
+      console.error('[Beanie] Display brightness change failed', error);
+      await this.refreshDisplayStateSilently();
+      this.setState({ status: 'Brightness save failed' });
+    }
+  }
+
   private async requestMachineState(state: string): Promise<void> {
     if (this.settingsLocal) {
       this.setState({ status: `${state} unavailable in demo mode` });
@@ -4521,6 +4617,8 @@ export class BeanieApp {
     try {
       await gateway.setMachineState(state);
       this.setState({ status: `Machine → ${state}` });
+      if (state === 'sleeping') this.scheduleSleepBrightnessZero(1000);
+      else this.observeSleepBrightnessState(false);
     } catch (error) {
       console.error('[Beanie] Machine state change failed', error);
       this.setState({ status: 'Machine command failed' });

@@ -42,6 +42,7 @@ import {
   readDe1AdvancedSettings,
   readDe1Calibration,
   readDevices,
+  readDisplayState,
   readPlugins,
   readPluginSettings,
   readPluginVerify,
@@ -53,6 +54,7 @@ import {
   type De1AdvancedSettingsPatch,
   type De1Calibration,
   type DeviceInfo,
+  type DisplayState,
   type PluginInfo,
   type PluginSettings,
   type PluginVerifyResult,
@@ -279,6 +281,14 @@ export const gateway = {
     fetchJson<PresenceSettings>('settings', '/api/v1/presence/settings', readPresenceSettings),
   updatePresenceSettings: (patch: PresenceSettingsPatch) =>
     fetchEmpty('settings', '/api/v1/presence/settings', jsonPost(patch)),
+  displayState: () =>
+    fetchJson<DisplayState>('settings', '/api/v1/display', readDisplayState),
+  setDisplayBrightness: (brightness: number) =>
+    fetchJson<DisplayState>('settings', '/api/v1/display/brightness', readDisplayState, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ brightness: Math.max(0, Math.min(100, Math.round(brightness))) })
+    }),
   skins: () => fetchJson<SkinInfo[]>('settings', '/api/v1/webui/skins', readSkins),
 
   // --- devices (pairing) ---

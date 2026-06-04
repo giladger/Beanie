@@ -1,5 +1,6 @@
 import {
   de1MachineSettingsPatchBody,
+  readDisplayState,
   readReaSettings,
   readSkins
 } from '../api/settings';
@@ -28,6 +29,22 @@ run('readReaSettings rejects bad enums back to a safe default', () => {
   equal(s.gatewayMode, 'disabled');
   equal(s.scalePowerMode, 'disconnect');
   equal(s.themeMode, 'system');
+});
+
+run('readDisplayState clamps brightness and fills support defaults', () => {
+  const display = readDisplayState({
+    wakeLockEnabled: 'true',
+    brightness: '27.6',
+    requestedBrightness: 205,
+    lowBatteryBrightnessActive: 1,
+    platformSupported: { brightness: false }
+  });
+  equal(display.wakeLockEnabled, true);
+  equal(display.brightness, 28);
+  equal(display.requestedBrightness, 100);
+  equal(display.lowBatteryBrightnessActive, true);
+  equal(display.platformSupported.brightness, false);
+  equal(display.platformSupported.wakeLock, true);
 });
 
 run('de1MachineSettingsPatchBody converts usb boolean to enable/disable', () => {
