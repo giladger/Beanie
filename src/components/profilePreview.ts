@@ -69,6 +69,7 @@ export function renderProfilePreview(profile: Profile | null | undefined): strin
     .join('');
 
   return `<svg class="profile-preview" viewBox="0 0 ${width} ${height}" role="img" aria-label="Profile target preview">
+    <rect class="profile-preview-plot" x="${plot.x}" y="${plot.y}" width="${plot.w}" height="${plot.h}" rx="5" />
     ${yTicks.map((tick) => {
       const y = yFor(tick, plot, yMax);
       return `<line class="profile-preview-grid" x1="${plot.x}" x2="${plot.x + plot.w}" y1="${y}" y2="${y}" />
