@@ -1073,8 +1073,7 @@ p {
   flex: 1;
   min-height: 0;
   height: clamp(280px, 56vh, 520px);
-  border-radius: 7px;
-  background-color: rgba(0, 0, 0, 0.16);
+  background-color: transparent;
 }
 
 .live-canvas {
@@ -4393,8 +4392,7 @@ p {
   min-height: 120px;
   height: 100%;
   border: 0;
-  border-radius: var(--radius);
-  background: #272d32;
+  background: transparent;
 }
 
 .detail-canvas {
