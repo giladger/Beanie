@@ -103,5 +103,7 @@ npm run release:zip
 ```
 
 Releases are published from Git tags. `npm run release` fetches tags, finds the
-highest `vX.Y.Z` tag, creates the next patch tag, and pushes it. Push a `v*` tag
-to run the GitHub release workflow, build the zip, and attach it to the release.
+highest `vX.Y.Z` tag, bumps the project and skin manifest versions, commits the
+bump, creates the next patch tag, and pushes both the commit and tag. The GitHub
+release workflow verifies the tag matches `package.json`, builds
+`beanie-vX.Y.Z.zip`, and attaches it to the release.

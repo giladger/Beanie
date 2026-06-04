@@ -27,6 +27,15 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Verify tag matches package version
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$VERSION" != "$TAG_VERSION" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $VERSION"
+            exit 1
+          fi
+
       - name: Build release zip
         run: npm run release:zip
 
@@ -34,7 +43,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ZIP="beanie-v$(node -p "require('./package.json').version").zip"
+          ZIP="beanie-$GITHUB_REF_NAME.zip"
           gh release create "$GITHUB_REF_NAME" "$ZIP" \
             --title "Beanie $GITHUB_REF_NAME" \
             --notes "Beanie WebUI skin release $GITHUB_REF_NAME." \

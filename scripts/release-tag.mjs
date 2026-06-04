@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 const args = new Set(process.argv.slice(2));
 const dryRun = args.has('--dry-run');
@@ -24,13 +25,19 @@ function main() {
   assertTagMissing(next, remote);
 
   if (dryRun) {
-    console.log(`ok - would create and push ${next} from ${latest.tag}`);
+    console.log(`ok - would bump project version to ${next.slice(1)}`);
+    console.log(`ok - would commit, tag, and push ${next} from ${latest.tag}`);
     return;
   }
 
+  const nextVersion = next.slice(1);
+  updateProjectVersion(nextVersion);
+  git(['add', 'package.json', 'package-lock.json', 'public/manifest.json']);
+  git(['commit', '-m', `Release ${next}`]);
   git(['tag', '-a', next, '-m', `Release ${next}`]);
+  git(['push', remote, 'HEAD']);
   git(['push', remote, next]);
-  console.log(`ok - created and pushed ${next}`);
+  console.log(`ok - bumped project version, committed, tagged, and pushed ${next}`);
 }
 
 function optionValue(name) {
@@ -87,6 +94,25 @@ function assertTagMissing(tag, remoteName) {
 
   const remoteTag = git(['ls-remote', '--tags', remoteName, tag], { silent: true }).trim();
   if (remoteTag !== '') fail(`${tag} already exists on ${remoteName}.`);
+}
+
+function updateProjectVersion(version) {
+  updateJsonFile('package.json', (json) => {
+    json.version = version;
+  });
+  updateJsonFile('package-lock.json', (json) => {
+    json.version = version;
+    if (json.packages?.['']) json.packages[''].version = version;
+  });
+  updateJsonFile('public/manifest.json', (json) => {
+    json.version = version;
+  });
+}
+
+function updateJsonFile(filePath, mutate) {
+  const json = JSON.parse(readFileSync(filePath, 'utf8'));
+  mutate(json);
+  writeFileSync(filePath, `${JSON.stringify(json, null, 2)}\n`);
 }
 
 function git(args, options = {}) {
