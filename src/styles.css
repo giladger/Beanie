@@ -1247,7 +1247,7 @@ p {
 .bean-picker-body {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(220px, 0.36fr) minmax(0, 0.64fr);
+  grid-template-columns: minmax(220px, 0.34fr) minmax(0, 0.66fr);
   gap: 8px;
 }
 
@@ -1271,7 +1271,7 @@ p {
 .bean-picker-bean-form,
 .bean-picker-batches {
   min-width: 0;
-  padding: 9px;
+  padding: 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: rgba(255, 255, 255, 0.025);
@@ -1324,7 +1324,7 @@ p {
 }
 
 .bean-picker-fields input {
-  height: 38px;
+  height: 36px;
 }
 
 .bean-picker-notes {
@@ -1332,7 +1332,7 @@ p {
 }
 
 .bean-picker-notes textarea {
-  height: 96px;
+  height: 82px;
   resize: vertical;
   overflow: auto;
   line-height: 1.25;
@@ -1363,10 +1363,13 @@ p {
 .bean-picker-batch {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(98px, 1fr) 92px minmax(80px, 0.85fr) 76px 76px 82px auto;
-  gap: 6px;
+  grid-template-columns: minmax(150px, 1.05fr) repeat(4, minmax(112px, 0.82fr)) minmax(110px, 0.72fr);
+  grid-template-areas:
+    "title date roast weight remaining frozen"
+    "title actions actions actions actions actions";
+  gap: 7px;
   align-items: end;
-  padding: 7px;
+  padding: 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel-2);
@@ -1382,8 +1385,25 @@ p {
 }
 
 .bean-picker-batch-title {
+  grid-area: title;
   min-width: 0;
   align-self: center;
+}
+
+.bean-picker-batch label:nth-of-type(1) {
+  grid-area: date;
+}
+
+.bean-picker-batch label:nth-of-type(2) {
+  grid-area: roast;
+}
+
+.bean-picker-batch label:nth-of-type(3) {
+  grid-area: weight;
+}
+
+.bean-picker-batch label:nth-of-type(4) {
+  grid-area: remaining;
 }
 
 .bean-picker-batch-title strong,
@@ -1415,9 +1435,11 @@ p {
 .bean-picker-batch input {
   height: 32px;
   padding: 0 7px;
+  font-size: 13px;
 }
 
 .bean-picker-check {
+  grid-area: frozen;
   align-self: center;
   min-height: 32px;
   display: flex !important;
@@ -1440,8 +1462,14 @@ p {
 }
 
 .bean-picker-batch-actions {
+  grid-area: actions;
   align-self: center;
   justify-content: flex-end;
+}
+
+.bean-picker-batch-actions .primary-button,
+.bean-picker-batch-actions .secondary-button {
+  min-width: 82px;
 }
 
 @media (max-width: 860px) {
@@ -1460,6 +1488,12 @@ p {
 
   .bean-picker-batch {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      "title title"
+      "date roast"
+      "weight remaining"
+      "frozen frozen"
+      "actions actions";
     align-items: stretch;
   }
 
