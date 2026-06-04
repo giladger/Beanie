@@ -539,9 +539,7 @@ export class BeanieApp {
     });
 
     const batches = await this.loadBatches(bean);
-    const selectedBatch =
-      batches.find((batch) => batch.id === this.state.workflow?.context?.beanBatchId) ??
-      latestBatch(batches);
+    const selectedBatch = latestBatch(batches);
 
     const { records: shots, total: shotsTotal } = await this.loadFirstShots(bean);
     const workflowMatches = this.workflowMatchesBean(bean);
@@ -1358,16 +1356,6 @@ export class BeanieApp {
           }
         }
         break;
-      case 'select-batch':
-        if (id) {
-          const beanId = el.dataset.beanId;
-          if (beanId && beanId !== this.state.selectedBeanId) {
-            await this.selectBean(beanId, { apply: false, preferWorkflow: false });
-          }
-          this.setState({ selectedBatchId: id, status: 'Batch selected' });
-          this.scheduleApply();
-        }
-        break;
       case 'adjust':
         if (field) this.adjustField(field, Number(el.dataset.delta ?? '0'));
         break;
@@ -1993,11 +1981,6 @@ export class BeanieApp {
       return;
     }
 
-    if (field === 'batchId') {
-      this.setState({ selectedBatchId: (target as HTMLSelectElement).value || null });
-      return;
-    }
-
     const draft = { ...this.state.draft };
     if (field === 'dose') draft.dose = parseNumberInput(target.value);
     if (field === 'yield') draft.yield = parseNumberInput(target.value);
@@ -2275,7 +2258,7 @@ export class BeanieApp {
       batchesByBean: { ...this.state.batchesByBean, [bean.id]: optimisticBatches },
       status: 'Batch saved'
     });
-    if (bean.id === this.state.selectedBeanId && batchId === this.state.selectedBatchId) this.scheduleApply();
+    if (bean.id === this.state.selectedBeanId && latestBatch(optimisticBatches)?.id === batchId) this.scheduleApply();
     if (this.state.demo) return;
 
     try {
@@ -2309,9 +2292,7 @@ export class BeanieApp {
     const previousSelectedBatchId = this.state.selectedBatchId;
     const batches = current.filter((item) => item.id !== batchId);
     const selectedBatchId =
-      bean.id === this.state.selectedBeanId && previousSelectedBatchId === batchId
-        ? latestBatch(batches)?.id ?? null
-        : previousSelectedBatchId;
+      bean.id === this.state.selectedBeanId ? latestBatch(batches)?.id ?? null : previousSelectedBatchId;
 
     this.setState({
       batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
@@ -3214,7 +3195,8 @@ export class BeanieApp {
     }
 
     const batches = this.state.batchesByBean[bean.id] ?? [];
-    const selectedBatchId = bean.id === this.state.selectedBeanId ? this.selectedBatch()?.id ?? null : null;
+    const visibleBatches = recentBatches(batches, 2);
+    const currentBatchId = latestBatch(batches)?.id ?? null;
     return `
       <div class="bean-picker-inspector">
         ${this.renderBeanPickerBeanForm(bean)}
@@ -3222,7 +3204,7 @@ export class BeanieApp {
           <div class="bean-picker-section-head">
             <div>
               <span class="eyebrow">Batches</span>
-              <strong>${escapeHtml(String(batches.length))}</strong>
+              <strong>${escapeHtml(batches.length === 0 ? 'None' : batchOptionLabel(latestBatch(batches)!))}</strong>
             </div>
             <button type="button" class="secondary-button compact" data-action="bean-picker-add-batch">${icon('plus')}<span>Batch</span></button>
           </div>
@@ -3230,7 +3212,7 @@ export class BeanieApp {
             ${
               batches.length === 0
                 ? '<p class="empty-history">No batches yet.</p>'
-                : batches.map((batch) => this.renderBeanPickerBatchForm(bean, batch, batch.id === selectedBatchId)).join('')
+                : visibleBatches.map((batch) => this.renderBeanPickerBatchForm(bean, batch, batch.id === currentBatchId)).join('')
             }
           </div>
         </div>
@@ -3272,26 +3254,22 @@ export class BeanieApp {
   }
 
   private renderBeanPickerBatchForm(bean: Bean, batch: BeanBatch, active: boolean): string {
-    const activeLabel = active ? 'Using' : 'Use';
     return `
       <form
-        class="bean-picker-batch ${active ? 'active' : ''}"
+        class="bean-picker-batch ${active ? 'current' : ''}"
         data-form="bean-picker-batch"
         data-bean-id="${escapeAttr(bean.id)}"
         data-batch-id="${escapeAttr(batch.id)}"
       >
         <div class="bean-picker-batch-title">
           <strong>${escapeHtml(batchOptionLabel(batch))}</strong>
-          <small>${escapeHtml(batch.frozen ? 'Frozen' : batch.roastLevel ?? 'Batch')}</small>
+          <small>${escapeHtml(active ? 'Latest' : batch.frozen ? 'Frozen' : batch.roastLevel ?? 'Batch')}</small>
         </div>
         <label>Date<input data-action="bean-picker-batch-field" type="date" name="roastDate" value="${escapeAttr(dateInputValue(batch.roastDate))}" /></label>
         <label>Roast<input data-action="bean-picker-batch-field" name="roastLevel" autocomplete="off" value="${escapeAttr(inputValue(batch.roastLevel))}" /></label>
         <label>Bag<input data-action="bean-picker-batch-field" type="number" name="weight" min="0" step="0.1" inputmode="decimal" value="${escapeAttr(inputValue(batch.weight))}" /></label>
         <label>Left<input data-action="bean-picker-batch-field" type="number" name="weightRemaining" min="0" step="0.1" inputmode="decimal" value="${escapeAttr(inputValue(batch.weightRemaining))}" /></label>
         <label class="bean-picker-check" title="Frozen"><input data-action="bean-picker-batch-field" type="checkbox" name="frozen" ${batch.frozen ? 'checked' : ''} /><span>Frozen</span></label>
-        <div class="bean-picker-batch-actions">
-          <button type="button" class="secondary-button compact" data-action="select-batch" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}">${escapeHtml(activeLabel)}</button>
-        </div>
         <button type="button" class="icon-button danger-icon bean-picker-batch-delete" data-action="delete-batch" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}" aria-label="Delete batch" title="Delete batch">${icon('trash-2')}</button>
       </form>
     `;
@@ -3861,19 +3839,13 @@ export class BeanieApp {
 
   private renderBatchControl(bean: Bean | null): string {
     if (!bean) return '';
-    const batches = this.state.batchesByBean[bean.id] ?? [];
-    const selectedId = this.selectedBatch()?.id ?? '';
+    const batch = this.selectedBatch();
     return `
       <div class="batch-control">
-        <select data-field="batchId" aria-label="Batch">
-          <option value="">No batch</option>
-          ${batches
-            .map(
-              (batch) =>
-                `<option value="${escapeAttr(batch.id)}" ${batch.id === selectedId ? 'selected' : ''}>${escapeHtml(batchOptionLabel(batch))}</option>`
-            )
-            .join('')}
-        </select>
+        <button type="button" class="batch-current" data-action="open-bean-picker" aria-label="Manage batches" title="Manage batches">
+          <span>Batch</span>
+          <strong>${escapeHtml(batch ? batchOptionLabel(batch) : 'No batch')}</strong>
+        </button>
         <button class="icon-button" data-action="open-add-batch" aria-label="Add batch" title="Add batch">${icon('plus')}</button>
       </div>
     `;
@@ -4086,7 +4058,7 @@ export class BeanieApp {
     const bean = this.selectedBean();
     if (!bean) return null;
     const batches = this.state.batchesByBean[bean.id] ?? [];
-    return batches.find((batch) => batch.id === this.state.selectedBatchId) ?? latestBatch(batches);
+    return latestBatch(batches);
   }
 
   private workflowMatchesBean(bean: Bean): boolean {
@@ -5229,6 +5201,16 @@ function batchOptionLabel(batch: BeanBatch): string {
       : 'Batch';
   const remaining = batch.weightRemaining != null ? ` · ${formatGrams(batch.weightRemaining)}` : '';
   return `${roastText}${remaining}`;
+}
+
+function recentBatches(batches: BeanBatch[], limit: number): BeanBatch[] {
+  return [...batches]
+    .sort((a, b) => {
+      const ad = a.roastDate ? Date.parse(a.roastDate) : 0;
+      const bd = b.roastDate ? Date.parse(b.roastDate) : 0;
+      return bd - ad;
+    })
+    .slice(0, limit);
 }
 
 function profileGroup(title: string, author?: string): string {
