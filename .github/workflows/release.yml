@@ -1,0 +1,41 @@
+name: Release skin
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build release zip
+        run: npm run release:zip
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ZIP="beanie-v$(node -p "require('./package.json').version").zip"
+          gh release create "$GITHUB_REF_NAME" "$ZIP" \
+            --title "Beanie $GITHUB_REF_NAME" \
+            --notes "Beanie WebUI skin release $GITHUB_REF_NAME." \
+            --verify-tag
