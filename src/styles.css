@@ -840,19 +840,22 @@ p {
 }
 
 .pane-head {
-  display: grid;
-  grid-template-columns: auto auto auto auto minmax(0, 1fr) auto auto;
+  display: flex;
   align-items: center;
-  column-gap: 10px;
+  gap: 10px;
   min-width: 0;
 }
 
-.pane-time {
-  flex: none;
-  font-size: 15px;
+/* The profile leads the description and is the one element that truncates. */
+.pane-profile {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 14px;
   font-weight: 900;
   color: var(--ink);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .pane-stat {
@@ -863,19 +866,19 @@ p {
   white-space: nowrap;
 }
 
-.pane-profile {
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  font-weight: 800;
+/* Date: small and trailing the description. */
+.pane-time {
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
   color: var(--muted);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
+/* Push the score + edit controls to the right edge. */
 .pane-head .enjoyment-badge {
   flex: none;
+  margin-left: auto;
 }
 
 .shot-edit-button {
@@ -4514,12 +4517,12 @@ p {
   }
 
   .pane-head {
-    grid-template-columns: auto auto auto minmax(0, 1fr) auto;
+    flex-wrap: wrap;
     row-gap: 5px;
   }
 
   .pane-profile {
-    grid-column: 1 / -1;
+    flex-basis: 100%;
   }
 
   .shot-edit-grid {

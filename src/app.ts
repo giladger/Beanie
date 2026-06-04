@@ -3628,17 +3628,22 @@ export class BeanieApp {
   private renderShotDetailPane(shot: ShotRecord): string {
     const recipe = recipeFromShot(shot);
     const date = new Date(shot.timestamp);
-    const title = Number.isNaN(date.valueOf())
+    const dateLabel = Number.isNaN(date.valueOf())
       ? shot.timestamp
       : date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     const duration = shotDurationLabel(shot);
+    const grinder = recipe.grinderModel
+      ? `${recipe.grinderModel}${recipe.grinderSetting ? ` ${recipe.grinderSetting}` : ''}`
+      : recipe.grinderSetting
+        ? `grind ${recipe.grinderSetting}`
+        : '';
     return `
       <div class="pane-head">
-        <span class="pane-time">${escapeHtml(title)}</span>
-        <span class="pane-stat">${formatGrams(recipe.dose)} → ${formatGrams(recipe.yield)}</span>
-        <span class="pane-stat">grind ${escapeHtml(recipe.grinderSetting ?? '--')}</span>
-        <span class="pane-stat">${duration ? escapeHtml(duration) : ''}</span>
         <span class="pane-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
+        <span class="pane-stat">${formatGrams(recipe.dose)} → ${formatGrams(recipe.yield)}</span>
+        ${duration ? `<span class="pane-stat">@ ${escapeHtml(duration)}</span>` : ''}
+        ${grinder ? `<span class="pane-stat">${escapeHtml(grinder)}</span>` : ''}
+        <span class="pane-time">${escapeHtml(dateLabel)}</span>
         ${shotScoreControl(shot.annotations?.enjoyment ?? null, {
           action: 'set-shot-score',
           shotId: shot.id,
