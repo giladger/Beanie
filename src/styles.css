@@ -2138,8 +2138,9 @@ p {
   gap: 10px;
   padding: 12px;
   overflow: hidden;
-  background: transparent;
-  box-shadow: none;
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 
 .profile-preview-head {
@@ -3330,16 +3331,11 @@ p {
   font-weight: 850;
 }
 
+.pe-chart-panel,
 .pe-step-detail {
   border-radius: 8px;
   background: var(--panel);
   box-shadow: inset 0 0 0 1px var(--line);
-}
-
-.pe-chart-panel {
-  border-radius: 8px;
-  background: transparent;
-  box-shadow: none;
 }
 
 .pe-profile-chart {
@@ -3349,8 +3345,8 @@ p {
 }
 
 .pe-chart-bg {
-  fill: transparent;
-  stroke: transparent;
+  fill: rgba(0, 0, 0, 0.12);
+  stroke: var(--line);
 }
 
 .pe-chart-grid {
