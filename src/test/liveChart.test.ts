@@ -12,9 +12,9 @@ import {
 run('computePlotArea respects detailed margins', () => {
   const plot = computePlotArea(920, 340, true);
   equal(plot.x, 42);
-  equal(plot.y, 42);
+  equal(plot.y, 18);
   equal(plot.width, 920 - 42 - 22);
-  equal(plot.height, 340 - 42 - 38);
+  equal(plot.height, 340 - 18 - 64);
 });
 
 run('computePlotArea uses compact margins when not detailed', () => {

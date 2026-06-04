@@ -68,7 +68,7 @@ export const LIVE_SERIES: LiveSeriesDefinition[] = [
   {
     key: 'targetPressure',
     label: 'Target pressure',
-    shortLabel: 'Target P',
+    shortLabel: 'Target pressure',
     color: '#7fcf9f',
     dashArray: '6 5',
     value: (machine) => numeric(machine?.targetPressure)
@@ -76,7 +76,7 @@ export const LIVE_SERIES: LiveSeriesDefinition[] = [
   {
     key: 'targetFlow',
     label: 'Target flow',
-    shortLabel: 'Target F',
+    shortLabel: 'Target flow',
     color: '#a9c6ff',
     dashArray: '6 5',
     value: (machine) => numeric(machine?.targetFlow)

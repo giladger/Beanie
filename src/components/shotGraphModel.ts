@@ -81,7 +81,7 @@ const SERIES_DEFINITIONS: ShotGraphSeriesDefinition[] = [
   {
     key: 'targetPressure',
     label: 'Target pressure',
-    shortLabel: 'Target P',
+    shortLabel: 'Target pressure',
     className: 'trace-target-pressure',
     color: '#7fcf9f',
     dashArray: '6 5',
@@ -91,7 +91,7 @@ const SERIES_DEFINITIONS: ShotGraphSeriesDefinition[] = [
   {
     key: 'targetFlow',
     label: 'Target flow',
-    shortLabel: 'Target F',
+    shortLabel: 'Target flow',
     className: 'trace-target-flow',
     color: '#a9c6ff',
     dashArray: '6 5',

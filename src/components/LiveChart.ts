@@ -26,7 +26,7 @@ export interface LiveChartOptions {
   pixelScale?: number;
 }
 
-const MARGIN_DETAILED = { top: 42, right: 22, bottom: 38, left: 42 };
+const MARGIN_DETAILED = { top: 18, right: 22, bottom: 64, left: 42 };
 const MARGIN_COMPACT = { top: 7, right: 7, bottom: 7, left: 7 };
 
 const AXIS_LINE = 'rgba(255,255,255,0.22)';
@@ -166,12 +166,12 @@ export class LiveChart {
       return;
     }
 
-    if (detailed) this.drawGrid(model, plot, height);
+    if (detailed) this.drawGrid(model, plot);
     this.drawMarkers(model, plot, detailed);
     for (let i = 0; i < model.series.length; i += 1) {
       this.drawSeries(model.series[i]!, model.maxTime, model.maxY, plot);
     }
-    if (detailed) this.drawLegend(model.series, width);
+    if (detailed) this.drawLegend(model.series, width, height);
   }
 
   private drawNoData(plot: PlotArea, width: number, height: number): void {
@@ -196,7 +196,7 @@ export class LiveChart {
     ctx.fillText('No chart data', width / 2, height / 2);
   }
 
-  private drawGrid(model: LiveChartModel, plot: PlotArea, height: number): void {
+  private drawGrid(model: LiveChartModel, plot: PlotArea): void {
     const ctx = this.ctx;
     const xTicks = tickValues(model.maxTime, 5);
     const yTicks = tickValues(model.maxY, 5);
@@ -227,7 +227,7 @@ export class LiveChart {
     for (let i = 0; i < xTicks.length; i += 1) {
       if (this.hideMaxTimeLabel && i === xTicks.length - 1) continue;
       const x = projectX(xTicks[i]!, model.maxTime, plot);
-      ctx.fillText(`${formatTick(xTicks[i]!)}s`, x, height - 12);
+      ctx.fillText(`${formatTick(xTicks[i]!)}s`, x, plot.y + plot.height + 16);
     }
     ctx.textAlign = 'right';
     for (let i = 0; i < yTicks.length; i += 1) {
@@ -322,12 +322,16 @@ export class LiveChart {
     ctx.setLineDash([]);
   }
 
-  private drawLegend(series: LiveChartSeries[], width: number): void {
+  private drawLegend(series: LiveChartSeries[], width: number, height: number): void {
     if (series.length === 0) return;
     const ctx = this.ctx;
-    const itemWidth = 108;
+    const itemWidth = 124;
+    const rowHeight = 15;
     const columns = Math.max(1, Math.min(series.length, Math.floor((width - 24) / itemWidth)));
+    const rows = Math.ceil(series.length / columns);
     const start = Math.max(12, width - columns * itemWidth - 12);
+    // Bottom-anchored: last row sits near the canvas bottom, below the x-axis labels.
+    const firstRowY = height - 11 - (rows - 1) * rowHeight;
 
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'left';
@@ -336,7 +340,7 @@ export class LiveChart {
     for (let i = 0; i < series.length; i += 1) {
       const item = series[i]!;
       const x = start + (i % columns) * itemWidth;
-      const y = 16 + Math.floor(i / columns) * 15;
+      const y = firstRowY + Math.floor(i / columns) * rowHeight;
       ctx.strokeStyle = item.color;
       ctx.setLineDash(item.dashArray ? parseDashArray(item.dashArray) : []);
       ctx.beginPath();
