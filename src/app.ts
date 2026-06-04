@@ -3355,11 +3355,6 @@ export class BeanieApp {
             }
           </div>
         </div>
-        <div class="hero-side">
-          <div class="hero-context">
-            ${this.renderBatchControl(bean)}
-          </div>
-        </div>
       </section>
     `;
   }
@@ -3891,20 +3886,6 @@ export class BeanieApp {
           <label>Big step<input type="number" name="settingBigStep" min="0" step="0.1" value="${escapeAttr(String(editing?.settingBigStep ?? 1))}" /></label>
         </div>
       </form>
-    `;
-  }
-
-  private renderBatchControl(bean: Bean | null): string {
-    if (!bean) return '';
-    const batch = this.selectedBatch();
-    return `
-      <div class="batch-control">
-        <button type="button" class="batch-current" data-action="open-bean-picker" aria-label="Manage batches" title="Manage batches">
-          <span>Batch</span>
-          <strong>${escapeHtml(batch ? batchOptionLabel(batch) : 'No batch')}</strong>
-        </button>
-        <button class="icon-button" data-action="open-add-batch" aria-label="Add batch" title="Add batch">${icon('plus')}</button>
-      </div>
     `;
   }
 
