@@ -3652,7 +3652,6 @@ export class BeanieApp {
         <label>Profile</label>
         <button type="button" class="profile-button" data-action="open-profile-picker">
           <span>${escapeHtml(title)}</span>
-          ${icon('sliders-horizontal')}
         </button>
       </div>
     `;

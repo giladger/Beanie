@@ -2055,10 +2055,6 @@ p {
   white-space: nowrap;
 }
 
-.profile-button .icon {
-  color: var(--soft);
-}
-
 .profile-picker {
   width: min(560px, 100%);
 }
