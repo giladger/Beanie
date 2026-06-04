@@ -81,6 +81,7 @@ Useful development commands:
 npm run skin:shim     # only install the Decent.app -> Vite shim
 npm run skin:dev      # install the shim and start Vite with hot reload
 npm run skin:deploy   # build and copy the static skin into Decent.app
+npm run release       # tag and push the next patch release
 npm run release:zip   # build the installable release zip
 ```
 
@@ -96,8 +97,11 @@ Override it with `DECENT_SKIN_DIR=/path/to/beanie`.
 
 ```bash
 npm test
+npm run release -- --dry-run
+npm run release
 npm run release:zip
 ```
 
-Releases are published from Git tags. Push a `v*` tag to run the GitHub release
-workflow, build the zip, and attach it to the release.
+Releases are published from Git tags. `npm run release` fetches tags, finds the
+highest `vX.Y.Z` tag, creates the next patch tag, and pushes it. Push a `v*` tag
+to run the GitHub release workflow, build the zip, and attach it to the release.

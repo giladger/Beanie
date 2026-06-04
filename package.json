@@ -14,6 +14,8 @@
     "preview": "vite preview --host 0.0.0.0",
     "test": "tsx src/test/runAll.ts",
     "validate:manifest": "node scripts/validate-manifest.mjs",
+    "release": "node scripts/release-tag.mjs",
+    "release:tag": "node scripts/release-tag.mjs",
     "release:zip": "rm -f beanie-v$npm_package_version.zip && npm run build && npm run validate:manifest && (cd dist && zip -r ../beanie-v$npm_package_version.zip . -x '*.DS_Store' '*/.DS_Store')",
     "seed:decent": "node scripts/seed-decent-db.mjs"
   },
