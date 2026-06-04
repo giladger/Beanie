@@ -4239,9 +4239,18 @@ p {
 }
 
 .input-dialog-choice-select {
-  display: flex !important;
+  min-width: 0;
+  width: 100%;
+  display: block !important;
+}
+
+.input-dialog-choice-line {
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
   align-items: baseline;
   gap: 8px;
+  white-space: nowrap;
 }
 
 .input-dialog-choice-edit {
@@ -4264,10 +4273,17 @@ p {
 .input-dialog-choices strong,
 .input-dialog-choices small {
   min-width: 0;
-  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.input-dialog-choices strong {
+  flex: 0 1 auto;
+}
+
+.input-dialog-choices small {
+  flex: 1 1 auto;
 }
 
 .input-dialog-choices small {

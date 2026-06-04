@@ -327,8 +327,10 @@ function renderChoices(dialog: InputDialogState): string {
       ${dialog.choices.map((choice) => `
         <span class="input-dialog-choice ${choice.id === dialog.selectedChoiceId ? 'active' : ''}">
           <button type="button" class="input-dialog-choice-select" data-action="dialog-choice" data-id="${escapeAttr(choice.id)}">
-            <strong>${escapeHtml(choice.label)}</strong>
-            ${choice.detail ? `<small>${escapeHtml(choice.detail)}</small>` : ''}
+            <span class="input-dialog-choice-line">
+              <strong>${escapeHtml(choice.label)}</strong>
+              ${choice.detail ? `<small>${escapeHtml(choice.detail)}</small>` : ''}
+            </span>
           </button>
           <button type="button" class="input-dialog-choice-edit" data-action="open-edit-grinder" data-id="${escapeAttr(choice.id)}" aria-label="Edit ${escapeAttr(choice.label)}" title="Edit grinder">
             ${icon('pencil')}
