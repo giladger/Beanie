@@ -4193,13 +4193,6 @@ p {
   width: 100%;
   height: 34px;
   justify-self: stretch;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel-2);
 }
 
 .settings-toggle input {
@@ -4217,11 +4210,8 @@ p {
 }
 
 .settings-line > .settings-toggle span {
-  position: relative;
-  inset: auto;
+  inset: 3px 0 3px auto;
   width: 48px;
-  height: 24px;
-  flex: 0 0 48px;
 }
 
 .settings-toggle span::after {
