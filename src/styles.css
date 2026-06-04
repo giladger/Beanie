@@ -762,8 +762,8 @@ p {
   flex-direction: column;
   gap: 3px;
   width: 100%;
-  min-height: 57px;
-  padding: 8px 12px 9px;
+  min-height: 61px;
+  padding: 9px 12px 10px;
   border: 0;
   border-bottom: 1px solid var(--line);
   background: transparent;
@@ -815,7 +815,7 @@ p {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 800;
   color: var(--ink);
   white-space: nowrap;
@@ -831,7 +831,7 @@ p {
 }
 
 .shot-item-profile {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   color: var(--muted);
   white-space: nowrap;
