@@ -59,32 +59,30 @@ function settingsSections(
   bundle: SettingsBundle | null,
   pluginConfig: PluginConfigState | null
 ): SettingsSection[] {
+  const connectionSection: SettingsSection = {
+    id: 'connection',
+    title: 'Connection',
+    terms: 'status host gateway devices bluetooth machine scale connect control',
+    html: [
+      renderSection('Status', renderGatewayRows(model)),
+      bundle ? renderConnectionRuntimeSection(bundle) : '',
+      bundle ? renderDevicesSection(bundle) : '',
+      bundle ? renderSpecSectionById('connection-policy', bundle) : ''
+    ].join('')
+  };
   const sections: SettingsSection[] = [
-    {
-      id: 'connection',
-      title: 'Connection',
-      terms: 'status host gateway devices bluetooth machine scale connect control',
-      html: [
-        renderSection('Status', renderGatewayRows(model)),
-        bundle ? renderConnectionRuntimeSection(bundle) : '',
-        bundle ? renderDevicesSection(bundle) : '',
-        bundle ? renderSpecSectionById('connection-policy', bundle) : ''
-      ].join('')
-    },
     {
       id: 'app',
       title: 'App',
-      terms: 'appearance theme ui skin update diagnostics cache about version',
+      terms: 'appearance theme ui skin update diagnostics about version',
       html: [
         renderSection('Beanie display', renderAppearanceRows(model.preferences)),
         bundle ? renderSpecSectionById('app-skin', bundle) : '',
-        bundle ? renderAppRuntimeSection(bundle) : '',
-        renderSection('Local data', renderDataRows(model)),
         renderSection('About', renderAboutRows(model))
       ].join('')
     }
   ];
-  // ReaPrime-backed settings only render after the gateway/demo bundle loads.
+  // Decent.app-backed settings only render after the gateway/demo bundle loads.
   if (bundle) {
     sections.push(
       {
@@ -117,13 +115,19 @@ function settingsSections(
         terms: 'plugins visualizer extensions enable disable configure credentials',
         html: renderPluginsSection(bundle, pluginConfig)
       },
+      connectionSection,
       {
         id: 'danger',
         title: 'Danger',
-        terms: 'danger advanced heater voltage refill kit calibration fan firmware reset',
-        html: renderSpecSectionById('danger-zone', bundle)
+        terms: 'danger advanced heater voltage refill kit firmware reset cache',
+        html: [
+          renderSpecSectionById('danger-zone', bundle),
+          renderSection('Local data', renderCacheResetRows(model), 'danger')
+        ].join('')
       }
     );
+  } else {
+    sections.push(connectionSection);
   }
   return sections;
 }
@@ -162,14 +166,7 @@ function renderDevicesSection(bundle: SettingsBundle): string {
 
 function renderConnectionRuntimeSection(bundle: SettingsBundle): string {
   const simulated = bundle.rea.simulatedDevices.length ? bundle.rea.simulatedDevices.join(', ') : 'None';
-  return renderSection('Runtime', settingReadout('Simulated devices', simulated, 'Simulator mode devices reported by ReaPrime', 'muted'));
-}
-
-function renderAppRuntimeSection(bundle: SettingsBundle): string {
-  return renderSection(
-    'Served skin',
-    settingReadout('Web UI path', bundle.rea.webUiPath ?? 'Default', 'Filesystem path ReaPrime serves for the skin', 'muted')
-  );
+  return renderSection('Runtime', settingReadout('Simulated devices', simulated, 'Simulator devices reported by Decent.app', 'muted'));
 }
 
 function renderPowerRuntimeSection(bundle: SettingsBundle): string {
@@ -283,9 +280,9 @@ function renderPluginField(field: PluginSettingField, config: PluginConfigState)
       .map((o) => `<option value="${escapeAttr(o.value)}" ${o.value === current ? 'selected' : ''}>${escapeHtml(o.label)}</option>`)
       .join('')}</select>`;
   } else if (field.type === 'number') {
-    const unit = `<span class="settings-unit">${field.unit ? escapeHtml(field.unit) : ''}</span>`;
+    const unit = field.unit ? `<em class="settings-unit">${escapeHtml(field.unit)}</em>` : '';
     const value = String(draftVal ?? '');
-    control = `<span class="settings-number"><button type="button" class="settings-input number-edit-button settings-number-button" data-action="open-number-edit" data-target="settings-plugin-field" data-key="${escapeAttr(field.key)}" data-title="${escapeAttr(field.label)}" data-value="${escapeAttr(value)}" data-min="${field.min ?? 0}" data-max="${field.max ?? 9999}" data-step="${field.step ?? 1}" data-unit="${escapeAttr(field.unit ?? '')}">${escapeHtml(value || '--')}</button>${unit}</span>`;
+    control = `<button type="button" class="settings-input number-edit-button settings-number-button" data-action="open-number-edit" data-target="settings-plugin-field" data-key="${escapeAttr(field.key)}" data-title="${escapeAttr(field.label)}" data-value="${escapeAttr(value)}" data-min="${field.min ?? 0}" data-max="${field.max ?? 9999}" data-step="${field.step ?? 1}" data-unit="${escapeAttr(field.unit ?? '')}"><span>${escapeHtml(value || '--')}</span>${unit}</button>`;
   } else {
     // text / password
     const inputType = field.type === 'password' ? 'password' : 'text';
@@ -365,10 +362,8 @@ function renderSettingsField(field: SettingsField, bundle: SettingsBundle): stri
     control = `<input class="settings-input" type="time" ${base} value="${minutesToTime(typeof value === 'number' ? value : null)}" />`;
   } else {
     const num = typeof value === 'number' ? String(value) : '';
-    // Always emit the unit span (empty when unitless) so its fixed-width gutter
-    // reserves space and every number input shares the same right edge.
-    const unit = `<span class="settings-unit">${field.unit ? escapeHtml(field.unit) : ''}</span>`;
-    control = `<span class="settings-number"><button type="button" class="settings-input number-edit-button settings-number-button" data-action="open-number-edit" data-target="settings-field" data-group="${field.group}" data-key="${escapeAttr(field.key)}" data-title="${escapeAttr(field.label)}" data-value="${escapeAttr(num)}" data-min="${field.min ?? 0}" data-max="${field.max ?? 9999}" data-step="${field.step ?? 1}" data-unit="${escapeAttr(field.unit ?? '')}">${escapeHtml(num || '--')}</button>${unit}</span>`;
+    const unit = field.unit ? `<em class="settings-unit">${escapeHtml(field.unit)}</em>` : '';
+    control = `<button type="button" class="settings-input number-edit-button settings-number-button" data-action="open-number-edit" data-target="settings-field" data-group="${field.group}" data-key="${escapeAttr(field.key)}" data-title="${escapeAttr(field.label)}" data-value="${escapeAttr(num)}" data-min="${field.min ?? 0}" data-max="${field.max ?? 9999}" data-step="${field.step ?? 1}" data-unit="${escapeAttr(field.unit ?? '')}"><span>${escapeHtml(num || '--')}</span>${unit}</button>`;
   }
   return settingControlRow(field.label, field.help ?? '', control);
 }
@@ -376,7 +371,7 @@ function renderSettingsField(field: SettingsField, bundle: SettingsBundle): stri
 function renderGatewayRows(model: SettingsShellModel): string {
   return `
     ${settingReadout('Gateway status', model.gateway.label, model.gateway.detail, model.gateway.tone)}
-    ${settingReadout('Host', model.gateway.host || 'Current origin', 'Resolved ReaPrime gateway origin', 'muted')}
+    ${settingReadout('Host', model.gateway.host || 'Current origin', 'Resolved Decent.app gateway origin', 'muted')}
     ${settingReadout('Machine', model.gateway.machine, 'Latest machine WebSocket snapshot', 'muted')}
     ${settingReadout('Scale', model.gateway.scale, 'Latest scale WebSocket snapshot', 'muted')}
   `;
@@ -405,10 +400,9 @@ function renderAppearanceRows(preferences: SettingsPreferences): string {
   `;
 }
 
-function renderDataRows(model: SettingsShellModel): string {
+function renderCacheResetRows(model: SettingsShellModel): string {
   const count = model.cacheKeyCount === 1 ? '1 local key' : `${model.cacheKeyCount} local keys`;
   return `
-    ${settingReadout('Mode', model.gateway.label, model.gateway.detail, model.gateway.tone)}
     ${settingControlRow(
       'Demo/cache reset',
       `${count} can be cleared; theme and scale are kept`,
@@ -421,7 +415,7 @@ function renderAboutRows(model: SettingsShellModel): string {
   return `
     ${settingReadout('Beanie version', model.version.version, `Commit ${model.version.gitCommit}`, 'muted')}
     ${settingReadout('Build time', model.version.buildTime, 'Generated by the Vite skin build', 'muted')}
-    ${settingReadout('Default skin', model.version.defaultSkinStatus, 'ReaPrime skin status endpoint is not wired yet', 'muted')}
+    ${settingReadout('Default skin', model.version.defaultSkinStatus, 'Decent.app skin status endpoint is not wired yet', 'muted')}
   `;
 }
 

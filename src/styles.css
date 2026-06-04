@@ -3934,7 +3934,10 @@ p {
 }
 
 .settings-number-button {
+  display: inline-flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 8px;
 }
 
 /* Scoped under .settings-line (0,2,0) so they beat the label rule
@@ -3943,9 +3946,16 @@ p {
 .settings-line .settings-number {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 38px;
   align-items: center;
-  gap: 6px;
+}
+
+.settings-line .settings-number.no-unit {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.settings-line .settings-number.has-unit {
+  grid-template-columns: minmax(0, 1fr) minmax(28px, max-content);
+  gap: 8px;
 }
 
 .settings-line .settings-number .settings-input {
@@ -3953,14 +3963,15 @@ p {
 }
 
 .settings-line .settings-unit {
-  display: block;
+  display: inline;
   overflow: visible;
   min-width: 0;
-  text-align: left;
+  text-align: right;
   color: var(--muted);
   font-size: 11px;
   font-weight: 800;
-  text-transform: uppercase;
+  font-style: normal;
+  text-transform: none;
 }
 
 .settings-empty {
@@ -4182,6 +4193,13 @@ p {
   width: 100%;
   height: 34px;
   justify-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
 }
 
 .settings-toggle input {
@@ -4199,8 +4217,11 @@ p {
 }
 
 .settings-line > .settings-toggle span {
-  inset: 3px 0 3px auto;
+  position: relative;
+  inset: auto;
   width: 48px;
+  height: 24px;
+  flex: 0 0 48px;
 }
 
 .settings-toggle span::after {

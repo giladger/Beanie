@@ -104,9 +104,9 @@ export const SETTINGS_SPEC: SettingsSpecSection[] = [
     title: 'Skin & diagnostics',
     terms: 'skin update log theme diagnostics',
     fields: [
-      { group: 'rea', key: 'defaultSkinId', label: 'Active skin', type: 'select', optionsFrom: 'skins', help: 'The skin reaprime serves by default.' },
+      { group: 'rea', key: 'defaultSkinId', label: 'Active skin', type: 'select', optionsFrom: 'skins', help: 'The skin Decent.app serves by default.' },
       { group: 'rea', key: 'automaticUpdateCheck', label: 'Automatic update check', type: 'toggle' },
-      { group: 'rea', key: 'themeMode', label: 'ReaPrime theme', type: 'select', options: opts(THEME_MODES), help: 'Stored ReaPrime app theme preference.' },
+      { group: 'rea', key: 'themeMode', label: 'Decent.app theme', type: 'select', options: opts(THEME_MODES), help: 'Stored Decent.app theme preference.' },
       { group: 'rea', key: 'logLevel', label: 'Log level', type: 'select', options: opts(LOG_LEVELS, (v) => v), help: 'Only change while debugging.' }
     ]
   },
@@ -117,7 +117,8 @@ export const SETTINGS_SPEC: SettingsSpecSection[] = [
     fields: [
       { group: 'rea', key: 'blockOnNoScale', label: 'Block shots without a scale', type: 'toggle' },
       { group: 'rea', key: 'weightFlowMultiplier', label: 'Weight stop lookahead', type: 'number', min: 0, max: 5, step: 0.05, help: 'Higher stops earlier when using stop-at-weight.' },
-      { group: 'rea', key: 'volumeFlowMultiplier', label: 'Volume stop lookahead', type: 'number', min: 0, max: 2, step: 0.05, unit: 's', help: 'Seconds of flow to expect after a volume stop command.' }
+      { group: 'rea', key: 'volumeFlowMultiplier', label: 'Volume stop lookahead', type: 'number', min: 0, max: 2, step: 0.05, unit: 's', help: 'Seconds of flow to expect after a volume stop command.' },
+      { group: 'calibration', key: 'flowMultiplier', label: 'Flow calibration', type: 'number', min: 0.13, max: 2, step: 0.01, help: 'Adjusts Decent.app flow estimation.' }
     ]
   },
   {
@@ -167,8 +168,7 @@ export const SETTINGS_SPEC: SettingsSpecSection[] = [
           { value: '1', label: 'Force on' },
           { value: '0', label: 'Force off' }
         ]
-      },
-      { group: 'calibration', key: 'flowMultiplier', label: 'Flow estimation multiplier', type: 'number', min: 0.13, max: 2, step: 0.01, help: 'DE1 flow-estimation calibration.' }
+      }
     ]
   },
   {
