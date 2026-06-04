@@ -754,7 +754,7 @@ export class BeanieApp {
   private loadShotRecipe(shotId: string): void {
     const shot = this.state.shots.find((item) => item.id === shotId);
     if (!shot) return;
-    this.completeSecondTapHint();
+    this.completeSecondTapHint('shot');
     this.setState({
       draft: normalizeDraft(recipeFromShot(shot), this.state.profiles, this.state.grinders),
       view: 'workbench',
@@ -778,11 +778,11 @@ export class BeanieApp {
   }
 
   private nextSecondTapHint(kind: SecondTapHintKind, id: string): SecondTapHintState | null {
-    return recordSecondTapHintShown() ? { kind, id } : null;
+    return shouldShowSecondTapHint(kind) ? { kind, id } : null;
   }
 
-  private completeSecondTapHint(): void {
-    markSecondTapHintUsed();
+  private completeSecondTapHint(kind: SecondTapHintKind): void {
+    markSecondTapHintUsed(kind);
   }
 
   private openShotEditor(): void {
@@ -1397,7 +1397,7 @@ export class BeanieApp {
     switch (action) {
       case 'select-bean':
         if (id) {
-          this.completeSecondTapHint();
+          this.completeSecondTapHint('bean');
           this.setState({ modal: null, secondTapHint: null });
           await this.selectBean(id, { apply: true, preferWorkflow: false });
         }
@@ -1406,7 +1406,7 @@ export class BeanieApp {
         if (id) {
           const focusedId = this.state.beanPickerBeanId ?? this.state.selectedBeanId;
           if (id === focusedId) {
-            this.completeSecondTapHint();
+            this.completeSecondTapHint('bean');
             this.setState({ modal: null, secondTapHint: null });
             if (id !== this.state.selectedBeanId) {
               await this.selectBean(id, { apply: true, preferWorkflow: false });
@@ -4518,27 +4518,25 @@ export class BeanieApp {
 
 const machinePresetLabelsStorageKey = 'beanie:machine-preset-labels';
 const machinePresetValuesStorageKey = 'beanie:machine-preset-values';
-const secondTapHintStorageKey = 'beanie:second-tap-hint';
-const secondTapHintMaxShows = 3;
+const secondTapHintStorageKey = 'beanie:second-tap-hint-v2';
 
 type MachinePresetValueOverrides = Record<string, Record<string, number>>;
 
 interface SecondTapHintPrefs {
-  shown: number;
-  used: boolean;
+  beanUsed: boolean;
+  shotUsed: boolean;
 }
 
 function readSecondTapHintPrefs(): SecondTapHintPrefs {
   try {
     const raw = localStorage.getItem(secondTapHintStorageKey);
     const parsed = raw ? JSON.parse(raw) : {};
-    const shown = typeof parsed?.shown === 'number' && Number.isFinite(parsed.shown) ? parsed.shown : 0;
     return {
-      shown: Math.max(0, Math.min(secondTapHintMaxShows, shown)),
-      used: parsed?.used === true
+      beanUsed: parsed?.beanUsed === true,
+      shotUsed: parsed?.shotUsed === true
     };
   } catch {
-    return { shown: 0, used: false };
+    return { beanUsed: false, shotUsed: false };
   }
 }
 
@@ -4550,17 +4548,20 @@ function writeSecondTapHintPrefs(prefs: SecondTapHintPrefs): void {
   }
 }
 
-function recordSecondTapHintShown(): boolean {
+function shouldShowSecondTapHint(kind: SecondTapHintKind): boolean {
   const prefs = readSecondTapHintPrefs();
-  if (prefs.used || prefs.shown >= secondTapHintMaxShows) return false;
-  writeSecondTapHintPrefs({ ...prefs, shown: prefs.shown + 1 });
-  return true;
+  return kind === 'bean' ? !prefs.beanUsed : !prefs.shotUsed;
 }
 
-function markSecondTapHintUsed(): void {
+function markSecondTapHintUsed(kind: SecondTapHintKind): void {
   const prefs = readSecondTapHintPrefs();
-  if (prefs.used) return;
-  writeSecondTapHintPrefs({ shown: prefs.shown, used: true });
+  if (kind === 'bean') {
+    if (prefs.beanUsed) return;
+    writeSecondTapHintPrefs({ ...prefs, beanUsed: true });
+    return;
+  }
+  if (prefs.shotUsed) return;
+  writeSecondTapHintPrefs({ ...prefs, shotUsed: true });
 }
 
 function readMachinePresetLabels(): Record<string, string> {
