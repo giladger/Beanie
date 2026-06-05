@@ -121,8 +121,6 @@ import {
 import { LiveChart } from './components/LiveChart';
 import { chartModelFromShot } from './components/liveChartModel';
 import {
-  analyzeFlowCalibration,
-  calibrationShotCandidate,
   clampCalibration,
   renderFlowCalibrator,
   roundCalibration
@@ -379,8 +377,8 @@ interface AppState {
   asleep: boolean;
   applyState: ApplyState;
   appliedSignature: string | null;
-  flowCalPreviewMultiplier: number | null;
-  flowCalBaseMultiplier: number | null;
+  flowCalDraft: number | null;
+  flowCalBase: number | null;
   flowCalShotId: string | null;
 }
 
@@ -454,8 +452,8 @@ export class BeanieApp {
     asleep: false,
     applyState: 'idle',
     appliedSignature: null,
-    flowCalPreviewMultiplier: null,
-    flowCalBaseMultiplier: null,
+    flowCalDraft: null,
+    flowCalBase: null,
     flowCalShotId: null
   };
 
@@ -1770,9 +1768,10 @@ export class BeanieApp {
         this.openFlowCalibrator();
         break;
       case 'flow-cal-adjust':
-        this.adjustFlowCalibrationPreview(Number(el.dataset.delta ?? '0'));
+        this.adjustFlowCalibrationDraft(Number(el.dataset.delta ?? '0'));
         break;
       case 'flow-cal-save-preview':
+      case 'flow-cal-apply':
         await this.saveFlowCalibrationValue(Number(value));
         break;
       case 'flow-cal-shot':
@@ -3295,7 +3294,7 @@ export class BeanieApp {
       return;
     }
     if (edit.target === 'flow-calibration') {
-      this.setFlowCalibrationPreview(Number(value));
+      this.setFlowCalibrationDraft(Number(value));
       return;
     }
     if (edit.target === 'bean-picker-batch' && edit.beanId && edit.batchId && edit.name) {
@@ -3402,6 +3401,7 @@ export class BeanieApp {
     refreshIcons();
     this.bindLiveElements();
     this.bindDetailChart();
+    this.bindCalibratorChart();
     this.restoreFocus(focus);
     this.restoreScroll(scroll);
   }
@@ -3481,6 +3481,20 @@ export class BeanieApp {
     const chart = new LiveChart(canvas, { detailed: true, pixelScale: 3 });
     chart.setModel(chartModelFromShot(shot));
     // Draw after layout so the canvas has its CSS box for DPR sizing.
+    window.requestAnimationFrame(() => {
+      chart.resize();
+      chart.draw();
+    });
+  }
+
+  private bindCalibratorChart(): void {
+    if (this.state.view !== 'flow-calibrator') return;
+    const canvas = this.root.querySelector<HTMLCanvasElement>('#flow-cal-canvas');
+    if (!canvas) return;
+    const shot = this.flowCalibrationSelectedShot();
+    if (!shot) return;
+    const chart = new LiveChart(canvas, { detailed: true, pixelScale: 3 });
+    chart.setModel(chartModelFromShot(shot));
     window.requestAnimationFrame(() => {
       chart.resize();
       chart.draw();
@@ -4180,14 +4194,13 @@ export class BeanieApp {
 
   private renderFlowCalibratorPage(): string {
     const savedMultiplier = this.currentFlowCalibrationMultiplier();
-    const previewMultiplier = this.flowCalibrationPreviewMultiplier();
-    const baseMultiplier = this.flowCalibrationBaseMultiplier();
-    const referenceShots = this.flowCalibrationReferenceShots();
-    const referenceShot = this.flowCalibrationReferenceShot(referenceShots);
-    const analysis = analyzeFlowCalibration(referenceShot, baseMultiplier, previewMultiplier);
+    const baseMultiplier = this.flowCalibrationBase();
+    const draftMultiplier = this.flowCalibrationDraft();
+    const shots = this.flowCalibrationShots();
+    const selected = this.flowCalibrationSelectedShot();
     return `
       ${this.pageHeader('Flow Calibrator', 'workbench')}
-      ${renderFlowCalibrator(analysis, savedMultiplier, previewMultiplier, referenceShots, this.state.busy)}
+      ${renderFlowCalibrator(shots, savedMultiplier, baseMultiplier, draftMultiplier, selected?.id ?? null, this.state.busy)}
     `;
   }
 
@@ -4718,8 +4731,8 @@ export class BeanieApp {
         : this.state.demo
           ? 'demo'
           : 'loading',
-      flowCalPreviewMultiplier: null,
-      flowCalBaseMultiplier: null,
+      flowCalDraft: null,
+      flowCalBase: null,
       flowCalShotId: null
     });
     void this.loadReaSettings();
@@ -4730,44 +4743,45 @@ export class BeanieApp {
     return roundCalibration(typeof value === 'number' && Number.isFinite(value) ? value : 1);
   }
 
-  private flowCalibrationPreviewMultiplier(): number {
-    return this.state.flowCalPreviewMultiplier ?? this.currentFlowCalibrationMultiplier();
+  private flowCalibrationDraft(): number {
+    return this.state.flowCalDraft ?? this.currentFlowCalibrationMultiplier();
   }
 
-  private flowCalibrationBaseMultiplier(): number {
-    return this.state.flowCalBaseMultiplier ?? this.currentFlowCalibrationMultiplier();
+  // The multiplier the displayed shots were pulled under — the saved value as it
+  // was before any change this visit. Frozen on the first edit so applying one
+  // shot doesn't re-scale every other shot's suggestion.
+  private flowCalibrationBase(): number {
+    return roundCalibration(this.state.flowCalBase ?? this.currentFlowCalibrationMultiplier());
   }
 
-  private setFlowCalibrationPreview(raw: number): void {
+  private setFlowCalibrationDraft(raw: number): void {
     if (!Number.isFinite(raw)) return;
     this.setState({
-      flowCalBaseMultiplier: this.state.flowCalBaseMultiplier ?? this.currentFlowCalibrationMultiplier(),
-      flowCalPreviewMultiplier: roundCalibration(raw),
+      flowCalBase: this.state.flowCalBase ?? this.currentFlowCalibrationMultiplier(),
+      flowCalDraft: roundCalibration(raw),
       status: 'Flow calibration preview'
     });
   }
 
-  private adjustFlowCalibrationPreview(delta: number): void {
+  private adjustFlowCalibrationDraft(delta: number): void {
     if (!Number.isFinite(delta) || delta === 0) return;
-    this.setFlowCalibrationPreview(this.flowCalibrationPreviewMultiplier() + delta);
+    this.setFlowCalibrationDraft(this.flowCalibrationDraft() + delta);
   }
 
-  private flowCalibrationReferenceShots(): ShotRecord[] {
-    return this.state.shots.filter(calibrationShotCandidate);
+  // Every real (non flush/steam/water) shot is a calibration candidate now —
+  // each one knows how much the machine thought it pushed versus the cup weight.
+  private flowCalibrationShots(): ShotRecord[] {
+    return this.state.shots.filter((shot) => !isServiceShot(shot));
   }
 
-  private flowCalibrationReferenceShot(referenceShots = this.flowCalibrationReferenceShots()): ShotRecord | null {
-    return referenceShots.find((shot) => shot.id === this.state.flowCalShotId) ?? referenceShots[0] ?? null;
+  private flowCalibrationSelectedShot(): ShotRecord | null {
+    const shots = this.flowCalibrationShots();
+    return shots.find((shot) => shot.id === this.state.flowCalShotId) ?? shots[0] ?? null;
   }
 
   private selectFlowCalibrationShot(id: string): void {
-    if (!this.flowCalibrationReferenceShots().some((shot) => shot.id === id)) return;
-    this.setState({
-      flowCalShotId: id,
-      flowCalPreviewMultiplier: null,
-      flowCalBaseMultiplier: null,
-      status: 'Reference shot selected'
-    });
+    if (!this.flowCalibrationShots().some((shot) => shot.id === id)) return;
+    this.setState({ flowCalShotId: id, status: 'Shot selected' });
   }
 
   private async saveFlowCalibrationValue(raw: number): Promise<void> {
@@ -4776,8 +4790,10 @@ export class BeanieApp {
     const bundle = this.state.settingsBundle ?? demoSettingsBundle();
     this.setState({
       settingsBundle: { ...bundle, calibration: { ...bundle.calibration, flowMultiplier } },
-      flowCalPreviewMultiplier: flowMultiplier,
-      flowCalBaseMultiplier: this.state.flowCalBaseMultiplier ?? bundle.calibration.flowMultiplier,
+      // Freeze the base at the value the shots were pulled under (pre-change) so
+      // their suggestions stay put after this apply.
+      flowCalBase: this.state.flowCalBase ?? roundCalibration(bundle.calibration.flowMultiplier),
+      flowCalDraft: null,
       status: 'Flow calibration updated'
     });
     if (this.state.demo || this.state.settingsSource === 'demo') return;

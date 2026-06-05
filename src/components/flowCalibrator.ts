@@ -1,220 +1,247 @@
-import type { ShotMeasurement, ShotRecord } from '../api/types';
+import type { ShotRecord } from '../api/types';
 import { icon } from './icons';
 
 export const FLOW_CALIBRATION_MIN = 0.13;
 export const FLOW_CALIBRATION_MAX = 2;
 export const FLOW_CALIBRATION_STEP = 0.01;
 
-export interface FlowCalibrationSample {
-  t: number;
-  machineFlow: number | null;
-  scaleFlow: number | null;
-}
-
-export interface FlowCalibrationAnalysis {
-  shot: ShotRecord | null;
-  samples: FlowCalibrationSample[];
-  tailStart: number | null;
-  averageMachineFlow: number | null;
-  averageScaleFlow: number | null;
+// Per-shot flow calibration, modelled on the DE1 app's Graphical Flow Calibrator
+// (GFC): the machine estimates how much water it pushed, and we compare that to
+// what actually landed in the cup. If the machine consistently reads high or low,
+// the global `calibration_flow_multiplier` nudges its flow estimate back in line.
+//
+// machineVolume = integral of the machine's reported flow over the shot (mL).
+// cupWeight     = what the cup actually weighed (g) — a scale trace if the shot
+//                 has one, otherwise the recorded yield.
+// suggested     = baseMultiplier * (cupWeight / machineVolume), clamped to the
+//                 DE1's slider bounds. The recorded flow already reflects whatever
+//                 multiplier was active when the shot was pulled, so we scale
+//                 relative to that base — captured before any change this visit so
+//                 applying a shot doesn't shift the other shots' suggestions.
+export interface ShotCalibration {
+  machineVolume: number | null;
+  cupWeight: number | null;
+  weightSource: 'scale' | 'yield' | null;
   ratio: number | null;
+  baseMultiplier: number;
   suggestedMultiplier: number | null;
-  confidence: 'none' | 'low' | 'medium' | 'high';
-  message: string;
+  durationSeconds: number | null;
 }
 
-export function calibrationShotCandidate(shot: ShotRecord): boolean {
-  return analyzeFlowCalibration(shot, 1).suggestedMultiplier != null;
-}
-
-export function analyzeFlowCalibration(
+export function analyzeShotCalibration(
   shot: ShotRecord | null,
-  baseMultiplier: number,
-  previewMultiplier = baseMultiplier,
-  tailSeconds = 8
-): FlowCalibrationAnalysis {
-  const scale = multiplierScale(baseMultiplier, previewMultiplier);
-  const samples = trimShotSamples(
-    calibrationSamples(shot?.measurements ?? []).map((sample) => ({
-      ...sample,
-      machineFlow: sample.machineFlow == null ? null : sample.machineFlow * scale
-    }))
+  baseMultiplier: number
+): ShotCalibration {
+  const base = roundCalibration(
+    Number.isFinite(baseMultiplier) && baseMultiplier > 0 ? baseMultiplier : 1
   );
-  const paired = pairedSamples(samples);
-  const maxTime = Math.max(0, ...paired.map((sample) => sample.t));
-  const tailStart = paired.length ? Math.max(0, maxTime - tailSeconds) : null;
-  const tailPaired = tailStart == null ? [] : paired.filter((sample) => sample.t >= tailStart);
-  const stablePaired = tailPaired.length >= 3 ? tailPaired : paired;
-  const averageMachineFlow = average(stablePaired.map((sample) => sample.machineFlow!));
-  const averageScaleFlow = average(stablePaired.map((sample) => sample.scaleFlow!));
+  const { volume, duration } = machineFlowVolume(shot);
+  const { weight, source } = cupWeight(shot);
   const ratio =
-    averageMachineFlow != null && averageMachineFlow > 0 && averageScaleFlow != null
-      ? averageScaleFlow / averageMachineFlow
-      : null;
-  const suggestedMultiplier =
-    ratio == null ? null : roundCalibration(clampCalibration(previewMultiplier * ratio));
-  const confidence = confidenceFor(stablePaired.length, ratio);
+    volume != null && volume > 0 && weight != null && weight > 0 ? weight / volume : null;
+  const suggestedMultiplier = ratio == null ? null : roundCalibration(clampCalibration(base * ratio));
   return {
-    shot,
-    samples,
-    tailStart,
-    averageMachineFlow,
-    averageScaleFlow,
+    machineVolume: volume,
+    cupWeight: weight,
+    weightSource: source,
     ratio,
+    baseMultiplier: base,
     suggestedMultiplier,
-    confidence,
-    message: analysisMessage(confidence, ratio)
+    durationSeconds: duration
   };
 }
 
-function pairedSamples(samples: FlowCalibrationSample[]): FlowCalibrationSample[] {
-  return samples.filter(
-    (sample) =>
-      sample.machineFlow != null &&
-      sample.scaleFlow != null &&
-      sample.machineFlow >= 0.1 &&
-      sample.scaleFlow >= 0.1
-  );
+// Trapezoidal integral of machine flow against real wall-clock time. Gaps in the
+// trace (a dropped sample, a paused shot) are skipped rather than bridged so a
+// missing chunk doesn't inflate the estimate.
+function machineFlowVolume(shot: ShotRecord | null): {
+  volume: number | null;
+  duration: number | null;
+} {
+  const measurements = shot?.measurements ?? [];
+  let volume = 0;
+  let intervals = 0;
+  let firstT: number | null = null;
+  let lastT: number | null = null;
+  let prevT: number | null = null;
+  let prevFlow: number | null = null;
+  for (const measurement of measurements) {
+    const t = parseMs(measurement.machine?.timestamp);
+    const flow = numberFrom(measurement.machine, 'flow');
+    if (t == null || flow == null) {
+      prevT = null;
+      prevFlow = null;
+      continue;
+    }
+    if (firstT == null) firstT = t;
+    lastT = t;
+    if (prevT != null && prevFlow != null) {
+      const dt = (t - prevT) / 1000;
+      if (dt > 0 && dt < 30) {
+        volume += ((flow + prevFlow) / 2) * dt;
+        intervals += 1;
+      }
+    }
+    prevT = t;
+    prevFlow = flow;
+  }
+  const duration = firstT != null && lastT != null ? (lastT - firstT) / 1000 : null;
+  return { volume: intervals > 0 ? volume : null, duration };
 }
 
-function trimShotSamples(samples: FlowCalibrationSample[]): FlowCalibrationSample[] {
-  const first = samples.findIndex(activeSample);
-  if (first < 0) return [];
-  let last = samples.length - 1;
-  while (last > first && !activeSample(samples[last]!)) last -= 1;
-  const offset = samples[first]!.t;
-  return samples.slice(first, last + 1).map((sample) => ({ ...sample, t: sample.t - offset }));
-}
-
-function activeSample(sample: FlowCalibrationSample): boolean {
-  return sample.machineFlow != null && sample.machineFlow >= 0.1;
-}
-
-function multiplierScale(baseMultiplier: number, previewMultiplier: number): number {
-  if (!Number.isFinite(baseMultiplier) || baseMultiplier <= 0) return 1;
-  return previewMultiplier / baseMultiplier;
+function cupWeight(shot: ShotRecord | null): {
+  weight: number | null;
+  source: 'scale' | 'yield' | null;
+} {
+  let maxWeight: number | null = null;
+  for (const measurement of shot?.measurements ?? []) {
+    const weight = measurement.scale ? numberFrom(measurement.scale, 'weight') : null;
+    if (weight != null && (maxWeight == null || weight > maxWeight)) maxWeight = weight;
+  }
+  if (maxWeight != null && maxWeight > 0) return { weight: roundTenth(maxWeight), source: 'scale' };
+  const yieldWeight = shot?.annotations?.actualYield;
+  if (typeof yieldWeight === 'number' && Number.isFinite(yieldWeight) && yieldWeight > 0) {
+    return { weight: roundTenth(yieldWeight), source: 'yield' };
+  }
+  return { weight: null, source: null };
 }
 
 export function renderFlowCalibrator(
-  analysis: FlowCalibrationAnalysis,
+  shots: ShotRecord[],
   savedMultiplier: number,
-  previewMultiplier: number,
-  referenceShots: ShotRecord[],
+  baseMultiplier: number,
+  draftMultiplier: number,
+  selectedShotId: string | null,
   busy: boolean
 ): string {
-  const saveDisabled = previewMultiplier === roundCalibration(savedMultiplier);
-  const selectedShot = analysis.shot;
+  const saved = roundCalibration(savedMultiplier);
+  const base = roundCalibration(baseMultiplier);
+  const draft = roundCalibration(draftMultiplier);
+  const dirty = draft !== saved;
+  const selected = shots.find((shot) => shot.id === selectedShotId) ?? shots[0] ?? null;
 
   return `
     <main class="page-body flow-cal-page">
-      <section class="flow-cal-chart-panel">
-        ${renderFlowCalibrationSvg(analysis)}
-        <div class="flow-cal-legend">
-          <span><i class="machine"></i>Machine flow</span>
-          <span><i class="scale"></i>Scale flow</span>
+      <header class="flow-cal-head">
+        <div class="flow-cal-current">
+          <span class="flow-cal-current-label">Flow calibration</span>
+          <div class="flow-cal-stepper" aria-label="Flow calibration multiplier">
+            <button type="button" data-action="flow-cal-adjust" data-delta="-0.01" aria-label="Decrease flow calibration">${icon('minus')}</button>
+            <button
+              type="button"
+              class="settings-input number-edit-button flow-cal-number"
+              data-action="open-number-edit"
+              data-target="flow-calibration"
+              data-title="Flow calibration"
+              data-value="${escapeAttr(String(draft))}"
+              data-min="${FLOW_CALIBRATION_MIN}"
+              data-max="${FLOW_CALIBRATION_MAX}"
+              data-step="${FLOW_CALIBRATION_STEP}"
+              data-unit="x"
+            ><span>${escapeHtml(formatMultiplier(draft))}</span></button>
+            <button type="button" data-action="flow-cal-adjust" data-delta="0.01" aria-label="Increase flow calibration">${icon('plus')}</button>
+          </div>
+          ${
+            dirty
+              ? `<button type="button" class="text-button flow-cal-save" data-action="flow-cal-save-preview" data-value="${draft}" ${busy ? 'disabled' : ''}>${icon('save')}<span>Save ${escapeHtml(formatMultiplier(draft))}</span></button>`
+              : '<small class="flow-cal-control-note">Active on the machine</small>'
+          }
         </div>
-      </section>
-      <section class="flow-cal-reference">
-        <div class="flow-cal-shot-list">
-          ${renderReferenceShots(referenceShots, selectedShot, savedMultiplier, previewMultiplier, saveDisabled, busy)}
+        <p class="flow-cal-explain">Each shot weighs what the machine measured against what reached the cup. Apply a shot to correct the flow reading.</p>
+      </header>
+      <div class="flow-cal-split">
+        <div class="flow-cal-list">
+          ${
+            shots.length === 0
+              ? '<p class="flow-cal-empty-list">No shots yet for this bean.</p>'
+              : shots.map((shot) => renderShotRow(shot, saved, base, shot.id === selected?.id, busy)).join('')
+          }
         </div>
-      </section>
+        <div class="flow-cal-detail">
+          ${selected ? renderShotDetail(selected, saved, base, busy) : '<p class="flow-cal-empty">Select a shot to calibrate from.</p>'}
+        </div>
+      </div>
     </main>
   `;
 }
 
-export function renderFlowCalibrationSvg(analysis: FlowCalibrationAnalysis): string {
-  const width = 880;
-  const height = 330;
-  const plot = { x: 46, y: 24, width: width - 68, height: height - 70 };
-  if (analysis.samples.length === 0) {
-    return `<svg class="flow-cal-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="No flow calibration data">
-      <rect class="flow-cal-plot" x="${plot.x}" y="${plot.y}" width="${plot.width}" height="${plot.height}" />
-      <text class="flow-cal-empty" x="${width / 2}" y="${height / 2}">Choose a shot with machine and scale flow</text>
-    </svg>`;
-  }
-
-  const maxTime = Math.max(1, ...analysis.samples.map((sample) => sample.t));
-  const maxFlow = Math.max(
-    4,
-    ...analysis.samples.flatMap((sample) => [sample.machineFlow ?? 0, sample.scaleFlow ?? 0])
-  );
-  const xFor = (t: number) => plot.x + (t / maxTime) * plot.width;
-  const yFor = (flow: number) => plot.y + (1 - Math.max(0, Math.min(1, flow / maxFlow))) * plot.height;
-  const machine = tracePath(analysis.samples, 'machineFlow', xFor, yFor);
-  const scale = tracePath(analysis.samples, 'scaleFlow', xFor, yFor);
-  const xTicks = [0, maxTime / 4, maxTime / 2, (maxTime * 3) / 4, maxTime];
-  const yTicks = [0, maxFlow / 4, maxFlow / 2, (maxFlow * 3) / 4, maxFlow];
-
-  return `<svg class="flow-cal-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Flow calibration chart">
-    <rect class="flow-cal-plot" x="${plot.x}" y="${plot.y}" width="${plot.width}" height="${plot.height}" />
-    ${analysis.tailStart == null ? '' : `<rect class="flow-cal-tail" x="${xFor(analysis.tailStart).toFixed(1)}" y="${plot.y}" width="${(plot.x + plot.width - xFor(analysis.tailStart)).toFixed(1)}" height="${plot.height}" />`}
-    ${xTicks.map((tick) => `<line class="flow-cal-grid" x1="${xFor(tick).toFixed(1)}" y1="${plot.y}" x2="${xFor(tick).toFixed(1)}" y2="${plot.y + plot.height}" />`).join('')}
-    ${yTicks.map((tick) => `<line class="flow-cal-grid" x1="${plot.x}" y1="${yFor(tick).toFixed(1)}" x2="${plot.x + plot.width}" y2="${yFor(tick).toFixed(1)}" />`).join('')}
-    ${xTicks.map((tick) => `<text class="flow-cal-axis" x="${xFor(tick).toFixed(1)}" y="${height - 18}" text-anchor="middle">${formatTick(tick)}s</text>`).join('')}
-    ${yTicks.map((tick) => `<text class="flow-cal-axis" x="${plot.x - 10}" y="${(yFor(tick) + 4).toFixed(1)}" text-anchor="end">${formatTick(tick)}</text>`).join('')}
-    ${machine ? `<path class="flow-cal-machine" d="${machine}" />` : ''}
-    ${scale ? `<path class="flow-cal-scale" d="${scale}" />` : ''}
-  </svg>`;
+function renderShotRow(
+  shot: ShotRecord,
+  savedMultiplier: number,
+  baseMultiplier: number,
+  active: boolean,
+  busy: boolean
+): string {
+  const analysis = analyzeShotCalibration(shot, baseMultiplier);
+  const suggested = analysis.suggestedMultiplier;
+  const canApply = suggested != null && suggested !== savedMultiplier && !busy;
+  return `
+    <article class="flow-cal-shot ${active ? 'active' : ''}">
+      <button type="button" class="flow-cal-shot-pick" data-action="flow-cal-shot" data-id="${escapeAttr(shot.id)}" aria-pressed="${active}">
+        <span class="flow-cal-shot-meta">
+          <span>${escapeHtml(dateLabel(shot.timestamp))}</span>
+          <strong>${escapeHtml(recipeLabel(shot, analysis.durationSeconds))}</strong>
+          <small>${escapeHtml(profileTitle(shot))}</small>
+        </span>
+        <span class="flow-cal-shot-cal">
+          <small>suggested</small>
+          <strong>${suggested == null ? '—' : escapeHtml(formatMultiplier(suggested))}</strong>
+        </span>
+      </button>
+      <button
+        type="button"
+        class="flow-cal-apply"
+        data-action="flow-cal-apply"
+        data-value="${suggested ?? ''}"
+        ${canApply ? '' : 'disabled'}
+      >${suggested != null && suggested === savedMultiplier ? 'Active' : 'Apply'}</button>
+    </article>
+  `;
 }
 
-function calibrationSamples(measurements: ShotMeasurement[]): FlowCalibrationSample[] {
-  const first = firstTimestamp(measurements);
-  return measurements.flatMap((measurement, index) => {
-    const timestamp = timestampFor(measurement.machine.timestamp) ?? first;
-    const t = first == null || timestamp == null ? index : Math.max(0, (timestamp - first) / 1000);
-    const machineFlow = numberFrom(measurement.machine, 'flow');
-    const scaleFlow = measurement.scale ? numberFrom(measurement.scale, 'weightFlow') : null;
-    if (machineFlow == null && scaleFlow == null) return [];
-    return [{ t, machineFlow, scaleFlow }];
-  });
-}
-
-function firstTimestamp(measurements: ShotMeasurement[]): number | null {
-  for (const measurement of measurements) {
-    const timestamp = timestampFor(measurement.machine.timestamp) ?? timestampFor(measurement.scale?.timestamp);
-    if (timestamp != null) return timestamp;
-  }
-  return null;
-}
-
-function timestampFor(value: unknown): number | null {
-  if (typeof value !== 'string') return null;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function numberFrom(record: Record<string, unknown>, key: string): number | null {
-  const value = record[key];
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string' && value.trim() !== '') {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
-function average(values: number[]): number | null {
-  if (values.length === 0) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const trim = Math.floor(sorted.length * 0.1);
-  const kept = sorted.slice(trim, sorted.length - trim);
-  const usable = kept.length ? kept : sorted;
-  return usable.reduce((sum, value) => sum + value, 0) / usable.length;
-}
-
-function confidenceFor(sampleCount: number, ratio: number | null): FlowCalibrationAnalysis['confidence'] {
-  if (ratio == null) return 'none';
-  if (sampleCount < 8) return 'low';
-  if (sampleCount < 30) return 'medium';
-  return 'high';
-}
-
-function analysisMessage(confidence: FlowCalibrationAnalysis['confidence'], ratio: number | null): string {
-  if (confidence === 'none') return 'Need a shot with both machine flow and scale flow.';
-  if (confidence === 'low') return 'Only a small overlap was found; choose a longer shot if one is available.';
-  if (ratio != null && Math.abs(1 - ratio) <= 0.03) return 'The two traces are already close.';
-  return 'Suggested multiplier is current value adjusted by scale flow divided by machine flow.';
+function renderShotDetail(
+  shot: ShotRecord,
+  savedMultiplier: number,
+  baseMultiplier: number,
+  busy: boolean
+): string {
+  const analysis = analyzeShotCalibration(shot, baseMultiplier);
+  const suggested = analysis.suggestedMultiplier;
+  const sourceLabel =
+    analysis.weightSource === 'scale' ? 'scale' : analysis.weightSource === 'yield' ? 'yield' : '';
+  return `
+    <div class="flow-cal-detail-head">
+      <strong>${escapeHtml(recipeLabel(shot, analysis.durationSeconds))}</strong>
+      <span>${escapeHtml(profileTitle(shot))}</span>
+      <span>${escapeHtml(dateLabel(shot.timestamp))}</span>
+    </div>
+    <div class="flow-cal-detail-chart">
+      <canvas id="flow-cal-canvas" class="live-canvas detail-canvas"></canvas>
+    </div>
+    <dl class="flow-cal-breakdown">
+      <div>
+        <dt>Machine measured</dt>
+        <dd>${analysis.machineVolume == null ? '—' : `${analysis.machineVolume.toFixed(1)} mL`}</dd>
+      </div>
+      <div>
+        <dt>In the cup</dt>
+        <dd>${analysis.cupWeight == null ? '—' : `${analysis.cupWeight.toFixed(1)} g`}${sourceLabel ? ` <small>(${sourceLabel})</small>` : ''}</dd>
+      </div>
+      <div>
+        <dt>Current</dt>
+        <dd>${escapeHtml(formatMultiplier(savedMultiplier))}</dd>
+      </div>
+      <div class="flow-cal-breakdown-suggest">
+        <dt>Suggested</dt>
+        <dd>${suggested == null ? '—' : escapeHtml(formatMultiplier(suggested))}</dd>
+      </div>
+    </dl>
+    ${
+      suggested == null
+        ? '<p class="flow-cal-detail-note">Add a final weight (or pull this shot on a connected scale) to calibrate from it.</p>'
+        : `<button type="button" class="command primary flow-cal-apply-big" data-action="flow-cal-apply" data-value="${suggested}" ${suggested === savedMultiplier || busy ? 'disabled' : ''}>${icon('check')}<span>${suggested === savedMultiplier ? 'Already applied' : `Apply ${formatMultiplier(suggested)}`}</span></button>`
+    }
+  `;
 }
 
 export function clampCalibration(value: number): number {
@@ -225,114 +252,63 @@ export function roundCalibration(value: number): number {
   return Number(clampCalibration(value).toFixed(2));
 }
 
-function tracePath(
-  samples: FlowCalibrationSample[],
-  key: 'machineFlow' | 'scaleFlow',
-  xFor: (value: number) => number,
-  yFor: (value: number) => number
-): string {
-  const runs: string[] = [];
-  let current: string[] = [];
-  for (const sample of samples) {
-    const value = sample[key];
-    if (value == null) {
-      if (current.length > 1) runs.push(`M${current.join('L')}`);
-      current = [];
-      continue;
-    }
-    current.push(`${xFor(sample.t).toFixed(1)} ${yFor(value).toFixed(1)}`);
+function recipeLabel(shot: ShotRecord, durationSeconds: number | null): string {
+  const context = shot.workflow?.context;
+  const dose = firstNumber(shot.annotations?.actualDoseWeight, context?.targetDoseWeight);
+  const yieldWeight = firstNumber(shot.annotations?.actualYield, context?.targetYield);
+  const recipe = `${formatGrams(dose)} → ${formatGrams(yieldWeight)}`;
+  return durationSeconds && durationSeconds > 0 ? `${recipe} @ ${Math.round(durationSeconds)}s` : recipe;
+}
+
+function profileTitle(shot: ShotRecord): string {
+  return shot.workflow?.profile?.title ?? shot.workflow?.name ?? 'No profile';
+}
+
+function firstNumber(...values: Array<number | null | undefined>): number | null {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
   }
-  if (current.length > 1) runs.push(`M${current.join('L')}`);
-  return runs.join('');
+  return null;
 }
 
-function renderReferenceShots(
-  shots: ShotRecord[],
-  selectedShot: ShotRecord | null,
-  savedMultiplier: number,
-  previewMultiplier: number,
-  saveDisabled: boolean,
-  busy: boolean
-): string {
-  if (shots.length === 0) return '<p class="flow-cal-empty-list">No loaded shots have scale flow yet.</p>';
-  return shots
-    .map((shot) => {
-      const active = shot.id === selectedShot?.id;
-      const title = shot.workflow?.profile?.title ?? 'Untitled shot';
-      const yieldText = shot.annotations?.actualYield == null ? '' : ` · ${shot.annotations.actualYield.toFixed(1)}g`;
-      const shotAnalysis = analyzeFlowCalibration(shot, savedMultiplier);
-      const duration = shotDurationText(shotAnalysis.samples);
-      return `
-        <article class="flow-cal-shot ${active ? 'active' : ''}">
-          <button type="button" class="flow-cal-shot-pick" data-action="flow-cal-shot" data-id="${escapeAttr(shot.id)}" aria-pressed="${active}">
-            <span class="flow-cal-shot-meta">
-              <span>${escapeHtml(dateLabel(shot.timestamp))}</span>
-              <strong>${escapeHtml(title)}</strong>
-              <small>${escapeHtml(`${duration}${yieldText}`)}</small>
-            </span>
-            <span class="flow-cal-shot-cal">
-              <small>calibration</small>
-              <strong>${escapeHtml(shotAnalysis.suggestedMultiplier == null ? '--' : formatMultiplier(shotAnalysis.suggestedMultiplier))}</strong>
-            </span>
-          </button>
-          ${active ? renderSelectedShotControls(previewMultiplier, savedMultiplier, saveDisabled, busy) : ''}
-        </article>`;
-    })
-    .join('');
-}
-
-function renderSelectedShotControls(
-  previewMultiplier: number,
-  savedMultiplier: number,
-  saveDisabled: boolean,
-  busy: boolean
-): string {
-  return `
-    <div class="flow-cal-controls">
-      <div class="flow-cal-stepper" aria-label="Flow calibration preview">
-        <button type="button" data-action="flow-cal-adjust" data-delta="-0.01" aria-label="Decrease flow calibration">${icon('minus')}</button>
-        <button
-          type="button"
-          class="settings-input number-edit-button flow-cal-number"
-          data-action="open-number-edit"
-          data-target="flow-calibration"
-          data-title="Flow calibration preview"
-          data-value="${escapeAttr(String(previewMultiplier))}"
-          data-min="${FLOW_CALIBRATION_MIN}"
-          data-max="${FLOW_CALIBRATION_MAX}"
-          data-step="${FLOW_CALIBRATION_STEP}"
-          data-unit="x"
-        >
-          <span>${escapeHtml(formatMultiplier(previewMultiplier))}</span>
-        </button>
-        <button type="button" data-action="flow-cal-adjust" data-delta="0.01" aria-label="Increase flow calibration">${icon('plus')}</button>
-      </div>
-      <button type="button" class="text-button" data-action="flow-cal-save-preview" data-value="${previewMultiplier}" ${saveDisabled || busy ? 'disabled' : ''}>
-        ${icon('save')}<span>Save preview</span>
-      </button>
-      <small class="flow-cal-control-note">Saved ${escapeHtml(formatMultiplier(savedMultiplier))}</small>
-    </div>
-  `;
-}
-
-function shotDurationText(samples: FlowCalibrationSample[]): string {
-  const maxTime = Math.max(0, ...samples.map((sample) => sample.t));
-  return `${formatTick(maxTime)}s`;
+function formatGrams(value: number | null): string {
+  return value == null ? '—' : `${value.toFixed(1)}g`;
 }
 
 function formatMultiplier(value: number): string {
-  return `${roundCalibration(value).toFixed(2)}x`;
+  return `${roundCalibration(value).toFixed(2)}×`;
 }
 
-function formatTick(value: number): string {
-  const rounded = Math.round(value * 10) / 10;
-  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+function parseMs(value: unknown): number | null {
+  if (typeof value !== 'string') return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function numberFrom(record: Record<string, unknown> | null | undefined, key: string): number | null {
+  if (!record) return null;
+  const value = record[key];
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function roundTenth(value: number): number {
+  return Math.round(value * 10) / 10;
 }
 
 function dateLabel(value: string): string {
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) return value;
-  return new Date(timestamp).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return new Date(timestamp).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }
 
 function escapeHtml(value: string): string {

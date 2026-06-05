@@ -1,54 +1,53 @@
 import type { ShotRecord } from '../api/types';
-import {
-  analyzeFlowCalibration,
-  calibrationShotCandidate,
-  roundCalibration
-} from '../components/flowCalibrator';
+import { analyzeShotCalibration, roundCalibration } from '../components/flowCalibrator';
 
-run('analyzeFlowCalibration suggests current multiplier times scale over machine flow', () => {
-  const analysis = analyzeFlowCalibration(flowShot(1.5, 1.8, 40), 1.1);
-  equal(analysis.averageMachineFlow?.toFixed(2), '1.50');
-  equal(analysis.averageScaleFlow?.toFixed(2), '1.80');
-  equal(analysis.ratio?.toFixed(3), '1.200');
-  equal(analysis.suggestedMultiplier, 1.32);
-  equal(analysis.confidence, 'medium');
+run('analyzeShotCalibration suggests base multiplier times cup weight over machine volume', () => {
+  // Constant 2 mL/s for 20s -> 40 mL machine volume; 36 g in the cup.
+  const analysis = analyzeShotCalibration(constFlowShot(2, 21, { yield: 36 }), 1);
+  equal(analysis.machineVolume?.toFixed(1), '40.0');
+  equal(analysis.cupWeight, 36);
+  equal(analysis.weightSource, 'yield');
+  equal(analysis.ratio?.toFixed(3), '0.900');
+  equal(analysis.suggestedMultiplier, 0.9);
 });
 
-run('analyzeFlowCalibration scales machine flow by preview over baseline', () => {
-  const analysis = analyzeFlowCalibration(flowShot(1.5, 1.8, 40), 1, 1.2);
-  equal(analysis.averageMachineFlow?.toFixed(2), '1.80');
-  equal(analysis.averageScaleFlow?.toFixed(2), '1.80');
-  equal(analysis.ratio?.toFixed(3), '1.000');
-  equal(analysis.suggestedMultiplier, 1.2);
+run('analyzeShotCalibration prefers a scale weight trace over the recorded yield', () => {
+  // 40 mL machine volume, scale ramps to 38 g (yield annotation deliberately wrong).
+  const analysis = analyzeShotCalibration(constFlowShot(2, 21, { scaleTo: 38, yield: 99 }), 1);
+  equal(analysis.weightSource, 'scale');
+  equal(analysis.cupWeight, 38);
+  equal(analysis.suggestedMultiplier, 0.95);
 });
 
-run('analyzeFlowCalibration focuses the stable tail instead of the whole shot', () => {
-  const analysis = analyzeFlowCalibration(rampingThenStableShot(), 1, 1, 8);
-  equal(analysis.tailStart?.toFixed(1), '11.0');
-  equal(analysis.averageMachineFlow?.toFixed(2), '2.00');
-  equal(analysis.averageScaleFlow?.toFixed(2), '2.00');
-  equal(analysis.suggestedMultiplier, 1);
+run('analyzeShotCalibration scales the suggestion by the base multiplier', () => {
+  // base 1.2 * (36/40) = 1.08
+  const analysis = analyzeShotCalibration(constFlowShot(2, 21, { yield: 36 }), 1.2);
+  equal(analysis.suggestedMultiplier, 1.08);
 });
 
-run('analyzeFlowCalibration trims trailing idle frames from chart samples', () => {
-  const analysis = analyzeFlowCalibration(activeShotWithTrailingIdle(), 1, 1, 8);
-  const maxTime = Math.max(...analysis.samples.map((sample) => sample.t));
-  equal(analysis.samples.length, 24);
-  equal(maxTime.toFixed(1), '23.0');
-  equal(analysis.tailStart?.toFixed(1), '15.0');
-});
-
-run('analyzeFlowCalibration clamps suggested multiplier into DE1 bounds', () => {
-  const analysis = analyzeFlowCalibration(flowShot(0.2, 2, 40), 1.5);
+run('analyzeShotCalibration clamps the suggestion into DE1 slider bounds', () => {
+  // 0.5 mL/s for 4s -> 2 mL volume, 40 g cup -> ratio 20 -> clamp to 2.
+  const analysis = analyzeShotCalibration(constFlowShot(0.5, 5, { yield: 40 }), 1.5);
   equal(analysis.suggestedMultiplier, 2);
 });
 
-run('calibrationShotCandidate accepts old shots with paired flow traces', () => {
-  equal(calibrationShotCandidate(flowShot(1, 1, 2)), true);
+run('analyzeShotCalibration returns no suggestion without a cup weight', () => {
+  const analysis = analyzeShotCalibration(constFlowShot(2, 21, {}), 1);
+  equal(analysis.machineVolume?.toFixed(1), '40.0');
+  equal(analysis.cupWeight, null);
+  equal(analysis.weightSource, null);
+  equal(analysis.suggestedMultiplier, null);
 });
 
-run('calibrationShotCandidate rejects shots without scale flow', () => {
-  equal(calibrationShotCandidate(machineOnlyShot()), false);
+run('analyzeShotCalibration returns no suggestion without a flow trace', () => {
+  const analysis = analyzeShotCalibration(noFlowShot(36), 1);
+  equal(analysis.machineVolume, null);
+  equal(analysis.suggestedMultiplier, null);
+});
+
+run('analyzeShotCalibration reports the shot duration in seconds', () => {
+  const analysis = analyzeShotCalibration(constFlowShot(2, 21, { yield: 36 }), 1);
+  equal(analysis.durationSeconds, 20);
 });
 
 run('roundCalibration applies two-digit DE1 slider precision', () => {
@@ -56,75 +55,47 @@ run('roundCalibration applies two-digit DE1 slider precision', () => {
   equal(roundCalibration(0), 0.13);
 });
 
-function flowShot(machineFlow: number, scaleFlow: number, count: number, title = 'Any shot'): ShotRecord {
+interface ShotOptions {
+  scaleTo?: number;
+  yield?: number;
+}
+
+// One measurement per second so the trapezoidal integral of a constant flow is
+// flow * (count - 1) seconds.
+function constFlowShot(flow: number, count: number, options: ShotOptions): ShotRecord {
   const start = Date.parse('2026-06-01T10:00:00.000Z');
   return {
-    id: 'flow-shot',
+    id: 'shot',
     timestamp: '2026-06-01T10:00:00.000Z',
-    workflow: { profile: { title } },
+    workflow: { profile: { title: 'Any shot' } },
+    annotations: options.yield == null ? {} : { actualYield: options.yield },
     measurements: Array.from({ length: count }, (_, index) => ({
       machine: {
         timestamp: new Date(start + index * 1000).toISOString(),
-        flow: machineFlow
+        flow
       },
-      scale: {
-        timestamp: new Date(start + index * 1000).toISOString(),
-        weightFlow: scaleFlow
-      }
+      scale:
+        options.scaleTo == null
+          ? null
+          : {
+              timestamp: new Date(start + index * 1000).toISOString(),
+              weight: (options.scaleTo * index) / (count - 1)
+            }
     }))
   } as ShotRecord;
 }
 
-function rampingThenStableShot(): ShotRecord {
+function noFlowShot(yieldWeight: number): ShotRecord {
   const start = Date.parse('2026-06-01T10:00:00.000Z');
   return {
-    id: 'tail-shot',
+    id: 'no-flow-shot',
     timestamp: '2026-06-01T10:00:00.000Z',
-    measurements: Array.from({ length: 20 }, (_, index) => ({
+    annotations: { actualYield: yieldWeight },
+    measurements: Array.from({ length: 10 }, (_, index) => ({
       machine: {
-        timestamp: new Date(start + index * 1000).toISOString(),
-        flow: index < 10 ? 0.8 : 2
-      },
-      scale: {
-        timestamp: new Date(start + index * 1000).toISOString(),
-        weightFlow: index < 10 ? 1.4 : 2
+        timestamp: new Date(start + index * 1000).toISOString()
       }
     }))
-  } as ShotRecord;
-}
-
-function machineOnlyShot(): ShotRecord {
-  const start = Date.parse('2026-06-01T10:00:00.000Z');
-  return {
-    id: 'machine-only-shot',
-    timestamp: '2026-06-01T10:00:00.000Z',
-    measurements: Array.from({ length: 20 }, (_, index) => ({
-      machine: {
-        timestamp: new Date(start + index * 1000).toISOString(),
-        flow: 2
-      }
-    }))
-  } as ShotRecord;
-}
-
-function activeShotWithTrailingIdle(): ShotRecord {
-  const start = Date.parse('2026-06-01T10:00:00.000Z');
-  return {
-    id: 'trailing-idle-shot',
-    timestamp: '2026-06-01T10:00:00.000Z',
-    measurements: Array.from({ length: 34 }, (_, index) => {
-      const active = index <= 23;
-      return {
-        machine: {
-          timestamp: new Date(start + index * 1000).toISOString(),
-          flow: active ? 2 : 0
-        },
-        scale: {
-          timestamp: new Date(start + index * 1000).toISOString(),
-          weightFlow: active ? 2 : 0.4
-        }
-      };
-    })
   } as ShotRecord;
 }
 
