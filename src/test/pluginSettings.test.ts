@@ -57,10 +57,16 @@ run('visualizer spec exposes credential + option fields and is verifiable', () =
   equal(keys.includes('Password'), true);
   equal(keys.includes('AutoUpload'), true);
   equal(keys.includes('LengthThreshold'), true);
+  equal(keys.includes('BackSync'), true);
+  equal(keys.includes('BackSyncIntervalSeconds'), true);
   equal(keys.includes('visibility'), false);
   equal(spec.supportsVerify, true);
   const password = spec.fields.find((field) => field.key === 'Password');
   equal(password?.secret, true); // password must be write-only
+  equal(spec.fields.find((field) => field.key === 'BackSync')?.type, 'toggle');
+  const interval = spec.fields.find((field) => field.key === 'BackSyncIntervalSeconds');
+  equal(interval?.type, 'number');
+  equal(interval?.default, 300);
   equal(pluginSettingsSpec('does-not-exist'), null);
 });
 
@@ -71,6 +77,8 @@ run('pluginFieldDefault returns type-appropriate blanks', () => {
   equal(pluginFieldDefault(byKey('AutoUpload')), false);
   equal(pluginFieldDefault(byKey('LengthThreshold')), 0);
   equal(pluginFieldDefault(byKey('Password')), ''); // secret default stays blank
+  equal(pluginFieldDefault(byKey('BackSync')), false);
+  equal(pluginFieldDefault(byKey('BackSyncIntervalSeconds')), 300); // explicit default wins
 });
 
 run('demoPluginSettings provides visualizer demo values', () => {

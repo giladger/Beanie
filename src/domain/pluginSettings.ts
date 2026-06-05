@@ -24,6 +24,8 @@ export interface PluginSettingField {
   max?: number;
   step?: number;
   unit?: string;
+  /** Fallback shown before the gateway supplies a value (matches the plugin's manifest default). */
+  default?: string | number | boolean;
 }
 
 export interface PluginSettingsSpec {
@@ -39,7 +41,7 @@ export const PLUGIN_SETTINGS_SPECS: Record<string, PluginSettingsSpec> = {
   visualizer: {
     id: 'visualizer',
     title: 'Visualizer',
-    help: 'Upload finished shots to visualizer.coffee. Credentials are stored by the gateway and hidden here after saving.',
+    help: 'Upload finished shots to visualizer.coffee, and optionally sync your edits back. Credentials are stored by the gateway and hidden here after saving.',
     supportsVerify: true,
     fields: [
       { key: 'Username', label: 'Email', type: 'text', placeholder: 'you@example.com' },
@@ -60,6 +62,23 @@ export const PLUGIN_SETTINGS_SPECS: Record<string, PluginSettingsSpec> = {
         step: 1,
         unit: 's',
         help: 'Skip uploading very short flushes and rinses.'
+      },
+      {
+        key: 'BackSync',
+        label: 'Sync edits back from Visualizer',
+        type: 'toggle',
+        help: 'Pull notes, TDS, EY, enjoyment and bean/grinder you edit on visualizer.coffee back onto your shots. Only your own uploaded shots are touched.'
+      },
+      {
+        key: 'BackSyncIntervalSeconds',
+        label: 'Back-sync check interval',
+        type: 'number',
+        min: 60,
+        max: 3600,
+        step: 60,
+        unit: 's',
+        default: 300,
+        help: 'How often to check Visualizer for your edits.'
       }
     ]
   }
@@ -92,6 +111,7 @@ export interface PluginConfigState {
 /** Default value for a field when the gateway hasn't supplied one yet. */
 export function pluginFieldDefault(field: PluginSettingField): string | number | boolean {
   if (field.secret) return '';
+  if (field.default !== undefined) return field.default;
   switch (field.type) {
     case 'toggle':
       return false;
