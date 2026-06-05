@@ -384,6 +384,8 @@ interface AppState {
   scale: ScaleSnapshot | null;
   waterLevel: number | null;
   liveActive: boolean;
+  /** Shot ended; keep the shot screen up while the gateway finishes saving it. */
+  liveFinalizing: boolean;
   liveChartMode: LiveChartMode;
   asleep: boolean;
   applyState: ApplyState;
@@ -466,6 +468,7 @@ export class BeanieApp {
     scale: null,
     waterLevel: null,
     liveActive: false,
+    liveFinalizing: false,
     liveChartMode: 'preset30',
     asleep: false,
     applyState: 'idle',
@@ -1391,7 +1394,8 @@ export class BeanieApp {
 
     if (active && !wasActive) {
       // First active frame: render once to mount the live panel + canvas, then draw.
-      this.setState({ liveActive: true, status: 'Live shot' });
+      // Clear any leftover finalizing from a just-prior shot so this one takes over.
+      this.setState({ liveActive: true, liveFinalizing: false, status: 'Live shot' });
       return;
     }
     if (!active && wasActive) {
@@ -1499,7 +1503,7 @@ export class BeanieApp {
   }
 
   private drawLiveChart(): void {
-    if (!this.state.liveActive || !this.liveChart) return;
+    if ((!this.state.liveActive && !this.state.liveFinalizing) || !this.liveChart) return;
     this.liveDirty = false;
     this.liveChart.resize();
     const model = this.liveShot.model(liveChartModelOptions(this.state.liveChartMode));
@@ -1565,15 +1569,33 @@ export class BeanieApp {
           shotWindow
         )
       : null;
-    const refreshContext = {
-      previousShotIds: new Set(this.state.shots.map((shot) => shot.id)),
-      startedAtMs: shotWindow.startMs,
-      endedAtMs: shotWindow.lastActiveMs ?? Date.now(),
-      optimisticShot
-    };
     const reason = this.liveShot.completionReason;
+
+    if (bean && !this.state.demo) {
+      // Keep the shot screen up (chart frozen, "Saving…") while the gateway
+      // finishes persisting the shot, so the list never flashes the unsettled
+      // optimistic yield. refreshShotsAfterLiveShot swaps in the real shot —
+      // or falls back to the optimistic one — and only then closes the screen.
+      const refreshContext = {
+        previousShotIds: new Set(this.state.shots.map((shot) => shot.id)),
+        startedAtMs: shotWindow.startMs,
+        endedAtMs: shotWindow.lastActiveMs ?? Date.now(),
+        optimisticShot
+      };
+      this.setState({
+        liveActive: false,
+        liveFinalizing: true,
+        beans: promoteBean(this.state.beans, bean.id),
+        status: 'Saving shot…'
+      });
+      void this.refreshShotsAfterLiveShot(bean, refreshContext);
+      return;
+    }
+
+    // Demo / no bean: nothing to wait for — show the shot immediately.
     this.setState({
       liveActive: false,
+      liveFinalizing: false,
       beans: bean ? promoteBean(this.state.beans, bean.id) : this.state.beans,
       shots: optimisticShot ? includeShotInHistory(this.state.shots, optimisticShot, this.shotPageSize) : this.state.shots,
       shotsTotal: optimisticShot ? Math.max(this.state.shotsTotal, this.state.shots.length + 1) : this.state.shotsTotal,
@@ -1581,9 +1603,6 @@ export class BeanieApp {
       status: reason ? `Shot complete (${reason})` : 'Shot complete'
     });
     this.liveShot.reset();
-    if (bean && !this.state.demo) {
-      void this.refreshShotsAfterLiveShot(bean, refreshContext);
-    }
   }
 
   private async refreshShotsAfterLiveShot(
@@ -1599,47 +1618,65 @@ export class BeanieApp {
     let lastRecords: ShotRecord[] = [];
     let lastTotal = this.state.shotsTotal;
 
-    for (let attempt = 0; attempt < delays.length; attempt += 1) {
-      const delayMs = delays[attempt]!;
-      if (delayMs > 0) await delay(delayMs);
-      if (this.selectedBean()?.id !== bean.id) return;
+    try {
+      for (let attempt = 0; attempt < delays.length; attempt += 1) {
+        const delayMs = delays[attempt]!;
+        if (delayMs > 0) await delay(delayMs);
+        if (this.selectedBean()?.id !== bean.id || this.state.liveActive) return;
 
-      await beanieCache.invalidateShotMutation().catch(() => {});
-      const [{ records, total }, latestRecords] = await Promise.all([
-        this.loadFirstShots(bean),
-        this.loadLatestShotCandidates()
-      ]);
-      lastRecords = records;
-      lastTotal = total;
+        await beanieCache.invalidateShotMutation().catch(() => {});
+        const [{ records, total }, latestRecords] = await Promise.all([
+          this.loadFirstShots(bean),
+          this.loadLatestShotCandidates()
+        ]);
+        lastRecords = records;
+        lastTotal = total;
 
-      const completedShot =
-        completedLiveShot(records, context, false) ??
-        completedLiveShot(latestRecords, context, attempt === delays.length - 1);
-      if (!completedShot) continue;
+        const completedShot =
+          completedLiveShot(records, context, false) ??
+          completedLiveShot(latestRecords, context, attempt === delays.length - 1);
+        if (!completedShot) continue;
 
-      const visibleRecords = includeShotInHistory(records, completedShot, this.shotPageSize);
+        const visibleRecords = includeShotInHistory(records, completedShot, this.shotPageSize);
 
+        // Real shot is persisted and settled — now close the shot screen onto it.
+        this.liveShot.reset();
+        this.setState({
+          shots: visibleRecords,
+          shotsTotal: Math.max(total, visibleRecords.length),
+          shotsLoadingMore: false,
+          liveActive: false,
+          liveFinalizing: false,
+          detailShotId: completedShot.id,
+          status: 'Shot saved'
+        });
+        return;
+      }
+
+      if (this.selectedBean()?.id !== bean.id || this.state.liveActive) return;
+      // Gave up waiting for the gateway — fall back to the optimistic shot so the
+      // screen still closes rather than hanging.
+      this.liveShot.reset();
+      const visibleRecords = context.optimisticShot
+        ? includeShotInHistory(lastRecords, context.optimisticShot, this.shotPageSize)
+        : lastRecords;
       this.setState({
         shots: visibleRecords,
-        shotsTotal: Math.max(total, visibleRecords.length),
+        shotsTotal: Math.max(lastTotal, visibleRecords.length),
         shotsLoadingMore: false,
-        detailShotId: completedShot.id,
+        liveActive: false,
+        liveFinalizing: false,
+        detailShotId: context.optimisticShot?.id ?? lastRecords[0]?.id ?? this.state.detailShotId,
         status: 'Shot list updated'
       });
-      return;
+    } finally {
+      // Safety net: never leave the shot screen stuck finalizing (e.g. the user
+      // switched beans mid-wait). Don't touch it if a new live shot took over.
+      if (this.state.liveFinalizing && !this.state.liveActive) {
+        this.liveShot.reset();
+        this.setState({ liveActive: false, liveFinalizing: false });
+      }
     }
-
-    if (this.selectedBean()?.id !== bean.id) return;
-    const visibleRecords = context.optimisticShot
-      ? includeShotInHistory(lastRecords, context.optimisticShot, this.shotPageSize)
-      : lastRecords;
-    this.setState({
-      shots: visibleRecords,
-      shotsTotal: Math.max(lastTotal, visibleRecords.length),
-      shotsLoadingMore: false,
-      detailShotId: context.optimisticShot?.id ?? lastRecords[0]?.id ?? this.state.detailShotId,
-      status: 'Shot list updated'
-    });
   }
 
   // Demo affordance: replay a deterministic simulated shot at real-time pacing so
@@ -3642,14 +3679,18 @@ export class BeanieApp {
   }
 
   private renderLivePanel(): string {
-    if (!this.state.liveActive) return '';
+    if (!this.state.liveActive && !this.state.liveFinalizing) return '';
+    const finalizing = this.state.liveFinalizing;
     return `
       <div class="live-panel">
-        <div class="live-card panel">
+        <div class="live-card panel ${finalizing ? 'live-finalizing' : ''}">
           <div class="live-head">
             <div class="live-title-row">
-              <span class="eyebrow">Live shot</span>
-              <button
+              <span class="eyebrow">${finalizing ? 'Saving shot' : 'Live shot'}</span>
+              ${
+                finalizing
+                  ? `<span class="live-saving" role="status"><span class="live-spinner" aria-hidden="true"></span><span>Saving…</span></span>`
+                  : `<button
                 class="live-stop-button"
                 data-action="stop"
                 aria-label="Stop shot"
@@ -3658,7 +3699,8 @@ export class BeanieApp {
               >
                 ${icon('square')}
                 <span>Stop</span>
-              </button>
+              </button>`
+              }
             </div>
             <div class="live-readouts">
               ${liveReadout('Time', 'live-time', '0.0s')}
