@@ -30,6 +30,14 @@ run('analyzeFlowCalibration focuses the stable tail instead of the whole shot', 
   equal(analysis.suggestedMultiplier, 1);
 });
 
+run('analyzeFlowCalibration trims trailing idle frames from chart samples', () => {
+  const analysis = analyzeFlowCalibration(activeShotWithTrailingIdle(), 1, 1, 8);
+  const maxTime = Math.max(...analysis.samples.map((sample) => sample.t));
+  equal(analysis.samples.length, 24);
+  equal(maxTime.toFixed(1), '23.0');
+  equal(analysis.tailStart?.toFixed(1), '15.0');
+});
+
 run('analyzeFlowCalibration clamps suggested multiplier into DE1 bounds', () => {
   const analysis = analyzeFlowCalibration(flowShot(0.2, 2, 40), 1.5);
   equal(analysis.suggestedMultiplier, 2);
@@ -96,6 +104,27 @@ function machineOnlyShot(): ShotRecord {
         flow: 2
       }
     }))
+  } as ShotRecord;
+}
+
+function activeShotWithTrailingIdle(): ShotRecord {
+  const start = Date.parse('2026-06-01T10:00:00.000Z');
+  return {
+    id: 'trailing-idle-shot',
+    timestamp: '2026-06-01T10:00:00.000Z',
+    measurements: Array.from({ length: 34 }, (_, index) => {
+      const active = index <= 23;
+      return {
+        machine: {
+          timestamp: new Date(start + index * 1000).toISOString(),
+          flow: active ? 2 : 0
+        },
+        scale: {
+          timestamp: new Date(start + index * 1000).toISOString(),
+          weightFlow: active ? 2 : 0.4
+        }
+      };
+    })
   } as ShotRecord;
 }
 

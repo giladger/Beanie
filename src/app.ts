@@ -1741,9 +1741,6 @@ export class BeanieApp {
       case 'flow-cal-adjust':
         this.adjustFlowCalibrationPreview(Number(el.dataset.delta ?? '0'));
         break;
-      case 'flow-cal-auto':
-        this.setFlowCalibrationPreview(Number(value));
-        break;
       case 'flow-cal-save-preview':
         await this.saveFlowCalibrationValue(Number(value));
         break;

@@ -1180,7 +1180,6 @@ p {
   gap: 12px;
 }
 
-.flow-cal-main,
 .flow-cal-side {
   min-width: 0;
   display: grid;
@@ -1190,8 +1189,7 @@ p {
 
 .flow-cal-chart-panel,
 .flow-cal-reference,
-.flow-cal-controls,
-.flow-cal-readout {
+.flow-cal-controls {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
@@ -1201,62 +1199,11 @@ p {
   padding: 12px;
 }
 
-.flow-cal-chart-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
-.flow-cal-chart-head h2 {
-  margin-top: 4px;
-  font-size: 34px;
-  line-height: 1;
-}
-
-.flow-cal-result {
-  min-width: 106px;
-  padding: 9px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel-2);
-  text-align: right;
-}
-
-.flow-cal-result span {
-  display: block;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 900;
-  text-transform: uppercase;
-}
-
-.flow-cal-result strong {
-  display: block;
-  margin-top: 4px;
-  color: var(--ink);
-  font-size: 22px;
-  line-height: 1;
-}
-
-.flow-cal-result.high {
-  border-color: color-mix(in srgb, var(--green) 55%, var(--line));
-}
-
-.flow-cal-result.medium {
-  border-color: color-mix(in srgb, var(--amber) 55%, var(--line));
-}
-
-.flow-cal-result.low,
-.flow-cal-result.none {
-  border-color: color-mix(in srgb, var(--red) 45%, var(--line));
-}
-
 .flow-cal-chart {
   display: block;
   width: 100%;
-  height: clamp(260px, 44vh, 420px);
+  aspect-ratio: 880 / 330;
+  height: auto;
 }
 
 .flow-cal-plot {
@@ -1326,37 +1273,11 @@ p {
   background: #8a6d1c;
 }
 
-.flow-cal-readouts {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.flow-cal-readout {
-  min-height: 96px;
-  padding: 11px;
-  display: grid;
-  align-content: start;
-  gap: 6px;
-}
-
-.flow-cal-readout span,
 .flow-cal-reference h2 {
   color: var(--muted);
   font-size: 10px;
   font-weight: 900;
   text-transform: uppercase;
-}
-
-.flow-cal-readout strong {
-  overflow-wrap: anywhere;
-  font-size: 20px;
-  line-height: 1.05;
-}
-
-.flow-cal-readout small {
-  color: var(--muted);
-  line-height: 1.25;
 }
 
 .flow-cal-reference,
@@ -6028,10 +5949,6 @@ p {
     align-items: start;
   }
 
-  .flow-cal-readouts {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .machine-lanes,
   .machine-custom-grid,
   .machine-custom-grid.flush-grid {
@@ -6057,23 +5974,8 @@ p {
 }
 
 @media (max-width: 560px) {
-  .flow-cal-side,
-  .flow-cal-readouts {
+  .flow-cal-side {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .flow-cal-chart-head {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .flow-cal-result {
-    width: 100%;
-    text-align: left;
-  }
-
-  .flow-cal-chart {
-    height: 250px;
   }
 
   .machine-lanes,

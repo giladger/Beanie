@@ -37,10 +37,12 @@ export function analyzeFlowCalibration(
   tailSeconds = 8
 ): FlowCalibrationAnalysis {
   const scale = multiplierScale(baseMultiplier, previewMultiplier);
-  const samples = calibrationSamples(shot?.measurements ?? []).map((sample) => ({
-    ...sample,
-    machineFlow: sample.machineFlow == null ? null : sample.machineFlow * scale
-  }));
+  const samples = trimShotSamples(
+    calibrationSamples(shot?.measurements ?? []).map((sample) => ({
+      ...sample,
+      machineFlow: sample.machineFlow == null ? null : sample.machineFlow * scale
+    }))
+  );
   const paired = pairedSamples(samples);
   const maxTime = Math.max(0, ...paired.map((sample) => sample.t));
   const tailStart = paired.length ? Math.max(0, maxTime - tailSeconds) : null;
@@ -78,6 +80,19 @@ function pairedSamples(samples: FlowCalibrationSample[]): FlowCalibrationSample[
   );
 }
 
+function trimShotSamples(samples: FlowCalibrationSample[]): FlowCalibrationSample[] {
+  const first = samples.findIndex(activeSample);
+  if (first < 0) return [];
+  let last = samples.length - 1;
+  while (last > first && !activeSample(samples[last]!)) last -= 1;
+  const offset = samples[first]!.t;
+  return samples.slice(first, last + 1).map((sample) => ({ ...sample, t: sample.t - offset }));
+}
+
+function activeSample(sample: FlowCalibrationSample): boolean {
+  return sample.machineFlow != null && sample.machineFlow >= 0.1;
+}
+
 function multiplierScale(baseMultiplier: number, previewMultiplier: number): number {
   if (!Number.isFinite(baseMultiplier) || baseMultiplier <= 0) return 1;
   return previewMultiplier / baseMultiplier;
@@ -90,42 +105,19 @@ export function renderFlowCalibrator(
   referenceShots: ShotRecord[],
   busy: boolean
 ): string {
-  const suggested = analysis.suggestedMultiplier;
   const saveDisabled = previewMultiplier === roundCalibration(savedMultiplier);
   const selectedShot = analysis.shot;
-  const latestLabel = selectedShot
-    ? `${dateLabel(selectedShot.timestamp)} · ${selectedShot.workflow?.profile?.title ?? 'Untitled shot'}`
-    : 'No shot data yet';
-  const tailLabel = analysis.tailStart == null ? '--' : `${analysis.tailStart.toFixed(1)}s → end`;
 
   return `
     <main class="page-body flow-cal-page">
       <section class="flow-cal-layout">
-        <div class="flow-cal-main">
-          <section class="flow-cal-chart-panel">
-            <div class="flow-cal-chart-head">
-              <div>
-                <span class="eyebrow">Flow calibration</span>
-                <h2>${escapeHtml(formatMultiplier(previewMultiplier))}</h2>
-              </div>
-              <div class="flow-cal-result ${analysis.confidence}">
-                <span>tail match</span>
-                <strong>${escapeHtml(suggested == null ? '--' : formatMultiplier(suggested))}</strong>
-              </div>
-            </div>
-            ${renderFlowCalibrationSvg(analysis)}
-            <div class="flow-cal-legend">
-              <span><i class="machine"></i>Machine flow</span>
-              <span><i class="scale"></i>Scale flow</span>
-            </div>
-          </section>
-          <section class="flow-cal-readouts">
-            ${readout('Reference shot', latestLabel, 'Selected from shot history')}
-            ${readout('Tail window', tailLabel, 'Use the stable tail where flow should match weight flow')}
-            ${readout('Machine tail', flowText(analysis.averageMachineFlow, 'ml/s'), 'Preview-adjusted DE1 flow')}
-            ${readout('Scale tail', flowText(analysis.averageScaleFlow, 'g/s'), 'Bluetooth scale weight flow')}
-          </section>
-        </div>
+        <section class="flow-cal-chart-panel">
+          ${renderFlowCalibrationSvg(analysis)}
+          <div class="flow-cal-legend">
+            <span><i class="machine"></i>Machine flow</span>
+            <span><i class="scale"></i>Scale flow</span>
+          </div>
+        </section>
         <aside class="flow-cal-side">
           <section class="flow-cal-reference">
             <h2>Reference shots</h2>
@@ -152,13 +144,10 @@ export function renderFlowCalibrator(
               </button>
               <button type="button" data-action="flow-cal-adjust" data-delta="0.01" aria-label="Increase flow calibration">${icon('plus')}</button>
             </div>
-            <button type="button" class="text-button" data-action="flow-cal-auto" data-value="${suggested ?? ''}" ${suggested == null || busy ? 'disabled' : ''}>
-              ${icon('sliders-horizontal')}<span>Auto align</span>
-            </button>
             <button type="button" class="text-button" data-action="flow-cal-save-preview" data-value="${previewMultiplier}" ${saveDisabled || busy ? 'disabled' : ''}>
               ${icon('save')}<span>Save preview</span>
             </button>
-            <small class="flow-cal-control-note">Saved ${escapeHtml(formatMultiplier(savedMultiplier))} · preview only until saved</small>
+            <small class="flow-cal-control-note">Saved ${escapeHtml(formatMultiplier(savedMultiplier))}</small>
           </section>
         </aside>
       </section>
@@ -289,15 +278,6 @@ function tracePath(
   return runs.join('');
 }
 
-function readout(label: string, value: string, detail: string): string {
-  return `
-    <div class="flow-cal-readout">
-      <span>${escapeHtml(label)}</span>
-      <strong>${escapeHtml(value)}</strong>
-      <small>${escapeHtml(detail)}</small>
-    </div>`;
-}
-
 function renderReferenceShots(shots: ShotRecord[], selectedShot: ShotRecord | null): string {
   if (shots.length === 0) return '<p class="flow-cal-empty-list">No loaded shots have scale flow yet.</p>';
   return shots
@@ -313,10 +293,6 @@ function renderReferenceShots(shots: ShotRecord[], selectedShot: ShotRecord | nu
         </button>`;
     })
     .join('');
-}
-
-function flowText(value: number | null, unit: string): string {
-  return value == null ? '--' : `${value.toFixed(2)} ${unit}`;
 }
 
 function formatMultiplier(value: number): string {
