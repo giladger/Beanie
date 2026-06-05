@@ -216,7 +216,7 @@ const FOCUSABLE_SEARCH = new Set(['search', 'profile-search', 'settings-search']
 // Scrollable containers whose scroll position must survive a re-render.
 const SCROLL_SELECTORS = ['.bean-picker-list', '.bean-picker-batch-list', '.shot-list', '.profile-list', '.page-body'];
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 15_000;
-const SHOT_REFRESH_INTERVAL_MS = 10_000;
+const SHOT_REFRESH_INTERVAL_MS = 60_000;
 const NO_SCALE_SHOT_MESSAGE = 'Shot blocked: connect a scale to start.';
 const NO_SCALE_MACHINE_STATUS = 'Connect scale';
 const NO_SCALE_ABORT_WINDOW_MS = 3_000;
@@ -966,6 +966,7 @@ export class BeanieApp {
   private async refreshVisibleShots(): Promise<void> {
     const bean = this.selectedBean();
     if (!bean || this.state.demo || this.shotRefreshInFlight) return;
+    if (document.visibilityState !== 'visible' || this.state.view !== 'workbench') return;
     if (this.state.liveActive || this.state.liveFinalizing || this.state.shotsLoadingMore) return;
     if (this.state.modal === 'edit-shot') return;
 
