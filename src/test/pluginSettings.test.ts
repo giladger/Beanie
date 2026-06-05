@@ -10,7 +10,7 @@ import {
   type PluginConfigState,
   type PluginSettingField
 } from '../domain/pluginSettings';
-import { renderSettingsShell } from '../components/SettingsShell';
+import { renderSettingsShell, type DecentAccountPanelState } from '../components/SettingsShell';
 import { demoSettingsBundle } from '../domain/settingsModel';
 import type { SettingsShellModel } from '../domain/settings';
 
@@ -110,7 +110,7 @@ run('visualizer password draft survives render and saves with real plugin id', (
     saving: false,
     verify: null
   };
-  const html = renderSettingsShell(settingsModel(), 'plugins', bundle, config);
+  const html = renderSettingsShell(settingsModel(), 'plugins', bundle, config, accountPanel());
 
   equal(html.includes('data-action="settings-plugin-save" data-id="visualizer.reaplugin"'), true);
   equal(html.includes('data-action="settings-plugin-verify" data-id="visualizer.reaplugin"'), true);
@@ -152,5 +152,16 @@ function settingsModel(): SettingsShellModel {
       defaultSkinStatus: 'test'
     },
     cacheKeyCount: 0
+  };
+}
+
+function accountPanel(): DecentAccountPanelState {
+  return {
+    status: { loggedIn: false, email: null },
+    source: 'demo',
+    emailDraft: '',
+    passwordDraft: '',
+    saving: false,
+    message: null
   };
 }

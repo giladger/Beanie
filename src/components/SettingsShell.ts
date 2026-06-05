@@ -19,6 +19,7 @@ import {
   type PluginSettingsSpec
 } from '../domain/pluginSettings';
 import type { PluginInfo } from '../api/settings';
+import type { DecentAccountStatus } from '../api/settings';
 import { icon } from './icons';
 
 interface SettingsSection {
@@ -28,13 +29,23 @@ interface SettingsSection {
   html: string;
 }
 
+export interface DecentAccountPanelState {
+  status: DecentAccountStatus | null;
+  source: 'loading' | 'gateway' | 'demo' | 'unavailable' | null;
+  emailDraft: string;
+  passwordDraft: string;
+  saving: boolean;
+  message: { tone: 'good' | 'warn' | 'muted'; text: string } | null;
+}
+
 export function renderSettingsShell(
   model: SettingsShellModel,
   activeSection: string,
   bundle: SettingsBundle | null,
-  pluginConfig: PluginConfigState | null
+  pluginConfig: PluginConfigState | null,
+  decentAccount: DecentAccountPanelState
 ): string {
-  const sections = settingsSections(model, bundle, pluginConfig);
+  const sections = settingsSections(model, bundle, pluginConfig, decentAccount);
   const active = sections.find((section) => section.id === activeSection) ?? sections[0]!;
 
   return `
@@ -57,7 +68,8 @@ export function renderSettingsShell(
 function settingsSections(
   model: SettingsShellModel,
   bundle: SettingsBundle | null,
-  pluginConfig: PluginConfigState | null
+  pluginConfig: PluginConfigState | null,
+  decentAccount: DecentAccountPanelState
 ): SettingsSection[] {
   const connectionSection: SettingsSection = {
     id: 'connection',
@@ -109,6 +121,12 @@ function settingsSections(
           renderPowerRuntimeSection(bundle),
           renderSpecSectionById('power', bundle)
         ].join('')
+      },
+      {
+        id: 'account',
+        title: 'Account',
+        terms: 'decent account login email password credentials link unlink serial',
+        html: renderDecentAccountSection(decentAccount)
       },
       {
         id: 'plugins',
@@ -232,6 +250,53 @@ function renderMaintenanceSection(): string {
     settingControlRow('Clean', 'Run the cleaning cycle', stateBtn('cleaning', 'Start clean')),
     settingControlRow('Sleep', 'Put the machine to sleep', stateBtn('sleeping', 'Sleep'))
   ].join(''));
+}
+
+function renderDecentAccountSection(account: DecentAccountPanelState): string {
+  const status = account.status;
+  const loggedIn = status?.loggedIn === true;
+  const message = account.message
+    ? `<span class="settings-plugin-verify ${account.message.tone}">${escapeHtml(account.message.text)}</span>`
+    : '';
+  const unavailable = account.source === 'unavailable'
+    ? `<span class="settings-plugin-verify warn">Decent account login is not available from this gateway.</span>`
+    : '';
+  const statusRow = loggedIn
+    ? settingReadout(
+        'Status',
+        status.email ? `Linked as ${status.email}` : 'Linked',
+        'Decent Espresso account is linked on this tablet.',
+        'good'
+      )
+    : settingReadout(
+        'Status',
+        account.source === 'loading' ? 'Loading' : 'Not linked',
+        'Link your Decent Espresso account for account-backed machine checks.',
+        account.source === 'loading' ? 'muted' : 'warn'
+      );
+  const form = loggedIn
+    ? `
+      <div class="settings-line">
+        <div><span>Decent Account</span><small>Remove the linked account from this tablet.</small></div>
+        <button type="button" class="text-button danger" data-action="settings-account-logout" ${account.saving ? 'disabled' : ''}>${icon('log-out')}<span>${account.saving ? 'Unlinking...' : 'Unlink'}</span></button>
+      </div>
+      ${message}`
+    : `
+      <div class="settings-line">
+        <div><span>Email</span><small>Decent Espresso account email.</small></div>
+        <input class="settings-input settings-plugin-text" type="email" data-action="settings-account-field" data-key="email" value="${escapeAttr(account.emailDraft)}" autocomplete="username" spellcheck="false" />
+      </div>
+      <div class="settings-line">
+        <div><span>Password</span><small>Sent to the gateway for secure account linking.</small></div>
+        <input class="settings-input settings-plugin-text" type="password" data-action="settings-account-field" data-key="password" value="${escapeAttr(account.passwordDraft)}" autocomplete="current-password" spellcheck="false" />
+      </div>
+      <div class="settings-plugin-config-actions">
+        ${message || unavailable}
+        <span class="settings-plugin-buttons">
+          <button type="button" class="text-button primary" data-action="settings-account-login" ${account.saving || account.source === 'loading' ? 'disabled' : ''}>${icon('log-in')}<span>${account.saving ? 'Linking...' : 'Link'}</span></button>
+        </span>
+      </div>`;
+  return renderSection('Decent Account', `${statusRow}${form}`);
 }
 
 function renderDangerActions(): string {

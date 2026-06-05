@@ -114,6 +114,11 @@ export interface DisplayState {
   platformSupported: DisplayPlatformSupport;
 }
 
+export interface DecentAccountStatus {
+  loggedIn: boolean;
+  email: string | null;
+}
+
 export interface SkinInfo {
   id: string;
   name: string;
@@ -239,6 +244,15 @@ export function readDisplayState(value: unknown): DisplayState {
   };
 }
 
+export function readDecentAccountStatus(value: unknown): DecentAccountStatus {
+  const r = rec(value);
+  const email = strOrNull(r.email);
+  return {
+    loggedIn: r.loggedIn === true || r.isLoggedIn === true || email != null,
+    email
+  };
+}
+
 export function readSkins(value: unknown): SkinInfo[] {
   const list = Array.isArray(value)
     ? value
@@ -331,6 +345,10 @@ export function demoDisplayState(): DisplayState {
     lowBatteryBrightnessActive: false,
     platformSupported: { brightness: true, wakeLock: true }
   });
+}
+
+export function demoDecentAccountStatus(): DecentAccountStatus {
+  return { loggedIn: false, email: null };
 }
 
 // --- devices · wake schedules · plugins ----------------------------------

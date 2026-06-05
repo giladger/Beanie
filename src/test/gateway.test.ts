@@ -192,6 +192,37 @@ await run('visualizer verify calls plugin verifyCredentials endpoint', async () 
   equal(calls[0]!.init?.body, JSON.stringify({ username: 'user@example.com', password: 'secret' }));
 });
 
+await run('decent account login posts credentials to account endpoint', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const restore = installFetchStub(calls, { loggedIn: true, email: 'user@example.com' });
+  let email: string | null = null;
+  try {
+    email = (await gateway.loginDecentAccount('user@example.com', 'secret')).email;
+  } finally {
+    restore();
+  }
+
+  equal(email, 'user@example.com');
+  equal(calls.length, 1);
+  equal(calls[0]!.url, '/api/v1/account/decent/login');
+  equal(calls[0]!.init?.method, 'POST');
+  equal(calls[0]!.init?.body, JSON.stringify({ email: 'user@example.com', password: 'secret' }));
+});
+
+await run('decent account logout deletes account endpoint', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const restore = installFetchStub(calls, {});
+  try {
+    await gateway.logoutDecentAccount();
+  } finally {
+    restore();
+  }
+
+  equal(calls.length, 1);
+  equal(calls[0]!.url, '/api/v1/account/decent');
+  equal(calls[0]!.init?.method, 'DELETE');
+});
+
 async function run(name: string, fn: () => void | Promise<void>): Promise<void> {
   try {
     await fn();

@@ -1,6 +1,7 @@
 import {
   STEAM_PURGE_MODES,
   de1MachineSettingsPatchBody,
+  readDecentAccountStatus,
   readDisplayState,
   readReaSettings,
   readSkins
@@ -46,6 +47,13 @@ run('readDisplayState clamps brightness and fills support defaults', () => {
   equal(display.lowBatteryBrightnessActive, true);
   equal(display.platformSupported.brightness, false);
   equal(display.platformSupported.wakeLock, true);
+});
+
+run('readDecentAccountStatus accepts logged-in and email shapes', () => {
+  equal(readDecentAccountStatus({ loggedIn: true, email: 'user@example.com' }).loggedIn, true);
+  equal(readDecentAccountStatus({ email: 'user@example.com' }).loggedIn, true);
+  equal(readDecentAccountStatus({ isLoggedIn: true }).loggedIn, true);
+  equal(readDecentAccountStatus({}).loggedIn, false);
 });
 
 run('de1MachineSettingsPatchBody converts usb boolean to enable/disable', () => {

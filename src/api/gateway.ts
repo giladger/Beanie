@@ -43,6 +43,7 @@ import {
   de1MachineSettingsPatchBody,
   readDe1AdvancedSettings,
   readDe1Calibration,
+  readDecentAccountStatus,
   readDevices,
   readDisplayState,
   readPlugins,
@@ -55,6 +56,7 @@ import {
   type De1AdvancedSettings,
   type De1AdvancedSettingsPatch,
   type De1Calibration,
+  type DecentAccountStatus,
   type DeviceInfo,
   type DisplayState,
   type PluginInfo,
@@ -291,6 +293,19 @@ export const gateway = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ brightness: Math.max(0, Math.min(100, Math.round(brightness))) })
     }),
+
+  // --- Decent account ---
+  decentAccount: () =>
+    fetchJson<DecentAccountStatus>('settings', '/api/v1/account/decent', readDecentAccountStatus),
+  loginDecentAccount: (email: string, password: string) =>
+    fetchJson<DecentAccountStatus>('settings', '/api/v1/account/decent/login', readDecentAccountStatus, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    }),
+  logoutDecentAccount: () =>
+    fetchEmpty('settings', '/api/v1/account/decent', { method: 'DELETE' }),
+
   skins: () => fetchJson<SkinInfo[]>('settings', '/api/v1/webui/skins', readSkins),
 
   // --- devices (pairing) ---

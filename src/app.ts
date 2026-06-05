@@ -71,7 +71,7 @@ import {
   type InputDialogState,
   typeInputDialogKey
 } from './components/InputDialog';
-import { renderSettingsShell } from './components/SettingsShell';
+import { renderSettingsShell, type DecentAccountPanelState } from './components/SettingsShell';
 import {
   SETTINGS_SPEC,
   coerceFieldValue,
@@ -79,9 +79,10 @@ import {
   setBundleField,
   type SettingsBundle
 } from './domain/settingsModel';
-import { STEAM_PURGE_MODES, demoPluginSettings } from './api/settings';
+import { STEAM_PURGE_MODES, demoDecentAccountStatus, demoPluginSettings } from './api/settings';
 import type {
   De1AdvancedSettingsPatch,
+  DecentAccountStatus,
   PluginSettings,
   PresenceSettingsPatch,
   ReaSettingsPatch
@@ -351,6 +352,12 @@ interface AppState {
   settingsBundle: SettingsBundle | null;
   settingsSource: 'gateway' | 'demo' | 'loading' | null;
   pluginConfig: PluginConfigState | null;
+  decentAccount: DecentAccountStatus | null;
+  decentAccountSource: 'loading' | 'gateway' | 'demo' | 'unavailable' | null;
+  decentAccountEmail: string;
+  decentAccountPassword: string;
+  decentAccountSaving: boolean;
+  decentAccountMessage: { tone: 'good' | 'warn' | 'muted'; text: string } | null;
   modal: Modal;
   beanPickerBeanId: string | null;
   beanPickerMode: BeanPickerMode;
@@ -427,6 +434,12 @@ export class BeanieApp {
     settingsBundle: null,
     settingsSource: null,
     pluginConfig: null,
+    decentAccount: null,
+    decentAccountSource: null,
+    decentAccountEmail: '',
+    decentAccountPassword: '',
+    decentAccountSaving: false,
+    decentAccountMessage: null,
     modal: null,
     beanPickerBeanId: null,
     beanPickerMode: 'inspect',
@@ -1809,6 +1822,7 @@ export class BeanieApp {
               : 'loading'
         });
         void this.loadReaSettings();
+        void this.loadDecentAccount();
         break;
       case 'open-flow-calibrator':
         this.openFlowCalibrator();
@@ -1836,6 +1850,12 @@ export class BeanieApp {
         break;
       case 'settings-plugin-verify':
         if (id) await this.verifyPluginConfig(id);
+        break;
+      case 'settings-account-login':
+        await this.loginDecentAccount();
+        break;
+      case 'settings-account-logout':
+        await this.logoutDecentAccount();
         break;
       case 'settings-scan-devices':
         await this.scanDevices();
@@ -2079,6 +2099,9 @@ export class BeanieApp {
     }
     if (target.dataset.action === 'profile-search') {
       this.setState({ profileSearch: target.value, profilePage: 0, profileFocusId: null });
+    }
+    if (target.dataset.action === 'settings-account-field') {
+      this.updateDecentAccountField(target.dataset.key ?? '', target.value);
     }
     if (target.dataset.action?.startsWith('pe-')) {
       this.applyEditorEvent(target, false);
@@ -4257,7 +4280,13 @@ export class BeanieApp {
   private renderSettingsPage(): string {
     return `
       ${this.pageHeader('Settings', 'workbench')}
-      ${renderSettingsShell(this.settingsShellModel(), this.state.settingsSection, this.state.settingsBundle, this.state.pluginConfig)}
+      ${renderSettingsShell(
+        this.settingsShellModel(),
+        this.state.settingsSection,
+        this.state.settingsBundle,
+        this.state.pluginConfig,
+        this.decentAccountPanelState()
+      )}
     `;
   }
 
@@ -4707,6 +4736,17 @@ export class BeanieApp {
     });
   }
 
+  private decentAccountPanelState(): DecentAccountPanelState {
+    return {
+      status: this.state.decentAccount,
+      source: this.state.decentAccountSource,
+      emailDraft: this.state.decentAccountEmail,
+      passwordDraft: this.state.decentAccountPassword,
+      saving: this.state.decentAccountSaving,
+      message: this.state.decentAccountMessage
+    };
+  }
+
   private selectedBean(): Bean | null {
     return this.state.beans.find((bean) => bean.id === this.state.selectedBeanId) ?? null;
   }
@@ -5028,6 +5068,125 @@ export class BeanieApp {
       await gateway.updateWakeSchedule(id, { enabled });
     } catch (error) {
       console.error('[Beanie] Update schedule failed', error);
+    }
+  }
+
+  private async loadDecentAccount(): Promise<void> {
+    if (this.state.decentAccountSource === 'gateway' || this.state.decentAccountSource === 'demo') return;
+    if (this.state.demo || this.settingsLocal) {
+      const account = demoDecentAccountStatus();
+      this.setState({
+        decentAccount: account,
+        decentAccountSource: 'demo',
+        decentAccountEmail: account.email ?? this.state.decentAccountEmail,
+        decentAccountPassword: '',
+        decentAccountMessage: null
+      });
+      return;
+    }
+    this.setState({ decentAccountSource: 'loading' });
+    try {
+      const account = await gateway.decentAccount();
+      this.setState({
+        decentAccount: account,
+        decentAccountSource: 'gateway',
+        decentAccountEmail: account.email ?? this.state.decentAccountEmail,
+        decentAccountPassword: '',
+        decentAccountMessage: null
+      });
+    } catch (error) {
+      console.warn('[Beanie] Decent account API unavailable', error);
+      this.setState({
+        decentAccount: null,
+        decentAccountSource: 'unavailable',
+        decentAccountPassword: '',
+        decentAccountMessage: null
+      });
+    }
+  }
+
+  private updateDecentAccountField(key: string, value: string): void {
+    if (key === 'email') {
+      this.setState({ decentAccountEmail: value, decentAccountMessage: null });
+      return;
+    }
+    if (key === 'password') {
+      this.setState({ decentAccountPassword: value, decentAccountMessage: null });
+    }
+  }
+
+  private async loginDecentAccount(): Promise<void> {
+    const email = this.state.decentAccountEmail.trim();
+    const password = this.state.decentAccountPassword;
+    if (!email || !password) {
+      this.setState({
+        decentAccountMessage: { tone: 'warn', text: 'Enter both email and password.' }
+      });
+      return;
+    }
+    if (this.state.demo || this.settingsLocal) {
+      this.setState({
+        decentAccount: { loggedIn: true, email },
+        decentAccountSource: 'demo',
+        decentAccountPassword: '',
+        decentAccountMessage: { tone: 'good', text: 'Decent account linked (demo).' }
+      });
+      return;
+    }
+    this.setState({
+      decentAccountSaving: true,
+      decentAccountMessage: { tone: 'muted', text: 'Linking Decent account...' }
+    });
+    try {
+      const account = await gateway.loginDecentAccount(email, password);
+      this.setState({
+        decentAccount: account,
+        decentAccountSource: 'gateway',
+        decentAccountEmail: account.email ?? email,
+        decentAccountPassword: '',
+        decentAccountSaving: false,
+        decentAccountMessage: account.loggedIn
+          ? { tone: 'good', text: 'Decent account linked.' }
+          : { tone: 'warn', text: 'Login failed. Check your email and password.' }
+      });
+    } catch (error) {
+      console.error('[Beanie] Decent account login failed', error);
+      this.setState({
+        decentAccountSaving: false,
+        decentAccountSource: this.state.decentAccountSource === 'loading' ? 'unavailable' : this.state.decentAccountSource,
+        decentAccountMessage: { tone: 'warn', text: 'Could not link Decent account.' }
+      });
+    }
+  }
+
+  private async logoutDecentAccount(): Promise<void> {
+    if (this.state.demo || this.settingsLocal) {
+      this.setState({
+        decentAccount: { loggedIn: false, email: null },
+        decentAccountPassword: '',
+        decentAccountMessage: { tone: 'good', text: 'Decent account unlinked (demo).' }
+      });
+      return;
+    }
+    this.setState({
+      decentAccountSaving: true,
+      decentAccountMessage: { tone: 'muted', text: 'Unlinking Decent account...' }
+    });
+    try {
+      await gateway.logoutDecentAccount();
+      this.setState({
+        decentAccount: { loggedIn: false, email: null },
+        decentAccountSource: 'gateway',
+        decentAccountPassword: '',
+        decentAccountSaving: false,
+        decentAccountMessage: { tone: 'good', text: 'Decent account unlinked.' }
+      });
+    } catch (error) {
+      console.error('[Beanie] Decent account unlink failed', error);
+      this.setState({
+        decentAccountSaving: false,
+        decentAccountMessage: { tone: 'warn', text: 'Could not unlink Decent account.' }
+      });
     }
   }
 
