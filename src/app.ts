@@ -404,7 +404,7 @@ export class BeanieApp {
     modal: null,
     beanPickerBeanId: null,
     beanPickerMode: 'inspect',
-    beanPickerAutofocusSearch: true,
+    beanPickerAutofocusSearch: false,
     editingBeanId: null,
     editingGrinderId: null,
     profileEditor: null,
@@ -729,7 +729,7 @@ export class BeanieApp {
       search: '',
       beanPickerBeanId: options.create ? null : id,
       beanPickerMode: options.create ? 'create' : 'inspect',
-      beanPickerAutofocusSearch: options.autofocusSearch ?? true
+      beanPickerAutofocusSearch: options.autofocusSearch ?? false
     });
     if (id && !options.create) await this.ensureBatchesLoaded(id);
   }
