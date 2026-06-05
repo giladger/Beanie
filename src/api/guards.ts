@@ -39,6 +39,7 @@ const MACHINE_STATES: MachineState[] = [
   'heating',
   'preheating',
   'espresso',
+  'brewing',
   'hotWater',
   'flush',
   'steam',

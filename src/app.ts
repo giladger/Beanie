@@ -1439,17 +1439,22 @@ export class BeanieApp {
     if (this.liveRaf != null) return;
     this.liveRaf = window.requestAnimationFrame(() => {
       this.liveRaf = null;
-      if (!this.state.liveActive || !this.liveChart || !this.liveDirty) return;
-      this.liveDirty = false;
-      this.liveChart.resize();
-      const model = this.liveShot.model(liveChartModelOptions(this.state.liveChartMode));
-      this.liveChart.setOptions({
-        hideMaxTimeLabel: liveChartHideMaxTimeLabel(this.state.liveChartMode, model.maxTime)
-      });
-      this.liveChart.setModel(model);
-      this.liveChart.draw();
-      this.updateLiveReadouts();
+      if (!this.liveDirty) return;
+      this.drawLiveChart();
     });
+  }
+
+  private drawLiveChart(): void {
+    if (!this.state.liveActive || !this.liveChart) return;
+    this.liveDirty = false;
+    this.liveChart.resize();
+    const model = this.liveShot.model(liveChartModelOptions(this.state.liveChartMode));
+    this.liveChart.setOptions({
+      hideMaxTimeLabel: liveChartHideMaxTimeLabel(this.state.liveChartMode, model.maxTime)
+    });
+    this.liveChart.setModel(model);
+    this.liveChart.draw();
+    this.updateLiveReadouts();
   }
 
   // Re-acquire the canvas + readout nodes after each full render. The DOM is only
@@ -1477,7 +1482,7 @@ export class BeanieApp {
       flow: this.root.querySelector<HTMLElement>('#live-flow'),
       temp: this.root.querySelector<HTMLElement>('#live-temp')
     };
-    this.scheduleLiveDraw();
+    this.drawLiveChart();
   }
 
   private updateLiveReadouts(): void {

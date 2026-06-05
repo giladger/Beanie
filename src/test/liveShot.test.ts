@@ -56,6 +56,18 @@ run('flush frames with pour substates do not start a shot', () => {
   equal(session.model().series.length, 0);
 });
 
+run('gateway brewing state starts a live shot immediately', () => {
+  const session = new LiveShotSession();
+  session.ingest({
+    tMs: 1000,
+    machine: machineSnapshot({ state: { state: 'brewing' }, pressure: 2 }),
+    scale: scaleSnapshot({ weight: 0 })
+  });
+
+  equal(session.isActive, true);
+  equal(seriesValue(session, 'pressure', 0).t, 0);
+});
+
 run('leaving espresso ends the session and sets a completion reason', () => {
   const session = new LiveShotSession();
   session.ingest(pourFrame(0, { weight: 5 }));

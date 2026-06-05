@@ -7,6 +7,7 @@ export type MachineState =
   | 'heating'
   | 'preheating'
   | 'espresso'
+  | 'brewing'
   | 'hotWater'
   | 'flush'
   | 'steam'
