@@ -5,7 +5,7 @@ const env =
   (globalThis as unknown as { process?: { env?: Record<string, string | undefined> } })
     .process?.env ?? {};
 
-const gatewayHost = env.GATEWAY_HOST ?? 'localhost:8080';
+const gatewayHost = env.GATEWAY_HOST ?? 'decent:8080';
 const gitCommit = env.GIT_COMMIT ?? 'dev';
 
 export default defineConfig({
