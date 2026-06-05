@@ -121,6 +121,7 @@ import {
 import { LiveChart } from './components/LiveChart';
 import { chartModelFromShot } from './components/liveChartModel';
 import {
+  calibrationPreviewFactor,
   clampCalibration,
   renderFlowCalibrator,
   roundCalibration
@@ -1771,7 +1772,6 @@ export class BeanieApp {
         this.adjustFlowCalibrationDraft(Number(el.dataset.delta ?? '0'));
         break;
       case 'flow-cal-save-preview':
-      case 'flow-cal-apply':
         await this.saveFlowCalibrationValue(Number(value));
         break;
       case 'flow-cal-shot':
@@ -3493,8 +3493,26 @@ export class BeanieApp {
     if (!canvas) return;
     const shot = this.flowCalibrationSelectedShot();
     if (!shot) return;
+    // Show just the two lines that matter for calibration — machine flow and
+    // scale (weight) flow — and scale the machine line by the preview multiplier
+    // so −/+ visibly moves it onto the scale line.
+    const factor = calibrationPreviewFactor(this.flowCalibrationBase(), this.flowCalibrationDraft());
+    const model = chartModelFromShot(shot);
+    const series = model.series
+      .filter((item) => item.key === 'flow' || item.key === 'weightFlow')
+      .map((item) => {
+        if (item.key === 'flow') {
+          return {
+            ...item,
+            label: 'Machine flow',
+            shortLabel: 'Machine flow',
+            points: item.points.map((point) => ({ t: point.t, value: point.value * factor }))
+          };
+        }
+        return { ...item, label: 'Scale flow', shortLabel: 'Scale flow' };
+      });
     const chart = new LiveChart(canvas, { detailed: true, pixelScale: 3 });
-    chart.setModel(chartModelFromShot(shot));
+    chart.setModel({ ...model, series });
     window.requestAnimationFrame(() => {
       chart.resize();
       chart.draw();
@@ -4194,13 +4212,12 @@ export class BeanieApp {
 
   private renderFlowCalibratorPage(): string {
     const savedMultiplier = this.currentFlowCalibrationMultiplier();
-    const baseMultiplier = this.flowCalibrationBase();
     const draftMultiplier = this.flowCalibrationDraft();
     const shots = this.flowCalibrationShots();
     const selected = this.flowCalibrationSelectedShot();
     return `
       ${this.pageHeader('Flow Calibrator', 'workbench')}
-      ${renderFlowCalibrator(shots, savedMultiplier, baseMultiplier, draftMultiplier, selected?.id ?? null, this.state.busy)}
+      ${renderFlowCalibrator(shots, savedMultiplier, draftMultiplier, selected?.id ?? null, this.state.busy)}
     `;
   }
 
