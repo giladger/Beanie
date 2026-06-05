@@ -3496,13 +3496,13 @@ export class BeanieApp {
     if (!canvas) return;
     const shot = this.flowCalibrationSelectedShot();
     if (!shot) return;
-    // Show just the two lines that matter for calibration — machine flow and
-    // scale (weight) flow — and scale the machine line by the preview multiplier
-    // so −/+ visibly moves it onto the scale line.
+    // Show the two calibration lines — machine flow and scale (weight) flow —
+    // plus pressure for context. Only the machine-flow line is scaled by the
+    // preview multiplier, so −/+ visibly moves it onto the scale line.
     const factor = calibrationPreviewFactor(this.flowCalibrationBase(), this.flowCalibrationDraft());
     const model = chartModelFromShot(shot);
     const series = model.series
-      .filter((item) => item.key === 'flow' || item.key === 'weightFlow')
+      .filter((item) => item.key === 'flow' || item.key === 'weightFlow' || item.key === 'pressure')
       .map((item) => {
         if (item.key === 'flow') {
           return {
@@ -3512,7 +3512,10 @@ export class BeanieApp {
             points: item.points.map((point) => ({ t: point.t, value: point.value * factor }))
           };
         }
-        return { ...item, label: 'Scale flow', shortLabel: 'Scale flow' };
+        if (item.key === 'weightFlow') {
+          return { ...item, label: 'Scale flow', shortLabel: 'Scale flow' };
+        }
+        return item;
       });
     const chart = new LiveChart(canvas, { detailed: true, pixelScale: 3 });
     chart.setModel({ ...model, series });
