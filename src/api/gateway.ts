@@ -192,7 +192,7 @@ async function responseErrorDetail(res: Response): Promise<string | null> {
     const json = JSON.parse(trimmed) as unknown;
     if (json && typeof json === 'object') {
       const record = json as Record<string, unknown>;
-      const detail = record.error ?? record.message;
+      const detail = record.error ?? record.message ?? record.details ?? record.type;
       if (typeof detail === 'string' && detail.trim()) return detail.trim();
     }
   } catch {

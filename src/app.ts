@@ -205,6 +205,7 @@ const FOCUSABLE_SEARCH = new Set(['search', 'profile-search', 'settings-search']
 // Scrollable containers whose scroll position must survive a re-render.
 const SCROLL_SELECTORS = ['.bean-picker-list', '.bean-picker-batch-list', '.shot-list', '.profile-list', '.page-body'];
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 15_000;
+const NO_SCALE_SHOT_MESSAGE = 'Shot blocked: connect a scale to start.';
 
 const SHOT_SCORE_OPTIONS = [
   { value: 20, label: 'Bad', tone: 'bad' },
@@ -1228,6 +1229,10 @@ export class BeanieApp {
 
   private async machineAction(state: MachineState): Promise<void> {
     const service = machineServiceState(state);
+    if (state === 'espresso' && this.shouldPreflightBlockShotForScale()) {
+      this.setState({ busy: false, status: NO_SCALE_SHOT_MESSAGE });
+      return;
+    }
     this.setState({ busy: true, status: machineActionStatus(state, 'sending') });
     if (this.state.demo) {
       if (state !== 'espresso') this.stopSimulatedShot();
@@ -1259,8 +1264,17 @@ export class BeanieApp {
       else this.observeSleepBrightnessState(false);
     } catch (error) {
       console.error('[Beanie] Machine action failed', error);
-      this.setState({ busy: false, status: 'Machine command failed' });
+      this.setState({
+        busy: false,
+        status: state === 'espresso' && isNoScaleShotBlockError(error)
+          ? NO_SCALE_SHOT_MESSAGE
+          : 'Machine command failed'
+      });
     }
+  }
+
+  private shouldPreflightBlockShotForScale(): boolean {
+    return this.state.settingsBundle?.rea.blockOnNoScale === true && !scaleConnected(this.state.scale);
   }
 
   private async toggleMachineCommand(state: MachineState): Promise<void> {
@@ -6475,6 +6489,16 @@ function water(value: number | null | undefined): string {
   if (value == null) return '--';
   const ml = Math.round(waterTankMlFromMm(value) / 10) * 10;
   return `${ml} ml`;
+}
+
+function scaleConnected(scale: ScaleSnapshot | null): boolean {
+  return scale != null && scale.status !== 'disconnected';
+}
+
+function isNoScaleShotBlockError(error: unknown): boolean {
+  if (!(error instanceof GatewayRequestError)) return false;
+  const message = error.issue.message.toLowerCase();
+  return error.issue.statusCode === 400 && (message.includes('block_no_scale') || message.includes('no scale'));
 }
 
 // A friendly readiness label instead of the raw machine state. Heating shows
