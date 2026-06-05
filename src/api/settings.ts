@@ -472,15 +472,15 @@ export function readPluginSettings(value: unknown): PluginSettings {
 
 export function readPluginVerify(value: unknown): PluginVerifyResult {
   const r = rec(value);
-  const ok = r.ok === true;
+  const ok = r.ok === true || r.valid === true;
   return { ok, message: str(r.message, ok ? 'Credentials verified' : 'Verification failed') };
 }
 
 export function demoPluginSettings(id: string): PluginSettings {
   if (id.replace(/\.reaplugin$/i, '').toLowerCase() === 'visualizer') {
     return {
-      values: { username: 'demo@visualizer.coffee', autoUpload: true, visibility: 'unlisted', minUploadSeconds: 6 },
-      secretsSet: { password: true }
+      values: { Username: 'demo@visualizer.coffee', Password: 'demo-password', AutoUpload: true, LengthThreshold: 6 },
+      secretsSet: { Password: true }
     };
   }
   return { values: {}, secretsSet: {} };

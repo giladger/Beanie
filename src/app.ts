@@ -86,6 +86,7 @@ import type {
   ReaSettingsPatch
 } from './api/settings';
 import {
+  normalizePluginId,
   pluginFieldDefault,
   pluginSettingsSpec,
   type PluginConfigState
@@ -5021,11 +5022,12 @@ export class BeanieApp {
 
   private async savePluginConfig(id: string): Promise<void> {
     const config = this.state.pluginConfig;
-    if (!config || config.id !== id) return;
-    const spec = pluginSettingsSpec(id);
+    if (!config || normalizePluginId(config.id) !== normalizePluginId(id)) return;
+    const pluginId = config.id;
+    const spec = pluginSettingsSpec(pluginId);
     if (!spec) return;
-    // Build the payload + optimistic next state. Secret fields are only sent (and
-    // only marked "set") when the user actually typed a new value this session.
+    // Build the payload + optimistic next state. Reaprime stores plugin settings
+    // as a whole object, so preserve existing secret values when saving other fields.
     const payload: Record<string, string | number | boolean> = {};
     const nextValues = { ...config.settings.values };
     const nextSecretsSet = { ...config.settings.secretsSet };
@@ -5033,7 +5035,10 @@ export class BeanieApp {
       if (field.secret) {
         if (config.secretEdited[field.key] && String(config.draft[field.key] ?? '') !== '') {
           payload[field.key] = config.draft[field.key];
+          nextValues[field.key] = config.draft[field.key];
           nextSecretsSet[field.key] = true;
+        } else if (config.settings.values[field.key] != null) {
+          payload[field.key] = config.settings.values[field.key];
         }
       } else {
         payload[field.key] = config.draft[field.key];
@@ -5042,30 +5047,38 @@ export class BeanieApp {
     }
     const nextSettings: PluginSettings = { values: nextValues, secretsSet: nextSecretsSet };
     if (this.settingsLocal) {
-      this.setState({ pluginConfig: this.makePluginConfig(id, nextSettings), status: 'Plugin settings saved (demo)' });
+      this.setState({ pluginConfig: this.makePluginConfig(pluginId, nextSettings), status: 'Plugin settings saved (demo)' });
       return;
     }
     this.setState({ pluginConfig: { ...config, saving: true } });
     try {
-      await gateway.updatePluginSettings(id, payload);
-      this.setState({ pluginConfig: this.makePluginConfig(id, nextSettings), status: 'Plugin settings saved' });
+      await gateway.updatePluginSettings(pluginId, payload);
+      this.setState({ pluginConfig: this.makePluginConfig(pluginId, nextSettings), status: 'Plugin settings saved' });
     } catch (error) {
       console.error('[Beanie] Save plugin settings failed', error);
-      this.setState({ pluginConfig: { ...config, saving: false }, status: 'Plugin settings save failed' });
+      this.setState({
+        pluginConfig: {
+          ...config,
+          saving: false,
+          verify: { tone: 'warn', message: 'Save failed. Check plugin settings are valid.' }
+        },
+        status: 'Plugin settings save failed'
+      });
     }
   }
 
   private async verifyPluginConfig(id: string): Promise<void> {
     const config = this.state.pluginConfig;
-    if (!config || config.id !== id) return;
+    if (!config || normalizePluginId(config.id) !== normalizePluginId(id)) return;
+    const pluginId = config.id;
     if (config.dirty) {
       this.setState({ pluginConfig: { ...config, verify: { tone: 'warn', message: 'Save your changes before verifying.' } } });
       return;
     }
     this.setState({ pluginConfig: { ...config, verify: { tone: 'muted', message: 'Verifying…' } } });
     if (this.settingsLocal) {
-      const hasUser = String(config.settings.values.username ?? '') !== '';
-      const ok = hasUser && config.settings.secretsSet.password === true;
+      const hasUser = String(config.settings.values.Username ?? '') !== '';
+      const ok = hasUser && config.settings.secretsSet.Password === true;
       this.setState({
         pluginConfig: {
           ...config,
@@ -5075,14 +5088,17 @@ export class BeanieApp {
       return;
     }
     try {
-      const result = await gateway.verifyPlugin(id);
+      const result = await gateway.verifyPlugin(pluginId, {
+        username: String(config.settings.values.Username ?? ''),
+        password: String(config.settings.values.Password ?? '')
+      });
       const current = this.state.pluginConfig;
-      if (!current || current.id !== id) return;
+      if (!current || normalizePluginId(current.id) !== normalizePluginId(pluginId)) return;
       this.setState({ pluginConfig: { ...current, verify: { tone: result.ok ? 'good' : 'warn', message: result.message } } });
     } catch (error) {
       console.error('[Beanie] Verify plugin failed', error);
       const current = this.state.pluginConfig;
-      if (!current || current.id !== id) return;
+      if (!current || normalizePluginId(current.id) !== normalizePluginId(pluginId)) return;
       this.setState({ pluginConfig: { ...current, verify: { tone: 'warn', message: 'Verification failed.' } } });
     }
   }

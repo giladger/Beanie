@@ -333,9 +333,14 @@ export const gateway = {
   pluginSettings: (id: string) =>
     fetchJson<PluginSettings>('settings', `/api/v1/plugins/${encodeURIComponent(id)}/settings`, readPluginSettings),
   updatePluginSettings: (id: string, values: Record<string, string | number | boolean>) =>
-    fetchEmpty('settings', `/api/v1/plugins/${encodeURIComponent(id)}/settings`, { ...jsonPost(values), method: 'PUT' }),
-  verifyPlugin: (id: string) =>
-    fetchJson<PluginVerifyResult>('settings', `/api/v1/plugins/${encodeURIComponent(id)}/verify`, readPluginVerify, jsonPost({})),
+    fetchEmpty('settings', `/api/v1/plugins/${encodeURIComponent(id)}/settings`, jsonPost(values)),
+  verifyPlugin: (id: string, credentials: { username: string; password: string }) =>
+    fetchJson<PluginVerifyResult>(
+      'settings',
+      `/api/v1/plugins/${encodeURIComponent(id)}/verifyCredentials`,
+      readPluginVerify,
+      jsonPost(credentials)
+    ),
   shots: (query: URLSearchParams) =>
     fetchJson<PaginatedShots>('shots', `/api/v1/shots?${query.toString()}`, readPaginatedShots),
   shot: (id: string) =>

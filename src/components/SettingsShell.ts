@@ -324,8 +324,8 @@ function renderPluginField(field: PluginSettingField, config: PluginConfigState)
         ? '•••••••• (saved)'
         : 'Not set'
       : field.placeholder ?? '';
-    // Secret fields are write-only: the box starts empty and the gateway never
-    // echoes the value back, so a blank box means "keep the saved secret".
+    // Secret fields render blank after save; while editing, keep the draft visible
+    // so a re-render does not wipe the user's typed password.
     const val = field.secret
       ? config.secretEdited[field.key]
         ? escapeAttr(String(draftVal ?? ''))

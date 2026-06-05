@@ -17,7 +17,7 @@ export interface PluginSettingField {
   type: PluginSettingType;
   help?: string;
   placeholder?: string;
-  /** Write-only on the gateway — never echoed back to the browser. */
+  /** Sensitive in the UI: keep the field blank after save unless the user is editing it. */
   secret?: boolean;
   options?: PluginSettingOption[];
   min?: number;
@@ -39,30 +39,20 @@ export const PLUGIN_SETTINGS_SPECS: Record<string, PluginSettingsSpec> = {
   visualizer: {
     id: 'visualizer',
     title: 'Visualizer',
-    help: 'Upload finished shots to visualizer.coffee. Credentials are stored on the gateway, never in the browser.',
+    help: 'Upload finished shots to visualizer.coffee. Credentials are stored by the gateway and hidden here after saving.',
     supportsVerify: true,
     fields: [
-      { key: 'username', label: 'Email', type: 'text', placeholder: 'you@example.com' },
+      { key: 'Username', label: 'Email', type: 'text', placeholder: 'you@example.com' },
       {
-        key: 'password',
+        key: 'Password',
         label: 'Password',
         type: 'password',
         secret: true,
         help: 'Leave blank to keep the saved password.'
       },
-      { key: 'autoUpload', label: 'Auto-upload after each shot', type: 'toggle' },
+      { key: 'AutoUpload', label: 'Auto-upload after each shot', type: 'toggle' },
       {
-        key: 'visibility',
-        label: 'Shot visibility',
-        type: 'select',
-        options: [
-          { value: 'unlisted', label: 'Unlisted' },
-          { value: 'public', label: 'Public' },
-          { value: 'private', label: 'Private' }
-        ]
-      },
-      {
-        key: 'minUploadSeconds',
+        key: 'LengthThreshold',
         label: 'Minimum shot length to upload',
         type: 'number',
         min: 0,

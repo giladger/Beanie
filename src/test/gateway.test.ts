@@ -3,6 +3,7 @@ import {
   GatewayRequestError,
   createDemoStartupSnapshot,
   fallbackFromGatewaySnapshot,
+  gateway,
   loadGatewayStartup,
   type GatewayStartupClient
 } from '../api/gateway';
@@ -149,6 +150,48 @@ await run('startup snapshot reports unavailable when no gateway resources load',
   equal(snapshot.data.beans, undefined);
 });
 
+await run('plugin settings save uses Reaprime POST endpoint', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const restore = installFetchStub(calls, {});
+  try {
+    await gateway.updatePluginSettings('visualizer.reaplugin', {
+      Username: 'user@example.com',
+      Password: 'secret',
+      AutoUpload: true,
+      LengthThreshold: 6
+    });
+  } finally {
+    restore();
+  }
+
+  equal(calls.length, 1);
+  equal(calls[0]!.url, '/api/v1/plugins/visualizer.reaplugin/settings');
+  equal(calls[0]!.init?.method, 'POST');
+  equal(calls[0]!.init?.body, JSON.stringify({
+    Username: 'user@example.com',
+    Password: 'secret',
+    AutoUpload: true,
+    LengthThreshold: 6
+  }));
+});
+
+await run('visualizer verify calls plugin verifyCredentials endpoint', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const restore = installFetchStub(calls, { valid: true });
+  let ok = false;
+  try {
+    ok = (await gateway.verifyPlugin('visualizer.reaplugin', { username: 'user@example.com', password: 'secret' })).ok;
+  } finally {
+    restore();
+  }
+
+  equal(ok, true);
+  equal(calls.length, 1);
+  equal(calls[0]!.url, '/api/v1/plugins/visualizer.reaplugin/verifyCredentials');
+  equal(calls[0]!.init?.method, 'POST');
+  equal(calls[0]!.init?.body, JSON.stringify({ username: 'user@example.com', password: 'secret' }));
+});
+
 async function run(name: string, fn: () => void | Promise<void>): Promise<void> {
   try {
     await fn();
@@ -157,6 +200,34 @@ async function run(name: string, fn: () => void | Promise<void>): Promise<void> 
     console.error(`not ok - ${name}`);
     throw error;
   }
+}
+
+function installFetchStub(
+  calls: Array<{ url: string; init?: RequestInit }>,
+  responseBody: unknown
+): () => void {
+  const previousFetch = globalThis.fetch;
+  const previousWindow = (globalThis as unknown as { window?: unknown }).window;
+  const previousLocation = (globalThis as unknown as { location?: unknown }).location;
+  (globalThis as unknown as { window: { BEANIE_GATEWAY?: string } }).window = {};
+  (globalThis as unknown as { location: { port: string; protocol: string; hostname: string; origin: string } }).location = {
+    port: '',
+    protocol: 'http:',
+    hostname: 'localhost',
+    origin: ''
+  };
+  globalThis.fetch = async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify(responseBody), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  };
+  return () => {
+    globalThis.fetch = previousFetch;
+    (globalThis as unknown as { window?: unknown }).window = previousWindow;
+    (globalThis as unknown as { location?: unknown }).location = previousLocation;
+  };
 }
 
 function equal<T>(actual: T, expected: T): void {
