@@ -9,6 +9,7 @@ import {
   GATEWAY_MODES,
   LOG_LEVELS,
   SCALE_POWER_MODES,
+  STEAM_PURGE_MODES,
   THEME_MODES,
   demoCalibration,
   demoDe1AdvancedSettings,
@@ -65,6 +66,8 @@ export interface SettingsField {
   /** Fixed decimal places for display (e.g. 1 renders the value as "%.1f"). */
   decimals?: number;
   options?: SettingsOption[];
+  /** Store select values as numbers when the API uses numeric enums. */
+  valueType?: 'number';
   /** Populate select options dynamically from the bundle (e.g. installed skins). */
   optionsFrom?: 'skins';
   /** Label to show when a select value is unknown/unset instead of falling through to the first option. */
@@ -133,7 +136,15 @@ export const SETTINGS_SPEC: SettingsSpecSection[] = [
     fields: [
       { group: 'de1', key: 'tankTemp', label: 'Tank preheat target', type: 'number', min: 0, max: 60, step: 1, unit: '°C', help: '0 = off' },
       { group: 'de1', key: 'steamFlow', label: 'Steam flow', type: 'number', min: 0, max: 5, step: 0.1, unit: 'ml/s', decimals: 1 },
-      { group: 'de1', key: 'steamPurgeMode', label: 'Steam purge mode', type: 'number', min: 0, max: 4, step: 1 },
+      {
+        group: 'de1',
+        key: 'steamPurgeMode',
+        label: 'Steam purge mode',
+        type: 'select',
+        options: STEAM_PURGE_MODES.map((mode) => ({ value: String(mode.value), label: mode.label })),
+        valueType: 'number',
+        help: 'Reaprime supports normal auto-purge or two-tap stop.'
+      },
       { group: 'de1', key: 'hotWaterFlow', label: 'Hot water flow', type: 'number', min: 0, max: 10, step: 0.1, unit: 'ml/s' },
       { group: 'de1', key: 'flushTemp', label: 'Flush temperature', type: 'number', min: 0, max: 110, step: 1, unit: '°C' },
       { group: 'de1', key: 'flushFlow', label: 'Flush flow', type: 'number', min: 0, max: 10, step: 0.1, unit: 'ml/s' },
@@ -236,6 +247,10 @@ export function coerceFieldValue(field: SettingsField, raw: string | boolean): s
     const [h, m] = String(raw).split(':').map((p) => Number(p));
     if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
     return clamp(h * 60 + m, 0, 1439);
+  }
+  if (field.type === 'select' && field.valueType === 'number') {
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
   }
   return String(raw);
 }

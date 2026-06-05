@@ -78,7 +78,7 @@ import {
   setBundleField,
   type SettingsBundle
 } from './domain/settingsModel';
-import { demoPluginSettings } from './api/settings';
+import { STEAM_PURGE_MODES, demoPluginSettings } from './api/settings';
 import type {
   De1AdvancedSettingsPatch,
   PluginSettings,
@@ -1671,6 +1671,9 @@ export class BeanieApp {
       case 'machine-preset':
         if (el.dataset.name && value) await this.applyMachinePreset(el.dataset.name, value);
         break;
+      case 'machine-steam-purge-mode':
+        await this.setSteamPurgeMode(Number(value));
+        break;
       case 'machine-edit-label':
         this.openMachineLabelDialog(el);
         break;
@@ -3073,6 +3076,37 @@ export class BeanieApp {
     );
   }
 
+  private async setSteamPurgeMode(mode: number): Promise<void> {
+    const nextMode = normalizeSteamPurgeMode(mode);
+    const machineSettings = {
+      ...(this.state.machineSettings ?? {}),
+      steamPurgeMode: nextMode
+    };
+    const settingsBundle = this.state.settingsBundle
+      ? { ...this.state.settingsBundle, de1: { ...this.state.settingsBundle.de1, steamPurgeMode: nextMode } }
+      : this.state.settingsBundle;
+
+    this.setState({
+      machineSettings,
+      settingsBundle,
+      busy: true,
+      status: 'Steam purge setting...'
+    });
+    if (this.state.demo) {
+      this.setState({ busy: false, status: 'Steam purge setting saved (demo)' });
+      return;
+    }
+
+    try {
+      await gateway.updateMachineSettings({ steamPurgeMode: nextMode });
+      this.setState({ busy: false, status: 'Steam purge setting saved' });
+      void this.loadMachineControlState();
+    } catch (error) {
+      console.error('[Beanie] Save steam purge setting failed', error);
+      this.setState({ busy: false, status: 'Steam purge setting failed' });
+    }
+  }
+
   private savePresetValuesAfterMachineEdit(
     fieldName: string,
     selectedSteamPreset: string,
@@ -4205,7 +4239,8 @@ export class BeanieApp {
               machineValueTile('steamFlow', 'Flow', steam.flow, capabilities.steam.flow),
               machineValueTile('steamTemp', 'Temp', steam.targetTemperature, capabilities.steam.targetTemperature),
               machineValueTile('steamDuration', 'Time', steam.duration, capabilities.steam.duration),
-              machineValueTile('steamStopTemp', 'Milk stop', steam.stopAtTemperature, capabilities.steam.stopAtTemperature!)
+              machineValueTile('steamStopTemp', 'Milk stop', steam.stopAtTemperature, capabilities.steam.stopAtTemperature!),
+              machineSteamPurgeTile(this.state.machineSettings?.steamPurgeMode)
             ]
           })}
           ${renderMachineLane({
@@ -5241,6 +5276,8 @@ interface MachineValueTile {
   label: string;
   value: string;
   unit: string;
+  action?: string;
+  actionValue?: string;
   spec?: NumberSpec;
   disabled?: boolean;
 }
@@ -5339,9 +5376,24 @@ function machineReadoutTile(label: string, value: string, unit: string): Machine
   return { label, value, unit, disabled: true };
 }
 
+function machineSteamPurgeTile(mode: number | null | undefined): MachineValueTile {
+  const currentMode = normalizeSteamPurgeMode(mode);
+  const nextMode = currentMode === 0 ? 1 : 0;
+  return {
+    name: 'steamPurgeMode',
+    label: 'Purge',
+    value: steamPurgeModeLabel(currentMode),
+    unit: currentMode === 0 ? 'On stop' : 'Second tap',
+    action: 'machine-steam-purge-mode',
+    actionValue: String(nextMode)
+  };
+}
+
 function renderMachineValueTile(tile: MachineValueTile): string {
   const disabled = tile.disabled === true ? ' disabled' : '';
-  const action = tile.name && tile.spec?.enabled
+  const action = tile.action
+    ? ` data-action="${escapeAttr(tile.action)}" data-value="${escapeAttr(tile.actionValue ?? '')}"`
+    : tile.name && tile.spec?.enabled
     ? ` data-action="machine-edit-value" data-name="${escapeAttr(tile.name)}" data-title="${escapeAttr(tile.label)}" data-value="${escapeAttr(tile.value)}" data-unit="${escapeAttr(tile.spec.unit)}" data-min="${tile.spec.min}" data-max="${tile.spec.max}" data-step="${tile.spec.step}"`
     : '';
   const title = tile.spec?.reason ? ` title="${escapeAttr(tile.spec.reason)}"` : '';
@@ -5352,6 +5404,15 @@ function renderMachineValueTile(tile: MachineValueTile): string {
       <em>${escapeHtml(tile.unit)}</em>
     </button>
   `;
+}
+
+function normalizeSteamPurgeMode(mode: number | null | undefined): number {
+  if (mode === 0 || mode === 1) return mode;
+  return 0;
+}
+
+function steamPurgeModeLabel(mode: number): string {
+  return STEAM_PURGE_MODES.find((option) => option.value === mode)?.label ?? STEAM_PURGE_MODES[0]!.label;
 }
 
 function sourceLabel(capabilities: WaterControlCapabilities): string {

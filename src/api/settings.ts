@@ -26,6 +26,10 @@ export const SCALE_POWER_MODES: ScalePowerMode[] = ['disabled', 'displayOff', 'd
 export const CHARGING_MODES: ChargingMode[] = ['disabled', 'longevity', 'balanced', 'highAvailability'];
 export const THEME_MODES: ThemeMode[] = ['system', 'light', 'dark'];
 export const LOG_LEVELS = ['FINEST', 'FINER', 'FINE', 'CONFIG', 'INFO', 'WARNING', 'SEVERE'];
+export const STEAM_PURGE_MODES = [
+  { value: 0, label: 'Auto purge' },
+  { value: 1, label: 'Two tap stop' }
+] as const;
 
 export interface ReaSettings {
   gatewayMode: GatewayMode;

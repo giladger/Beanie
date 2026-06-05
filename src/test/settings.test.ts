@@ -1,10 +1,11 @@
 import {
+  STEAM_PURGE_MODES,
   de1MachineSettingsPatchBody,
   readDisplayState,
   readReaSettings,
   readSkins
 } from '../api/settings';
-import { SETTINGS_SPEC } from '../domain/settingsModel';
+import { SETTINGS_SPEC, coerceFieldValue } from '../domain/settingsModel';
 
 run('readReaSettings coerces wire values and fills defaults', () => {
   const s = readReaSettings({
@@ -52,6 +53,18 @@ run('de1MachineSettingsPatchBody converts usb boolean to enable/disable', () => 
   equal((de1MachineSettingsPatchBody({ usb: false }).usb as string), 'disable');
   equal('usb' in de1MachineSettingsPatchBody({ fan: 40 }), false);
   equal(de1MachineSettingsPatchBody({ fan: 40 }).fan as number, 40);
+});
+
+run('steam purge mode exposes Reaprime-supported numeric options', () => {
+  const field = SETTINGS_SPEC.flatMap((section) => section.fields)
+    .find((candidate) => candidate.group === 'de1' && candidate.key === 'steamPurgeMode');
+  if (!field) throw new Error('Missing steamPurgeMode field');
+
+  equal(field.type, 'select');
+  equal(field.options?.length, STEAM_PURGE_MODES.length);
+  equal(field.options?.[0]?.value, '0');
+  equal(field.options?.[1]?.value, '1');
+  equal(coerceFieldValue(field, '1'), 1);
 });
 
 run('readSkins normalizes id/name from a few shapes', () => {
