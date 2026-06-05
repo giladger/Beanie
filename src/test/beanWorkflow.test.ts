@@ -110,6 +110,21 @@ run('planned preference falls back to actuals when no target is set', () => {
   match(recipeFromShot(shot, 'planned'), { dose: 18.2, yield: 41.8 });
 });
 
+run('falls back to target yield when the recorded actual yield is 0', () => {
+  const shot: ShotRecord = {
+    id: 'shot-zero-yield',
+    timestamp: '2026-05-22T16:22:09Z',
+    workflow: {
+      profile: { title: 'Rao Allongé' },
+      context: { targetDoseWeight: 18, targetYield: 135 }
+    },
+    annotations: { actualDoseWeight: 18, actualYield: 0 },
+    measurements: []
+  };
+  // An imported shot with drink_weight 0 should show the planned 135 g, not 0.
+  match(recipeFromShot(shot), { dose: 18, yield: 135 });
+});
+
 run('creates a workflow patch with bean context and selected profile', () => {
   const profiles: ProfileRecord[] = [{ id: 'p1', profile: { title: 'Default' } }];
   const update = buildWorkflowUpdate(

@@ -128,6 +128,10 @@ export function recipeFromWorkflow(workflow: Workflow | null): RecipeDraft {
  * - `'planned'` — the workflow's target dose/yield, falling back to actuals.
  *   Use this when *loading* a shot into the current dial-in: you want to repeat
  *   the recipe you aimed for, not the measurement noise of one pour.
+ *
+ * In either mode a non-positive value (e.g. an imported shot whose actual yield
+ * is 0) is skipped in favour of the other source, so the displayed recipe never
+ * shows a meaningless 0 g.
  */
 export function recipeFromShot(
   shot: ShotSummary | ShotRecord | null,
@@ -143,8 +147,12 @@ export function recipeFromShot(
   return {
     profileTitle: workflow?.profile?.title ?? null,
     profile: workflow?.profile ?? null,
-    dose: prefer === 'planned' ? (plannedDose ?? actualDose) : (actualDose ?? plannedDose),
-    yield: prefer === 'planned' ? (plannedYield ?? actualYield) : (actualYield ?? plannedYield),
+    dose: prefer === 'planned'
+      ? firstPositive(plannedDose, actualDose)
+      : firstPositive(actualDose, plannedDose),
+    yield: prefer === 'planned'
+      ? firstPositive(plannedYield, actualYield)
+      : firstPositive(actualYield, plannedYield),
     grinderId: ctx?.grinderId ?? null,
     grinderModel: ctx?.grinderModel ?? null,
     grinderSetting: stringOrNull(ctx?.grinderSetting),
@@ -316,6 +324,19 @@ export function newestPreset(presets: BeanPreset[]): BeanPreset | null {
 
 function numberOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * First strictly-positive value among the candidates, else null. Used so a
+ * recorded 0 (e.g. an imported shot with `drink_weight 0` / unset dose) is
+ * treated as "no value" and falls back to the next candidate, rather than
+ * showing a meaningless 0 g.
+ */
+function firstPositive(...values: Array<number | null>): number | null {
+  for (const value of values) {
+    if (value != null && value > 0) return value;
+  }
+  return null;
 }
 
 function stringOrNull(value: unknown): string | null {
