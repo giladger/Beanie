@@ -23,9 +23,6 @@ export interface FlowCalibrationAnalysis {
   message: string;
 }
 
-const FLOW_COLOR = '#7ca8ff';
-const SCALE_FLOW_COLOR = '#8a6d1c';
-
 export function calibrationShotCandidate(shot: ShotRecord): boolean {
   return analyzeFlowCalibration(shot, 1).suggestedMultiplier != null;
 }
@@ -110,46 +107,17 @@ export function renderFlowCalibrator(
 
   return `
     <main class="page-body flow-cal-page">
-      <section class="flow-cal-layout">
-        <section class="flow-cal-chart-panel">
-          ${renderFlowCalibrationSvg(analysis)}
-          <div class="flow-cal-legend">
-            <span><i class="machine"></i>Machine flow</span>
-            <span><i class="scale"></i>Scale flow</span>
-          </div>
-        </section>
-        <aside class="flow-cal-side">
-          <section class="flow-cal-reference">
-            <h2>Reference shots</h2>
-            <div class="flow-cal-shot-list">
-              ${renderReferenceShots(referenceShots, selectedShot)}
-            </div>
-          </section>
-          <section class="flow-cal-controls">
-            <div class="flow-cal-stepper" aria-label="Flow calibration preview">
-              <button type="button" data-action="flow-cal-adjust" data-delta="-0.01" aria-label="Decrease flow calibration">${icon('minus')}</button>
-              <button
-                type="button"
-                class="settings-input number-edit-button flow-cal-number"
-                data-action="open-number-edit"
-                data-target="flow-calibration"
-                data-title="Flow calibration preview"
-                data-value="${escapeAttr(String(previewMultiplier))}"
-                data-min="${FLOW_CALIBRATION_MIN}"
-                data-max="${FLOW_CALIBRATION_MAX}"
-                data-step="${FLOW_CALIBRATION_STEP}"
-                data-unit="x"
-              >
-                <span>${escapeHtml(formatMultiplier(previewMultiplier))}</span>
-              </button>
-              <button type="button" data-action="flow-cal-adjust" data-delta="0.01" aria-label="Increase flow calibration">${icon('plus')}</button>
-            </div>
-            <button type="button" class="text-button" data-action="flow-cal-save-preview" data-value="${previewMultiplier}" ${saveDisabled || busy ? 'disabled' : ''}>
-              ${icon('save')}<span>Save preview</span>
-            </button>
-            <small class="flow-cal-control-note">Saved ${escapeHtml(formatMultiplier(savedMultiplier))}</small>
-          </section>
-        </aside>
+      <section class="flow-cal-chart-panel">
+        ${renderFlowCalibrationSvg(analysis)}
+        <div class="flow-cal-legend">
+          <span><i class="machine"></i>Machine flow</span>
+          <span><i class="scale"></i>Scale flow</span>
+        </div>
+      </section>
+      <section class="flow-cal-reference">
+        <div class="flow-cal-shot-list">
+          ${renderReferenceShots(referenceShots, selectedShot, savedMultiplier, previewMultiplier, saveDisabled, busy)}
+        </div>
       </section>
     </main>
   `;
@@ -278,21 +246,78 @@ function tracePath(
   return runs.join('');
 }
 
-function renderReferenceShots(shots: ShotRecord[], selectedShot: ShotRecord | null): string {
+function renderReferenceShots(
+  shots: ShotRecord[],
+  selectedShot: ShotRecord | null,
+  savedMultiplier: number,
+  previewMultiplier: number,
+  saveDisabled: boolean,
+  busy: boolean
+): string {
   if (shots.length === 0) return '<p class="flow-cal-empty-list">No loaded shots have scale flow yet.</p>';
   return shots
     .map((shot) => {
       const active = shot.id === selectedShot?.id;
       const title = shot.workflow?.profile?.title ?? 'Untitled shot';
       const yieldText = shot.annotations?.actualYield == null ? '' : ` · ${shot.annotations.actualYield.toFixed(1)}g`;
+      const shotAnalysis = analyzeFlowCalibration(shot, savedMultiplier);
+      const duration = shotDurationText(shotAnalysis.samples);
       return `
-        <button type="button" class="flow-cal-shot ${active ? 'active' : ''}" data-action="flow-cal-shot" data-id="${escapeAttr(shot.id)}" aria-pressed="${active}">
-          <span>${escapeHtml(dateLabel(shot.timestamp))}</span>
-          <strong>${escapeHtml(title)}</strong>
-          <small>${escapeHtml(`${shot.measurements.length} frames${yieldText}`)}</small>
-        </button>`;
+        <article class="flow-cal-shot ${active ? 'active' : ''}">
+          <button type="button" class="flow-cal-shot-pick" data-action="flow-cal-shot" data-id="${escapeAttr(shot.id)}" aria-pressed="${active}">
+            <span class="flow-cal-shot-meta">
+              <span>${escapeHtml(dateLabel(shot.timestamp))}</span>
+              <strong>${escapeHtml(title)}</strong>
+              <small>${escapeHtml(`${duration}${yieldText}`)}</small>
+            </span>
+            <span class="flow-cal-shot-cal">
+              <small>calibration</small>
+              <strong>${escapeHtml(shotAnalysis.suggestedMultiplier == null ? '--' : formatMultiplier(shotAnalysis.suggestedMultiplier))}</strong>
+            </span>
+          </button>
+          ${active ? renderSelectedShotControls(previewMultiplier, savedMultiplier, saveDisabled, busy) : ''}
+        </article>`;
     })
     .join('');
+}
+
+function renderSelectedShotControls(
+  previewMultiplier: number,
+  savedMultiplier: number,
+  saveDisabled: boolean,
+  busy: boolean
+): string {
+  return `
+    <div class="flow-cal-controls">
+      <div class="flow-cal-stepper" aria-label="Flow calibration preview">
+        <button type="button" data-action="flow-cal-adjust" data-delta="-0.01" aria-label="Decrease flow calibration">${icon('minus')}</button>
+        <button
+          type="button"
+          class="settings-input number-edit-button flow-cal-number"
+          data-action="open-number-edit"
+          data-target="flow-calibration"
+          data-title="Flow calibration preview"
+          data-value="${escapeAttr(String(previewMultiplier))}"
+          data-min="${FLOW_CALIBRATION_MIN}"
+          data-max="${FLOW_CALIBRATION_MAX}"
+          data-step="${FLOW_CALIBRATION_STEP}"
+          data-unit="x"
+        >
+          <span>${escapeHtml(formatMultiplier(previewMultiplier))}</span>
+        </button>
+        <button type="button" data-action="flow-cal-adjust" data-delta="0.01" aria-label="Increase flow calibration">${icon('plus')}</button>
+      </div>
+      <button type="button" class="text-button" data-action="flow-cal-save-preview" data-value="${previewMultiplier}" ${saveDisabled || busy ? 'disabled' : ''}>
+        ${icon('save')}<span>Save preview</span>
+      </button>
+      <small class="flow-cal-control-note">Saved ${escapeHtml(formatMultiplier(savedMultiplier))}</small>
+    </div>
+  `;
+}
+
+function shotDurationText(samples: FlowCalibrationSample[]): string {
+  const maxTime = Math.max(0, ...samples.map((sample) => sample.t));
+  return `${formatTick(maxTime)}s`;
 }
 
 function formatMultiplier(value: number): string {
@@ -322,8 +347,3 @@ function escapeHtml(value: string): string {
 function escapeAttr(value: string): string {
   return escapeHtml(value);
 }
-
-export const flowCalibrationColors = {
-  machine: FLOW_COLOR,
-  scale: SCALE_FLOW_COLOR
-};

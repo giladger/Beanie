@@ -1190,42 +1190,35 @@ p {
 }
 
 .flow-cal-page {
-  width: min(1180px, 100%);
+  width: 100%;
+  max-width: none;
   height: 100%;
+  margin: 0;
+  grid-template-rows: minmax(260px, 48vh) minmax(0, 1fr);
   align-content: stretch;
-}
-
-.flow-cal-layout {
-  min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 12px;
-}
-
-.flow-cal-side {
-  min-width: 0;
-  display: grid;
-  gap: 12px;
-  align-content: start;
+  overflow: hidden;
 }
 
 .flow-cal-chart-panel,
-.flow-cal-reference,
-.flow-cal-controls {
+.flow-cal-reference {
+  min-height: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
 }
 
 .flow-cal-chart-panel {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 10px;
   padding: 12px;
 }
 
 .flow-cal-chart {
   display: block;
   width: 100%;
-  aspect-ratio: 880 / 330;
-  height: auto;
+  height: 100%;
+  min-height: 0;
 }
 
 .flow-cal-plot {
@@ -1295,25 +1288,16 @@ p {
   background: #8a6d1c;
 }
 
-.flow-cal-reference h2 {
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 900;
-  text-transform: uppercase;
-}
-
-.flow-cal-reference,
-.flow-cal-controls {
+.flow-cal-reference {
   padding: 13px;
-}
-
-.flow-cal-reference h2 {
-  margin: 0 0 9px;
+  display: grid;
+  min-height: 0;
 }
 
 .flow-cal-shot-list {
-  max-height: 320px;
-  display: grid;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   gap: 7px;
   overflow: auto;
 }
@@ -1321,13 +1305,25 @@ p {
 .flow-cal-shot {
   width: 100%;
   min-width: 0;
-  padding: 9px 10px;
+  flex: 0 0 auto;
   display: grid;
-  gap: 3px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel-2);
   color: var(--soft);
+}
+
+.flow-cal-shot-pick {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, max-content);
+  align-items: center;
+  gap: 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
   text-align: left;
 }
 
@@ -1336,8 +1332,16 @@ p {
   background: color-mix(in srgb, var(--teal) 14%, var(--panel-2));
 }
 
+.flow-cal-shot-meta,
+.flow-cal-shot-cal {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
 .flow-cal-shot span,
-.flow-cal-shot small {
+.flow-cal-shot small,
+.flow-cal-shot-cal small {
   overflow: hidden;
   color: var(--muted);
   font-size: 11px;
@@ -1347,12 +1351,23 @@ p {
   white-space: nowrap;
 }
 
-.flow-cal-shot strong {
+.flow-cal-shot strong,
+.flow-cal-shot-cal strong {
   overflow: hidden;
   font-size: 13px;
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.flow-cal-shot-cal {
+  justify-items: end;
+  text-align: right;
+}
+
+.flow-cal-shot-cal strong {
+  color: var(--ink);
+  font-size: 20px;
 }
 
 .flow-cal-empty-list {
@@ -1364,8 +1379,12 @@ p {
 }
 
 .flow-cal-controls {
+  padding: 10px 12px 12px;
   display: grid;
+  grid-template-columns: minmax(180px, 280px) minmax(120px, 180px) minmax(80px, max-content);
+  align-items: center;
   gap: 8px;
+  border-top: 1px solid var(--line);
 }
 
 .flow-cal-stepper {
@@ -1399,7 +1418,7 @@ p {
   font-size: 11px;
   font-weight: 800;
   line-height: 1.25;
-  text-align: center;
+  text-align: right;
 }
 
 .empty-history {
@@ -5962,13 +5981,17 @@ p {
 }
 
 @media (max-width: 900px) {
-  .flow-cal-layout {
-    grid-template-columns: minmax(0, 1fr);
+  .flow-cal-page {
+    grid-template-rows: minmax(240px, 42vh) minmax(0, 1fr);
   }
 
-  .flow-cal-side {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    align-items: start;
+  .flow-cal-controls {
+    grid-template-columns: minmax(0, 1fr) minmax(120px, 160px);
+  }
+
+  .flow-cal-control-note {
+    grid-column: 1 / -1;
+    text-align: center;
   }
 
   .machine-lanes,
@@ -5995,11 +6018,24 @@ p {
   }
 }
 
-@media (max-width: 560px) {
-  .flow-cal-side {
+@media (max-width: 640px) {
+  .flow-cal-page {
+    padding: 8px;
+    grid-template-rows: minmax(210px, 38vh) minmax(0, 1fr);
+  }
+
+  .flow-cal-shot-pick,
+  .flow-cal-controls {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .flow-cal-shot-cal {
+    justify-items: start;
+    text-align: left;
+  }
+}
+
+@media (max-width: 560px) {
   .machine-lanes,
   .machine-presets,
   .machine-values,

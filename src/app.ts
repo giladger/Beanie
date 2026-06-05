@@ -4699,7 +4699,12 @@ export class BeanieApp {
 
   private selectFlowCalibrationShot(id: string): void {
     if (!this.flowCalibrationReferenceShots().some((shot) => shot.id === id)) return;
-    this.setState({ flowCalShotId: id, status: 'Reference shot selected' });
+    this.setState({
+      flowCalShotId: id,
+      flowCalPreviewMultiplier: null,
+      flowCalBaseMultiplier: null,
+      status: 'Reference shot selected'
+    });
   }
 
   private async saveFlowCalibrationValue(raw: number): Promise<void> {
