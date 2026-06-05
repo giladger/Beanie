@@ -3334,7 +3334,7 @@ export class BeanieApp {
         ${isPage ? this.renderPage() : this.renderWorkbench(bean)}
         ${isPage ? '' : this.renderLivePanel()}
         ${this.renderModal()}
-        ${this.renderSleepOverlay()}
+        ${this.renderWakeCorner()}
       </div>
     `;
     refreshIcons();
@@ -3455,14 +3455,12 @@ export class BeanieApp {
     }
   }
 
-  private renderSleepOverlay(): string {
+  private renderWakeCorner(): string {
     if (!this.state.asleep) return '';
     return `
-      <div class="sleep-overlay" role="dialog" aria-label="Machine asleep">
-        <button type="button" class="sleep-wake-button" data-action="wake">
-          ${icon('power')}<span>Wake</span>
-        </button>
-      </div>
+      <button type="button" class="sleep-wake-button" data-action="wake" aria-label="Wake machine" title="Wake machine">
+        ${icon('power')}<span>Wake</span>
+      </button>
     `;
   }
 
@@ -3505,6 +3503,8 @@ export class BeanieApp {
     const machine = this.state.machine;
     const scale = this.state.scale;
     const machineCommands = this.renderMachineCommands();
+    const powerAction = this.state.asleep ? 'wake' : 'sleep';
+    const powerLabel = this.state.asleep ? 'Wake' : 'Sleep';
     return `
       <header class="topbar">
         <div class="top-inline">
@@ -3519,7 +3519,7 @@ export class BeanieApp {
           <div class="top-icons" role="toolbar" aria-label="Skin actions">
             <button class="icon-tool" data-action="open-machine-settings" aria-label="Machine settings" title="Machine settings">${icon('droplet')}</button>
             <button class="icon-tool" data-action="open-settings" aria-label="Settings" title="Settings">${icon('settings')}</button>
-            <button class="icon-tool" data-action="sleep" aria-label="Sleep" title="Sleep">${icon('power')}</button>
+            <button class="icon-tool ${this.state.asleep ? 'icon-tool-wake' : ''}" data-action="${powerAction}" aria-label="${powerLabel}" title="${powerLabel}">${icon('power')}</button>
           </div>
         </div>
       </header>

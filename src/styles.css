@@ -965,34 +965,35 @@ p {
   font-size: 13px;
 }
 
-.sleep-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 90;
-  display: grid;
-  place-items: center;
-  background: #000;
-  border: 0;
+.icon-tool-wake {
+  border-color: color-mix(in srgb, var(--teal) 62%, var(--line));
+  background: rgba(91, 216, 200, 0.14);
+  color: var(--ink);
 }
 
 .sleep-wake-button {
-  min-width: 128px;
-  height: 52px;
+  position: fixed;
+  right: max(12px, env(safe-area-inset-right));
+  bottom: max(12px, env(safe-area-inset-bottom));
+  z-index: 18;
+  min-width: 94px;
+  height: 40px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--teal) 62%, var(--line));
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.72);
-  font-size: 15px;
-  font-weight: 800;
+  background: rgba(14, 29, 31, 0.96);
+  color: var(--ink);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.34);
+  font-size: 13px;
+  font-weight: 900;
 }
 
 .sleep-wake-button svg {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   stroke-width: 2.4;
 }
 
