@@ -62,6 +62,8 @@ export interface SettingsField {
   min?: number;
   max?: number;
   step?: number;
+  /** Fixed decimal places for display (e.g. 1 renders the value as "%.1f"). */
+  decimals?: number;
   options?: SettingsOption[];
   /** Populate select options dynamically from the bundle (e.g. installed skins). */
   optionsFrom?: 'skins';
@@ -130,7 +132,7 @@ export const SETTINGS_SPEC: SettingsSpecSection[] = [
     terms: 'tank steam flush hot water purge flow temperature',
     fields: [
       { group: 'de1', key: 'tankTemp', label: 'Tank preheat target', type: 'number', min: 0, max: 60, step: 1, unit: '°C', help: '0 = off' },
-      { group: 'de1', key: 'steamFlow', label: 'Steam flow', type: 'number', min: 0, max: 5, step: 0.1, unit: 'ml/s' },
+      { group: 'de1', key: 'steamFlow', label: 'Steam flow', type: 'number', min: 0, max: 5, step: 0.1, unit: 'ml/s', decimals: 1 },
       { group: 'de1', key: 'steamPurgeMode', label: 'Steam purge mode', type: 'number', min: 0, max: 4, step: 1 },
       { group: 'de1', key: 'hotWaterFlow', label: 'Hot water flow', type: 'number', min: 0, max: 10, step: 0.1, unit: 'ml/s' },
       { group: 'de1', key: 'flushTemp', label: 'Flush temperature', type: 'number', min: 0, max: 110, step: 1, unit: '°C' },

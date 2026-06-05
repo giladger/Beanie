@@ -390,7 +390,12 @@ function renderSettingsField(field: SettingsField, bundle: SettingsBundle): stri
   } else if (field.type === 'time') {
     control = `<input class="settings-input" type="time" ${base} value="${minutesToTime(typeof value === 'number' ? value : null)}" />`;
   } else {
-    const num = typeof value === 'number' ? String(value) : '';
+    const num =
+      typeof value === 'number'
+        ? field.decimals != null
+          ? value.toFixed(field.decimals)
+          : String(value)
+        : '';
     const unit = field.unit ? `<em class="settings-unit">${escapeHtml(field.unit)}</em>` : '';
     control = `<button type="button" class="settings-input number-edit-button settings-number-button" data-action="open-number-edit" data-target="settings-field" data-group="${field.group}" data-key="${escapeAttr(field.key)}" data-title="${escapeAttr(field.label)}" data-value="${escapeAttr(num)}" data-min="${field.min ?? 0}" data-max="${field.max ?? 9999}" data-step="${field.step ?? 1}" data-unit="${escapeAttr(field.unit ?? '')}"><span>${escapeHtml(num || '--')}</span>${unit}</button>`;
     if (field.group === 'calibration' && field.key === 'flowMultiplier') {
