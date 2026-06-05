@@ -1368,7 +1368,41 @@ p {
 }
 
 .flow-cal-save {
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 20px;
+  border: 1px solid var(--teal);
+  border-radius: var(--radius);
+  background: var(--teal);
+  color: #062420;
+  font-size: 15px;
+  font-weight: 900;
   white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--teal) 28%, transparent);
+}
+
+.flow-cal-save svg {
+  width: 18px;
+  height: 18px;
+}
+
+.flow-cal-save:hover {
+  filter: brightness(1.07);
+}
+
+.flow-cal-save:active {
+  transform: translateY(1px);
+}
+
+.flow-cal-save:disabled {
+  border-color: var(--line);
+  background: var(--panel-2);
+  color: var(--muted);
+  box-shadow: none;
+  cursor: default;
 }
 
 .flow-cal-control-note {

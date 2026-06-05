@@ -382,6 +382,7 @@ interface AppState {
   flowCalDraft: number | null;
   flowCalBase: number | null;
   flowCalShotId: string | null;
+  flowCalShots: ShotRecord[];
 }
 
 interface LiveReadoutEls {
@@ -456,7 +457,8 @@ export class BeanieApp {
     appliedSignature: null,
     flowCalDraft: null,
     flowCalBase: null,
-    flowCalShotId: null
+    flowCalShotId: null,
+    flowCalShots: []
   };
 
   private applyTimer: number | null = null;
@@ -4751,9 +4753,28 @@ export class BeanieApp {
           : 'loading',
       flowCalDraft: null,
       flowCalBase: null,
-      flowCalShotId: null
+      flowCalShotId: null,
+      // Seed with the current bean's shots for an instant list, then widen to
+      // every bean's shots — calibration is machine-global, so any shot works.
+      flowCalShots: this.state.shots
     });
     void this.loadReaSettings();
+    void this.loadAllCalibrationShots();
+  }
+
+  // Flow calibration spans all beans, not just the selected one. Demo gathers
+  // every demo bean's shots; live reuses the no-bean-filter shot loader.
+  private async loadAllCalibrationShots(): Promise<void> {
+    if (this.state.demo) {
+      const all = demoBeans
+        .flatMap((bean) => demoShotsForBean(bean))
+        .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
+      this.setState({ flowCalShots: all });
+      return;
+    }
+    const shots = await this.loadLatestShotCandidates(40);
+    if (this.state.view !== 'flow-calibrator' || shots.length === 0) return;
+    this.setState({ flowCalShots: shots });
   }
 
   private currentFlowCalibrationMultiplier(): number {
@@ -4786,10 +4807,10 @@ export class BeanieApp {
     this.setFlowCalibrationDraft(this.flowCalibrationDraft() + delta);
   }
 
-  // Every real (non flush/steam/water) shot is a calibration candidate now —
-  // each one knows how much the machine thought it pushed versus the cup weight.
+  // All real (non flush/steam/water) shots across every bean, newest first.
   private flowCalibrationShots(): ShotRecord[] {
-    return this.state.shots.filter((shot) => !isServiceShot(shot));
+    const all = this.state.flowCalShots.length ? this.state.flowCalShots : this.state.shots;
+    return all.filter((shot) => !isServiceShot(shot));
   }
 
   private flowCalibrationSelectedShot(): ShotRecord | null {

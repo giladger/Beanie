@@ -100,12 +100,12 @@ function renderShotDetail(
           data-max="${FLOW_CALIBRATION_MAX}"
           data-step="${FLOW_CALIBRATION_STEP}"
           data-unit="x"
-        ><span>${escapeHtml(formatMultiplier(draftMultiplier))}</span></button>
+        ><span>${escapeHtml(formatMultiplierPlain(draftMultiplier))}</span></button>
         <button type="button" data-action="flow-cal-adjust" data-delta="0.01" aria-label="Increase flow calibration">${icon('plus')}</button>
       </div>
       ${
         dirty
-          ? `<button type="button" class="command primary flow-cal-save" data-action="flow-cal-save-preview" data-value="${draftMultiplier}" ${busy ? 'disabled' : ''}>${icon('save')}<span>Save ${escapeHtml(formatMultiplier(draftMultiplier))}</span></button>`
+          ? `<button type="button" class="flow-cal-save" data-action="flow-cal-save-preview" data-value="${draftMultiplier}" ${busy ? 'disabled' : ''}>${icon('save')}<span>Save ${escapeHtml(formatMultiplierPlain(draftMultiplier))}</span></button>`
           : `<small class="flow-cal-control-note">${escapeHtml(formatMultiplier(savedMultiplier))} active on the machine</small>`
       }
     </div>
@@ -162,6 +162,10 @@ function formatGrams(value: number | null): string {
 
 function formatMultiplier(value: number): string {
   return `${roundCalibration(value).toFixed(2)}×`;
+}
+
+function formatMultiplierPlain(value: number): string {
+  return roundCalibration(value).toFixed(2);
 }
 
 function parseMs(value: unknown): number | null {
