@@ -191,6 +191,10 @@ type ShotEditField =
 type ApplyState = 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
 type LiveChartMode = 'preset30' | 'auto';
 type MachineServiceState = 'steam' | 'flush' | 'hotWater';
+// 'starting' = machine ramping up (substate preparingForShot), before flow;
+// 'active' = actually flowing (substate pouring); 'purging' = flow stopped but
+// still in the service state (the DE1 steam puff / purge).
+type MachineServicePhase = 'starting' | 'active' | 'purging';
 type BeanPickerMode = 'inspect' | 'create';
 type SecondTapHintKind = 'bean' | 'shot';
 type View =
@@ -516,6 +520,7 @@ export class BeanieApp {
   private simTimer: number | null = null;
   private machineServiceState: MachineServiceState | null = null;
   private machineServiceStartedAtMs: number | null = null;
+  private machineServicePhase: MachineServicePhase | null = null;
   private machineProgressReturnView: View | null = null;
   private machineStopRequestedFor: MachineServiceState | null = null;
   private machineStopRequestedAtMs: number | null = null;
@@ -1507,7 +1512,7 @@ export class BeanieApp {
     const previousMachineState = this.state.machine?.state?.state;
     if (machine) {
       this.state.machine = machine;
-      this.trackMachineServiceState(machine.state.state, tMs);
+      this.trackMachineServiceState(machine.state.state, machine.state.substate, tMs);
       this.observeSleepBrightnessState(machine.state.state === 'sleeping');
       this.beginNoScaleBrewFlashIfNeeded(machine, previousMachineState, tMs);
     }
@@ -1577,17 +1582,36 @@ export class BeanieApp {
     return view;
   }
 
-  private trackMachineServiceState(state: MachineState | undefined, nowMs = Date.now()): void {
+  private trackMachineServiceState(
+    state: MachineState | undefined,
+    substate?: string,
+    nowMs = Date.now()
+  ): void {
     const service = machineServiceState(state);
     if (!service) {
       this.machineServiceState = null;
       this.machineServiceStartedAtMs = null;
+      this.machineServicePhase = null;
       this.clearMachineStopRequest();
       return;
     }
-    if (this.machineServiceState !== service || this.machineServiceStartedAtMs == null) {
+    if (this.machineServiceState !== service) {
       this.machineServiceState = service;
-      this.machineServiceStartedAtMs = nowMs;
+      this.machineServiceStartedAtMs = null;
+      this.machineServicePhase = 'starting';
+    }
+    // The machine spends a couple of seconds ramping up (substate
+    // 'preparingForShot') before steam/water actually flows ('pouring').
+    // Start the clock only once it's really flowing, so the countdown matches
+    // reality instead of running through the ramp and overshooting. When flow
+    // stops but we're still in the service state, the DE1 is purging (the
+    // steam puff) — reported as substate 'idle' while state stays 'steam'.
+    const flowing = substate === 'pouring';
+    if (flowing) {
+      if (this.machineServiceStartedAtMs == null) this.machineServiceStartedAtMs = nowMs;
+      this.machineServicePhase = 'active';
+    } else if (this.machineServicePhase === 'active') {
+      this.machineServicePhase = 'purging';
     }
     if (this.machineStopRequestedFor && this.machineStopRequestedFor !== service) this.clearMachineStopRequest();
   }
@@ -4626,7 +4650,11 @@ export class BeanieApp {
     const stopLabel = stopRequested
       ? stopAgeSeconds > 4 && !this.state.busy ? 'Stop again' : 'Stopping...'
       : 'Stop';
-    const primaryTime = machineServicePrimaryTime(elapsedSeconds, targetSeconds);
+    const primaryTime = this.machineServicePhase === 'starting'
+      ? { value: service === 'steam' ? 'Heating' : 'Starting', label: 'getting ready' }
+      : this.machineServicePhase === 'purging'
+        ? { value: 'Purging', label: service === 'steam' ? 'clearing wand' : 'finishing' }
+        : machineServicePrimaryTime(elapsedSeconds, targetSeconds);
     return `
       <header class="page-head machine-progress-head">
         <h1 class="page-title">${escapeHtml(machineServiceVerb(service))}</h1>
