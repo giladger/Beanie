@@ -892,7 +892,7 @@ export class BeanieApp {
       const page = await gateway.shots(query);
       void beanieCache.putShotPage(query, page);
       void beanieCache.putShotSummaries(page.items);
-      const records = await Promise.all(page.items.map((shot) => this.loadFullShot(shot, { refresh: true })));
+      const records = await Promise.all(page.items.map((shot) => this.loadFullShot(shot)));
       return { records, total: page.total };
     } catch (error) {
       console.warn('[Beanie] Could not load shots', error);
@@ -905,18 +905,15 @@ export class BeanieApp {
     }
   }
 
-  private async loadFullShot(shot: ShotSummary, options: { refresh?: boolean } = {}): Promise<ShotRecord> {
-    if (!options.refresh) {
-      const cached = await beanieCache.getShotRecord(shot.id).catch(() => null);
-      if (cached) return cached;
-    }
+  private async loadFullShot(shot: ShotSummary): Promise<ShotRecord> {
+    const cached = await beanieCache.getShotRecord(shot.id).catch(() => null);
+    if (cached) return cached;
     try {
       const record = await gateway.shot(shot.id);
       void beanieCache.putShotRecord(record);
       return record;
     } catch {
-      const cached = options.refresh ? await beanieCache.getShotRecord(shot.id).catch(() => null) : null;
-      return cached ?? { ...shot, measurements: [] };
+      return { ...shot, measurements: [] };
     }
   }
 
@@ -936,7 +933,7 @@ export class BeanieApp {
       const page = await gateway.shots(query);
       void beanieCache.putShotPage(query, page);
       void beanieCache.putShotSummaries(page.items);
-      return Promise.all(page.items.map((shot) => this.loadFullShot(shot, { refresh: true })));
+      return Promise.all(page.items.map((shot) => this.loadFullShot(shot)));
     } catch (error) {
       console.warn('[Beanie] Could not load latest shot candidates', error);
       const cached = await beanieCache.getShotPage(query).catch(() => null);
@@ -4299,14 +4296,16 @@ export class BeanieApp {
   private renderShotListItem(shot: ShotRecord, active: boolean): string {
     const recipe = recipeFromShot(shot);
     const duration = shotDurationLabel(shot);
+    const recipeText = shotRecipeDisplay(shot, recipe);
+    const date = shotDateShortLabel(shot.timestamp);
     const hint = this.renderSecondTapHint('shot', shot.id);
     return `
       <button class="shot-item ${active ? 'active' : ''} ${hint ? 'has-second-tap-hint' : ''}" data-action="select-history-shot" data-id="${escapeAttr(shot.id)}">
         <span class="shot-item-info">
-          <span class="shot-item-recipe">${formatGrams(recipe.dose)} → ${formatGrams(recipe.yield)}${duration ? ` @ ${escapeHtml(duration)}` : ''}</span>
+          <span class="shot-item-recipe">${escapeHtml(recipeText)}${duration ? ` @ ${escapeHtml(duration)}` : ''}</span>
           ${enjoymentBadge(shot)}
         </span>
-        <span class="shot-item-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
+        <span class="shot-item-profile">${escapeHtml([recipe.profileTitle ?? 'No profile', date].filter(Boolean).join(' · '))}</span>
         ${hint}
       </button>
     `;
@@ -4332,7 +4331,7 @@ export class BeanieApp {
         : '';
     return `
       <div class="pane-head">
-        <span class="pane-stat pane-lead">${formatGrams(recipe.dose)} <span class="io-arrow">→</span> ${formatGrams(recipe.yield)}</span>
+        <span class="pane-stat pane-lead">${escapeHtml(shotRecipeDisplay(shot, recipe)).replace(' → ', ' <span class="io-arrow">→</span> ')}</span>
         ${duration ? `<span class="pane-stat">@ ${escapeHtml(duration)}</span>` : ''}
         ${grinder ? `<span class="pane-stat">${escapeHtml(grinder)}</span>` : ''}
         <span class="pane-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
@@ -5955,6 +5954,29 @@ function enjoymentBadge(shot: ShotRecord, size: 'row' | 'detail' = 'row'): strin
     return '';
   }
   return `<span class="enjoyment-badge ${score.tone} ${size === 'detail' ? 'large' : ''}" aria-label="Enjoyment ${escapeAttr(score.label)}">${escapeHtml(score.label)}</span>`;
+}
+
+function shotRecipeDisplay(shot: ShotRecord, recipe: RecipeDraft): string {
+  const yieldText = shotYieldDisplay(shot, recipe.yield);
+  return `${formatGrams(recipe.dose)} → ${yieldText}`;
+}
+
+function shotYieldDisplay(shot: ShotRecord, fallbackYield: number | null | undefined): string {
+  const actual = shot.annotations?.actualYield;
+  if (typeof actual === 'number' && Number.isFinite(actual) && actual > 0) {
+    return formatGrams(actual);
+  }
+  const target = shot.workflow?.context?.targetYield;
+  if (typeof target === 'number' && Number.isFinite(target) && target > 0 && fallbackYield === target) {
+    return `target ${formatGrams(target)}`;
+  }
+  return formatGrams(fallbackYield);
+}
+
+function shotDateShortLabel(timestamp: string): string | null {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.valueOf())) return null;
+  return date.toLocaleString([], { month: 'short', day: 'numeric' });
 }
 
 function shotScoreControl(
