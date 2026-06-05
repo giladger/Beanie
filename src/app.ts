@@ -200,7 +200,7 @@ const initialSettingsPreferences = readSettingsPreferences();
 const FOCUSABLE_SEARCH = new Set(['search', 'profile-search', 'settings-search']);
 
 // Scrollable containers whose scroll position must survive a re-render.
-const SCROLL_SELECTORS = ['.bean-picker-list', '.shot-list', '.profile-list', '.page-body'];
+const SCROLL_SELECTORS = ['.bean-picker-list', '.bean-picker-batch-list', '.shot-list', '.profile-list', '.page-body'];
 
 const SHOT_SCORE_OPTIONS = [
   { value: 20, label: 'Bad', tone: 'bad' },
@@ -2532,7 +2532,7 @@ export class BeanieApp {
     const current = this.state.batchesByBean[bean.id] ?? [];
     const previous = current.find((item) => item.id === batchId);
     if (!previous) return;
-    const batchInput = batchFieldsFromForm(new FormData(form), bean.id);
+    const batchInput = batchFieldsFromForm(new FormData(form), bean.id, previous);
     const optimistic: BeanBatch = { ...previous, ...batchInput, id: batchId, beanId: bean.id };
     const optimisticBatches = current.map((item) => (item.id === batchId ? optimistic : item));
 
@@ -3429,11 +3429,22 @@ export class BeanieApp {
     const active = document.activeElement as HTMLInputElement | null;
     const action = active?.dataset?.action;
     if (!action) return null;
-    if (!FOCUSABLE_SEARCH.has(action) && !action.startsWith('pe-') && action !== 'shot-edit-number') return null;
-    const parts = [`[data-action="${action}"]`];
+    if (
+      !FOCUSABLE_SEARCH.has(action) &&
+      !action.startsWith('pe-') &&
+      action !== 'shot-edit-number' &&
+      action !== 'bean-picker-batch-field'
+    ) {
+      return null;
+    }
+    const batchForm = active?.closest<HTMLFormElement>('[data-form="bean-picker-batch"]');
+    const parts = batchForm?.dataset.batchId != null
+      ? [`[data-form="bean-picker-batch"][data-batch-id="${batchForm.dataset.batchId}"] [data-action="${action}"]`]
+      : [`[data-action="${action}"]`];
     if (active?.dataset.field != null) parts.push(`[data-field="${active.dataset.field}"]`);
     if (active?.dataset.index != null) parts.push(`[data-index="${active.dataset.index}"]`);
     if (active?.dataset.key != null) parts.push(`[data-key="${active.dataset.key}"]`);
+    if (active?.getAttribute('name') != null) parts.push(`[name="${active.getAttribute('name')}"]`);
     // The four exit sliders share action/index/key — disambiguate by type+condition.
     if (active?.dataset.type != null) parts.push(`[data-type="${active.dataset.type}"]`);
     if (active?.dataset.condition != null) parts.push(`[data-condition="${active.dataset.condition}"]`);
@@ -3710,6 +3721,7 @@ export class BeanieApp {
   private renderBeanPickerBatchForm(bean: Bean, batch: BeanBatch, active: boolean): string {
     const batchNumber = (name: 'weight' | 'weightRemaining', label: string, value: number | null | undefined) => `
       <label>${escapeHtml(label)}
+        <input type="hidden" name="${name}" value="${escapeAttr(inputValue(value))}" />
         <button
           type="button"
           class="number-edit-button bean-picker-number"
@@ -5920,13 +5932,15 @@ function beanFieldsFromForm(data: FormData): Partial<Bean> {
   };
 }
 
-function batchFieldsFromForm(data: FormData, beanId: string): Partial<BeanBatch> {
+function batchFieldsFromForm(data: FormData, beanId: string, fallback?: BeanBatch): Partial<BeanBatch> {
   return {
     beanId,
     roastDate: textOrNull(data.get('roastDate')),
     roastLevel: textOrNull(data.get('roastLevel')),
-    weight: numberOrNullInput(data.get('weight')),
-    weightRemaining: numberOrNullInput(data.get('weightRemaining')),
+    weight: data.has('weight') ? numberOrNullInput(data.get('weight')) : fallback?.weight ?? null,
+    weightRemaining: data.has('weightRemaining')
+      ? numberOrNullInput(data.get('weightRemaining'))
+      : fallback?.weightRemaining ?? null,
     frozen: data.get('frozen') === 'on'
   };
 }
