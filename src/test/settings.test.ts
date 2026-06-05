@@ -61,6 +61,7 @@ run('de1MachineSettingsPatchBody converts usb boolean to enable/disable', () => 
   equal((de1MachineSettingsPatchBody({ usb: false }).usb as string), 'disable');
   equal('usb' in de1MachineSettingsPatchBody({ fan: 40 }), false);
   equal(de1MachineSettingsPatchBody({ fan: 40 }).fan as number, 40);
+  equal(de1MachineSettingsPatchBody({ steamPurgeMode: 1 }).steamPurgeMode as number, 1);
 });
 
 run('steam purge mode exposes Reaprime-supported numeric options', () => {

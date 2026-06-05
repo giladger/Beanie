@@ -169,6 +169,12 @@ import {
   type WaterControlCapabilities,
   type WaterPreset
 } from './domain/waterSettings';
+import {
+  paddedSteamDurationSeconds,
+  timedSteamStopDelayMs,
+  type MachineServicePhase,
+  type MachineServiceState
+} from './domain/timedSteamStop';
 
 type Modal = 'bean-picker' | 'edit-number' | 'edit-shot' | 'machine-label' | 'no-scale-shot' | null;
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
@@ -191,11 +197,9 @@ type ShotEditField =
   | 'espressoNotes';
 type ApplyState = 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
 type LiveChartMode = 'preset30' | 'auto';
-type MachineServiceState = 'steam' | 'flush' | 'hotWater';
 // 'starting' = machine ramping up (substate preparingForShot), before flow;
 // 'active' = actually flowing (substate pouring); 'purging' = flow stopped but
 // still in the service state (the DE1 steam puff / purge).
-type MachineServicePhase = 'starting' | 'active' | 'purging';
 type BeanPickerMode = 'inspect' | 'create';
 type SecondTapHintKind = 'bean' | 'shot';
 type View =
@@ -529,6 +533,10 @@ export class BeanieApp {
   private machineStopRequestedFor: MachineServiceState | null = null;
   private machineStopRequestedAtMs: number | null = null;
   private machineStopFeedbackTimer: number | null = null;
+  private timedSteamStopTimer: number | null = null;
+  private timedSteamStopScheduledForMs: number | null = null;
+  private steamSettingsToRestoreAfterSteam: SteamSettings | null = null;
+  private steamPurgeModeToRestoreAfterSteam: number | null = null;
   private sleepBrightnessTimer: number | null = null;
   private sleepBrightnessZeroed = false;
   private applyAfterWake = false;
@@ -601,6 +609,7 @@ export class BeanieApp {
     if (this.waterRetryTimer != null) window.clearTimeout(this.waterRetryTimer);
     if (this.shotRefreshTimer != null) window.clearInterval(this.shotRefreshTimer);
     if (this.simTimer != null) window.clearTimeout(this.simTimer);
+    if (this.timedSteamStopTimer != null) window.clearTimeout(this.timedSteamStopTimer);
     if (this.sleepBrightnessTimer != null) window.clearTimeout(this.sleepBrightnessTimer);
     if (this.liveRaf != null) window.cancelAnimationFrame(this.liveRaf);
     this.machineSocket?.close();
@@ -776,6 +785,20 @@ export class BeanieApp {
     if (capabilities.status === 'fulfilled') next.machineCapabilities = capabilities.value;
     if (settings.status === 'fulfilled') next.machineSettings = settings.value;
     if (Object.keys(next).length > 0) this.setState(next);
+  }
+
+  private async updateSteamPurgeModeAndReadBack(mode: number): Promise<De1MachineSettings> {
+    const nextMode = normalizeSteamPurgeMode(mode);
+    await gateway.updateMachineSettings({ steamPurgeMode: nextMode });
+    const settings = await gateway.machineSettings();
+    const readBackMode = settings.steamPurgeMode;
+    if (readBackMode !== 0 && readBackMode !== 1) {
+      throw new Error('Steam purge mode read-back was missing');
+    }
+    if (readBackMode !== nextMode) {
+      throw new Error(`Steam purge mode read back as ${readBackMode}, expected ${nextMode}`);
+    }
+    return settings;
   }
 
   private async selectBean(
@@ -1321,6 +1344,7 @@ export class BeanieApp {
       return;
     }
     try {
+      if (state === 'steam') await this.prepareMachineForBeanieTimedSteam();
       await gateway.requestState(state);
       this.rememberMachineProgressReturnView(service);
       this.trackMachineServiceState(state);
@@ -1343,6 +1367,37 @@ export class BeanieApp {
         busy: false,
         status: 'Machine command failed'
       });
+    }
+  }
+
+  private async prepareMachineForBeanieTimedSteam(): Promise<void> {
+    const workflow = this.state.workflow;
+    if (workflow == null || this.steamSettingsToRestoreAfterSteam != null) return;
+    const steamSettings = this.currentSteamSettings();
+    const userDuration = positiveNumber(steamSettings.duration);
+    const paddedDuration = paddedSteamDurationSeconds(userDuration);
+    if (paddedDuration == null || userDuration == null || paddedDuration <= userDuration) return;
+
+    this.steamSettingsToRestoreAfterSteam = { ...steamSettings };
+    try {
+      const liveMachineSettings = await gateway.machineSettings().catch(() => this.state.machineSettings);
+      const currentPurgeMode = normalizeSteamPurgeMode(liveMachineSettings?.steamPurgeMode);
+      if (currentPurgeMode !== 0) {
+        this.steamPurgeModeToRestoreAfterSteam = currentPurgeMode;
+        const verifiedMachineSettings = await this.updateSteamPurgeModeAndReadBack(0);
+        this.setState({
+          machineSettings: verifiedMachineSettings
+        });
+      }
+      await gateway.updateWorkflow({
+        ...workflow,
+        steamSettings: { ...steamSettings, duration: paddedDuration }
+      });
+    } catch (error) {
+      this.steamSettingsToRestoreAfterSteam = null;
+      this.steamPurgeModeToRestoreAfterSteam = null;
+      console.error('[Beanie] Steam duration padding failed', error);
+      throw error;
     }
   }
 
@@ -1461,6 +1516,7 @@ export class BeanieApp {
 
     this.machineStopRequestedFor = service;
     this.machineStopRequestedAtMs = Date.now();
+    if (service === 'steam') this.clearTimedSteamStopTimer();
     this.setState({ busy: true, status: 'Stopping machine' });
     if (this.state.demo) {
       const returnView = this.consumeMachineProgressReturnView();
@@ -1642,10 +1698,13 @@ export class BeanieApp {
   ): void {
     const service = machineServiceState(state);
     if (!service) {
+      const previousService = this.machineServiceState;
       this.machineServiceState = null;
       this.machineServiceStartedAtMs = null;
       this.machineServicePhase = null;
+      this.clearTimedSteamStopTimer();
       this.clearMachineStopRequest();
+      if (previousService === 'steam') void this.restoreMachineSteamDurationAfterSteam();
       return;
     }
     if (this.machineServiceState !== service) {
@@ -1667,6 +1726,94 @@ export class BeanieApp {
       this.machineServicePhase = 'purging';
     }
     if (this.machineStopRequestedFor && this.machineStopRequestedFor !== service) this.clearMachineStopRequest();
+    this.updateTimedSteamStopTimer(nowMs);
+  }
+
+  private updateTimedSteamStopTimer(nowMs = Date.now()): void {
+    if (this.state.demo) {
+      this.clearTimedSteamStopTimer();
+      return;
+    }
+    const delayMs = timedSteamStopDelayMs({
+      service: this.machineServiceState,
+      phase: this.machineServicePhase,
+      startedAtMs: this.machineServiceStartedAtMs,
+      stopRequested: this.machineStopRequestedFor === 'steam',
+      targetSeconds: positiveNumber(this.currentSteamSettings().duration),
+      nowMs
+    });
+    if (delayMs == null) {
+      this.clearTimedSteamStopTimer();
+      return;
+    }
+    const scheduledForMs = nowMs + delayMs;
+    if (
+      this.timedSteamStopTimer != null &&
+      this.timedSteamStopScheduledForMs != null &&
+      Math.abs(this.timedSteamStopScheduledForMs - scheduledForMs) < 250
+    ) {
+      return;
+    }
+    this.clearTimedSteamStopTimer();
+    this.timedSteamStopScheduledForMs = scheduledForMs;
+    this.timedSteamStopTimer = window.setTimeout(() => {
+      this.timedSteamStopTimer = null;
+      this.timedSteamStopScheduledForMs = null;
+      void this.requestTimedSteamIdleStop();
+    }, delayMs);
+  }
+
+  private clearTimedSteamStopTimer(): void {
+    if (this.timedSteamStopTimer != null) {
+      window.clearTimeout(this.timedSteamStopTimer);
+      this.timedSteamStopTimer = null;
+    }
+    this.timedSteamStopScheduledForMs = null;
+  }
+
+  private async requestTimedSteamIdleStop(): Promise<void> {
+    if (this.state.machine?.state?.state !== 'steam') return;
+    this.machineStopRequestedFor = 'steam';
+    this.machineStopRequestedAtMs = Date.now();
+    try {
+      await gateway.requestState('idle');
+      this.setState({ status: 'Timed steam stop requested' });
+      this.armMachineStopFeedbackTimer();
+    } catch (error) {
+      console.error('[Beanie] Timed steam stop failed', error);
+      this.clearMachineStopRequest();
+      this.setState({ status: 'Timed steam stop failed' });
+    }
+  }
+
+  private async restoreMachineSteamDurationAfterSteam(): Promise<void> {
+    const steamSettings = this.steamSettingsToRestoreAfterSteam;
+    const purgeMode = this.steamPurgeModeToRestoreAfterSteam;
+    if ((steamSettings == null && purgeMode == null) || this.state.demo) {
+      this.steamSettingsToRestoreAfterSteam = null;
+      this.steamPurgeModeToRestoreAfterSteam = null;
+      return;
+    }
+    this.steamSettingsToRestoreAfterSteam = null;
+    this.steamPurgeModeToRestoreAfterSteam = null;
+    try {
+      if (steamSettings != null) {
+        const workflow: Workflow = {
+          ...(this.state.workflow ?? {}),
+          steamSettings
+        };
+        await gateway.updateWorkflow(workflow);
+      }
+      if (purgeMode != null) {
+        const verifiedMachineSettings = await this.updateSteamPurgeModeAndReadBack(purgeMode);
+        this.setState({
+          machineSettings: verifiedMachineSettings
+        });
+      }
+    } catch (error) {
+      console.error('[Beanie] Steam settings restore failed', error);
+      this.setState({ status: 'Steam settings restore failed' });
+    }
   }
 
   private clearMachineStopRequest(): void {
@@ -3426,12 +3573,16 @@ export class BeanieApp {
     }
 
     try {
-      await gateway.updateMachineSettings({ steamPurgeMode: nextMode });
-      this.setState({ busy: false, status: 'Steam purge setting saved' });
-      void this.loadMachineControlState();
+      const verifiedMachineSettings = await this.updateSteamPurgeModeAndReadBack(nextMode);
+      this.setState({
+        machineSettings: verifiedMachineSettings,
+        busy: false,
+        status: 'Steam purge setting saved'
+      });
     } catch (error) {
       console.error('[Beanie] Save steam purge setting failed', error);
       this.setState({ busy: false, status: 'Steam purge setting failed' });
+      void this.loadMachineControlState();
     }
   }
 
