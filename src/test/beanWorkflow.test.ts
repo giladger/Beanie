@@ -84,6 +84,32 @@ run('hydrates recipe values from a shot', () => {
   });
 });
 
+run('loads planned dose and yield when preferring planned', () => {
+  const shot: ShotRecord = {
+    id: 'shot-planned',
+    timestamp: '2026-06-01T10:00:00Z',
+    workflow: {
+      profile: { title: 'Blooming' },
+      context: { targetDoseWeight: 18, targetYield: 42 }
+    },
+    annotations: { actualDoseWeight: 18.2, actualYield: 41.8 },
+    measurements: []
+  };
+  // Loading into the dial-in repeats the planned recipe, not the pour's actuals.
+  match(recipeFromShot(shot, 'planned'), { dose: 18, yield: 42 });
+});
+
+run('planned preference falls back to actuals when no target is set', () => {
+  const shot: ShotRecord = {
+    id: 'shot-planned-fallback',
+    timestamp: '2026-06-01T10:00:00Z',
+    workflow: { profile: { title: 'Blooming' }, context: {} },
+    annotations: { actualDoseWeight: 18.2, actualYield: 41.8 },
+    measurements: []
+  };
+  match(recipeFromShot(shot, 'planned'), { dose: 18.2, yield: 41.8 });
+});
+
 run('creates a workflow patch with bean context and selected profile', () => {
   const profiles: ProfileRecord[] = [{ id: 'p1', profile: { title: 'Default' } }];
   const update = buildWorkflowUpdate(

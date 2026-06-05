@@ -118,15 +118,33 @@ export function recipeFromWorkflow(workflow: Workflow | null): RecipeDraft {
   };
 }
 
-export function recipeFromShot(shot: ShotSummary | ShotRecord | null): RecipeDraft {
+/**
+ * Builds a recipe draft from a shot.
+ *
+ * `prefer` controls where dose/yield come from:
+ * - `'actual'` (default) — the measured `annotations` values, falling back to
+ *   the planned targets. Use this for *displaying* a past shot (what really
+ *   happened).
+ * - `'planned'` — the workflow's target dose/yield, falling back to actuals.
+ *   Use this when *loading* a shot into the current dial-in: you want to repeat
+ *   the recipe you aimed for, not the measurement noise of one pour.
+ */
+export function recipeFromShot(
+  shot: ShotSummary | ShotRecord | null,
+  prefer: 'actual' | 'planned' = 'actual'
+): RecipeDraft {
   const workflow = shot?.workflow ?? null;
   const ctx = workflow?.context;
   const annotations = shot?.annotations;
+  const actualDose = numberOrNull(annotations?.actualDoseWeight);
+  const plannedDose = numberOrNull(ctx?.targetDoseWeight);
+  const actualYield = numberOrNull(annotations?.actualYield);
+  const plannedYield = numberOrNull(ctx?.targetYield);
   return {
     profileTitle: workflow?.profile?.title ?? null,
     profile: workflow?.profile ?? null,
-    dose: numberOrNull(annotations?.actualDoseWeight) ?? numberOrNull(ctx?.targetDoseWeight),
-    yield: numberOrNull(annotations?.actualYield) ?? numberOrNull(ctx?.targetYield),
+    dose: prefer === 'planned' ? (plannedDose ?? actualDose) : (actualDose ?? plannedDose),
+    yield: prefer === 'planned' ? (plannedYield ?? actualYield) : (actualYield ?? plannedYield),
     grinderId: ctx?.grinderId ?? null,
     grinderModel: ctx?.grinderModel ?? null,
     grinderSetting: stringOrNull(ctx?.grinderSetting),

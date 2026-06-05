@@ -712,7 +712,7 @@ export class BeanieApp {
     const draft =
       options.preferWorkflow && workflowMatches
         ? recipeFromWorkflow(this.state.workflow)
-        : recipeFromShot(shots[0] ?? null);
+        : recipeFromShot(shots[0] ?? null, 'planned');
 
     this.setState({
       batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
@@ -943,7 +943,7 @@ export class BeanieApp {
     if (!shot) return;
     this.completeSecondTapHint('shot');
     this.setState({
-      draft: normalizeDraft(recipeFromShot(shot), this.state.profiles, this.state.grinders),
+      draft: normalizeDraft(recipeFromShot(shot, 'planned'), this.state.profiles, this.state.grinders),
       view: 'workbench',
       detailShotId: shotId,
       secondTapHint: null,
