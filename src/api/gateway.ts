@@ -392,6 +392,7 @@ export const gateway = {
     }),
   deleteShot: (id: string) =>
     fetchEmpty('shot', `/api/v1/shots/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  heartbeat: () => fetchEmpty('machine', '/api/v1/machine/heartbeat', { method: 'POST' }),
   requestState: (state: MachineState) =>
     fetchEmpty('machine', `/api/v1/machine/state/${encodeURIComponent(state)}`, {
       method: 'PUT'

@@ -204,6 +204,7 @@ const FOCUSABLE_SEARCH = new Set(['search', 'profile-search', 'settings-search']
 
 // Scrollable containers whose scroll position must survive a re-render.
 const SCROLL_SELECTORS = ['.bean-picker-list', '.bean-picker-batch-list', '.shot-list', '.profile-list', '.page-body'];
+const PRESENCE_HEARTBEAT_INTERVAL_MS = 15_000;
 
 const SHOT_SCORE_OPTIONS = [
   { value: 20, label: 'Bad', tone: 'bad' },
@@ -511,14 +512,39 @@ export class BeanieApp {
   private sleepBrightnessTimer: number | null = null;
   private sleepBrightnessZeroed = false;
   private applyAfterWake = false;
+  private lastPresenceHeartbeatMs = 0;
 
-  private readonly handleClick = (event: Event) => void this.onClick(event);
-  private readonly handleInput = (event: Event) => this.onInput(event);
-  private readonly handleChange = (event: Event) => void this.onChange(event);
-  private readonly handleSubmit = (event: Event) => void this.onSubmit(event);
-  private readonly handleWheel = (event: WheelEvent) => this.onScrollGesture(event);
-  private readonly handleTouchStart = (event: TouchEvent) => this.onTouchStart(event);
-  private readonly handleTouchMove = (event: TouchEvent) => this.onTouchMove(event);
+  private readonly handleClick = (event: Event) => {
+    this.noteUserActivity();
+    void this.onClick(event);
+  };
+  private readonly handleInput = (event: Event) => {
+    this.noteUserActivity();
+    this.onInput(event);
+  };
+  private readonly handleChange = (event: Event) => {
+    this.noteUserActivity();
+    void this.onChange(event);
+  };
+  private readonly handleSubmit = (event: Event) => {
+    this.noteUserActivity();
+    void this.onSubmit(event);
+  };
+  private readonly handleKeydown = () => {
+    this.noteUserActivity();
+  };
+  private readonly handleWheel = (event: WheelEvent) => {
+    this.noteUserActivity();
+    this.onScrollGesture(event);
+  };
+  private readonly handleTouchStart = (event: TouchEvent) => {
+    this.noteUserActivity();
+    this.onTouchStart(event);
+  };
+  private readonly handleTouchMove = (event: TouchEvent) => {
+    this.noteUserActivity();
+    this.onTouchMove(event);
+  };
   private touchScrollPoint: { x: number; y: number } | null = null;
 
   constructor(private readonly root: HTMLElement) {}
@@ -529,6 +555,7 @@ export class BeanieApp {
     this.root.addEventListener('input', this.handleInput);
     this.root.addEventListener('change', this.handleChange);
     this.root.addEventListener('submit', this.handleSubmit);
+    this.root.addEventListener('keydown', this.handleKeydown);
     this.root.addEventListener('wheel', this.handleWheel, { passive: false });
     this.root.addEventListener('touchstart', this.handleTouchStart, { passive: true });
     this.root.addEventListener('touchmove', this.handleTouchMove, { passive: false });
@@ -541,6 +568,7 @@ export class BeanieApp {
     this.root.removeEventListener('input', this.handleInput);
     this.root.removeEventListener('change', this.handleChange);
     this.root.removeEventListener('submit', this.handleSubmit);
+    this.root.removeEventListener('keydown', this.handleKeydown);
     this.root.removeEventListener('wheel', this.handleWheel);
     this.root.removeEventListener('touchstart', this.handleTouchStart);
     this.root.removeEventListener('touchmove', this.handleTouchMove);
@@ -609,6 +637,16 @@ export class BeanieApp {
     return false;
   }
 
+  private noteUserActivity(): void {
+    if (this.state.demo) return;
+    const now = Date.now();
+    if (now - this.lastPresenceHeartbeatMs < PRESENCE_HEARTBEAT_INTERVAL_MS) return;
+    this.lastPresenceHeartbeatMs = now;
+    void gateway.heartbeat().catch((error) => {
+      console.warn('[Beanie] Presence heartbeat failed', error);
+    });
+  }
+
   private async load(): Promise<void> {
     const prevSignature = this.state.appliedSignature;
     this.setState({ loading: true, status: 'Loading Decent.app data' });
@@ -644,6 +682,7 @@ export class BeanieApp {
         loading: false,
         status: machineSleeping ? 'Machine asleep' : 'Connected'
       });
+      this.noteUserActivity();
 
       const selected = selectInitialBean(beans, workflow, readLastBeanId(), latestShots.items[0]);
       if (selected) {
