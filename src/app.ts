@@ -853,7 +853,7 @@ export class BeanieApp {
       const page = await gateway.shots(query);
       void beanieCache.putShotPage(query, page);
       void beanieCache.putShotSummaries(page.items);
-      const records = await Promise.all(page.items.map((shot) => this.loadFullShot(shot)));
+      const records = await Promise.all(page.items.map((shot) => this.loadFullShot(shot, { refresh: true })));
       return { records, total: page.total };
     } catch (error) {
       console.warn('[Beanie] Could not load shots', error);
@@ -866,15 +866,18 @@ export class BeanieApp {
     }
   }
 
-  private async loadFullShot(shot: ShotSummary): Promise<ShotRecord> {
-    const cached = await beanieCache.getShotRecord(shot.id).catch(() => null);
-    if (cached) return cached;
+  private async loadFullShot(shot: ShotSummary, options: { refresh?: boolean } = {}): Promise<ShotRecord> {
+    if (!options.refresh) {
+      const cached = await beanieCache.getShotRecord(shot.id).catch(() => null);
+      if (cached) return cached;
+    }
     try {
       const record = await gateway.shot(shot.id);
       void beanieCache.putShotRecord(record);
       return record;
     } catch {
-      return { ...shot, measurements: [] };
+      const cached = options.refresh ? await beanieCache.getShotRecord(shot.id).catch(() => null) : null;
+      return cached ?? { ...shot, measurements: [] };
     }
   }
 
@@ -894,7 +897,7 @@ export class BeanieApp {
       const page = await gateway.shots(query);
       void beanieCache.putShotPage(query, page);
       void beanieCache.putShotSummaries(page.items);
-      return Promise.all(page.items.map((shot) => this.loadFullShot(shot)));
+      return Promise.all(page.items.map((shot) => this.loadFullShot(shot, { refresh: true })));
     } catch (error) {
       console.warn('[Beanie] Could not load latest shot candidates', error);
       const cached = await beanieCache.getShotPage(query).catch(() => null);
