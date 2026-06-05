@@ -1,5 +1,6 @@
 import './shotGraph.test';
 import './liveChart.test';
+import './flowCalibrator.test';
 import './liveShot.test';
 import './profilePreview.test';
 import './profileEditor.test';

@@ -120,6 +120,13 @@ import {
 } from './components/profileEditor';
 import { LiveChart } from './components/LiveChart';
 import { chartModelFromShot } from './components/liveChartModel';
+import {
+  analyzeFlowCalibration,
+  calibrationShotCandidate,
+  clampCalibration,
+  renderFlowCalibrator,
+  roundCalibration
+} from './components/flowCalibrator';
 import { LiveShotSession, simulateShotFrames, type LiveFrame, type LiveShotState } from './domain/liveShot';
 import { beanieCache } from './domain/cache';
 import { waterTankMlFromMm } from './domain/waterTank';
@@ -179,6 +186,7 @@ type BeanPickerMode = 'inspect' | 'create';
 type SecondTapHintKind = 'bean' | 'shot';
 type View =
   | 'workbench'
+  | 'flow-calibrator'
   | 'settings'
   | 'machine'
   | 'profiles'
@@ -231,6 +239,7 @@ interface NumberEditTarget {
     | 'settings-field'
     | 'settings-plugin-field'
     | 'display-brightness'
+    | 'flow-calibration'
     | 'bean-picker-batch'
     | 'shot-edit'
     | 'form-field';
@@ -347,6 +356,9 @@ interface AppState {
   asleep: boolean;
   applyState: ApplyState;
   appliedSignature: string | null;
+  flowCalPreviewMultiplier: number | null;
+  flowCalBaseMultiplier: number | null;
+  flowCalShotId: string | null;
 }
 
 interface LiveReadoutEls {
@@ -418,7 +430,10 @@ export class BeanieApp {
     liveChartMode: 'preset30',
     asleep: false,
     applyState: 'idle',
-    appliedSignature: null
+    appliedSignature: null,
+    flowCalPreviewMultiplier: null,
+    flowCalBaseMultiplier: null,
+    flowCalShotId: null
   };
 
   private applyTimer: number | null = null;
@@ -1719,6 +1734,21 @@ export class BeanieApp {
               : 'loading'
         });
         void this.loadReaSettings();
+        break;
+      case 'open-flow-calibrator':
+        this.openFlowCalibrator();
+        break;
+      case 'flow-cal-adjust':
+        this.adjustFlowCalibrationPreview(Number(el.dataset.delta ?? '0'));
+        break;
+      case 'flow-cal-auto':
+        this.setFlowCalibrationPreview(Number(value));
+        break;
+      case 'flow-cal-save-preview':
+        await this.saveFlowCalibrationValue(Number(value));
+        break;
+      case 'flow-cal-shot':
+        if (id) this.selectFlowCalibrationShot(id);
         break;
       case 'settings-section':
         if (value) this.setState({ settingsSection: value });
@@ -3205,6 +3235,10 @@ export class BeanieApp {
       await this.setDisplayBrightness(value);
       return;
     }
+    if (edit.target === 'flow-calibration') {
+      this.setFlowCalibrationPreview(Number(value));
+      return;
+    }
     if (edit.target === 'bean-picker-batch' && edit.beanId && edit.batchId && edit.name) {
       await this.saveBeanPickerBatchValue(edit.beanId, edit.batchId, edit.name, value);
       return;
@@ -3347,6 +3381,8 @@ export class BeanieApp {
 
   private renderPage(): string {
     switch (this.state.view) {
+      case 'flow-calibrator':
+        return this.renderFlowCalibratorPage();
       case 'settings':
         return this.renderSettingsPage();
       case 'machine':
@@ -4060,6 +4096,19 @@ export class BeanieApp {
     `;
   }
 
+  private renderFlowCalibratorPage(): string {
+    const savedMultiplier = this.currentFlowCalibrationMultiplier();
+    const previewMultiplier = this.flowCalibrationPreviewMultiplier();
+    const baseMultiplier = this.flowCalibrationBaseMultiplier();
+    const referenceShots = this.flowCalibrationReferenceShots();
+    const referenceShot = this.flowCalibrationReferenceShot(referenceShots);
+    const analysis = analyzeFlowCalibration(referenceShot, baseMultiplier, previewMultiplier);
+    return `
+      ${this.pageHeader('Flow Calibrator', 'workbench')}
+      ${renderFlowCalibrator(analysis, savedMultiplier, previewMultiplier, referenceShots, this.state.busy)}
+    `;
+  }
+
   private renderProfileEditorPage(): string {
     const pe = this.state.profileEditor;
     if (!pe) return this.pageHeader('Profile');
@@ -4577,6 +4626,82 @@ export class BeanieApp {
 
   private get settingsLocal(): boolean {
     return this.state.demo || this.state.settingsSource === 'demo';
+  }
+
+  private openFlowCalibrator(): void {
+    this.setState({
+      view: 'flow-calibrator',
+      settingsBundle: this.state.settingsBundle ?? demoSettingsBundle(),
+      settingsSource: this.state.settingsBundle
+        ? this.state.settingsSource
+        : this.state.demo
+          ? 'demo'
+          : 'loading',
+      flowCalPreviewMultiplier: null,
+      flowCalBaseMultiplier: null,
+      flowCalShotId: null
+    });
+    void this.loadReaSettings();
+  }
+
+  private currentFlowCalibrationMultiplier(): number {
+    const value = this.state.settingsBundle?.calibration.flowMultiplier ?? demoSettingsBundle().calibration.flowMultiplier;
+    return roundCalibration(typeof value === 'number' && Number.isFinite(value) ? value : 1);
+  }
+
+  private flowCalibrationPreviewMultiplier(): number {
+    return this.state.flowCalPreviewMultiplier ?? this.currentFlowCalibrationMultiplier();
+  }
+
+  private flowCalibrationBaseMultiplier(): number {
+    return this.state.flowCalBaseMultiplier ?? this.currentFlowCalibrationMultiplier();
+  }
+
+  private setFlowCalibrationPreview(raw: number): void {
+    if (!Number.isFinite(raw)) return;
+    this.setState({
+      flowCalBaseMultiplier: this.state.flowCalBaseMultiplier ?? this.currentFlowCalibrationMultiplier(),
+      flowCalPreviewMultiplier: roundCalibration(raw),
+      status: 'Flow calibration preview'
+    });
+  }
+
+  private adjustFlowCalibrationPreview(delta: number): void {
+    if (!Number.isFinite(delta) || delta === 0) return;
+    this.setFlowCalibrationPreview(this.flowCalibrationPreviewMultiplier() + delta);
+  }
+
+  private flowCalibrationReferenceShots(): ShotRecord[] {
+    return this.state.shots.filter(calibrationShotCandidate);
+  }
+
+  private flowCalibrationReferenceShot(referenceShots = this.flowCalibrationReferenceShots()): ShotRecord | null {
+    return referenceShots.find((shot) => shot.id === this.state.flowCalShotId) ?? referenceShots[0] ?? null;
+  }
+
+  private selectFlowCalibrationShot(id: string): void {
+    if (!this.flowCalibrationReferenceShots().some((shot) => shot.id === id)) return;
+    this.setState({ flowCalShotId: id, status: 'Reference shot selected' });
+  }
+
+  private async saveFlowCalibrationValue(raw: number): Promise<void> {
+    if (!Number.isFinite(raw)) return;
+    const flowMultiplier = roundCalibration(clampCalibration(raw));
+    const bundle = this.state.settingsBundle ?? demoSettingsBundle();
+    this.setState({
+      settingsBundle: { ...bundle, calibration: { ...bundle.calibration, flowMultiplier } },
+      flowCalPreviewMultiplier: flowMultiplier,
+      flowCalBaseMultiplier: this.state.flowCalBaseMultiplier ?? bundle.calibration.flowMultiplier,
+      status: 'Flow calibration updated'
+    });
+    if (this.state.demo || this.state.settingsSource === 'demo') return;
+    try {
+      await gateway.updateCalibration(flowMultiplier);
+      this.setState({ status: 'Flow calibration saved' });
+    } catch (error) {
+      console.error('[Beanie] Flow calibration save failed', error);
+      this.setState({ status: 'Flow calibration save failed' });
+    }
   }
 
   private async scanDevices(): Promise<void> {

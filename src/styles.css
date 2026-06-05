@@ -1167,6 +1167,298 @@ p {
   stroke-linecap: round;
 }
 
+.flow-cal-page {
+  width: min(1180px, 100%);
+  height: 100%;
+  align-content: stretch;
+}
+
+.flow-cal-layout {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 12px;
+}
+
+.flow-cal-main,
+.flow-cal-side {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.flow-cal-chart-panel,
+.flow-cal-reference,
+.flow-cal-controls,
+.flow-cal-readout {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.flow-cal-chart-panel {
+  padding: 12px;
+}
+
+.flow-cal-chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.flow-cal-chart-head h2 {
+  margin-top: 4px;
+  font-size: 34px;
+  line-height: 1;
+}
+
+.flow-cal-result {
+  min-width: 106px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  text-align: right;
+}
+
+.flow-cal-result span {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.flow-cal-result strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.flow-cal-result.high {
+  border-color: color-mix(in srgb, var(--green) 55%, var(--line));
+}
+
+.flow-cal-result.medium {
+  border-color: color-mix(in srgb, var(--amber) 55%, var(--line));
+}
+
+.flow-cal-result.low,
+.flow-cal-result.none {
+  border-color: color-mix(in srgb, var(--red) 45%, var(--line));
+}
+
+.flow-cal-chart {
+  display: block;
+  width: 100%;
+  height: clamp(260px, 44vh, 420px);
+}
+
+.flow-cal-plot {
+  fill: rgba(0, 0, 0, 0.08);
+  stroke: rgba(255, 255, 255, 0.14);
+}
+
+.flow-cal-grid {
+  stroke: rgba(255, 255, 255, 0.09);
+  stroke-width: 1;
+}
+
+.flow-cal-tail {
+  fill: rgba(255, 194, 96, 0.09);
+}
+
+.flow-cal-axis,
+.flow-cal-empty {
+  fill: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.flow-cal-empty {
+  text-anchor: middle;
+}
+
+.flow-cal-machine,
+.flow-cal-scale {
+  fill: none;
+  stroke-width: 4.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.flow-cal-machine {
+  stroke: var(--blue);
+}
+
+.flow-cal-scale {
+  stroke: #8a6d1c;
+}
+
+.flow-cal-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.flow-cal-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.flow-cal-legend i {
+  width: 24px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--blue);
+}
+
+.flow-cal-legend i.scale {
+  background: #8a6d1c;
+}
+
+.flow-cal-readouts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.flow-cal-readout {
+  min-height: 96px;
+  padding: 11px;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+
+.flow-cal-readout span,
+.flow-cal-reference h2 {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.flow-cal-readout strong {
+  overflow-wrap: anywhere;
+  font-size: 20px;
+  line-height: 1.05;
+}
+
+.flow-cal-readout small {
+  color: var(--muted);
+  line-height: 1.25;
+}
+
+.flow-cal-reference,
+.flow-cal-controls {
+  padding: 13px;
+}
+
+.flow-cal-reference h2 {
+  margin: 0 0 9px;
+}
+
+.flow-cal-shot-list {
+  max-height: 320px;
+  display: grid;
+  gap: 7px;
+  overflow: auto;
+}
+
+.flow-cal-shot {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--soft);
+  text-align: left;
+}
+
+.flow-cal-shot.active {
+  border-color: color-mix(in srgb, var(--teal) 60%, var(--line));
+  background: color-mix(in srgb, var(--teal) 14%, var(--panel-2));
+}
+
+.flow-cal-shot span,
+.flow-cal-shot small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-cal-shot strong {
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-cal-empty-list {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.flow-cal-controls {
+  display: grid;
+  gap: 8px;
+}
+
+.flow-cal-stepper {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  gap: 7px;
+}
+
+.flow-cal-stepper > button {
+  min-width: 0;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--soft);
+  font-weight: 900;
+}
+
+.flow-cal-stepper > button:not(.flow-cal-number) {
+  display: grid;
+  place-items: center;
+}
+
+.flow-cal-number {
+  width: 100%;
+  justify-content: center;
+}
+
+.flow-cal-control-note {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.25;
+  text-align: center;
+}
+
 .empty-history {
   padding: 30px;
   text-align: center;
@@ -3952,6 +4244,37 @@ p {
   gap: 8px;
 }
 
+.settings-line .settings-inline-actions {
+  width: 100%;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  overflow: visible;
+}
+
+.settings-line .settings-inline-actions .settings-number-button {
+  flex: 1 1 auto;
+}
+
+.settings-line .settings-inline-actions .text-button {
+  height: 34px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.settings-line .settings-inline-actions .text-button span {
+  display: inline;
+  overflow: visible;
+  white-space: nowrap;
+}
+
 /* Scoped under .settings-line (0,2,0) so they beat the label rule
    `.settings-line span` (0,1,1) — otherwise the unit span blockifies and
    drops below the input. */
@@ -5696,6 +6019,19 @@ p {
 }
 
 @media (max-width: 900px) {
+  .flow-cal-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .flow-cal-side {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .flow-cal-readouts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .machine-lanes,
   .machine-custom-grid,
   .machine-custom-grid.flush-grid {
@@ -5721,6 +6057,25 @@ p {
 }
 
 @media (max-width: 560px) {
+  .flow-cal-side,
+  .flow-cal-readouts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .flow-cal-chart-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .flow-cal-result {
+    width: 100%;
+    text-align: left;
+  }
+
+  .flow-cal-chart {
+    height: 250px;
+  }
+
   .machine-lanes,
   .machine-presets,
   .machine-values,
