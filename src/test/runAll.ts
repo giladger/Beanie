@@ -8,6 +8,7 @@ import './simpleProfile.test';
 import './profileChartModel.test';
 import './beanWorkflow.test';
 import './waterSettings.test';
+import './shotRecord.test';
 import './cache.test';
 import './gateway.test';
 import './settings.test';

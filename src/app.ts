@@ -138,6 +138,7 @@ import {
   type LiveShotState
 } from './domain/liveShot';
 import { beanieCache } from './domain/cache';
+import { mergeShotSummaryIntoRecord } from './domain/shotRecord';
 import { waterTankMlFromMm } from './domain/waterTank';
 import {
   applySettingsPreferences,
@@ -926,7 +927,11 @@ export class BeanieApp {
 
   private async loadFullShot(shot: ShotSummary): Promise<ShotRecord> {
     const cached = await beanieCache.getShotRecord(shot.id).catch(() => null);
-    if (cached) return cached;
+    if (cached) {
+      const merged = mergeShotSummaryIntoRecord(cached, shot);
+      void beanieCache.putShotRecord(merged);
+      return merged;
+    }
     try {
       const record = await gateway.shot(shot.id);
       void beanieCache.putShotRecord(record);
