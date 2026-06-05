@@ -114,12 +114,13 @@ async function fetchJson<T>(
   }
 
   if (!res.ok) {
+    const detail = await responseErrorDetail(res);
     throw requestError(
       resource,
       path,
       method,
       'http',
-      `${method} ${path} returned ${res.status}`,
+      detail ? `${method} ${path} returned ${res.status}: ${detail}` : `${method} ${path} returned ${res.status}`,
       undefined,
       res.status
     );
@@ -165,16 +166,39 @@ async function fetchEmpty(
   }
 
   if (!res.ok) {
+    const detail = await responseErrorDetail(res);
     throw requestError(
       resource,
       path,
       method,
       'http',
-      `${method} ${path} returned ${res.status}`,
+      detail ? `${method} ${path} returned ${res.status}: ${detail}` : `${method} ${path} returned ${res.status}`,
       undefined,
       res.status
     );
   }
+}
+
+async function responseErrorDetail(res: Response): Promise<string | null> {
+  let text = '';
+  try {
+    text = await res.text();
+  } catch {
+    return null;
+  }
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  try {
+    const json = JSON.parse(trimmed) as unknown;
+    if (json && typeof json === 'object') {
+      const record = json as Record<string, unknown>;
+      const detail = record.error ?? record.message;
+      if (typeof detail === 'string' && detail.trim()) return detail.trim();
+    }
+  } catch {
+    // Plain text error body.
+  }
+  return trimmed.length > 180 ? `${trimmed.slice(0, 177)}...` : trimmed;
 }
 
 function jsonPost(body: unknown): RequestInit {

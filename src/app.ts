@@ -21,7 +21,7 @@ import type {
   Workflow,
   WorkflowContext
 } from './api/types';
-import { gateway, gatewayHttpOrigin, gatewayWsOrigin } from './api/gateway';
+import { GatewayRequestError, gateway, gatewayHttpOrigin, gatewayWsOrigin } from './api/gateway';
 import {
   beanLabel,
   buildWorkflowUpdate,
@@ -402,6 +402,14 @@ interface LiveReadoutEls {
   pressure: HTMLElement | null;
   flow: HTMLElement | null;
   temp: HTMLElement | null;
+}
+
+function accountLoginErrorMessage(error: GatewayRequestError): string {
+  if (error.issue.statusCode === 401) return 'Invalid Decent account email or password.';
+  if (error.issue.statusCode === 404) return 'Update Reaprime to enable Decent account linking from Beanie.';
+  if (error.issue.kind === 'network') return 'Could not reach the gateway.';
+  const detail = error.issue.message.match(/returned \d+:\s*(.+)$/)?.[1]?.trim();
+  return detail || 'Could not link Decent account.';
 }
 
 export class BeanieApp {
@@ -5193,10 +5201,13 @@ export class BeanieApp {
       });
     } catch (error) {
       console.error('[Beanie] Decent account login failed', error);
+      const message = error instanceof GatewayRequestError
+        ? accountLoginErrorMessage(error)
+        : 'Could not link Decent account.';
       this.setState({
         decentAccountSaving: false,
         decentAccountSource: this.state.decentAccountSource === 'loading' ? 'unavailable' : this.state.decentAccountSource,
-        decentAccountMessage: { tone: 'warn', text: 'Could not link Decent account.' }
+        decentAccountMessage: { tone: 'warn', text: message }
       });
     }
   }

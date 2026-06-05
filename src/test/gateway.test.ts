@@ -209,6 +209,25 @@ await run('decent account login posts credentials to account endpoint', async ()
   equal(calls[0]!.init?.body, JSON.stringify({ email: 'user@example.com', password: 'secret' }));
 });
 
+await run('decent account login includes gateway error body in request errors', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const restore = installFetchStub(calls, { error: 'Invalid Decent account email or password' }, 401);
+  try {
+    await gateway.loginDecentAccount('user@example.com', 'wrong');
+  } catch (error) {
+    if (!(error instanceof GatewayRequestError)) {
+      throw new Error(`Expected GatewayRequestError, received ${String(error)}`);
+    }
+    equal(error.issue.statusCode, 401);
+    equal(error.issue.message.includes('Invalid Decent account email or password'), true);
+    return;
+  } finally {
+    restore();
+  }
+
+  throw new Error('Expected Decent account login to fail');
+});
+
 await run('decent account logout deletes account endpoint', async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const restore = installFetchStub(calls, {});
@@ -235,7 +254,8 @@ async function run(name: string, fn: () => void | Promise<void>): Promise<void> 
 
 function installFetchStub(
   calls: Array<{ url: string; init?: RequestInit }>,
-  responseBody: unknown
+  responseBody: unknown,
+  status = 200
 ): () => void {
   const previousFetch = globalThis.fetch;
   const previousWindow = (globalThis as unknown as { window?: unknown }).window;
@@ -250,7 +270,7 @@ function installFetchStub(
   globalThis.fetch = async (url: string | URL | Request, init?: RequestInit) => {
     calls.push({ url: String(url), init });
     return new Response(JSON.stringify(responseBody), {
-      status: 200,
+      status,
       headers: { 'Content-Type': 'application/json' }
     });
   };
