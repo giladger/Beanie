@@ -11,6 +11,7 @@ import type {
   Grinder,
   MachineCapabilities,
   MachineInfo,
+  MachineSnapshot,
   MachineState,
   PaginatedShots,
   Profile,
@@ -30,6 +31,7 @@ import {
   readGrinders,
   readMachineCapabilities,
   readMachineInfo,
+  readMachineSnapshot,
   readPaginatedShots,
   readProfile,
   readProfiles,
@@ -350,6 +352,8 @@ export const gateway = {
     fetchEmpty('machine', `/api/v1/machine/state/${encodeURIComponent(state)}`, {
       method: 'PUT'
     }),
+  machineState: () =>
+    fetchJson<MachineSnapshot>('machine', '/api/v1/machine/state', readMachineSnapshot),
   machineCapabilities: () =>
     fetchJson<MachineCapabilities>('machine', '/api/v1/machine/capabilities', readMachineCapabilities),
   machineSettings: () =>

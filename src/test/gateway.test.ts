@@ -1,4 +1,4 @@
-import { ApiValidationError, readBeans, readMachineInfo, readPaginatedShots } from '../api/guards';
+import { ApiValidationError, readBeans, readMachineInfo, readMachineSnapshot, readPaginatedShots } from '../api/guards';
 import {
   GatewayRequestError,
   createDemoStartupSnapshot,
@@ -61,6 +61,14 @@ await run('guards preserve machine info group-head-controller flag', () => {
 
   equal(info.GHC, false);
   equal(info.extra?.simulated, true);
+});
+
+await run('guards normalize machine state snapshots for startup sleep checks', () => {
+  const snapshot = readMachineSnapshot({ state: { state: 'sleeping' } });
+
+  equal(snapshot.state.state, 'sleeping');
+  equal(snapshot.flow, 0);
+  equal(snapshot.groupTemperature, 0);
 });
 
 await run('guards reject malformed bean responses', () => {

@@ -444,6 +444,7 @@ export class BeanieApp {
   private machineStopFeedbackTimer: number | null = null;
   private sleepBrightnessTimer: number | null = null;
   private sleepBrightnessZeroed = false;
+  private applyAfterWake = false;
 
   private readonly handleClick = (event: Event) => void this.onClick(event);
   private readonly handleInput = (event: Event) => this.onInput(event);
@@ -558,6 +559,11 @@ export class BeanieApp {
         console.warn('[Beanie] Could not load machine info', error);
         return null;
       });
+      const machine = await gateway.machineState().catch((error) => {
+        console.warn('[Beanie] Could not load machine state', error);
+        return null;
+      });
+      const machineSleeping = machine?.state?.state === 'sleeping';
 
       this.setState({
         workflow,
@@ -566,17 +572,24 @@ export class BeanieApp {
         grinders,
         profiles,
         machineInfo,
+        machine,
+        asleep: machineSleeping,
         demo: false,
         loading: false,
-        status: 'Connected'
+        status: machineSleeping ? 'Machine asleep' : 'Connected'
       });
 
       const selected = selectInitialBean(beans, workflow, readLastBeanId(), latestShots.items[0]);
       if (selected) {
+        const wantsStartupApply = this.state.autoLoad && !this.workflowMatchesBean(selected);
         await this.selectBean(selected.id, {
-          apply: this.state.autoLoad && !this.workflowMatchesBean(selected),
+          apply: wantsStartupApply && !machineSleeping,
           preferWorkflow: true
         });
+        if (wantsStartupApply && machineSleeping) {
+          this.applyAfterWake = true;
+          this.setState({ applyState: 'stale', status: 'Machine asleep — tap Wake to load recipe' });
+        }
       }
       if (prevSignature != null && workflowSignature(workflow) !== prevSignature) {
         this.setState({ applyState: 'stale', status: 'Workflow changed on the machine' });
@@ -828,6 +841,12 @@ export class BeanieApp {
     const bean = this.selectedBean();
     if (!bean) return;
 
+    if (!this.state.demo && this.machineIsSleeping()) {
+      this.applyAfterWake = true;
+      this.setState({ applyState: 'stale', status: 'Machine asleep — tap Wake to apply' });
+      return;
+    }
+
     const draft = normalizeDraft(this.state.draft, this.state.profiles, this.state.grinders);
     const batch = this.selectedBatch();
     const update = buildWorkflowUpdate(bean, batch, draft, draft.profile, this.state.workflow);
@@ -860,6 +879,10 @@ export class BeanieApp {
       console.error('[Beanie] Apply failed', error);
       this.setState({ applyState: 'failed', status: 'Apply failed' });
     }
+  }
+
+  private machineIsSleeping(): boolean {
+    return this.state.asleep || this.state.machine?.state?.state === 'sleeping';
   }
 
   // Debounced auto-apply: any dial-in edit pushes the draft to the workflow
@@ -1674,6 +1697,10 @@ export class BeanieApp {
       case 'wake':
         this.setState({ asleep: false });
         await this.machineAction('idle');
+        if (this.applyAfterWake && !this.machineIsSleeping()) {
+          this.applyAfterWake = false;
+          await this.applyDraft();
+        }
         break;
       case 'load-more-shots':
         await this.loadMoreShots();
@@ -3398,8 +3425,10 @@ export class BeanieApp {
   private renderSleepOverlay(): string {
     if (!this.state.asleep) return '';
     return `
-      <div class="sleep-overlay" data-action="wake" role="button" tabindex="0" aria-label="Tap to wake">
-        <span class="sleep-hint">Tap to wake</span>
+      <div class="sleep-overlay" role="dialog" aria-label="Machine asleep">
+        <button type="button" class="sleep-wake-button" data-action="wake">
+          ${icon('power')}<span>Wake</span>
+        </button>
       </div>
     `;
   }

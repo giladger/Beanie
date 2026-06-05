@@ -973,15 +973,27 @@ p {
   place-items: center;
   background: #000;
   border: 0;
-  cursor: pointer;
 }
 
-.sleep-hint {
-  color: rgba(255, 255, 255, 0.16);
-  font-size: 13px;
+.sleep-wake-button {
+  min-width: 128px;
+  height: 52px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 15px;
   font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+}
+
+.sleep-wake-button svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2.4;
 }
 
 .live-panel {

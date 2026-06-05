@@ -5,6 +5,8 @@ import type {
   Grinder,
   MachineCapabilities,
   MachineInfo,
+  MachineSnapshot,
+  MachineState,
   PaginatedShots,
   ProfileRecord,
   ShotRecord,
@@ -27,6 +29,30 @@ export class ApiValidationError extends Error {
 }
 
 export type ApiResponseGuard<T> = (value: unknown) => T;
+
+const MACHINE_STATES: MachineState[] = [
+  'booting',
+  'busy',
+  'idle',
+  'schedIdle',
+  'sleeping',
+  'heating',
+  'preheating',
+  'espresso',
+  'hotWater',
+  'flush',
+  'steam',
+  'steamRinse',
+  'skipStep',
+  'cleaning',
+  'descaling',
+  'calibration',
+  'selfTest',
+  'airPurge',
+  'needsWater',
+  'error',
+  'fwUpgrade'
+];
 
 export function readBean(value: unknown): Bean {
   return checked('Bean', value, validateBean);
@@ -82,6 +108,33 @@ export function readDe1MachineSettings(value: unknown): De1MachineSettings {
 
 export function readMachineInfo(value: unknown): MachineInfo {
   return checked('MachineInfo', value, validateMachineInfo);
+}
+
+export function readMachineSnapshot(value: unknown): MachineSnapshot {
+  const issues: ValidationIssue[] = [];
+  validateMachineSnapshotState(value, '$', issues);
+  if (issues.length > 0) throw new ApiValidationError('MachineSnapshot', issues);
+
+  const obj = value as Record<string, unknown>;
+  const stateObj = obj.state as Record<string, unknown>;
+  const state: MachineSnapshot['state'] = {
+    state: stateObj.state as MachineState
+  };
+  if (typeof stateObj.substate === 'string') state.substate = stateObj.substate;
+  return {
+    timestamp: typeof obj.timestamp === 'string' ? obj.timestamp : new Date().toISOString(),
+    state,
+    flow: finiteOrZero(obj.flow),
+    pressure: finiteOrZero(obj.pressure),
+    targetFlow: finiteOrZero(obj.targetFlow),
+    targetPressure: finiteOrZero(obj.targetPressure),
+    mixTemperature: finiteOrZero(obj.mixTemperature),
+    groupTemperature: finiteOrZero(obj.groupTemperature),
+    targetMixTemperature: finiteOrZero(obj.targetMixTemperature),
+    targetGroupTemperature: finiteOrZero(obj.targetGroupTemperature),
+    profileFrame: finiteOrZero(obj.profileFrame),
+    steamTemperature: finiteOrZero(obj.steamTemperature)
+  };
 }
 
 export function readPaginatedShots(value: unknown): PaginatedShots {
@@ -217,6 +270,20 @@ function validateMachineInfo(value: unknown, path: string, issues: ValidationIss
   optionalBoolean(obj, 'GHC', path, issues);
   optionalBoolean(obj, 'groupHeadControllerPresent', path, issues);
   optionalRecord(obj, 'extra', path, issues);
+}
+
+function validateMachineSnapshotState(value: unknown, path: string, issues: ValidationIssue[]): void {
+  const obj = expectRecord(value, path, issues);
+  if (!obj) return;
+  validateRequiredObject(obj, 'state', path, issues, (stateValue, statePath, stateIssues) => {
+    const stateObj = expectRecord(stateValue, statePath, stateIssues);
+    if (!stateObj) return;
+    optionalStringEnum(stateObj, 'state', statePath, stateIssues, MACHINE_STATES);
+    if (!('state' in stateObj)) {
+      stateIssues.push({ path: `${statePath}.state`, message: 'Expected one of: machine states' });
+    }
+    optionalString(stateObj, 'substate', statePath, stateIssues);
+  });
 }
 
 function validateWorkflowContext(
@@ -406,6 +473,10 @@ function requiredNumber(
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     issues.push({ path: `${path}.${key}`, message: 'Expected a finite number' });
   }
+}
+
+function finiteOrZero(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
 function optionalNumber(
