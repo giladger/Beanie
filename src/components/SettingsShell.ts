@@ -282,10 +282,10 @@ function renderPluginConfig(spec: PluginSettingsSpec, config: PluginConfigState)
     ? `<span class="settings-plugin-verify ${config.verify.tone}">${escapeHtml(config.verify.message)}</span>`
     : '';
   const verifyBtn = spec.supportsVerify
-    ? `<button type="button" class="text-button" data-action="settings-plugin-verify" data-id="${escapeAttr(spec.id)}">${icon('refresh-cw')}<span>Verify</span></button>`
+    ? `<button type="button" class="text-button" data-action="settings-plugin-verify" data-id="${escapeAttr(config.id)}">${icon('refresh-cw')}<span>Verify</span></button>`
     : '';
   const saveDisabled = config.dirty && !config.saving ? '' : 'disabled';
-  const saveBtn = `<button type="button" class="text-button primary" data-action="settings-plugin-save" data-id="${escapeAttr(spec.id)}" ${saveDisabled}>${icon('save')}<span>${config.saving ? 'Saving…' : 'Save'}</span></button>`;
+  const saveBtn = `<button type="button" class="text-button primary" data-action="settings-plugin-save" data-id="${escapeAttr(config.id)}" ${saveDisabled}>${icon('save')}<span>${config.saving ? 'Saving…' : 'Save'}</span></button>`;
   return `
     <div class="settings-plugin-config">
       ${help}
@@ -326,7 +326,11 @@ function renderPluginField(field: PluginSettingField, config: PluginConfigState)
       : field.placeholder ?? '';
     // Secret fields are write-only: the box starts empty and the gateway never
     // echoes the value back, so a blank box means "keep the saved secret".
-    const val = field.secret ? '' : escapeAttr(String(draftVal ?? ''));
+    const val = field.secret
+      ? config.secretEdited[field.key]
+        ? escapeAttr(String(draftVal ?? ''))
+        : ''
+      : escapeAttr(String(draftVal ?? ''));
     control = `<input class="settings-input settings-plugin-text" type="${inputType}" ${base} value="${val}" placeholder="${escapeAttr(placeholder)}" autocomplete="off" spellcheck="false" />`;
   }
   const help = field.help ? `<small>${escapeHtml(field.help)}</small>` : '';
