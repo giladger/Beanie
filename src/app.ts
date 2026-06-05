@@ -216,6 +216,7 @@ const FOCUSABLE_SEARCH = new Set(['search', 'profile-search', 'settings-search']
 // Scrollable containers whose scroll position must survive a re-render.
 const SCROLL_SELECTORS = ['.bean-picker-list', '.bean-picker-batch-list', '.shot-list', '.profile-list', '.page-body'];
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 15_000;
+const SHOT_REFRESH_INTERVAL_MS = 10_000;
 const NO_SCALE_SHOT_MESSAGE = 'Shot blocked: connect a scale to start.';
 const NO_SCALE_MACHINE_STATUS = 'Connect scale';
 const NO_SCALE_ABORT_WINDOW_MS = 3_000;
@@ -508,9 +509,11 @@ export class BeanieApp {
   private machineRetryTimer: number | null = null;
   private scaleRetryTimer: number | null = null;
   private waterRetryTimer: number | null = null;
+  private shotRefreshTimer: number | null = null;
   private machineSocket: WebSocket | null = null;
   private scaleSocket: WebSocket | null = null;
   private waterSocket: WebSocket | null = null;
+  private shotRefreshInFlight = false;
 
   private readonly liveShot = new LiveShotSession();
   private liveChart: LiveChart | null = null;
@@ -596,6 +599,7 @@ export class BeanieApp {
     if (this.machineRetryTimer != null) window.clearTimeout(this.machineRetryTimer);
     if (this.scaleRetryTimer != null) window.clearTimeout(this.scaleRetryTimer);
     if (this.waterRetryTimer != null) window.clearTimeout(this.waterRetryTimer);
+    if (this.shotRefreshTimer != null) window.clearInterval(this.shotRefreshTimer);
     if (this.simTimer != null) window.clearTimeout(this.simTimer);
     if (this.sleepBrightnessTimer != null) window.clearTimeout(this.sleepBrightnessTimer);
     if (this.liveRaf != null) window.cancelAnimationFrame(this.liveRaf);
@@ -723,6 +727,7 @@ export class BeanieApp {
       this.connectMachineSocket();
       this.connectScaleSocket();
       this.connectWaterLevelSocket();
+      this.startShotRefreshTimer();
     } catch (error) {
       console.warn('[Beanie] Gateway unavailable; using demo data', error);
       this.loadDemo();
@@ -949,6 +954,48 @@ export class BeanieApp {
     const { records } = await this.fetchShotPage(bean, this.state.shots.length);
     const shots = [...this.state.shots, ...records];
     this.setState({ shots, shotsLoadingMore: false, status: `${shots.length} shots` });
+  }
+
+  private startShotRefreshTimer(): void {
+    if (this.shotRefreshTimer != null) return;
+    this.shotRefreshTimer = window.setInterval(() => {
+      void this.refreshVisibleShots();
+    }, SHOT_REFRESH_INTERVAL_MS);
+  }
+
+  private async refreshVisibleShots(): Promise<void> {
+    const bean = this.selectedBean();
+    if (!bean || this.state.demo || this.shotRefreshInFlight) return;
+    if (this.state.liveActive || this.state.liveFinalizing || this.state.shotsLoadingMore) return;
+    if (this.state.modal === 'edit-shot') return;
+
+    this.shotRefreshInFlight = true;
+    try {
+      const { records, total } = await this.fetchShotPage(bean, 0);
+      if (this.selectedBean()?.id !== bean.id || this.state.liveActive || this.state.liveFinalizing) return;
+
+      const firstPageIds = new Set(records.map((shot) => shot.id));
+      const tail = this.state.shots.filter((shot) => !firstPageIds.has(shot.id));
+      const shots = [...records, ...tail].slice(0, Math.max(this.shotPageSize, this.state.shots.length));
+      const selectedShotStillVisible = this.state.detailShotId
+        ? shots.some((shot) => shot.id === this.state.detailShotId)
+        : false;
+
+      this.setState({
+        shots,
+        shotsTotal: total,
+        shotsLoadingMore: false,
+        detailShotId: selectedShotStillVisible ? this.state.detailShotId : shots.find((shot) => !isServiceShot(shot))?.id ?? null,
+        beanUsageAt: {
+          ...this.state.beanUsageAt,
+          ...this.beanUsageFromShots(this.state.beans, records)
+        }
+      });
+    } catch (error) {
+      console.warn('[Beanie] Could not refresh shots', error);
+    } finally {
+      this.shotRefreshInFlight = false;
+    }
   }
 
   private async loadLatestShotCandidates(limit = 6): Promise<ShotRecord[]> {
