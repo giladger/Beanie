@@ -911,8 +911,7 @@ p {
   flex: none;
 }
 
-.shot-edit-button,
-.shot-delete-button {
+.shot-edit-button {
   width: 38px;
   height: 38px;
   border-radius: 10px;
@@ -1937,6 +1936,12 @@ p {
   margin: 0;
   font-size: 19px;
   line-height: 1;
+}
+
+.shot-edit-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .shot-edit-grid {

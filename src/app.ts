@@ -4224,7 +4224,6 @@ export class BeanieApp {
           variant: 'detail'
         })}
         <button class="icon-button shot-edit-button" data-action="edit-shot" aria-label="Edit shot fields" title="Edit shot fields">${icon('pencil')}</button>
-        <button class="icon-button danger-icon shot-delete-button" data-action="delete-shot" data-id="${escapeAttr(shot.id)}" aria-label="Delete shot" title="Delete shot">${icon('trash-2')}</button>
       </div>
       <div class="detail-chart">
         <canvas id="detail-canvas" class="live-canvas detail-canvas"></canvas>
@@ -4579,7 +4578,10 @@ export class BeanieApp {
               <h2>Edit shot</h2>
               <p class="modal-hint">${escapeHtml(shotLabel)}</p>
             </div>
-            <button type="button" class="icon-button" data-action="close-modal" aria-label="Close">${icon('x')}</button>
+            <div class="shot-edit-head-actions">
+              <button type="button" class="icon-button danger-icon" data-action="delete-shot" data-id="${escapeAttr(shot.id)}" aria-label="Delete shot" title="Delete shot">${icon('trash-2')}</button>
+              <button type="button" class="icon-button" data-action="close-modal" aria-label="Close">${icon('x')}</button>
+            </div>
           </div>
 
           <div class="shot-edit-grid">
