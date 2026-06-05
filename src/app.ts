@@ -212,8 +212,10 @@ const FOCUSABLE_SEARCH = new Set(['search', 'profile-search', 'settings-search']
 const SCROLL_SELECTORS = ['.bean-picker-list', '.bean-picker-batch-list', '.shot-list', '.profile-list', '.page-body'];
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 15_000;
 const NO_SCALE_SHOT_MESSAGE = 'Shot blocked: connect a scale to start.';
+const NO_SCALE_MACHINE_STATUS = 'Connect scale';
 const NO_SCALE_ABORT_WINDOW_MS = 3_000;
 const SCALE_FRESH_WINDOW_MS = 5_000;
+const NO_SCALE_WARNING_VISIBLE_MS = 6_000;
 
 const SHOT_SCORE_OPTIONS = [
   { value: 20, label: 'Bad', tone: 'bad' },
@@ -524,6 +526,7 @@ export class BeanieApp {
   private lastPresenceHeartbeatMs = 0;
   private lastScaleFrameMs: number | null = null;
   private noScaleBrewFlashStartedMs: number | null = null;
+  private noScaleShotWarningUntilMs = 0;
 
   private readonly handleClick = (event: Event) => {
     this.noteUserActivity();
@@ -1240,7 +1243,7 @@ export class BeanieApp {
   private async machineAction(state: MachineState): Promise<void> {
     const service = machineServiceState(state);
     if (state === 'espresso' && this.shouldPreflightBlockShotForScale()) {
-      this.setState({ busy: false, status: NO_SCALE_SHOT_MESSAGE });
+      this.showNoScaleShotWarning({ busy: false });
       return;
     }
     this.setState({ busy: true, status: machineActionStatus(state, 'sending') });
@@ -1274,11 +1277,13 @@ export class BeanieApp {
       else this.observeSleepBrightnessState(false);
     } catch (error) {
       console.error('[Beanie] Machine action failed', error);
+      if (state === 'espresso' && isNoScaleShotBlockError(error)) {
+        this.showNoScaleShotWarning({ busy: false });
+        return;
+      }
       this.setState({
         busy: false,
-        status: state === 'espresso' && isNoScaleShotBlockError(error)
-          ? NO_SCALE_SHOT_MESSAGE
-          : 'Machine command failed'
+        status: 'Machine command failed'
       });
     }
   }
@@ -1318,12 +1323,21 @@ export class BeanieApp {
     if (this.hasFreshConnectedScale(tMs)) return false;
     if (tMs - startedMs > NO_SCALE_ABORT_WINDOW_MS) return false;
     this.liveShot.reset();
-    this.setState({
+    this.showNoScaleShotWarning({
       liveActive: false,
-      liveFinalizing: false,
-      status: NO_SCALE_SHOT_MESSAGE
+      liveFinalizing: false
     });
     return true;
+  }
+
+  private showNoScaleShotWarning(next: Partial<AppState> = {}): void {
+    this.noScaleShotWarningUntilMs = Date.now() + NO_SCALE_WARNING_VISIBLE_MS;
+    this.setState({ ...next, status: NO_SCALE_SHOT_MESSAGE });
+  }
+
+  private machineStatusLabel(): string {
+    if (Date.now() < this.noScaleShotWarningUntilMs) return NO_SCALE_MACHINE_STATUS;
+    return machineStatus(this.state.machine, this.state.loading);
   }
 
   private async toggleMachineCommand(state: MachineState): Promise<void> {
@@ -1500,7 +1514,10 @@ export class BeanieApp {
     if (scale) {
       this.state.scale = scale;
       this.lastScaleFrameMs = tMs;
-      if (this.hasFreshConnectedScale(tMs)) this.noScaleBrewFlashStartedMs = null;
+      if (this.hasFreshConnectedScale(tMs)) {
+        this.noScaleBrewFlashStartedMs = null;
+        this.noScaleShotWarningUntilMs = 0;
+      }
     }
 
     const wasActive = this.state.liveActive;
@@ -1600,7 +1617,7 @@ export class BeanieApp {
       const el = this.root.querySelector<HTMLElement>(`#${id}`);
       if (el) el.textContent = value;
     };
-    set('stat-machine', machineStatus(machine, this.state.loading));
+    set('stat-machine', this.machineStatusLabel());
     set('stat-group', temp(machine?.groupTemperature));
     set('stat-steam', temp(machine?.steamTemperature));
     set('stat-water', water(this.state.waterLevel));
@@ -1678,10 +1695,9 @@ export class BeanieApp {
     const shotWindow = this.liveShot.snapshot;
     if (this.isNoScaleBlockedLiveAbort(shotWindow)) {
       this.liveShot.reset();
-      this.setState({
+      this.showNoScaleShotWarning({
         liveActive: false,
-        liveFinalizing: false,
-        status: NO_SCALE_SHOT_MESSAGE
+        liveFinalizing: false
       });
       return;
     }
@@ -3856,7 +3872,7 @@ export class BeanieApp {
       <header class="topbar">
         <div class="top-inline">
           <div class="top-stats" aria-label="Machine metrics">
-            ${topStat('Status', machineStatus(machine, this.state.loading), 'stat-machine')}
+            ${topStat('Status', this.machineStatusLabel(), 'stat-machine')}
             ${topStat('Group', temp(machine?.groupTemperature), 'stat-group')}
             ${topStat('Steam', temp(machine?.steamTemperature), 'stat-steam')}
             ${topStat('Water', water(this.state.waterLevel), 'stat-water')}
