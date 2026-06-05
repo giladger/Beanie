@@ -212,6 +212,29 @@ const SHOT_SCORE_OPTIONS = [
 
 type ShotScoreOption = (typeof SHOT_SCORE_OPTIONS)[number];
 
+// Flush / steam / hot-water actions can end up in the shot store (e.g. imported
+// de1app history) tagged with a non-espresso beverage type. Keep them out of a
+// bean's shot history. Only records EXPLICITLY marked as a service are hidden,
+// so real espresso shots (beverage type espresso, or unlabelled) are untouched.
+const SERVICE_BEVERAGE_TYPES = new Set([
+  'steam',
+  'water',
+  'hot_water',
+  'hotwater',
+  'hot water',
+  'flush',
+  'rinse',
+  'clean',
+  'cleaning',
+  'calibrate',
+  'calibration'
+]);
+
+function isServiceShot(shot: ShotRecord): boolean {
+  const types = [shot.workflow?.context?.finalBeverageType, shot.workflow?.profile?.beverage_type];
+  return types.some((type) => type != null && SERVICE_BEVERAGE_TYPES.has(String(type).toLowerCase().trim()));
+}
+
 // Which editor field a tap-to-edit numpad dialog is bound to.
 interface ProfileEditTarget {
   target: 'step-field' | 'simple-field' | 'exit' | 'meta' | 'limiter-range';
@@ -4008,7 +4031,9 @@ export class BeanieApp {
   }
 
   private renderHistory(): string {
-    const shots = this.state.shots;
+    // Hide flush/steam/water records from the bean's history (state.shots stays
+    // raw so pagination/offsets are unaffected).
+    const shots = this.state.shots.filter((shot) => !isServiceShot(shot));
     const selected = this.selectedHistoryShot();
     return `
       <section class="history-panel panel">
@@ -4030,7 +4055,7 @@ export class BeanieApp {
   }
 
   private selectedHistoryShot(): ShotRecord | null {
-    const shots = this.state.shots;
+    const shots = this.state.shots.filter((shot) => !isServiceShot(shot));
     return shots.find((shot) => shot.id === this.state.detailShotId) ?? shots[0] ?? null;
   }
 
