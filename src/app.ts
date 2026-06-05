@@ -4476,12 +4476,10 @@ export class BeanieApp {
         <section class="modal panel no-scale-modal" role="alertdialog" aria-modal="true" aria-labelledby="no-scale-title">
           <div class="modal-head no-scale-head">
             <div>
-              <span class="eyebrow">Shot blocked</span>
               <h2 id="no-scale-title">Connect a scale to start</h2>
             </div>
             <button type="button" class="icon-button" data-action="close-modal" aria-label="Close">${icon('x')}</button>
           </div>
-          <p class="no-scale-copy">Beanie stopped this shot because Reaprime is set to block shots when no scale is connected.</p>
           <label class="no-scale-toggle-row">
             <span>
               <strong>Block shots without a scale</strong>
@@ -4493,7 +4491,7 @@ export class BeanieApp {
             </span>
           </label>
           <div class="modal-actions no-scale-actions">
-            <button type="button" class="command primary" data-action="close-modal">OK</button>
+            <button type="button" class="command primary no-scale-ok" data-action="close-modal">OK</button>
           </div>
         </section>
       </div>
