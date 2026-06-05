@@ -3334,7 +3334,7 @@ export class BeanieApp {
         ${isPage ? this.renderPage() : this.renderWorkbench(bean)}
         ${isPage ? '' : this.renderLivePanel()}
         ${this.renderModal()}
-        ${this.renderWakeCorner()}
+        ${this.renderSleepOverlay()}
       </div>
     `;
     refreshIcons();
@@ -3466,12 +3466,14 @@ export class BeanieApp {
     }
   }
 
-  private renderWakeCorner(): string {
-    if (!this.state.asleep) return '';
+  private renderSleepOverlay(): string {
+    if (!this.state.asleep || this.usesWebSleepControls()) return '';
     return `
-      <button type="button" class="sleep-wake-button" data-action="wake" aria-label="Wake machine" title="Wake machine">
-        ${icon('power')}<span>Wake</span>
-      </button>
+      <div class="sleep-overlay" role="dialog" aria-label="Machine asleep">
+        <button type="button" class="sleep-wake-button" data-action="wake">
+          ${icon('power')}<span>Wake</span>
+        </button>
+      </div>
     `;
   }
 
@@ -3516,6 +3518,7 @@ export class BeanieApp {
     const machineCommands = this.renderMachineCommands();
     const powerAction = this.state.asleep ? 'wake' : 'sleep';
     const powerLabel = this.state.asleep ? 'Wake' : 'Sleep';
+    const showWakeText = this.state.asleep && this.usesWebSleepControls();
     return `
       <header class="topbar">
         <div class="top-inline">
@@ -3530,7 +3533,9 @@ export class BeanieApp {
           <div class="top-icons" role="toolbar" aria-label="Skin actions">
             <button class="icon-tool" data-action="open-machine-settings" aria-label="Machine settings" title="Machine settings">${icon('droplet')}</button>
             <button class="icon-tool" data-action="open-settings" aria-label="Settings" title="Settings">${icon('settings')}</button>
-            <button class="icon-tool ${this.state.asleep ? 'icon-tool-wake' : ''}" data-action="${powerAction}" aria-label="${powerLabel}" title="${powerLabel}">${icon('power')}</button>
+            <button class="icon-tool ${this.state.asleep ? 'icon-tool-wake' : ''} ${showWakeText ? 'icon-tool-text' : ''}" data-action="${powerAction}" aria-label="${powerLabel}" title="${powerLabel}">
+              ${icon('power')}${showWakeText ? '<span>Wake</span>' : ''}
+            </button>
           </div>
         </div>
       </header>
@@ -3571,6 +3576,10 @@ export class BeanieApp {
           .join('')}
       </div>
     `;
+  }
+
+  private usesWebSleepControls(): boolean {
+    return !isDecentAppWebView();
   }
 
   private renderBeanPickerModal(): string {
@@ -6279,6 +6288,10 @@ function isThemePreference(value: string | undefined): value is ThemePreference 
 
 function isUIScalePreference(value: string | undefined): value is UIScalePreference {
   return value === 'compact' || value === 'standard' || value === 'large';
+}
+
+function isDecentAppWebView(): boolean {
+  return navigator.userAgent.trim() === 'Decent';
 }
 
 function defaultExitValueForApp(type: 'pressure' | 'flow', condition: 'over' | 'under'): number {
