@@ -4,6 +4,7 @@ import {
   profileBaseTemperature,
   ratioFor,
   recipeFromShot,
+  roastFreshnessLabel,
   selectInitialBean,
   shotFilterForBean,
   withProfileTemperature,
@@ -168,6 +169,40 @@ run('treats tank_temperature 0 as off and uses step temps as the base', () => {
   const steps = shifted.steps as Array<{ temperature: number }>;
   equal(steps[0]!.temperature, 92);
   equal(steps[1]!.temperature, 92);
+});
+
+run('formats roast freshness as days off roast (date prefix is locale-formatted)', () => {
+  // Asserting the suffix only: the day count is an absolute-time diff, so it is
+  // timezone- and locale-independent, unlike the localized date prefix.
+  const now = new Date('2026-06-05T12:00:00Z');
+  equal(
+    roastFreshnessLabel({ id: 'x', beanId: 'a', roastDate: '2026-06-01T00:00:00Z' }, now)?.endsWith(
+      '· 4 days off roast'
+    ),
+    true
+  );
+});
+
+run('uses singular day and a "today" label for fresh roasts', () => {
+  const now = new Date('2026-06-05T12:00:00Z');
+  equal(
+    roastFreshnessLabel({ id: 'x', beanId: 'a', roastDate: '2026-06-04T00:00:00Z' }, now)?.endsWith(
+      '· 1 day off roast'
+    ),
+    true
+  );
+  equal(
+    roastFreshnessLabel({ id: 'x', beanId: 'a', roastDate: '2026-06-05T00:00:00Z' }, now)?.endsWith(
+      '· today'
+    ),
+    true
+  );
+});
+
+run('returns null when a batch has no usable roast date', () => {
+  equal(roastFreshnessLabel(null), null);
+  equal(roastFreshnessLabel({ id: 'x', beanId: 'a' }), null);
+  equal(roastFreshnessLabel({ id: 'x', beanId: 'a', roastDate: 'not-a-date' }), null);
 });
 
 function run(name: string, fn: () => void): void {

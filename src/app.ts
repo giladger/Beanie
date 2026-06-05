@@ -35,6 +35,7 @@ import {
   ratioFor,
   recipeFromShot,
   recipeFromWorkflow,
+  roastFreshnessLabel,
   selectInitialBean,
   shotFilterForBean,
   yieldForRatio
@@ -3872,6 +3873,9 @@ export class BeanieApp {
 
   private renderHero(bean: Bean | null): string {
     const title = bean ? beanLabel(bean) : 'Pick a bag';
+    const freshness = bean
+      ? roastFreshnessLabel(latestBatch(this.state.batchesByBean[bean.id] ?? []))
+      : null;
     return `
       <section class="hero panel">
         <div class="hero-main">
@@ -3887,6 +3891,7 @@ export class BeanieApp {
                 : ''
             }
           </div>
+          ${freshness ? `<p class="hero-roast">${escapeHtml(freshness)}</p>` : ''}
         </div>
       </section>
     `;
@@ -5645,15 +5650,14 @@ function promoteBean(beans: Bean[], beanId: string): Bean[] {
 }
 
 function enjoymentBadge(shot: ShotRecord, size: 'row' | 'detail' = 'row'): string {
-  const value = shot.annotations?.enjoyment;
-  if (value == null) {
+  // Unrated shots (null, or the 0 that de1app imports use as "not rated")
+  // get no badge — scoreOptionForValue treats both as no score.
+  const score = scoreOptionForValue(shot.annotations?.enjoyment);
+  if (!score) {
     if (size === 'row') return '<span class="enjoyment-badge empty" aria-hidden="true"></span>';
     return '';
   }
-  const score = scoreOptionForValue(value);
-  const label = score ? score.label : Number.isInteger(value) ? value.toString() : value.toFixed(1);
-  const tone = score ? score.tone : 'ok';
-  return `<span class="enjoyment-badge ${tone} ${size === 'detail' ? 'large' : ''}" aria-label="Enjoyment ${escapeAttr(label)}">${escapeHtml(label)}</span>`;
+  return `<span class="enjoyment-badge ${score.tone} ${size === 'detail' ? 'large' : ''}" aria-label="Enjoyment ${escapeAttr(score.label)}">${escapeHtml(score.label)}</span>`;
 }
 
 function shotScoreControl(
@@ -5673,7 +5677,7 @@ function shotScoreControl(
 }
 
 function scoreOptionForValue(value: number | null | undefined): ShotScoreOption | null {
-  if (value == null) return null;
+  if (value == null || value <= 0) return null;
   let closest: ShotScoreOption = SHOT_SCORE_OPTIONS[0]!;
   let distance = Math.abs(value - closest.value);
   for (const option of SHOT_SCORE_OPTIONS) {

@@ -478,6 +478,13 @@ p {
   white-space: nowrap;
 }
 
+.hero-roast {
+  margin: 3px 0 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
 .bean-title-button {
   max-width: 100%;
   min-width: 0;
