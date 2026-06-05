@@ -910,7 +910,8 @@ p {
   flex: none;
 }
 
-.shot-edit-button {
+.shot-edit-button,
+.shot-delete-button {
   width: 38px;
   height: 38px;
   border-radius: 10px;

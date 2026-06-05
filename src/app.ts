@@ -1021,6 +1021,43 @@ export class BeanieApp {
     });
   }
 
+  private async deleteShot(shotId: string): Promise<void> {
+    const shot = this.state.shots.find((item) => item.id === shotId);
+    if (!shot) return;
+    if (!window.confirm('Delete this shot? This action cannot be undone.')) return;
+
+    const applyDeletedShot = (status: string) => {
+      const shots = this.state.shots.filter((item) => item.id !== shotId);
+      const visibleShots = shots.filter((item) => !isServiceShot(item));
+      this.setState({
+        shots,
+        shotsTotal: Math.max(0, this.state.shotsTotal - 1),
+        detailShotId: visibleShots[0]?.id ?? null,
+        modal: null,
+        editDialog: null,
+        shotEdit: null,
+        shotEditField: null,
+        busy: false,
+        status
+      });
+    };
+
+    this.setState({ busy: true, status: 'Deleting shot' });
+    if (this.state.demo) {
+      applyDeletedShot('Shot deleted (demo)');
+      return;
+    }
+
+    try {
+      await gateway.deleteShot(shotId);
+      await beanieCache.invalidateShotMutation(shotId);
+      applyDeletedShot('Shot deleted');
+    } catch (error) {
+      console.error('[Beanie] Delete shot failed', error);
+      this.setState({ busy: false, status: 'Delete shot failed' });
+    }
+  }
+
   private shotUpdateFromForm(form: HTMLFormElement, shot: ShotRecord): ShotUpdate {
     const draft = shotEditDraftWithFormNumbers(
       this.state.shotEdit?.shotId === shot.id ? this.state.shotEdit : shotEditDraftFromShot(shot),
@@ -1715,6 +1752,9 @@ export class BeanieApp {
         break;
       case 'edit-shot':
         this.openShotEditor();
+        break;
+      case 'delete-shot':
+        if (id) await this.deleteShot(id);
         break;
       case 'open-shot-field':
         if (isShotEditField(field)) this.setState({ shotEditField: field });
@@ -4188,6 +4228,7 @@ export class BeanieApp {
           variant: 'detail'
         })}
         <button class="icon-button shot-edit-button" data-action="edit-shot" aria-label="Edit shot fields" title="Edit shot fields">${icon('pencil')}</button>
+        <button class="icon-button danger-icon shot-delete-button" data-action="delete-shot" data-id="${escapeAttr(shot.id)}" aria-label="Delete shot" title="Delete shot">${icon('trash-2')}</button>
       </div>
       <div class="detail-chart">
         <canvas id="detail-canvas" class="live-canvas detail-canvas"></canvas>
