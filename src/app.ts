@@ -4239,7 +4239,6 @@ export class BeanieApp {
               machineValueTile('steamFlow', 'Flow', steam.flow, capabilities.steam.flow),
               machineValueTile('steamTemp', 'Temp', steam.targetTemperature, capabilities.steam.targetTemperature),
               machineValueTile('steamDuration', 'Time', steam.duration, capabilities.steam.duration),
-              machineValueTile('steamStopTemp', 'Milk stop', steam.stopAtTemperature, capabilities.steam.stopAtTemperature!),
               machineSteamPurgeTile(this.state.machineSettings?.steamPurgeMode)
             ]
           })}
@@ -4269,8 +4268,7 @@ export class BeanieApp {
             values: [
               machineValueTile('flushDuration', 'Time', flush.duration, capabilities.flush.duration),
               machineValueTile('flushFlow', 'Flow', flush.flow, capabilities.flush.flow),
-              machineValueTile('flushTemp', 'Temp', flush.targetTemperature, capabilities.flush.targetTemperature),
-              machineReadoutTile('Source', capabilities.source === 'machine' ? 'DE1' : sourceLabel(capabilities), 'settings')
+              machineValueTile('flushTemp', 'Temp', flush.targetTemperature, capabilities.flush.targetTemperature)
             ]
           })}
         </div>
@@ -5372,10 +5370,6 @@ function machineValueTile(name: string, label: string, value: number | undefined
   };
 }
 
-function machineReadoutTile(label: string, value: string, unit: string): MachineValueTile {
-  return { label, value, unit, disabled: true };
-}
-
 function machineSteamPurgeTile(mode: number | null | undefined): MachineValueTile {
   const currentMode = normalizeSteamPurgeMode(mode);
   const nextMode = currentMode === 0 ? 1 : 0;
@@ -5413,12 +5407,6 @@ function normalizeSteamPurgeMode(mode: number | null | undefined): number {
 
 function steamPurgeModeLabel(mode: number): string {
   return STEAM_PURGE_MODES.find((option) => option.value === mode)?.label ?? STEAM_PURGE_MODES[0]!.label;
-}
-
-function sourceLabel(capabilities: WaterControlCapabilities): string {
-  if (capabilities.source === 'machine') return 'Machine settings';
-  if (capabilities.source === 'demo') return 'Demo';
-  return 'Workflow';
 }
 
 function machineSettingsFromWorkflow(
