@@ -185,6 +185,11 @@ function completionReasonFor(
   return 'manual-stop';
 }
 
+export function liveShotDurationMs(state: LiveShotState): number | null {
+  if (state.startMs == null || state.lastActiveMs == null) return null;
+  return Math.max(0, state.lastActiveMs - state.startMs);
+}
+
 function readoutsFor(
   machine: MachineSnapshot | null,
   scale: ScaleSnapshot | null,
@@ -243,8 +248,7 @@ export function buildLiveChartModel(
 }
 
 function elapsedSecondsFor(state: LiveShotState): number {
-  if (state.startMs == null || state.lastActiveMs == null) return 0;
-  return Math.max(0, (state.lastActiveMs - state.startMs) / 1000);
+  return (liveShotDurationMs(state) ?? 0) / 1000;
 }
 
 // Thin mutable wrapper over the pure reducer for the app's by-reference usage.

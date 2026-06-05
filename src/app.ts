@@ -130,7 +130,13 @@ import {
   renderFlowCalibrator,
   roundCalibration
 } from './components/flowCalibrator';
-import { LiveShotSession, simulateShotFrames, type LiveFrame, type LiveShotState } from './domain/liveShot';
+import {
+  LiveShotSession,
+  liveShotDurationMs,
+  simulateShotFrames,
+  type LiveFrame,
+  type LiveShotState
+} from './domain/liveShot';
 import { beanieCache } from './domain/cache';
 import { waterTankMlFromMm } from './domain/waterTank';
 import {
@@ -206,6 +212,7 @@ const FOCUSABLE_SEARCH = new Set(['search', 'profile-search', 'settings-search']
 const SCROLL_SELECTORS = ['.bean-picker-list', '.bean-picker-batch-list', '.shot-list', '.profile-list', '.page-body'];
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 15_000;
 const NO_SCALE_SHOT_MESSAGE = 'Shot blocked: connect a scale to start.';
+const NO_SCALE_ABORT_WINDOW_MS = 3_000;
 
 const SHOT_SCORE_OPTIONS = [
   { value: 20, label: 'Bad', tone: 'bad' },
@@ -1277,6 +1284,14 @@ export class BeanieApp {
     return this.state.settingsBundle?.rea.blockOnNoScale === true && !scaleConnected(this.state.scale);
   }
 
+  private isNoScaleBlockedLiveAbort(shotWindow: LiveShotState): boolean {
+    const blockSetting = this.state.settingsBundle?.rea.blockOnNoScale;
+    if (blockSetting === false) return false;
+    if (scaleConnected(this.state.scale)) return false;
+    const durationMs = liveShotDurationMs(shotWindow);
+    return durationMs != null && durationMs <= NO_SCALE_ABORT_WINDOW_MS;
+  }
+
   private async toggleMachineCommand(state: MachineState): Promise<void> {
     const active = this.state.machine?.state?.state === state;
     await this.machineAction(active ? 'idle' : state);
@@ -1620,6 +1635,16 @@ export class BeanieApp {
 
   private onShotEnded(): void {
     const shotWindow = this.liveShot.snapshot;
+    if (this.isNoScaleBlockedLiveAbort(shotWindow)) {
+      this.liveShot.reset();
+      this.setState({
+        liveActive: false,
+        liveFinalizing: false,
+        status: NO_SCALE_SHOT_MESSAGE
+      });
+      return;
+    }
+
     const bean = this.selectedBean();
     const optimisticShot = bean
       ? optimisticShotFromLive(

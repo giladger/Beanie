@@ -1,6 +1,7 @@
 import type { MachineSnapshot, ScaleSnapshot } from '../api/types';
 import {
   LiveShotSession,
+  liveShotDurationMs,
   simulateShotFrames,
   type LiveFrame
 } from '../domain/liveShot';
@@ -77,6 +78,15 @@ run('leaving espresso ends the session and sets a completion reason', () => {
   equal(session.isActive, false);
   equal(session.phase, 'ended');
   equal(session.completionReason, 'manual-stop');
+});
+
+run('live shot duration spans the active brewing window', () => {
+  const session = new LiveShotSession();
+  session.ingest(pourFrame(5000, { pressure: 2 }));
+  session.ingest(pourFrame(6200, { pressure: 6 }));
+  session.ingest(idleFrame(7000));
+
+  equal(liveShotDurationMs(session.snapshot), 1200);
 });
 
 run('reaching target weight reports a target-weight completion reason', () => {
