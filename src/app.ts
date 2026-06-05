@@ -213,6 +213,7 @@ const SCROLL_SELECTORS = ['.bean-picker-list', '.bean-picker-batch-list', '.shot
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 15_000;
 const NO_SCALE_SHOT_MESSAGE = 'Shot blocked: connect a scale to start.';
 const NO_SCALE_ABORT_WINDOW_MS = 3_000;
+const SCALE_FRESH_WINDOW_MS = 5_000;
 
 const SHOT_SCORE_OPTIONS = [
   { value: 20, label: 'Bad', tone: 'bad' },
@@ -521,6 +522,8 @@ export class BeanieApp {
   private sleepBrightnessZeroed = false;
   private applyAfterWake = false;
   private lastPresenceHeartbeatMs = 0;
+  private lastScaleFrameMs: number | null = null;
+  private noScaleBrewFlashStartedMs: number | null = null;
 
   private readonly handleClick = (event: Event) => {
     this.noteUserActivity();
@@ -1281,15 +1284,46 @@ export class BeanieApp {
   }
 
   private shouldPreflightBlockShotForScale(): boolean {
-    return this.state.settingsBundle?.rea.blockOnNoScale === true && !scaleConnected(this.state.scale);
+    return this.state.settingsBundle?.rea.blockOnNoScale === true && !this.hasFreshConnectedScale(Date.now());
   }
 
   private isNoScaleBlockedLiveAbort(shotWindow: LiveShotState): boolean {
     const blockSetting = this.state.settingsBundle?.rea.blockOnNoScale;
     if (blockSetting === false) return false;
-    if (scaleConnected(this.state.scale)) return false;
+    if (this.hasFreshConnectedScale(Date.now())) return false;
     const durationMs = liveShotDurationMs(shotWindow);
     return durationMs != null && durationMs <= NO_SCALE_ABORT_WINDOW_MS;
+  }
+
+  private hasFreshConnectedScale(tMs: number): boolean {
+    if (!scaleConnected(this.state.scale)) return false;
+    return this.lastScaleFrameMs != null && tMs - this.lastScaleFrameMs <= SCALE_FRESH_WINDOW_MS;
+  }
+
+  private beginNoScaleBrewFlashIfNeeded(machine: MachineSnapshot, previousState: string | undefined, tMs: number): void {
+    const state = machine.state?.state;
+    if (!isBrewState(state) || isBrewState(previousState)) return;
+    if (this.state.settingsBundle?.rea.blockOnNoScale === false) return;
+    if (this.hasFreshConnectedScale(tMs)) return;
+    this.noScaleBrewFlashStartedMs = tMs;
+  }
+
+  private consumeNoScaleBrewFlashIfNeeded(machine: MachineSnapshot, previousState: string | undefined, tMs: number): boolean {
+    const state = machine.state?.state;
+    if (isBrewState(state) || !isBrewState(previousState)) return false;
+    const startedMs = this.noScaleBrewFlashStartedMs;
+    this.noScaleBrewFlashStartedMs = null;
+    if (startedMs == null) return false;
+    if (this.state.settingsBundle?.rea.blockOnNoScale === false) return false;
+    if (this.hasFreshConnectedScale(tMs)) return false;
+    if (tMs - startedMs > NO_SCALE_ABORT_WINDOW_MS) return false;
+    this.liveShot.reset();
+    this.setState({
+      liveActive: false,
+      liveFinalizing: false,
+      status: NO_SCALE_SHOT_MESSAGE
+    });
+    return true;
   }
 
   private async toggleMachineCommand(state: MachineState): Promise<void> {
@@ -1456,12 +1490,18 @@ export class BeanieApp {
     tMs: number
   ): void {
     const previousService = machineServiceState(this.state.machine?.state?.state);
+    const previousMachineState = this.state.machine?.state?.state;
     if (machine) {
       this.state.machine = machine;
       this.trackMachineServiceState(machine.state.state, tMs);
       this.observeSleepBrightnessState(machine.state.state === 'sleeping');
+      this.beginNoScaleBrewFlashIfNeeded(machine, previousMachineState, tMs);
     }
-    if (scale) this.state.scale = scale;
+    if (scale) {
+      this.state.scale = scale;
+      this.lastScaleFrameMs = tMs;
+      if (this.hasFreshConnectedScale(tMs)) this.noScaleBrewFlashStartedMs = null;
+    }
 
     const wasActive = this.state.liveActive;
     const frame: LiveFrame = { tMs, machine: this.state.machine, scale: this.state.scale };
@@ -1478,6 +1518,7 @@ export class BeanieApp {
       this.onShotEnded();
       return;
     }
+    if (!active && machine && this.consumeNoScaleBrewFlashIfNeeded(machine, previousMachineState, tMs)) return;
     if (active) {
       this.scheduleLiveDraw();
       return;
@@ -6524,6 +6565,10 @@ function isNoScaleShotBlockError(error: unknown): boolean {
   if (!(error instanceof GatewayRequestError)) return false;
   const message = error.issue.message.toLowerCase();
   return error.issue.statusCode === 400 && (message.includes('block_no_scale') || message.includes('no scale'));
+}
+
+function isBrewState(state: string | undefined): boolean {
+  return state === 'espresso' || state === 'brewing';
 }
 
 // A friendly readiness label instead of the raw machine state. Heating shows
