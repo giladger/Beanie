@@ -40,6 +40,22 @@ run('idle frames before the shot starts are ignored', () => {
   equal(session.model().series[0]!.points.length, 1);
 });
 
+run('flush frames with pour substates do not start a shot', () => {
+  const session = new LiveShotSession();
+  session.ingest({
+    tMs: 0,
+    machine: machineSnapshot({
+      state: { state: 'flush', substate: 'pouring' },
+      pressure: 2,
+      flow: 6
+    }),
+    scale: scaleSnapshot({ weight: 0, weightFlow: 0 })
+  });
+
+  equal(session.isActive, false);
+  equal(session.model().series.length, 0);
+});
+
 run('leaving espresso ends the session and sets a completion reason', () => {
   const session = new LiveShotSession();
   session.ingest(pourFrame(0, { weight: 5 }));

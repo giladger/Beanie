@@ -204,11 +204,11 @@ function readoutsFor(
 
 function isEspressoPour(machine: MachineSnapshot | null | undefined): boolean {
   if (!machine) return false;
+  if (machine.state?.state !== 'espresso') return false;
   const substate = stringValue(machine.state?.substate);
   if (substate != null && ESPRESSO_SUBSTATES.has(substate)) return true;
-  // No (or non-pour) substate: fall back to top-level state. Treat a bare
-  // 'espresso' state without an explicit non-pour substate as pouring.
-  return machine.state?.state === 'espresso' && substate == null;
+  // Treat a bare 'espresso' state without an explicit non-pour substate as pouring.
+  return substate == null;
 }
 
 // Builds the chart-ready model from accumulated session state. Only series that
