@@ -169,7 +169,7 @@ import {
   type WaterPreset
 } from './domain/waterSettings';
 
-type Modal = 'bean-picker' | 'edit-number' | 'edit-shot' | 'machine-label' | null;
+type Modal = 'bean-picker' | 'edit-number' | 'edit-shot' | 'machine-label' | 'no-scale-shot' | null;
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
 type ShotEditField =
   | 'coffeeRoaster'
@@ -1332,7 +1332,7 @@ export class BeanieApp {
 
   private showNoScaleShotWarning(next: Partial<AppState> = {}): void {
     this.noScaleShotWarningUntilMs = Date.now() + NO_SCALE_WARNING_VISIBLE_MS;
-    this.setState({ ...next, status: NO_SCALE_SHOT_MESSAGE });
+    this.setState({ ...next, modal: 'no-scale-shot', status: NO_SCALE_SHOT_MESSAGE });
   }
 
   private machineStatusLabel(): string {
@@ -2513,6 +2513,10 @@ export class BeanieApp {
     if (target.dataset.action === 'settings-field') {
       const raw = target instanceof HTMLInputElement && target.type === 'checkbox' ? target.checked : target.value;
       void this.onSettingsField(target.dataset.group ?? '', target.dataset.key ?? '', raw);
+      return;
+    }
+    if (target.dataset.action === 'no-scale-block-toggle') {
+      void this.setNoScaleBlock((target as HTMLInputElement).checked);
       return;
     }
     if (target.dataset.action === 'settings-plugin-toggle') {
@@ -4461,7 +4465,39 @@ export class BeanieApp {
     if (this.state.modal === 'edit-number') return this.renderEditDialog();
     if (this.state.modal === 'edit-shot') return this.renderShotEditModal();
     if (this.state.modal === 'machine-label') return this.renderMachineLabelModal();
+    if (this.state.modal === 'no-scale-shot') return this.renderNoScaleShotModal();
     return '';
+  }
+
+  private renderNoScaleShotModal(): string {
+    const blockEnabled = this.state.settingsBundle?.rea.blockOnNoScale !== false;
+    return `
+      <div class="modal-backdrop no-scale-backdrop">
+        <section class="modal panel no-scale-modal" role="alertdialog" aria-modal="true" aria-labelledby="no-scale-title">
+          <div class="modal-head no-scale-head">
+            <div>
+              <span class="eyebrow">Shot blocked</span>
+              <h2 id="no-scale-title">Connect a scale to start</h2>
+            </div>
+            <button type="button" class="icon-button" data-action="close-modal" aria-label="Close">${icon('x')}</button>
+          </div>
+          <p class="no-scale-copy">Beanie stopped this shot because Reaprime is set to block shots when no scale is connected.</p>
+          <label class="no-scale-toggle-row">
+            <span>
+              <strong>Block shots without a scale</strong>
+              <small>Turn this off to allow shots without a connected scale.</small>
+            </span>
+            <span class="settings-toggle">
+              <input type="checkbox" data-action="no-scale-block-toggle" ${blockEnabled ? 'checked' : ''} />
+              <span></span>
+            </span>
+          </label>
+          <div class="modal-actions no-scale-actions">
+            <button type="button" class="command primary" data-action="close-modal">OK</button>
+          </div>
+        </section>
+      </div>
+    `;
   }
 
   private renderSettingsPage(): string {
@@ -5539,6 +5575,41 @@ export class BeanieApp {
     } catch (error) {
       console.error('[Beanie] Update setting failed', error);
       this.setState({ status: 'Setting update failed' });
+    }
+  }
+
+  private async setNoScaleBlock(enabled: boolean): Promise<void> {
+    const previousBundle = this.state.settingsBundle;
+    const nextBundle = previousBundle
+      ? { ...previousBundle, rea: { ...previousBundle.rea, blockOnNoScale: enabled } }
+      : previousBundle;
+    this.setState({
+      settingsBundle: nextBundle,
+      status: enabled ? 'Scale block enabled' : 'Disabling scale block...'
+    });
+
+    if (this.state.demo || this.state.settingsSource === 'demo') {
+      if (!enabled) this.noScaleShotWarningUntilMs = 0;
+      this.setState({
+        modal: enabled ? this.state.modal : null,
+        status: enabled ? 'Scale block enabled (demo)' : 'Scale block disabled (demo)'
+      });
+      return;
+    }
+
+    try {
+      await gateway.updateSettings({ blockOnNoScale: enabled });
+      if (!enabled) this.noScaleShotWarningUntilMs = 0;
+      this.setState({
+        modal: enabled ? this.state.modal : null,
+        status: enabled ? 'Scale block enabled' : 'Scale block disabled'
+      });
+    } catch (error) {
+      console.error('[Beanie] Update no-scale block setting failed', error);
+      this.setState({
+        settingsBundle: previousBundle,
+        status: 'Setting update failed'
+      });
     }
   }
 
