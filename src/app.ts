@@ -125,6 +125,7 @@ import { chartModelFromShot } from './components/liveChartModel';
 import {
   calibrationPreviewFactor,
   clampCalibration,
+  recordedFlowMultiplier,
   renderFlowCalibrator,
   roundCalibration
 } from './components/flowCalibrator';
@@ -3539,8 +3540,11 @@ export class BeanieApp {
     if (!shot) return;
     // Show the two calibration lines — machine flow and scale (weight) flow —
     // plus pressure for context. Only the machine-flow line is scaled by the
-    // preview multiplier, so −/+ visibly moves it onto the scale line.
-    const factor = calibrationPreviewFactor(this.flowCalibrationBase(), this.flowCalibrationDraft());
+    // preview multiplier, so −/+ visibly moves it onto the scale line. Scale
+    // from the multiplier the shot was actually pulled under when reaprime
+    // recorded it; otherwise fall back to the open-time estimate.
+    const shotBase = recordedFlowMultiplier(shot) ?? this.flowCalibrationBase();
+    const factor = calibrationPreviewFactor(shotBase, this.flowCalibrationDraft());
     const model = chartModelFromShot(shot);
     const series = model.series
       .filter((item) => item.key === 'flow' || item.key === 'weightFlow' || item.key === 'pressure')

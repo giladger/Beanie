@@ -56,6 +56,15 @@ export function renderFlowCalibrator(
 }
 
 function renderShotRow(shot: ShotRecord, active: boolean): string {
+  const recorded = recordedFlowMultiplier(shot);
+  const tags = [
+    recorded == null
+      ? ''
+      : `<span class="flow-cal-shot-base" title="Flow calibration active when this shot was pulled">${escapeHtml(formatMultiplier(recorded))}</span>`,
+    hasScaleFlow(shot) ? '' : '<span class="flow-cal-shot-noscale">no scale</span>'
+  ]
+    .filter(Boolean)
+    .join('');
   return `
     <article class="flow-cal-shot ${active ? 'active' : ''}">
       <button type="button" class="flow-cal-shot-pick" data-action="flow-cal-shot" data-id="${escapeAttr(shot.id)}" aria-pressed="${active}">
@@ -64,7 +73,7 @@ function renderShotRow(shot: ShotRecord, active: boolean): string {
           <strong>${escapeHtml(recipeLabel(shot))}</strong>
           <small>${escapeHtml(profileTitle(shot))}</small>
         </span>
-        ${hasScaleFlow(shot) ? '' : '<span class="flow-cal-shot-noscale">no scale</span>'}
+        ${tags ? `<span class="flow-cal-shot-tags">${tags}</span>` : ''}
       </button>
     </article>
   `;
@@ -77,11 +86,13 @@ function renderShotDetail(
   dirty: boolean,
   busy: boolean
 ): string {
+  const recorded = recordedFlowMultiplier(shot);
   return `
     <div class="flow-cal-detail-head">
       <strong>${escapeHtml(recipeLabel(shot))}</strong>
       <span>${escapeHtml(profileTitle(shot))}</span>
       <span>${escapeHtml(dateLabel(shot.timestamp))}</span>
+      ${recorded == null ? '' : `<span class="flow-cal-detail-base" title="The machine's flow calibration when this shot was pulled — the chart scales the machine line from here">pulled at ${escapeHtml(formatMultiplier(recorded))}</span>`}
     </div>
     <div class="flow-cal-detail-chart">
       <canvas id="flow-cal-canvas" class="live-canvas detail-canvas"></canvas>
@@ -118,6 +129,23 @@ export function clampCalibration(value: number): number {
 
 export function roundCalibration(value: number): number {
   return Number(clampCalibration(value).toFixed(2));
+}
+
+// The flow calibration the machine was running when this shot was pulled, if it
+// was recorded. Reaprime stamps it into annotations.extras (and, via its legacy
+// fallback, top-level metadata) as `flowCalibrationMultiplier`. Returns null for
+// shots from a reaprime without that patch — callers fall back to an estimate.
+export function recordedFlowMultiplier(shot: ShotRecord): number | null {
+  return (
+    coerceMultiplier(shot.annotations?.extras?.['flowCalibrationMultiplier']) ??
+    coerceMultiplier(shot.metadata?.['flowCalibrationMultiplier'])
+  );
+}
+
+function coerceMultiplier(value: unknown): number | null {
+  const parsed =
+    typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function hasScaleFlow(shot: ShotRecord): boolean {

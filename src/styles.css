@@ -1290,6 +1290,24 @@ p {
   white-space: nowrap;
 }
 
+.flow-cal-shot-tags {
+  align-self: center;
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+
+.flow-cal-shot-base {
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--teal) 45%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--teal) 12%, transparent);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
 .flow-cal-detail {
   min-height: 0;
   display: flex;
@@ -1313,6 +1331,16 @@ p {
 
 .flow-cal-detail-head span {
   color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.flow-cal-detail-head .flow-cal-detail-base {
+  padding: 2px 9px;
+  border: 1px solid color-mix(in srgb, var(--teal) 45%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--teal) 12%, transparent);
+  color: var(--ink);
   font-size: 12px;
   font-weight: 800;
 }

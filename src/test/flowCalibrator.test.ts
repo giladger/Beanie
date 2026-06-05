@@ -1,8 +1,10 @@
+import type { ShotRecord } from '../api/types';
 import {
   FLOW_CALIBRATION_MAX,
   FLOW_CALIBRATION_MIN,
   calibrationPreviewFactor,
   clampCalibration,
+  recordedFlowMultiplier,
   roundCalibration
 } from '../components/flowCalibrator';
 
@@ -41,6 +43,45 @@ run('roundCalibration applies two-digit DE1 slider precision', () => {
   equal(roundCalibration(1.234), 1.23);
   equal(roundCalibration(0), 0.13);
 });
+
+run('recordedFlowMultiplier reads the value reaprime stamps into annotations.extras', () => {
+  equal(recordedFlowMultiplier(shotWith({ extras: { flowCalibrationMultiplier: 1.05 } })), 1.05);
+});
+
+run('recordedFlowMultiplier falls back to top-level metadata', () => {
+  equal(recordedFlowMultiplier({ ...shotWith({}), metadata: { flowCalibrationMultiplier: 0.9 } } as ShotRecord), 0.9);
+});
+
+run('recordedFlowMultiplier prefers annotations.extras over metadata', () => {
+  const shot = {
+    ...shotWith({ extras: { flowCalibrationMultiplier: 1.1 } }),
+    metadata: { flowCalibrationMultiplier: 0.8 }
+  } as ShotRecord;
+  equal(recordedFlowMultiplier(shot), 1.1);
+});
+
+run('recordedFlowMultiplier coerces a numeric string', () => {
+  equal(recordedFlowMultiplier(shotWith({ extras: { flowCalibrationMultiplier: '0.88' } })), 0.88);
+});
+
+run('recordedFlowMultiplier is null for shots without the stamp (old reaprime)', () => {
+  equal(recordedFlowMultiplier(shotWith({})), null);
+  equal(recordedFlowMultiplier(shotWith({ extras: { other: 1 } })), null);
+});
+
+run('recordedFlowMultiplier rejects non-positive or non-numeric values', () => {
+  equal(recordedFlowMultiplier(shotWith({ extras: { flowCalibrationMultiplier: 0 } })), null);
+  equal(recordedFlowMultiplier(shotWith({ extras: { flowCalibrationMultiplier: 'n/a' } })), null);
+});
+
+function shotWith(annotations: Record<string, unknown>): ShotRecord {
+  return {
+    id: 'shot',
+    timestamp: '2026-06-01T10:00:00.000Z',
+    annotations,
+    measurements: []
+  } as ShotRecord;
+}
 
 function run(name: string, fn: () => void): void {
   try {
