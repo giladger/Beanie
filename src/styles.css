@@ -479,10 +479,11 @@ p {
 }
 
 .hero-roast {
-  margin: 3px 0 0;
+  flex: none;
   font-size: 13px;
   font-weight: 700;
   color: var(--muted);
+  white-space: nowrap;
 }
 
 .bean-title-button {

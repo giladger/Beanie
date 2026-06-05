@@ -3923,6 +3923,7 @@ export class BeanieApp {
             <button class="bean-title-button" data-action="open-bean-picker" aria-label="Choose bean" title="Choose bean">
               <span>${escapeHtml(title)}</span>
             </button>
+            ${freshness ? `<span class="hero-roast">${escapeHtml(freshness)}</span>` : ''}
             ${
               bean
                 ? `<div class="hero-bean-actions">
@@ -3931,7 +3932,6 @@ export class BeanieApp {
                 : ''
             }
           </div>
-          ${freshness ? `<p class="hero-roast">${escapeHtml(freshness)}</p>` : ''}
         </div>
       </section>
     `;
