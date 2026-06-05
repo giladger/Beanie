@@ -3610,11 +3610,7 @@ export class BeanieApp {
   private renderSleepOverlay(): string {
     if (!this.state.asleep || this.usesWebSleepControls()) return '';
     return `
-      <div class="sleep-overlay" role="dialog" aria-label="Machine asleep">
-        <button type="button" class="sleep-wake-button" data-action="wake">
-          ${icon('power')}<span>Wake</span>
-        </button>
-      </div>
+      <button type="button" class="sleep-overlay" data-action="wake" aria-label="Wake machine"></button>
     `;
   }
 
