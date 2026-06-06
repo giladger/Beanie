@@ -4530,6 +4530,7 @@ export class BeanieApp {
         ${isPage ? '' : this.renderLivePanel()}
         ${this.renderModal()}
         ${isPage ? '' : this.renderWaterAlert()}
+        ${this.renderWaterWarningBanner()}
         ${this.renderSleepOverlay()}
       </div>
     `;
@@ -4564,7 +4565,6 @@ export class BeanieApp {
     return `
       ${this.renderTopbar()}
       <main class="workbench">
-        ${this.renderWaterWarningBanner()}
         <section class="surface">
           ${this.renderHero(bean)}
           ${this.renderRecipeEditor()}
@@ -5394,7 +5394,7 @@ export class BeanieApp {
       <div class="water-warning-banner" role="status">
         ${icon('droplet')}
         <strong>Water low</strong>
-        <span>${ml ? `About ${escapeHtml(ml)} left — refill soon to avoid a pause.` : 'Refill soon to avoid a pause.'}</span>
+        <span>${ml ? `About ${escapeHtml(ml)} left · refill soon` : 'Refill soon'}</span>
       </div>
     `;
   }

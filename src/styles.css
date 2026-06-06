@@ -584,11 +584,7 @@ p {
   padding: 8px 10px 10px;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  /* Row 1 holds the optional low-water banner (0px when absent); the surface is
-     pinned to row 2 so it always fills regardless of the banner. */
-  grid-template-rows: auto minmax(0, 1fr);
   gap: var(--workbench-gap);
-  row-gap: 0;
   min-width: 0;
   min-height: 0;
 }
@@ -604,7 +600,6 @@ p {
 }
 
 .surface {
-  grid-row: 2;
   display: grid;
   grid-template-rows: 50px 62px minmax(190px, 1fr);
   gap: var(--workbench-gap);
@@ -6779,17 +6774,23 @@ p {
 /* ---- Low-water alerts ---- */
 /* Soft warning: a prominent amber banner across the top of the workbench. */
 .water-warning-banner {
-  grid-row: 1;
-  margin-bottom: var(--workbench-gap);
-  min-height: 40px;
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 12;
+  max-width: min(560px, calc(100vw - 24px));
+  min-height: 42px;
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 0 14px;
-  border-radius: var(--radius);
+  padding: 0 16px;
+  border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--amber) 60%, var(--line));
-  background: color-mix(in srgb, var(--amber) 20%, var(--panel));
+  background: color-mix(in srgb, var(--amber) 22%, var(--panel));
   color: var(--ink);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.32);
+  pointer-events: none;
 }
 
 .water-warning-banner .icon {
