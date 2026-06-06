@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.1.6 - 2026-06-06
+
+- Added hot water scale stop mode.
+- Added a machine-page cleaning/backflush cycle with compact footer controls and easier profile selection.
+- Improved topbar controls with larger labeled actions, visible tablet labels, centered labels, and a clearer Dispense button.
+- Improved scale handling with top readout connect/tare actions and preferred device auto-connect.
+- Improved low-water alerts with soft and hard warnings.
+- Improved startup and shot history behavior with cached startup collections, selected-batch filtering, stale request guards, and safer shot cache writes.
+- Improved bean workflow by prefilling new beans from existing beans and reading recorded flow calibration from workflow machine data.
+- Improved live shot chart rendering by drawing at full detail-chart resolution.
+
 ## v0.1.5 - 2026-06-06
 
 - Added a themeable skin system with new Decent, Acaia, Espresso, Nord, Solarized, Dracula, Gruvbox, and Rose Pine themes.
