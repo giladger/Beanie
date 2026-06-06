@@ -18,6 +18,7 @@ import {
   type PluginSettingField,
   type PluginSettingsSpec
 } from '../domain/pluginSettings';
+import { WATER_HARD_OPTIONS_ML, WATER_SOFT_OPTIONS_ML } from '../domain/waterAlert';
 import type { PluginInfo } from '../api/settings';
 import type { DecentAccountStatus } from '../api/settings';
 import { icon } from './icons';
@@ -86,9 +87,10 @@ function settingsSections(
     {
       id: 'app',
       title: 'App',
-      terms: 'appearance theme ui skin update diagnostics about version brightness screen display',
+      terms: 'appearance theme ui skin update diagnostics about version brightness screen display water level low tank refill warning block alert',
       html: [
         renderSection('Beanie display', renderAppearanceRows(model.preferences)),
+        renderSection('Water level alerts', renderWaterAlertRows(model.preferences)),
         bundle ? renderDisplayRuntimeSection(bundle) : '',
         bundle ? renderSpecSectionById('app-skin', bundle) : '',
         renderSection('About', renderAboutRows(model))
@@ -502,6 +504,23 @@ function renderAppearanceRows(preferences: SettingsPreferences): string {
         ['standard', 'Standard'],
         ['large', 'Large']
       ] satisfies Array<[UIScalePreference, string]>)
+    )}
+  `;
+}
+
+function renderWaterAlertRows(preferences: SettingsPreferences): string {
+  const mlOptions = (values: readonly number[], zeroLabel: string): Array<[string, string]> =>
+    values.map((ml) => [String(ml), ml === 0 ? zeroLabel : `${ml} ml`] as [string, string]);
+  return `
+    ${settingControlRow(
+      'Low-water warning',
+      'Tint the water reading when the tank drops to this level',
+      segmentedControl('settings-water-soft', String(preferences.waterSoftLimitMl), mlOptions(WATER_SOFT_OPTIONS_ML, 'Off'))
+    )}
+    ${settingControlRow(
+      'Block shots at',
+      'Show a full-screen refill popup. The machine also blocks on its own (“Machine”).',
+      segmentedControl('settings-water-hard', String(preferences.waterHardLimitMl), mlOptions(WATER_HARD_OPTIONS_ML, 'Machine'))
     )}
   `;
 }

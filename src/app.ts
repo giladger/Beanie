@@ -172,6 +172,7 @@ import {
   writeCleaningThreshold,
   type CleaningState
 } from './domain/cleaning';
+import { waterAlertLevel, type WaterAlertLevel } from './domain/waterAlert';
 import {
   DEFAULT_HOT_WATER,
   DEFAULT_RINSE,
@@ -446,6 +447,8 @@ interface AppState {
   cleaning: CleaningState;
   cleaningProfileOverride: string | null;
   cleaningThreshold: number;
+  /** User dismissed the current hard low-water block (re-arms when it recovers). */
+  waterAlertDismissed: boolean;
 }
 
 interface LiveReadoutEls {
@@ -540,7 +543,8 @@ export class BeanieApp {
     flowCalShots: [],
     cleaning: readCleaningState(),
     cleaningProfileOverride: readCleaningProfileOverride(),
-    cleaningThreshold: readCleaningThreshold()
+    cleaningThreshold: readCleaningThreshold(),
+    waterAlertDismissed: false
   };
 
   private applyTimer: number | null = null;
@@ -569,6 +573,9 @@ export class BeanieApp {
   // True while a cleaning/backflush cycle is running as an espresso pull, so the
   // shot-end handler records a cleaning (not a bean shot) and restores the recipe.
   private cleaningInProgress = false;
+  // Last computed water-alert band, used to detect threshold crossings on the
+  // telemetry hot path (so we only re-render when the band actually changes).
+  private lastWaterAlert: WaterAlertLevel = 'none';
   private machineServiceStartedAtMs: number | null = null;
   private machineServicePhase: MachineServicePhase | null = null;
   private machineProgressReturnView: View | null = null;
@@ -1597,6 +1604,11 @@ export class BeanieApp {
       this.showNoScaleShotWarning({ busy: false });
       return;
     }
+    if (state === 'espresso' && this.currentWaterAlert() === 'hard') {
+      // Re-arm the (dismissable) refill popup instead of starting a shot.
+      this.setState({ waterAlertDismissed: false, status: 'Refill the water tank' });
+      return;
+    }
     this.setState({ busy: true, status: machineActionStatus(state, 'sending') });
     if (this.state.demo) {
       if (state !== 'espresso') this.stopSimulatedShot();
@@ -1652,6 +1664,10 @@ export class BeanieApp {
     }
     if (!this.state.demo && this.machineIsSleeping()) {
       this.setState({ status: 'Machine asleep — tap Wake first' });
+      return;
+    }
+    if (this.currentWaterAlert() === 'hard') {
+      this.setState({ waterAlertDismissed: false, status: 'Refill the water tank' });
       return;
     }
 
@@ -1982,6 +1998,12 @@ export class BeanieApp {
         const level = typeof data.currentLevel === 'number' && Number.isFinite(data.currentLevel) ? data.currentLevel : null;
         if (level === this.state.waterLevel) return;
         this.state.waterLevel = level;
+        // A band crossing (soft/hard) restyles the topbar + toggles the blocking
+        // overlay, so re-render; otherwise just patch the readout text cheaply.
+        if (this.syncWaterAlert()) {
+          this.setState({});
+          return;
+        }
         const el = this.root.querySelector<HTMLElement>('#stat-water');
         if (el) el.textContent = water(level);
       } catch (error) {
@@ -2065,6 +2087,11 @@ export class BeanieApp {
     }
     if (previousService && !currentService && this.state.view === 'machine') {
       this.setState({ view: this.consumeMachineProgressReturnView() });
+      return;
+    }
+    // The machine entering/leaving `needsWater` flips the water-alert band.
+    if (this.syncWaterAlert()) {
+      this.setState({});
       return;
     }
     this.updateTopbarStats();
@@ -2303,6 +2330,26 @@ export class BeanieApp {
     set('stat-steam', temp(machine?.steamTemperature));
     set('stat-water', water(this.state.waterLevel));
     set('stat-scale', scale?.status === 'disconnected' ? 'offline' : `${formatNumber(scale?.weight, 1)} g`);
+  }
+
+  private currentWaterAlert(): WaterAlertLevel {
+    return waterAlertLevel({
+      levelMm: this.state.waterLevel,
+      machineState: this.state.machine?.state?.state ?? null,
+      softLimitMl: this.state.settingsPreferences.waterSoftLimitMl,
+      hardLimitMl: this.state.settingsPreferences.waterHardLimitMl
+    });
+  }
+
+  // Recompute the water-alert band; return true if it changed so the caller can
+  // re-render (the topbar tint and the blocking overlay both follow the band).
+  // Clearing back below 'hard' re-arms the dismissable popup.
+  private syncWaterAlert(): boolean {
+    const next = this.currentWaterAlert();
+    if (next === this.lastWaterAlert) return false;
+    this.lastWaterAlert = next;
+    if (next !== 'hard') this.state.waterAlertDismissed = false;
+    return true;
   }
 
   // Coalesce many incoming frames into at most one canvas draw per animation
@@ -2690,6 +2737,19 @@ export class BeanieApp {
       case 'cleaning-threshold': {
         const shots = Number(value);
         if (Number.isFinite(shots)) this.setCleaningThreshold(shots);
+        break;
+      }
+      case 'water-alert-dismiss':
+        this.setState({ waterAlertDismissed: true });
+        break;
+      case 'settings-water-soft': {
+        const ml = Number(value);
+        if (Number.isFinite(ml)) this.updateSettingsPreferences({ waterSoftLimitMl: ml });
+        break;
+      }
+      case 'settings-water-hard': {
+        const ml = Number(value);
+        if (Number.isFinite(ml)) this.updateSettingsPreferences({ waterHardLimitMl: ml });
         break;
       }
       case 'stop':
@@ -4399,6 +4459,7 @@ export class BeanieApp {
         ${isPage ? this.renderPage() : this.renderWorkbench(bean)}
         ${isPage ? '' : this.renderLivePanel()}
         ${this.renderModal()}
+        ${isPage ? '' : this.renderWaterAlert()}
         ${this.renderSleepOverlay()}
       </div>
     `;
@@ -4626,6 +4687,8 @@ export class BeanieApp {
     const showWakeText = this.state.asleep && this.usesWebSleepControls();
     const cleaningDueNow = cleaningDue(this.state.cleaning, this.state.cleaningThreshold);
     const machineSettingsLabel = cleaningDueNow ? 'Machine settings (cleaning due)' : 'Machine settings';
+    const waterAlert = this.currentWaterAlert();
+    const waterTone = waterAlert === 'hard' ? 'stat-alert' : waterAlert === 'soft' ? 'stat-warn' : '';
     return `
       <header class="topbar">
         <div class="top-inline">
@@ -4633,7 +4696,7 @@ export class BeanieApp {
             ${topStat('Status', this.machineStatusLabel(), 'stat-machine')}
             ${topStat('Group', temp(machine?.groupTemperature), 'stat-group')}
             ${topStat('Steam', temp(machine?.steamTemperature), 'stat-steam')}
-            ${topStat('Water', water(this.state.waterLevel), 'stat-water')}
+            ${topStat('Water', water(this.state.waterLevel), 'stat-water', waterTone)}
             ${topStat('Scale', scale?.status === 'disconnected' ? 'offline' : `${formatNumber(scale?.weight, 1)} g`, 'stat-scale')}
           </div>
           ${machineCommands}
@@ -5246,6 +5309,28 @@ export class BeanieApp {
           </label>
           <div class="modal-actions no-scale-actions">
             <button type="button" class="command primary no-scale-ok" data-action="close-modal">OK</button>
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  private renderWaterAlert(): string {
+    if (this.currentWaterAlert() !== 'hard' || this.state.waterAlertDismissed) return '';
+    const machineBlocked = this.state.machine?.state?.state === 'needsWater';
+    const ml = this.state.waterLevel != null ? water(this.state.waterLevel) : null;
+    const detail = machineBlocked
+      ? 'The machine has paused shots until the tank is refilled.'
+      : 'The tank is low — refill it to keep pulling shots.';
+    return `
+      <div class="modal-backdrop water-alert-backdrop" role="alertdialog" aria-modal="true" aria-labelledby="water-alert-title">
+        <section class="modal panel water-alert-modal">
+          <div class="water-alert-icon">${icon('droplet')}</div>
+          <h2 id="water-alert-title">Refill the water tank</h2>
+          <p>${escapeHtml(detail)}${ml ? ` Tank is at about ${escapeHtml(ml)}.` : ''}</p>
+          <div class="modal-actions water-alert-actions">
+            <button type="button" class="secondary-button" data-action="open-settings">Alert settings</button>
+            <button type="button" class="primary-button" data-action="water-alert-dismiss">Dismiss</button>
           </div>
         </section>
       </div>
@@ -6906,9 +6991,10 @@ function formatMachineValue(value: number | undefined): string {
   return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
 }
 
-function topStat(label: string, value: string, id?: string): string {
+function topStat(label: string, value: string, id?: string, toneClass?: string): string {
   const idAttr = id ? ` id="${id}"` : '';
-  return `<div class="top-stat"><label>${escapeHtml(label)}</label><strong${idAttr}>${escapeHtml(value)}</strong></div>`;
+  const cls = toneClass ? ` ${toneClass}` : '';
+  return `<div class="top-stat${cls}"><label>${escapeHtml(label)}</label><strong${idAttr}>${escapeHtml(value)}</strong></div>`;
 }
 
 function liveReadout(label: string, id: string, value: string, unit = ''): string {

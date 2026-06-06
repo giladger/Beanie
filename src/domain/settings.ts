@@ -1,4 +1,5 @@
 import type { MachineSnapshot, ScaleSnapshot } from '../api/types';
+import { DEFAULT_WATER_HARD_ML, DEFAULT_WATER_SOFT_ML } from './waterAlert';
 
 export type ThemePreference =
   | 'system'
@@ -36,6 +37,10 @@ export const THEME_PREFERENCES: ThemePreference[] = [
 export interface SettingsPreferences {
   theme: ThemePreference;
   uiScale: UIScalePreference;
+  /** Soft low-water warning threshold in ml (0 = off). */
+  waterSoftLimitMl: number;
+  /** Hard low-water block threshold in ml (0 = rely on the machine's own block). */
+  waterHardLimitMl: number;
 }
 
 export interface GatewayStatusModel {
@@ -75,21 +80,29 @@ export interface BuildSettingsShellModelOptions {
 
 const themeKey = 'beanie:settings:theme';
 const uiScaleKey = 'beanie:settings:ui-scale';
+const waterSoftKey = 'beanie:settings:water-soft-ml';
+const waterHardKey = 'beanie:settings:water-hard-ml';
 const preservedResetKeys = new Set([
   themeKey,
-  uiScaleKey
+  uiScaleKey,
+  waterSoftKey,
+  waterHardKey
 ]);
 
 export function readSettingsPreferences(): SettingsPreferences {
   return {
     theme: readEnum(themeKey, THEME_PREFERENCES, 'dark'),
-    uiScale: readEnum(uiScaleKey, ['compact', 'standard', 'large'], 'standard')
+    uiScale: readEnum(uiScaleKey, ['compact', 'standard', 'large'], 'standard'),
+    waterSoftLimitMl: readNonNegativeNumber(waterSoftKey, DEFAULT_WATER_SOFT_ML),
+    waterHardLimitMl: readNonNegativeNumber(waterHardKey, DEFAULT_WATER_HARD_ML)
   };
 }
 
 export function writeSettingsPreferences(next: SettingsPreferences): void {
   localStorage.setItem(themeKey, next.theme);
   localStorage.setItem(uiScaleKey, next.uiScale);
+  localStorage.setItem(waterSoftKey, String(next.waterSoftLimitMl));
+  localStorage.setItem(waterHardKey, String(next.waterHardLimitMl));
 }
 
 export function applySettingsPreferences(preferences: SettingsPreferences): void {
@@ -186,6 +199,13 @@ function formatBuildTime(value: string): string {
 function readEnum<T extends string>(key: string, values: readonly T[], fallback: T): T {
   const stored = localStorage.getItem(key);
   return values.includes(stored as T) ? (stored as T) : fallback;
+}
+
+function readNonNegativeNumber(key: string, fallback: number): number {
+  const stored = localStorage.getItem(key);
+  if (stored == null) return fallback;
+  const value = Number(stored);
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
 function formatNumber(value: number | null | undefined, digits: number): string {

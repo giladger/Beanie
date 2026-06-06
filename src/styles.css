@@ -6753,3 +6753,64 @@ p {
     align-items: stretch;
   }
 }
+
+/* ---- Low-water alerts ---- */
+/* Soft = amber tint on the topbar water reading; hard = red. */
+.top-stat.stat-warn strong {
+  color: var(--amber);
+}
+
+.top-stat.stat-alert strong {
+  color: var(--red);
+}
+
+/* Hard block: full-screen refill popup (above modals, below the sleep screen). */
+.water-alert-backdrop {
+  z-index: 80;
+}
+
+.water-alert-modal {
+  width: min(420px, calc(100vw - 32px));
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 28px 24px 22px;
+  text-align: center;
+  border-color: color-mix(in srgb, var(--red) 45%, var(--line));
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+}
+
+.water-alert-icon {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--blue) 18%, var(--panel-2));
+  color: var(--blue);
+}
+
+.water-alert-icon .icon {
+  width: 28px;
+  height: 28px;
+}
+
+.water-alert-modal h2 {
+  font-size: 24px;
+  line-height: 1.05;
+}
+
+.water-alert-modal p {
+  color: var(--soft);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.water-alert-actions {
+  margin-top: 4px;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
