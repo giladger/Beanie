@@ -180,8 +180,11 @@ function renderSpecSection(section: SettingsSpecSection, bundle: SettingsBundle)
 function renderDevicesSection(bundle: SettingsBundle): string {
   const scan = settingControlRow(
     'Bluetooth devices',
-    'Scan for machines and scales, then connect',
-    `<button type="button" class="text-button" data-action="settings-scan-devices">${icon('refresh-cw')}<span>Scan</span></button>`
+    'Scan only, or let Decent.app connect preferred devices',
+    `<div class="settings-inline-actions">
+      <button type="button" class="text-button" data-action="settings-scan-devices">${icon('refresh-cw')}<span>Scan</span></button>
+      <button type="button" class="text-button primary" data-action="settings-connect-preferred-devices">${icon('scale')}<span>Auto-connect</span></button>
+    </div>`
   );
   const preferred = `
     ${settingReadout('Preferred machine', compactId(bundle.rea.preferredMachineId), 'Used for automatic machine reconnect', 'muted')}

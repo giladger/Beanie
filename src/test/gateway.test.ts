@@ -242,6 +242,34 @@ await run('decent account logout deletes account endpoint', async () => {
   equal(calls[0]!.init?.method, 'DELETE');
 });
 
+await run('device scan uses scan-only Reaprime endpoint before listing devices', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const restore = installFetchStub(calls, [{ id: 'scale-1', name: 'Scale', state: 'disconnected', type: 'scale' }]);
+  try {
+    await gateway.scanDevices();
+  } finally {
+    restore();
+  }
+
+  equal(calls.length, 2);
+  equal(calls[0]!.url, '/api/v1/devices/scan?connect=false');
+  equal(calls[1]!.url, '/api/v1/devices');
+});
+
+await run('preferred device connect uses Reaprime scan-and-connect endpoint before listing devices', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const restore = installFetchStub(calls, [{ id: 'scale-1', name: 'Scale', state: 'connected', type: 'scale' }]);
+  try {
+    await gateway.connectPreferredDevices();
+  } finally {
+    restore();
+  }
+
+  equal(calls.length, 2);
+  equal(calls[0]!.url, '/api/v1/devices/scan?connect=true');
+  equal(calls[1]!.url, '/api/v1/devices');
+});
+
 async function run(name: string, fn: () => void | Promise<void>): Promise<void> {
   try {
     await fn();

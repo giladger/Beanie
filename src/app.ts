@@ -2887,6 +2887,9 @@ export class BeanieApp {
       case 'settings-scan-devices':
         await this.scanDevices();
         break;
+      case 'settings-connect-preferred-devices':
+        await this.connectPreferredDevices();
+        break;
       case 'settings-connect-device':
         if (id) await this.connectDevice(id, true);
         break;
@@ -6267,6 +6270,33 @@ export class BeanieApp {
     } catch (error) {
       console.error('[Beanie] Device scan failed', error);
       this.setState({ status: 'Scan failed' });
+    }
+  }
+
+  private async connectPreferredDevices(): Promise<void> {
+    this.setState({ status: 'Searching for preferred devices…' });
+    if (this.settingsLocal) {
+      this.setState({ status: 'Auto-connect unavailable in demo mode' });
+      return;
+    }
+    try {
+      const devices = await gateway.connectPreferredDevices();
+      this.patchBundle({ devices });
+      const preferredScaleId = this.state.settingsBundle?.rea.preferredScaleId ?? null;
+      const preferredScale = preferredScaleId
+        ? devices.find((device) => device.id === preferredScaleId && device.type === 'scale')
+        : null;
+      const preferredScaleConnected = preferredScale?.state === 'connected';
+      this.setState({
+        status: preferredScaleId
+          ? preferredScaleConnected
+            ? 'Preferred scale connected'
+            : 'Preferred scale not found'
+          : 'Auto-connect complete'
+      });
+    } catch (error) {
+      console.error('[Beanie] Preferred device connect failed', error);
+      this.setState({ status: 'Auto-connect failed' });
     }
   }
 

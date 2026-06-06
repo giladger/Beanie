@@ -339,6 +339,11 @@ export const gateway = {
     await fetchEmpty('settings', '/api/v1/devices/scan?connect=false');
     return fetchJson<DeviceInfo[]>('settings', '/api/v1/devices', readDevices);
   },
+  connectPreferredDevices: async (): Promise<DeviceInfo[]> => {
+    // Reaprime's connect=true scan runs ConnectionManager's preferred/single-device policy.
+    await fetchEmpty('settings', '/api/v1/devices/scan?connect=true');
+    return fetchJson<DeviceInfo[]>('settings', '/api/v1/devices', readDevices);
+  },
   connectDevice: (deviceId: string) =>
     fetchEmpty('settings', '/api/v1/devices/connect', { ...jsonPost({ deviceId }), method: 'PUT' }),
   disconnectDevice: (deviceId: string) =>
