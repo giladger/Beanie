@@ -187,9 +187,6 @@ import {
 type Modal = 'bean-picker' | 'edit-number' | 'edit-shot' | 'machine-label' | 'no-scale-shot' | null;
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
 type ShotEditField =
-  | 'coffeeRoaster'
-  | 'coffeeName'
-  | 'beanBatchId'
   | 'finalBeverageType'
   | 'baristaName'
   | 'drinkerName'
@@ -198,7 +195,6 @@ type ShotEditField =
   | 'actualDoseWeight'
   | 'actualYield'
   | 'grinderId'
-  | 'grinderModel'
   | 'grinderSetting'
   | 'drinkTds'
   | 'drinkEy'
@@ -7015,7 +7011,7 @@ function shotFieldSpec(
       options: numericShotFieldOptions(field)
     };
   }
-  return { label, kind: 'text', value: inputValue(value), options: textShotFieldOptions(field, shots, grinders) };
+  return { label, kind: 'text', value: inputValue(value), options: textShotFieldOptions(field, shots) };
 }
 
 function numericShotFieldOptions(field: ShotEditField): ShotFieldOption[] {
@@ -7032,8 +7028,7 @@ function numericShotFieldOptions(field: ShotEditField): ShotFieldOption[] {
 
 function textShotFieldOptions(
   field: ShotEditField,
-  shots: ShotRecord[],
-  grinders: Grinder[]
+  shots: ShotRecord[]
 ): ShotFieldOption[] {
   if (field === 'finalBeverageType') {
     return uniqueTextOptions([
@@ -7055,15 +7050,6 @@ function textShotFieldOptions(
         return { label: value, value };
       })
     );
-  }
-  if (field === 'grinderModel') {
-    return uniqueTextOptions([
-      ...grinders.map((grinder) => ({ label: grinder.model, value: grinder.model, detail: grinder.burrs ?? '' })),
-      ...shots.map((shot) => ({
-        label: shot.workflow?.context?.grinderModel ?? '',
-        value: shot.workflow?.context?.grinderModel ?? ''
-      }))
-    ]);
   }
   if (field === 'grinderSetting') {
     return uniqueTextOptions([
@@ -7105,9 +7091,6 @@ function delay(ms: number): Promise<void> {
 
 function shotFieldLabel(field: ShotEditField): string {
   const labels: Record<ShotEditField, string> = {
-    coffeeRoaster: 'Roaster',
-    coffeeName: 'Bean',
-    beanBatchId: 'Batch',
     finalBeverageType: 'Drink',
     baristaName: 'Barista',
     drinkerName: 'Drinker',
@@ -7116,7 +7099,6 @@ function shotFieldLabel(field: ShotEditField): string {
     actualDoseWeight: 'Actual in',
     actualYield: 'Actual out',
     grinderId: 'Grinder',
-    grinderModel: 'Model',
     grinderSetting: 'Grind',
     drinkTds: 'TDS',
     drinkEy: 'EY',
@@ -7385,9 +7367,6 @@ function isEditField(value: string | undefined): value is EditField {
 
 function isShotEditField(value: string | undefined): value is ShotEditField {
   return (
-    value === 'coffeeRoaster' ||
-    value === 'coffeeName' ||
-    value === 'beanBatchId' ||
     value === 'finalBeverageType' ||
     value === 'baristaName' ||
     value === 'drinkerName' ||
@@ -7396,7 +7375,6 @@ function isShotEditField(value: string | undefined): value is ShotEditField {
     value === 'actualDoseWeight' ||
     value === 'actualYield' ||
     value === 'grinderId' ||
-    value === 'grinderModel' ||
     value === 'grinderSetting' ||
     value === 'drinkTds' ||
     value === 'drinkEy' ||
