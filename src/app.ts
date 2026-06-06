@@ -21,7 +21,13 @@ import type {
   Workflow,
   WorkflowContext
 } from './api/types';
-import { GatewayRequestError, gateway, gatewayHttpOrigin, gatewayWsOrigin } from './api/gateway';
+import {
+  GatewayRequestError,
+  gateway,
+  gatewayHttpOrigin,
+  gatewayWsOrigin,
+  loadGatewayStartup
+} from './api/gateway';
 import {
   beanLabel,
   buildWorkflowUpdate,
@@ -704,13 +710,20 @@ export class BeanieApp {
     this.setState({ loading: true, status: 'Loading Decent.app data' });
     try {
       const latestShotQuery = new URLSearchParams({ limit: '50', offset: '0', order: 'desc' });
-      const [workflow, beans, grinders, profiles, latestShots] = await Promise.all([
-        gateway.workflow(),
-        gateway.beans(),
-        gateway.grinders(),
-        gateway.profiles(),
-        gateway.shots(latestShotQuery)
-      ]);
+      const startup = await loadGatewayStartup({ latestShotQuery });
+      const workflow = startup.data.workflow;
+      const beans = startup.data.beans;
+      if (!workflow || !beans) {
+        throw new Error('Essential gateway startup data was unavailable');
+      }
+      const grinders = startup.data.grinders ?? [];
+      const profiles = startup.data.profiles ?? [];
+      const latestShots = startup.data.latestShots ?? {
+        items: [],
+        total: 0,
+        limit: Number(latestShotQuery.get('limit') ?? 0),
+        offset: Number(latestShotQuery.get('offset') ?? 0)
+      };
       const machineInfo = await gateway.machineInfo().catch((error) => {
         console.warn('[Beanie] Could not load machine info', error);
         return null;
@@ -732,7 +745,11 @@ export class BeanieApp {
         asleep: machineSleeping,
         demo: false,
         loading: false,
-        status: machineSleeping ? 'Machine asleep' : 'Connected'
+        status: machineSleeping
+          ? 'Machine asleep'
+          : startup.status === 'partial-failure'
+            ? 'Connected with limited data'
+            : 'Connected'
       });
       this.noteUserActivity();
 
