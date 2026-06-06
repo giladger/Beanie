@@ -325,12 +325,12 @@ interface ShotEditDraft {
   annotationExtras: Record<string, unknown> | null;
 }
 
-// The combined bean/roaster/batch picker shown inside the shot editor. Editing a
-// shot's bean is one act, like everywhere else in the skin: pick a bag (which
-// carries its roaster) and then one of its batches. focusBeanId tracks which
-// bag's batches the dialog is currently showing.
+// The combined bean/roaster picker shown inside the shot editor. Editing a
+// shot's bean is one act, like everywhere else in the skin: pick a bag, which
+// carries its roaster and the latest batch. `creating` swaps the bag list for
+// an inline new-bean form.
 interface ShotBeanEditState {
-  focusBeanId: string | null;
+  creating: boolean;
 }
 
 interface ShotFieldOption {
@@ -1310,60 +1310,70 @@ export class BeanieApp {
     );
   }
 
-  private async openShotBeanDialog(): Promise<void> {
-    const draft = this.state.shotEdit;
-    if (!draft) return;
-    const focusBeanId = this.shotDraftBean(draft)?.id ?? null;
-    this.setState({ shotBeanEdit: { focusBeanId }, shotEditField: null });
-    if (focusBeanId) await this.ensureBatchesLoaded(focusBeanId);
+  private openShotBeanDialog(): void {
+    if (!this.state.shotEdit) return;
+    this.setState({ shotBeanEdit: { creating: false }, shotEditField: null });
   }
 
-  // Pick a bag in the combined dialog: adopt its roaster + name and reveal its
-  // batches. Drop the batch only when it belonged to a different bag. An empty
-  // id clears the bean entirely.
+  // Pick a bag and close the dialog: adopt its roaster + name and tag the shot
+  // with its latest batch. An empty id clears the bean entirely.
   private async pickShotBean(beanId: string): Promise<void> {
     const draft = this.state.shotEdit;
     if (!draft) return;
     if (!beanId) {
       this.setState({
         shotEdit: { ...draft, coffeeRoaster: null, coffeeName: null, beanBatchId: null },
-        shotBeanEdit: { focusBeanId: null },
+        shotBeanEdit: null,
         status: 'Shot draft changed'
       });
       return;
     }
     const bean = this.state.beans.find((item) => item.id === beanId);
     if (!bean) return;
-    const keepBatch = this.batchAndBeanForId(draft.beanBatchId)?.bean.id === beanId;
-    this.setState({
-      shotEdit: {
-        ...draft,
-        coffeeRoaster: bean.roaster,
-        coffeeName: bean.name,
-        beanBatchId: keepBatch ? draft.beanBatchId : null
-      },
-      shotBeanEdit: { focusBeanId: beanId },
-      status: 'Shot draft changed'
-    });
     await this.ensureBatchesLoaded(beanId);
-  }
-
-  // Choose (or clear) a batch and close the dialog — the batch is the final step
-  // of picking a bag. Re-sync roaster + name from the batch's bag for safety.
-  private selectShotBatch(batchId: string): void {
-    const draft = this.state.shotEdit;
-    if (!draft) return;
-    const match = batchId ? this.batchAndBeanForId(batchId) : null;
+    const current = this.state.shotEdit;
+    if (!current) return;
+    const latest = latestBatch(this.state.batchesByBean[beanId] ?? []);
     this.setState({
-      shotEdit: {
-        ...draft,
-        beanBatchId: batchId || null,
-        coffeeRoaster: match?.bean.roaster ?? draft.coffeeRoaster,
-        coffeeName: match?.bean.name ?? draft.coffeeName
-      },
+      shotEdit: { ...current, coffeeRoaster: bean.roaster, coffeeName: bean.name, beanBatchId: latest?.id ?? null },
       shotBeanEdit: null,
       status: 'Shot draft changed'
     });
+  }
+
+  // Create a bag inline from the shot editor and tag the shot with it. A brand
+  // new bag has no batches yet, so the batch is left empty.
+  private async createShotBean(form: HTMLFormElement): Promise<void> {
+    const draft = this.state.shotEdit;
+    if (!draft) return;
+    const fields = beanFieldsFromForm(new FormData(form));
+    if (!fields.roaster || !fields.name) return;
+
+    const tagShot = (bean: Bean, status: string) => {
+      const current = this.state.shotEdit;
+      this.setState({
+        beans: [bean, ...this.state.beans],
+        batchesByBean: { ...this.state.batchesByBean, [bean.id]: [] },
+        shotEdit: current
+          ? { ...current, coffeeRoaster: bean.roaster, coffeeName: bean.name, beanBatchId: null }
+          : current,
+        shotBeanEdit: null,
+        busy: false,
+        status
+      });
+    };
+
+    this.setState({ busy: true, status: 'Adding bean' });
+    if (this.state.demo) {
+      tagShot({ id: `demo-${Date.now()}`, ...fields } as Bean, 'Bean added (demo)');
+      return;
+    }
+    try {
+      tagShot(await gateway.createBean(fields), 'Bean added');
+    } catch (error) {
+      console.error('[Beanie] Add bean failed', error);
+      this.setState({ busy: false, status: 'Add bean failed' });
+    }
   }
 
   private async updateShotEnjoyment(shotId: string, value: number | null): Promise<void> {
@@ -2234,8 +2244,11 @@ export class BeanieApp {
       case 'shot-bean-pick':
         await this.pickShotBean(id ?? '');
         break;
-      case 'shot-bean-batch':
-        this.selectShotBatch(id ?? '');
+      case 'shot-bean-new':
+        if (this.state.shotBeanEdit) this.setState({ shotBeanEdit: { creating: true } });
+        break;
+      case 'shot-bean-cancel-new':
+        if (this.state.shotBeanEdit) this.setState({ shotBeanEdit: { creating: false } });
         break;
       case 'shot-edit-score':
         this.setShotEditEnjoyment(scoreValueFromTap(value, this.state.shotEdit?.enjoyment ?? null));
@@ -2854,6 +2867,11 @@ export class BeanieApp {
     if (form.dataset.form === 'shot-dye-editor') {
       event.preventDefault();
       await this.submitShotDyeEditor(form);
+      return;
+    }
+    if (form.dataset.form === 'shot-bean-create') {
+      event.preventDefault();
+      await this.createShotBean(form);
       return;
     }
     if (form.dataset.form === 'bean-editor') {
@@ -5187,64 +5205,71 @@ export class BeanieApp {
   private renderShotBeanDialog(draft: ShotEditDraft): string {
     const state = this.state.shotBeanEdit;
     if (!state) return '';
-    const selectedBean = this.shotDraftBean(draft);
-    const focusId = state.focusBeanId ?? selectedBean?.id ?? null;
-    const beans = this.sortedBeansForPicker();
-    const beanButton = (bean: Bean) => `
-      <button type="button" class="${bean.id === focusId ? 'active' : ''}" data-action="shot-bean-pick" data-id="${escapeAttr(bean.id)}">
-        <strong>${escapeHtml(bean.name)}</strong>
-        <small>${escapeHtml(bean.roaster)}${bean.country ? ` · ${escapeHtml(bean.country)}` : ''}</small>
-      </button>
-    `;
-    const beanList = `
-      <div class="shot-bean-section">
-        <span class="eyebrow">Bag</span>
-        <div class="shot-field-options shot-bean-list" aria-label="Beans">
-          <button type="button" class="${focusId ? '' : 'active'}" data-action="shot-bean-pick" data-id="">
-            <strong>No bean</strong>
-          </button>
-          ${beans.length === 0 ? '<p class="empty-history">No beans yet.</p>' : beans.map(beanButton).join('')}
-        </div>
-      </div>
-    `;
-    const focusBean = focusId ? this.state.beans.find((bean) => bean.id === focusId) ?? null : null;
-    const batches = focusBean ? recentBatches(this.state.batchesByBean[focusBean.id] ?? [], 12) : [];
-    const batchButton = (batch: BeanBatch) => `
-      <button type="button" class="${batch.id === draft.beanBatchId ? 'active' : ''}" data-action="shot-bean-batch" data-id="${escapeAttr(batch.id)}">
-        <strong>${escapeHtml(batchOptionLabel(batch))}</strong>
-        ${batch.roastLevel ? `<small>${escapeHtml(batch.roastLevel)}</small>` : ''}
-      </button>
-    `;
-    const batchList = !focusBean
-      ? ''
-      : `
-        <div class="shot-bean-section">
-          <span class="eyebrow">Batch</span>
-          <div class="shot-field-options shot-bean-batch-options" aria-label="Batches">
-            <button type="button" class="${draft.beanBatchId ? '' : 'active'}" data-action="shot-bean-batch" data-id="">
-              <strong>No batch</strong>
-            </button>
-            ${batches.length === 0 ? '<p class="empty-history">No batches yet.</p>' : batches.map(batchButton).join('')}
-          </div>
-        </div>
-      `;
+    const body = state.creating ? this.renderShotBeanCreateForm() : this.renderShotBeanPicker(draft);
     return `
       <div class="modal-backdrop shot-field-backdrop shot-bean-backdrop" data-action="close-shot-bean">
         <section class="modal panel shot-field-dialog shot-bean-dialog" role="dialog" aria-modal="true" aria-label="Choose bean" data-action="noop">
           <div class="modal-head shot-edit-head">
             <div>
               <span class="eyebrow">Edit</span>
-              <h2>Bean</h2>
+              <h2>${state.creating ? 'New bean' : 'Bean'}</h2>
             </div>
-            <button type="button" class="icon-button" data-action="close-shot-bean" aria-label="Close">${icon('x')}</button>
+            <div class="shot-edit-head-actions">
+              ${
+                state.creating
+                  ? ''
+                  : `<button type="button" class="icon-button" data-action="shot-bean-new" aria-label="Add bean" title="Add bean">${icon('plus')}</button>`
+              }
+              <button type="button" class="icon-button" data-action="close-shot-bean" aria-label="Close">${icon('x')}</button>
+            </div>
           </div>
-          ${beanList}
-          ${batchList}
-          <div class="modal-actions shot-edit-actions">
-            <button type="button" class="command primary" data-action="close-shot-bean">Done</button>
-          </div>
+          ${body}
         </section>
       </div>
+    `;
+  }
+
+  private renderShotBeanPicker(draft: ShotEditDraft): string {
+    const selectedId = this.shotDraftBean(draft)?.id ?? null;
+    const beans = this.sortedBeansForPicker();
+    const beanButton = (bean: Bean) => `
+      <button type="button" class="${bean.id === selectedId ? 'active' : ''}" data-action="shot-bean-pick" data-id="${escapeAttr(bean.id)}">
+        <strong>${escapeHtml(bean.name)}</strong>
+        <small>${escapeHtml(bean.roaster)}${bean.country ? ` · ${escapeHtml(bean.country)}` : ''}</small>
+      </button>
+    `;
+    return `
+      <div class="shot-bean-section">
+        <span class="eyebrow">Bag</span>
+        <div class="shot-field-options shot-bean-list" aria-label="Beans">
+          <button type="button" class="${selectedId ? '' : 'active'}" data-action="shot-bean-pick" data-id="">
+            <strong>No bean</strong>
+          </button>
+          ${beans.length === 0 ? '<p class="empty-history">No beans yet.</p>' : beans.map(beanButton).join('')}
+        </div>
+      </div>
+      <div class="modal-actions shot-edit-actions">
+        <button type="button" class="command primary" data-action="close-shot-bean">Done</button>
+      </div>
+    `;
+  }
+
+  private renderShotBeanCreateForm(): string {
+    const text = (name: string, label: string, required = false) => `
+      <label>${escapeHtml(label)}<input name="${name}" autocomplete="off"${required ? ' required' : ''} /></label>
+    `;
+    return `
+      <form class="shot-bean-create" data-form="shot-bean-create" data-action="noop">
+        <div class="shot-bean-create-fields">
+          ${text('roaster', 'Roaster', true)}
+          ${text('name', 'Bean', true)}
+          ${text('country', 'Country')}
+        </div>
+        <div class="modal-actions shot-edit-actions">
+          <button type="button" class="command" data-action="shot-bean-cancel-new">Cancel</button>
+          <button type="submit" class="command primary">${icon('check')}<span>Add bean</span></button>
+        </div>
+      </form>
     `;
   }
 
