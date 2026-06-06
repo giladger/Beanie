@@ -529,6 +529,7 @@ export class BeanieApp {
   private scaleSocket: WebSocket | null = null;
   private waterSocket: WebSocket | null = null;
   private shotRefreshInFlight = false;
+  private applyRequestId = 0;
 
   private readonly liveShot = new LiveShotSession();
   private liveChart: LiveChart | null = null;
@@ -1067,6 +1068,7 @@ export class BeanieApp {
     const batch = this.selectedBatch();
     const update = buildWorkflowUpdate(bean, batch, draft, draft.profile, this.state.workflow);
     const signature = draftSignature(draft);
+    const requestId = ++this.applyRequestId;
 
     this.setState({ applyState: 'pending', status: 'Applying workflow' });
     if (this.state.demo) {
@@ -1085,6 +1087,19 @@ export class BeanieApp {
 
     try {
       const workflow = await gateway.updateWorkflow(update);
+      if (requestId !== this.applyRequestId) return;
+      const currentSignature = draftSignature(
+        normalizeDraft(this.state.draft, this.state.profiles, this.state.grinders)
+      );
+      if (currentSignature !== signature) {
+        this.setState({
+          workflow,
+          applyState: 'stale',
+          appliedSignature: signature,
+          status: 'Draft changed; applying soon'
+        });
+        return;
+      }
       this.setState({
         workflow,
         applyState: 'applied',
@@ -1092,6 +1107,14 @@ export class BeanieApp {
         status: 'Workflow applied'
       });
     } catch (error) {
+      if (requestId !== this.applyRequestId) return;
+      const currentSignature = draftSignature(
+        normalizeDraft(this.state.draft, this.state.profiles, this.state.grinders)
+      );
+      if (currentSignature !== signature) {
+        this.setState({ applyState: 'stale', status: 'Draft changed; applying soon' });
+        return;
+      }
       console.error('[Beanie] Apply failed', error);
       this.setState({ applyState: 'failed', status: 'Apply failed' });
     }
