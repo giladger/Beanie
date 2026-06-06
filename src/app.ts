@@ -252,6 +252,8 @@ const NO_SCALE_ABORT_WINDOW_MS = 3_000;
 const SCALE_FRESH_WINDOW_MS = 5_000;
 const NO_SCALE_WARNING_VISIBLE_MS = 6_000;
 const DEFAULT_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS = 1;
+const MIN_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS = 1.6;
+const HOT_WATER_WEIGHT_STOP_MARGIN_GRAMS = 1.5;
 
 const SHOT_SCORE_OPTIONS = [
   { value: 20, label: 'Bad', tone: 'bad' },
@@ -477,6 +479,7 @@ interface HotWaterWeightStopController {
   targetWeight: number;
   configuredFlow: number;
   armedAtMs: number;
+  tareRequestedAtMs: number | null;
   activeSeen: boolean;
   stopRequested: boolean;
 }
@@ -1670,13 +1673,13 @@ export class BeanieApp {
       this.setState({ waterAlertDismissed: false, status: 'Refill the water tank' });
       return;
     }
-    const hotWaterWeightStop = state === 'hotWater' ? this.hotWaterWeightStopTarget(Date.now()) : null;
+    const hotWaterWeightStop = state === 'hotWater' ? this.hotWaterWeightStopTarget() : null;
     this.setState({ busy: true, status: machineActionStatus(state, 'sending') });
     if (this.state.demo) {
       if (state !== 'espresso') this.stopSimulatedShot();
       if (state === 'hotWater') {
         this.hotWaterWeightStop = hotWaterWeightStop
-          ? this.createHotWaterWeightStop(hotWaterWeightStop)
+          ? this.createHotWaterWeightStop(hotWaterWeightStop, null)
           : null;
       }
       this.rememberMachineProgressReturnView(service);
@@ -1697,7 +1700,7 @@ export class BeanieApp {
       if (state === 'hotWater' && hotWaterWeightStop) {
         this.setState({ status: 'Taring scale' });
         await gateway.tareScale();
-        this.hotWaterWeightStop = this.createHotWaterWeightStop(hotWaterWeightStop);
+        this.hotWaterWeightStop = this.createHotWaterWeightStop(hotWaterWeightStop, Date.now());
       } else if (state === 'hotWater') {
         this.hotWaterWeightStop = null;
       }
@@ -1866,9 +1869,9 @@ export class BeanieApp {
     return this.lastScaleFrameMs != null && tMs - this.lastScaleFrameMs <= SCALE_FRESH_WINDOW_MS;
   }
 
-  private hotWaterWeightStopTarget(tMs: number): { targetWeight: number; configuredFlow: number } | null {
+  private hotWaterWeightStopTarget(): { targetWeight: number; configuredFlow: number } | null {
     if (this.state.hotWaterStopMode !== 'volume') return null;
-    if (!this.hasFreshConnectedScale(tMs)) return null;
+    if (!scaleConnected(this.state.scale)) return null;
     const water = this.currentHotWaterData();
     const targetWeight = positiveNumber(water.volume);
     if (targetWeight == null) return null;
@@ -1878,10 +1881,14 @@ export class BeanieApp {
     };
   }
 
-  private createHotWaterWeightStop(target: { targetWeight: number; configuredFlow: number }): HotWaterWeightStopController {
+  private createHotWaterWeightStop(
+    target: { targetWeight: number; configuredFlow: number },
+    tareRequestedAtMs: number | null
+  ): HotWaterWeightStopController {
     return {
       ...target,
       armedAtMs: Date.now(),
+      tareRequestedAtMs,
       activeSeen: false,
       stopRequested: false
     };
@@ -1901,17 +1908,23 @@ export class BeanieApp {
     }
 
     if (!controller.activeSeen || controller.stopRequested) return;
-    if (this.machineServicePhase !== 'active') return;
     if (!this.hasFreshConnectedScale(tMs)) return;
+    if (controller.tareRequestedAtMs != null && this.lastScaleFrameMs != null && this.lastScaleFrameMs < controller.tareRequestedAtMs) {
+      return;
+    }
 
     const scale = this.state.scale;
-    const weight = positiveNumber(scale?.weight) ?? 0;
+    const weight = finiteNumber(scale?.weight) ?? 0;
     const scaleFlow = positiveNumber(scale?.weightFlow);
-    const flow = scaleFlow ?? controller.configuredFlow;
-    const lookahead = positiveNumber(this.state.settingsBundle?.rea.weightFlowMultiplier)
-      ?? DEFAULT_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS;
+    const flow = Math.max(scaleFlow ?? 0, controller.configuredFlow);
+    const lookahead = Math.max(
+      positiveNumber(this.state.settingsBundle?.rea.weightFlowMultiplier)
+        ?? DEFAULT_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS,
+      MIN_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS
+    );
     const projectedWeight = weight + flow * lookahead;
-    if (projectedWeight < controller.targetWeight) return;
+    const stopAtWeight = Math.max(0, controller.targetWeight - HOT_WATER_WEIGHT_STOP_MARGIN_GRAMS);
+    if (projectedWeight < stopAtWeight) return;
 
     controller.stopRequested = true;
     void this.stopHotWaterAtWeight(controller.targetWeight, weight, projectedWeight);
@@ -8146,6 +8159,10 @@ function machineServicePrimaryTime(
 
 function positiveNumber(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function finiteNumber(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function formatSecondsValue(value: number): string {
