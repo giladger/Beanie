@@ -468,7 +468,6 @@ interface LiveReadoutEls {
   pressure: HTMLElement | null;
   flow: HTMLElement | null;
   temp: HTMLElement | null;
-  rate: HTMLElement | null;
 }
 
 interface HotWaterWeightStopController {
@@ -590,10 +589,6 @@ export class BeanieApp {
   private liveChart: LiveChart | null = null;
   private liveCanvas: HTMLCanvasElement | null = null;
   private liveReadoutEls: LiveReadoutEls | null = null;
-  // Temporary diagnostic: arrival times (ms) of recent machine/scale frames, used
-  // to show the live telemetry sample rate. Each is a rolling ~3s window.
-  private machineFrameTimes: number[] = [];
-  private scaleFrameTimes: number[] = [];
   private liveRaf: number | null = null;
   private liveDirty = false;
   private simTimer: number | null = null;
@@ -2270,14 +2265,12 @@ export class BeanieApp {
     const previousMachineState = this.state.machine?.state?.state;
     const previousScaleConnected = scaleConnected(this.state.scale);
     if (machine) {
-      this.recordFrameTime(this.machineFrameTimes, tMs);
       this.state.machine = machine;
       this.trackMachineServiceState(machine.state.state, machine.state.substate, tMs);
       this.observeSleepBrightnessState(machine.state.state === 'sleeping');
       this.beginNoScaleBrewFlashIfNeeded(machine, previousMachineState, tMs);
     }
     if (scale) {
-      this.recordFrameTime(this.scaleFrameTimes, tMs);
       this.state.scale = scale;
       this.lastScaleFrameMs = tMs;
       if (this.hasFreshConnectedScale(tMs)) {
@@ -2680,8 +2673,7 @@ export class BeanieApp {
       weight: this.root.querySelector<HTMLElement>('#live-weight'),
       pressure: this.root.querySelector<HTMLElement>('#live-pressure'),
       flow: this.root.querySelector<HTMLElement>('#live-flow'),
-      temp: this.root.querySelector<HTMLElement>('#live-temp'),
-      rate: this.root.querySelector<HTMLElement>('#live-rate')
+      temp: this.root.querySelector<HTMLElement>('#live-temp')
     };
     this.drawLiveChart();
   }
@@ -2698,26 +2690,6 @@ export class BeanieApp {
       els.temp.textContent =
         latest.scaledTemperature == null ? '--' : (latest.scaledTemperature * 10).toFixed(1);
     }
-    if (els.rate) {
-      const m = this.frameRateHz(this.machineFrameTimes);
-      const s = this.frameRateHz(this.scaleFrameTimes);
-      const fmt = (hz: number | null) => (hz == null ? '--' : hz.toFixed(1));
-      els.rate.textContent = `${fmt(m)} / ${fmt(s)}`;
-    }
-  }
-
-  // Temporary live-rate diagnostic helpers. Keep a rolling ~3s window of frame
-  // arrival times per source so the readout reflects the current sample rate.
-  private recordFrameTime(times: number[], tMs: number): void {
-    times.push(tMs);
-    const cutoff = tMs - 3000;
-    while (times.length > 1 && times[0]! < cutoff) times.shift();
-  }
-
-  private frameRateHz(times: number[]): number | null {
-    if (times.length < 2) return null;
-    const span = times[times.length - 1]! - times[0]!;
-    return span > 0 ? ((times.length - 1) / span) * 1000 : null;
   }
 
   private onShotEnded(): void {
@@ -5030,7 +5002,6 @@ export class BeanieApp {
               ${liveReadout('Pressure', 'live-pressure', '--', 'bar')}
               ${liveReadout('Flow', 'live-flow', '--', 'ml/s')}
               ${liveReadout('Temp', 'live-temp', '--', 'C')}
-              ${liveReadout('Rate m/s', 'live-rate', '-- / --', 'Hz')}
             </div>
           </div>
           <div class="live-canvas-wrap">
