@@ -216,6 +216,7 @@ type ShotEditField =
   | 'espressoNotes';
 type ApplyState = 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
 type LiveChartMode = 'preset30' | 'auto';
+type HotWaterStopMode = 'volume' | 'time';
 // Backing-store resolution floor for every espresso chart (see LiveChart.resize).
 // The live chart and the historical detail chart share it so the trace looks
 // identically crisp whether it is streaming or saved, rather than the live one
@@ -250,6 +251,7 @@ const NO_SCALE_MACHINE_STATUS = 'Connect scale';
 const NO_SCALE_ABORT_WINDOW_MS = 3_000;
 const SCALE_FRESH_WINDOW_MS = 5_000;
 const NO_SCALE_WARNING_VISIBLE_MS = 6_000;
+const DEFAULT_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS = 1;
 
 const SHOT_SCORE_OPTIONS = [
   { value: 20, label: 'Bad', tone: 'bad' },
@@ -432,6 +434,7 @@ interface AppState {
   machineLabelEdit: MachineLabelEditTarget | null;
   machinePresetLabels: Record<string, string>;
   machinePresetValues: MachinePresetValueOverrides;
+  hotWaterStopMode: HotWaterStopMode;
   formNumbers: Record<string, string>;
   detailShotId: string | null;
   machineInfo: MachineInfo | null;
@@ -468,6 +471,14 @@ interface LiveReadoutEls {
   pressure: HTMLElement | null;
   flow: HTMLElement | null;
   temp: HTMLElement | null;
+}
+
+interface HotWaterWeightStopController {
+  targetWeight: number;
+  configuredFlow: number;
+  armedAtMs: number;
+  activeSeen: boolean;
+  stopRequested: boolean;
 }
 
 function accountLoginErrorMessage(error: GatewayRequestError): string {
@@ -534,6 +545,7 @@ export class BeanieApp {
     machineLabelEdit: null,
     machinePresetLabels: readMachinePresetLabels(),
     machinePresetValues: readMachinePresetValues(),
+    hotWaterStopMode: readHotWaterStopMode(),
     formNumbers: {},
     detailShotId: null,
     machineInfo: null,
@@ -604,6 +616,7 @@ export class BeanieApp {
     hotWaterData: HotWaterData;
     rinseData: RinseData;
   } | null = null;
+  private hotWaterWeightStop: HotWaterWeightStopController | null = null;
   private sleepBrightnessTimer: number | null = null;
   private sleepBrightnessZeroed = false;
   private applyAfterWake = false;
@@ -1657,9 +1670,15 @@ export class BeanieApp {
       this.setState({ waterAlertDismissed: false, status: 'Refill the water tank' });
       return;
     }
+    const hotWaterWeightStop = state === 'hotWater' ? this.hotWaterWeightStopTarget(Date.now()) : null;
     this.setState({ busy: true, status: machineActionStatus(state, 'sending') });
     if (this.state.demo) {
       if (state !== 'espresso') this.stopSimulatedShot();
+      if (state === 'hotWater') {
+        this.hotWaterWeightStop = hotWaterWeightStop
+          ? this.createHotWaterWeightStop(hotWaterWeightStop)
+          : null;
+      }
       this.rememberMachineProgressReturnView(service);
       this.trackMachineServiceState(state);
       this.setState({
@@ -1675,6 +1694,13 @@ export class BeanieApp {
     }
     try {
       if (state === 'steam') await this.prepareMachineForTimedSteamStop();
+      if (state === 'hotWater' && hotWaterWeightStop) {
+        this.setState({ status: 'Taring scale' });
+        await gateway.tareScale();
+        this.hotWaterWeightStop = this.createHotWaterWeightStop(hotWaterWeightStop);
+      } else if (state === 'hotWater') {
+        this.hotWaterWeightStop = null;
+      }
       await gateway.requestState(state);
       this.rememberMachineProgressReturnView(service);
       this.trackMachineServiceState(state);
@@ -1689,6 +1715,7 @@ export class BeanieApp {
       else this.observeSleepBrightnessState(false);
     } catch (error) {
       console.error('[Beanie] Machine action failed', error);
+      if (state === 'hotWater') this.hotWaterWeightStop = null;
       if (state === 'espresso' && isNoScaleShotBlockError(error)) {
         this.showNoScaleShotWarning({ busy: false });
         return;
@@ -1839,6 +1866,87 @@ export class BeanieApp {
     return this.lastScaleFrameMs != null && tMs - this.lastScaleFrameMs <= SCALE_FRESH_WINDOW_MS;
   }
 
+  private hotWaterWeightStopTarget(tMs: number): { targetWeight: number; configuredFlow: number } | null {
+    if (this.state.hotWaterStopMode !== 'volume') return null;
+    if (!this.hasFreshConnectedScale(tMs)) return null;
+    const water = this.currentHotWaterData();
+    const targetWeight = positiveNumber(water.volume);
+    if (targetWeight == null) return null;
+    return {
+      targetWeight,
+      configuredFlow: positiveNumber(water.flow) ?? 0
+    };
+  }
+
+  private createHotWaterWeightStop(target: { targetWeight: number; configuredFlow: number }): HotWaterWeightStopController {
+    return {
+      ...target,
+      armedAtMs: Date.now(),
+      activeSeen: false,
+      stopRequested: false
+    };
+  }
+
+  private handleHotWaterWeightStop(tMs: number): void {
+    const controller = this.hotWaterWeightStop;
+    if (!controller) return;
+
+    const machine = this.state.machine;
+    const state = machine?.state?.state;
+    if (state === 'hotWater') {
+      controller.activeSeen = true;
+    } else if (controller.activeSeen || Date.now() - controller.armedAtMs > 10_000) {
+      this.hotWaterWeightStop = null;
+      return;
+    }
+
+    if (!controller.activeSeen || controller.stopRequested) return;
+    if (this.machineServicePhase !== 'active') return;
+    if (!this.hasFreshConnectedScale(tMs)) return;
+
+    const scale = this.state.scale;
+    const weight = positiveNumber(scale?.weight) ?? 0;
+    const scaleFlow = positiveNumber(scale?.weightFlow);
+    const flow = scaleFlow ?? controller.configuredFlow;
+    const lookahead = positiveNumber(this.state.settingsBundle?.rea.weightFlowMultiplier)
+      ?? DEFAULT_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS;
+    const projectedWeight = weight + flow * lookahead;
+    if (projectedWeight < controller.targetWeight) return;
+
+    controller.stopRequested = true;
+    void this.stopHotWaterAtWeight(controller.targetWeight, weight, projectedWeight);
+  }
+
+  private async stopHotWaterAtWeight(targetWeight: number, weight: number, projectedWeight: number): Promise<void> {
+    this.machineStopRequestedFor = 'hotWater';
+    this.machineStopRequestedAtMs = Date.now();
+    this.setState({
+      status: `Water target ${formatNumber(targetWeight, 0)} g reached`
+    });
+    if (this.state.demo) {
+      this.hotWaterWeightStop = null;
+      this.trackMachineServiceState('idle');
+      this.setState({
+        machine: optimisticMachineSnapshot(this.state.machine, 'idle'),
+        view: this.consumeMachineProgressReturnView(),
+        status: 'Demo water stopped'
+      });
+      return;
+    }
+    try {
+      await gateway.requestState('idle');
+      this.setState({
+        status: `Stopping at ${formatNumber(weight, 1)} g (${formatNumber(projectedWeight, 1)} g projected)`
+      });
+      this.armMachineStopFeedbackTimer();
+    } catch (error) {
+      console.error('[Beanie] Hot water weight stop failed', error);
+      this.clearMachineStopRequest();
+      this.hotWaterWeightStop = null;
+      this.setState({ status: 'Hot water stop failed' });
+    }
+  }
+
   private beginNoScaleBrewFlashIfNeeded(machine: MachineSnapshot, previousState: string | undefined, tMs: number): void {
     const state = machine.state?.state;
     if (!isBrewState(state) || isBrewState(previousState)) return;
@@ -1935,6 +2043,7 @@ export class BeanieApp {
       return;
     }
 
+    if (service === 'hotWater') this.hotWaterWeightStop = null;
     this.machineStopRequestedFor = service;
     this.machineStopRequestedAtMs = Date.now();
     if (service === 'steam') this.clearTimedSteamStopTimer();
@@ -2092,6 +2201,7 @@ export class BeanieApp {
   ): void {
     const previousService = machineServiceState(this.state.machine?.state?.state);
     const previousMachineState = this.state.machine?.state?.state;
+    const previousScaleConnected = scaleConnected(this.state.scale);
     if (machine) {
       this.state.machine = machine;
       this.trackMachineServiceState(machine.state.state, machine.state.substate, tMs);
@@ -2106,6 +2216,8 @@ export class BeanieApp {
         this.noScaleShotWarningUntilMs = 0;
       }
     }
+    const scaleConnectionChanged = previousScaleConnected !== scaleConnected(this.state.scale);
+    this.handleHotWaterWeightStop(tMs);
 
     const wasActive = this.state.liveActive;
     const frame: LiveFrame = { tMs, machine: this.state.machine, scale: this.state.scale };
@@ -2152,6 +2264,10 @@ export class BeanieApp {
     }
     // The machine entering/leaving `needsWater` flips the water-alert band.
     if (this.syncWaterAlert()) {
+      this.setState({});
+      return;
+    }
+    if (this.state.view === 'machine' && scaleConnectionChanged) {
       this.setState({});
       return;
     }
@@ -2287,7 +2403,9 @@ export class BeanieApp {
       service,
       this.currentSteamSettings(),
       this.currentHotWaterData(),
-      this.currentRinseData()
+      this.currentRinseData(),
+      this.state.hotWaterStopMode,
+      scaleConnected(this.state.scale)
     );
   }
 
@@ -2301,7 +2419,9 @@ export class BeanieApp {
       service,
       this.currentSteamSettings(),
       this.currentHotWaterData(),
-      this.currentRinseData()
+      this.currentRinseData(),
+      this.state.hotWaterStopMode,
+      scaleConnected(this.state.scale)
     );
     const nextTarget = Math.ceil((currentTarget ?? elapsedSeconds) + seconds);
     this.machineServiceTargetOverrideSeconds = nextTarget;
@@ -2731,6 +2851,9 @@ export class BeanieApp {
         break;
       case 'machine-steam-purge-mode':
         await this.setSteamPurgeMode(Number(value));
+        break;
+      case 'machine-water-stop-mode':
+        this.setHotWaterStopMode(value === 'time' ? 'time' : 'volume');
         break;
       case 'machine-edit-label':
         this.openMachineLabelDialog(el);
@@ -4269,6 +4392,14 @@ export class BeanieApp {
     }
   }
 
+  private setHotWaterStopMode(mode: HotWaterStopMode): void {
+    writeHotWaterStopMode(mode);
+    this.setState({
+      hotWaterStopMode: mode,
+      status: mode === 'time' ? 'Water stops by time' : 'Water stops by weight when scale is connected'
+    });
+  }
+
   private savePresetValuesAfterMachineEdit(
     fieldName: string,
     selectedSteamPreset: string,
@@ -5519,6 +5650,7 @@ export class BeanieApp {
     const steamPreset = matchingPreset(steam, steamPresets);
     const waterPreset = matchingPreset(water, waterPresets);
     const flushPreset = matchingPreset(flush, flushPresets);
+    const waterScaleConnected = scaleConnected(this.state.scale);
     return `
       ${this.pageHeader('Steam · Water · Flush')}
       <main class="page-body machine-page no-scroll-page">
@@ -5549,8 +5681,15 @@ export class BeanieApp {
             values: [
               machineValueTile('waterTemp', 'Temp', water.targetTemperature, capabilities.hotWater.targetTemperature),
               machineValueTile('waterFlow', 'Flow', water.flow, capabilities.hotWater.flow),
-              machineValueTile('waterVolume', 'Volume', water.volume, capabilities.hotWater.volume!),
-              machineValueTile('waterDuration', 'Time', water.duration, capabilities.hotWater.duration)
+              machineHotWaterStopModeTile(this.state.hotWaterStopMode, waterScaleConnected),
+              this.state.hotWaterStopMode === 'time'
+                ? machineValueTile('waterDuration', 'Time', water.duration, capabilities.hotWater.duration)
+                : machineValueTile(
+                    'waterVolume',
+                    waterScaleConnected ? 'Weight' : 'Volume',
+                    water.volume,
+                    hotWaterTargetSpec(capabilities.hotWater.volume!, waterScaleConnected)
+                  )
             ]
           })}
           ${renderMachineLane({
@@ -5636,14 +5775,25 @@ export class BeanieApp {
     const steam = this.currentSteamSettings();
     const water = this.currentHotWaterData();
     const flush = this.currentRinseData();
+    const waterScaleConnected = scaleConnected(this.state.scale);
     const targetSeconds = this.machineServiceTargetOverrideSeconds
-      ?? machineServiceTargetSeconds(service, steam, water, flush);
+      ?? machineServiceTargetSeconds(
+        service,
+        steam,
+        water,
+        flush,
+        this.state.hotWaterStopMode,
+        waterScaleConnected
+      );
+    const targetWeight = service === 'hotWater' && this.state.hotWaterStopMode === 'volume' && waterScaleConnected
+      ? positiveNumber(water.volume)
+      : null;
     const elapsedSeconds = this.machineServiceStartedAtMs == null
       ? 0
       : Math.max(0, (Date.now() - this.machineServiceStartedAtMs) / 1000);
     const machine = this.state.machine;
-    const stats = machineServiceStats(targetSeconds);
-    const meta = machineServiceMeta(service, steam, water, flush, machine);
+    const stats = machineServiceStats(targetSeconds, targetWeight);
+    const meta = machineServiceMeta(service, steam, water, flush, machine, this.state.scale, this.state.hotWaterStopMode);
     const stopRequested = this.machineStopRequestedFor === service;
     const stopAgeSeconds = stopRequested && this.machineStopRequestedAtMs != null
       ? Math.max(0, (Date.now() - this.machineStopRequestedAtMs) / 1000)
@@ -5655,7 +5805,12 @@ export class BeanieApp {
       ? { value: service === 'steam' ? 'Heating' : 'Starting', label: null }
       : this.machineServicePhase === 'purging'
         ? { value: 'Purging', label: null }
-        : machineServicePrimaryTime(elapsedSeconds, targetSeconds);
+        : targetWeight != null
+          ? {
+              value: `${formatNumber(this.state.scale?.weight, 1)}g`,
+              label: `${formatNumber(targetWeight, 0)}g target`
+            }
+          : machineServicePrimaryTime(elapsedSeconds, targetSeconds);
     return `
       <header class="page-head machine-progress-head">
         <h1 class="page-title">${escapeHtml(machineServiceVerb(service))}</h1>
@@ -6846,6 +7001,7 @@ export class BeanieApp {
 
 const machinePresetLabelsStorageKey = 'beanie:machine-preset-labels';
 const machinePresetValuesStorageKey = 'beanie:machine-preset-values';
+const hotWaterStopModeStorageKey = 'beanie:hot-water-stop-mode';
 const secondTapHintStorageKey = 'beanie:second-tap-hint-v2';
 
 type MachinePresetValueOverrides = Record<string, Record<string, number>>;
@@ -6938,6 +7094,19 @@ function readMachinePresetValues(): MachinePresetValueOverrides {
 
 function writeMachinePresetValues(values: MachinePresetValueOverrides): void {
   localStorage.setItem(machinePresetValuesStorageKey, JSON.stringify(values));
+}
+
+function readHotWaterStopMode(): HotWaterStopMode {
+  try {
+    const value = localStorage.getItem(hotWaterStopModeStorageKey);
+    return value === 'time' ? 'time' : 'volume';
+  } catch {
+    return 'volume';
+  }
+}
+
+function writeHotWaterStopMode(mode: HotWaterStopMode): void {
+  localStorage.setItem(hotWaterStopModeStorageKey, mode);
 }
 
 function machinePresetLabelKey(name: string, presetId: string): string {
@@ -7085,6 +7254,27 @@ function machineValueTile(name: string, label: string, value: number | undefined
     spec,
     disabled: !spec.enabled
   };
+}
+
+function machineHotWaterStopModeTile(mode: HotWaterStopMode, scaleIsConnected: boolean): MachineValueTile {
+  const nextMode: HotWaterStopMode = mode === 'time' ? 'volume' : 'time';
+  return {
+    label: 'Stop by',
+    value: mode === 'time' ? 'Time' : scaleIsConnected ? 'Weight' : 'Volume',
+    unit: mode === 'time'
+      ? 'Timer'
+      : scaleIsConnected
+        ? 'Scale'
+        : 'Machine',
+    action: 'machine-water-stop-mode',
+    actionValue: nextMode
+  };
+}
+
+function hotWaterTargetSpec(spec: NumberSpec, scaleIsConnected: boolean): NumberSpec {
+  return scaleIsConnected
+    ? { ...spec, unit: 'g', reason: undefined }
+    : spec;
 }
 
 function machineSteamPurgeTile(mode: number | null | undefined): MachineValueTile {
@@ -7877,10 +8067,14 @@ function machineServiceTargetSeconds(
   service: MachineServiceState,
   steam: SteamSettings,
   water: HotWaterData,
-  flush: RinseData
+  flush: RinseData,
+  hotWaterStopMode: HotWaterStopMode,
+  hotWaterScaleConnected: boolean
 ): number | null {
   if (service === 'steam') return positiveNumber(steam.duration);
   if (service === 'flush') return positiveNumber(flush.duration);
+  if (hotWaterStopMode === 'time') return positiveNumber(water.duration);
+  if (hotWaterScaleConnected) return null;
   return positiveNumber(water.duration) ?? hotWaterVolumeSeconds(water);
 }
 
@@ -7892,11 +8086,13 @@ function hotWaterVolumeSeconds(water: HotWaterData): number | null {
 }
 
 function machineServiceStats(
-  targetSeconds: number | null
+  targetSeconds: number | null,
+  targetWeight: number | null = null
 ): Array<{ label: string; value: string; unit: string }> {
-  return [
-    { label: 'Target', value: targetSeconds == null ? '--' : formatSecondsValue(targetSeconds), unit: 's' }
-  ];
+  const target = targetWeight == null
+    ? { label: 'Target', value: targetSeconds == null ? '--' : formatSecondsValue(targetSeconds), unit: 's' }
+    : { label: 'Target', value: formatNumber(targetWeight, 0), unit: 'g' };
+  return [target];
 }
 
 function machineServiceMeta(
@@ -7904,7 +8100,9 @@ function machineServiceMeta(
   steam: SteamSettings,
   water: HotWaterData,
   flush: RinseData,
-  machine: MachineSnapshot | null
+  machine: MachineSnapshot | null,
+  scale: ScaleSnapshot | null,
+  hotWaterStopMode: HotWaterStopMode
 ): string[] {
   if (service === 'steam') {
     return [
@@ -7914,9 +8112,16 @@ function machineServiceMeta(
     ];
   }
   if (service === 'hotWater') {
+    const scaleIsConnected = scaleConnected(scale);
+    const targetLabel = hotWaterStopMode === 'volume' && scaleIsConnected
+      ? `${formatNumber(water.volume, 0)} g target`
+      : hotWaterStopMode === 'time'
+        ? `${formatNumber(water.duration, 0)} s target`
+        : `${formatNumber(water.volume, 0)} ml target`;
     return [
       `${formatNumber(water.flow, 1)} ml/s`,
-      `${formatNumber(water.volume, 0)} ml target`,
+      targetLabel,
+      ...(hotWaterStopMode === 'volume' && scaleIsConnected ? [`${formatNumber(scale?.weight, 1)} g scale`] : []),
       `${formatNumber(water.targetTemperature, 0)} C target`,
       `${formatNumber(machine?.mixTemperature, 0)} C water`
     ];
