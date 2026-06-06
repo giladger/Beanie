@@ -170,9 +170,8 @@ import {
   type WaterPreset
 } from './domain/waterSettings';
 import {
-  TIMED_STEAM_PURGE_DELAY_MS,
-  timedSteamAutoPurgeDelayMs,
-  timedSteamTargetReached,
+  paddedSteamDurationSeconds,
+  timedSteamStopDelayMs,
   type MachineServicePhase,
   type MachineServiceState
 } from './domain/timedSteamStop';
@@ -544,9 +543,15 @@ export class BeanieApp {
   private machineStopRequestedFor: MachineServiceState | null = null;
   private machineStopRequestedAtMs: number | null = null;
   private machineStopFeedbackTimer: number | null = null;
-  private timedSteamPurgeTimer: number | null = null;
-  private timedSteamPurgeScheduledForMs: number | null = null;
-  private timedSteamPurgeRequestedAtMs: number | null = null;
+  private timedSteamStopTimer: number | null = null;
+  private timedSteamStopScheduledForMs: number | null = null;
+  private timedSteamStopRequestedAtMs: number | null = null;
+  private machineServiceTargetOverrideSeconds: number | null = null;
+  private machineServiceWorkflowToRestore: {
+    steamSettings: SteamSettings;
+    hotWaterData: HotWaterData;
+    rinseData: RinseData;
+  } | null = null;
   private sleepBrightnessTimer: number | null = null;
   private sleepBrightnessZeroed = false;
   private applyAfterWake = false;
@@ -619,7 +624,7 @@ export class BeanieApp {
     if (this.waterRetryTimer != null) window.clearTimeout(this.waterRetryTimer);
     if (this.shotRefreshTimer != null) window.clearInterval(this.shotRefreshTimer);
     if (this.simTimer != null) window.clearTimeout(this.simTimer);
-    if (this.timedSteamPurgeTimer != null) window.clearTimeout(this.timedSteamPurgeTimer);
+    if (this.timedSteamStopTimer != null) window.clearTimeout(this.timedSteamStopTimer);
     if (this.sleepBrightnessTimer != null) window.clearTimeout(this.sleepBrightnessTimer);
     if (this.liveRaf != null) window.cancelAnimationFrame(this.liveRaf);
     this.machineSocket?.close();
@@ -1434,6 +1439,7 @@ export class BeanieApp {
       return;
     }
     try {
+      if (state === 'steam') await this.prepareMachineForTimedSteamStop();
       await gateway.requestState(state);
       this.rememberMachineProgressReturnView(service);
       this.trackMachineServiceState(state);
@@ -1457,6 +1463,37 @@ export class BeanieApp {
         status: 'Machine command failed'
       });
     }
+  }
+
+  private async prepareMachineForTimedSteamStop(): Promise<void> {
+    const workflow = this.state.workflow;
+    if (this.usesTwoTapSteamStop()) return;
+    if (workflow == null) return;
+    const steamSettings = this.currentSteamSettings();
+    const userDuration = positiveNumber(steamSettings.duration);
+    const paddedDuration = paddedSteamDurationSeconds(userDuration);
+    if (paddedDuration == null || userDuration == null || paddedDuration <= userDuration) return;
+
+    this.captureMachineServiceWorkflowRestore();
+    try {
+      await gateway.updateWorkflow({
+        ...workflow,
+        steamSettings: { ...steamSettings, duration: paddedDuration }
+      });
+    } catch (error) {
+      this.machineServiceWorkflowToRestore = null;
+      console.error('[Beanie] Steam max-duration headroom failed', error);
+      throw error;
+    }
+  }
+
+  private captureMachineServiceWorkflowRestore(): void {
+    if (this.machineServiceWorkflowToRestore != null) return;
+    this.machineServiceWorkflowToRestore = {
+      steamSettings: { ...this.currentSteamSettings() },
+      hotWaterData: { ...this.currentHotWaterData() },
+      rinseData: { ...this.currentRinseData() }
+    };
   }
 
   private shouldPreflightBlockShotForScale(): boolean {
@@ -1574,7 +1611,7 @@ export class BeanieApp {
 
     this.machineStopRequestedFor = service;
     this.machineStopRequestedAtMs = Date.now();
-    if (service === 'steam') this.clearTimedSteamPurgeTimer();
+    if (service === 'steam') this.clearTimedSteamStopTimer();
     this.setState({ busy: true, status: 'Stopping machine' });
     if (this.state.demo) {
       const returnView = this.consumeMachineProgressReturnView();
@@ -1757,26 +1794,25 @@ export class BeanieApp {
     const service = machineServiceState(state);
     if (!service) {
       const previousService = this.machineServiceState;
-      const shouldAutoPurgeSteam =
-        previousService === 'steam' && this.shouldRequestTimedSteamPurgeAfterEnd(nowMs);
       this.machineServiceState = null;
       this.machineServiceStartedAtMs = null;
       this.machineServicePhase = null;
-      this.clearTimedSteamPurgeTimer();
+      this.machineServiceTargetOverrideSeconds = null;
+      this.clearTimedSteamStopTimer();
       this.clearMachineStopRequest();
-      if (shouldAutoPurgeSteam) this.scheduleTimedSteamAutoPurge(TIMED_STEAM_PURGE_DELAY_MS);
+      if (previousService) void this.restoreMachineServiceWorkflowAfterEnd();
       return;
     }
     if (this.machineServiceState !== service) {
       this.machineServiceState = service;
       this.machineServiceStartedAtMs = null;
       this.machineServicePhase = 'starting';
-      if (service === 'steam' && state !== 'steamRinse') this.timedSteamPurgeRequestedAtMs = null;
+      this.machineServiceTargetOverrideSeconds = null;
+      if (service === 'steam' && state !== 'steamRinse') this.timedSteamStopRequestedAtMs = null;
     }
     if (state === 'steamRinse') {
       this.machineServicePhase = 'purging';
-      this.clearTimedSteamPurgeTimer();
-      if (this.timedSteamPurgeRequestedAtMs == null) this.timedSteamPurgeRequestedAtMs = nowMs;
+      this.clearTimedSteamStopTimer();
       return;
     }
     // The machine spends a couple of seconds ramping up (substate
@@ -1793,79 +1829,153 @@ export class BeanieApp {
       this.machineServicePhase = 'purging';
     }
     if (this.machineStopRequestedFor && this.machineStopRequestedFor !== service) this.clearMachineStopRequest();
-    this.updateTimedSteamPurgeTimer(nowMs);
+    this.updateTimedSteamStopTimer(nowMs);
   }
 
-  private shouldRequestTimedSteamPurgeAfterEnd(nowMs: number): boolean {
-    if (this.timedSteamPurgeRequestedAtMs != null) return false;
-    if (this.machineStopRequestedFor === 'steam') return false;
-    if (this.machineServicePhase !== 'active') return false;
-    return timedSteamTargetReached({
-      startedAtMs: this.machineServiceStartedAtMs,
-      targetSeconds: positiveNumber(this.currentSteamSettings().duration),
-      nowMs
-    });
-  }
-
-  private updateTimedSteamPurgeTimer(nowMs = Date.now()): void {
-    if (this.state.demo) {
-      this.clearTimedSteamPurgeTimer();
+  private updateTimedSteamStopTimer(nowMs = Date.now()): void {
+    if (this.state.demo || this.usesTwoTapSteamStop()) {
+      this.clearTimedSteamStopTimer();
       return;
     }
-    const delayMs = timedSteamAutoPurgeDelayMs({
+    const delayMs = timedSteamStopDelayMs({
       service: this.machineServiceState,
       phase: this.machineServicePhase,
       startedAtMs: this.machineServiceStartedAtMs,
-      purgeRequested: this.timedSteamPurgeRequestedAtMs != null,
-      targetSeconds: positiveNumber(this.currentSteamSettings().duration),
+      stopRequested: this.timedSteamStopRequestedAtMs != null || this.machineStopRequestedFor === 'steam',
+      targetSeconds: this.currentMachineServiceTargetSeconds(),
       nowMs
     });
     if (delayMs == null) {
-      this.clearTimedSteamPurgeTimer();
+      this.clearTimedSteamStopTimer();
       return;
     }
-    this.scheduleTimedSteamAutoPurge(delayMs, nowMs);
+    this.scheduleTimedSteamStop(delayMs, nowMs);
   }
 
-  private scheduleTimedSteamAutoPurge(delayMs: number, nowMs = Date.now()): void {
+  private scheduleTimedSteamStop(delayMs: number, nowMs = Date.now()): void {
     const scheduledForMs = nowMs + delayMs;
     if (
-      this.timedSteamPurgeTimer != null &&
-      this.timedSteamPurgeScheduledForMs != null &&
-      Math.abs(this.timedSteamPurgeScheduledForMs - scheduledForMs) < 250
+      this.timedSteamStopTimer != null &&
+      this.timedSteamStopScheduledForMs != null &&
+      Math.abs(this.timedSteamStopScheduledForMs - scheduledForMs) < 250
     ) {
       return;
     }
-    this.clearTimedSteamPurgeTimer();
-    this.timedSteamPurgeScheduledForMs = scheduledForMs;
-    this.timedSteamPurgeTimer = window.setTimeout(() => {
-      this.timedSteamPurgeTimer = null;
-      this.timedSteamPurgeScheduledForMs = null;
-      void this.requestTimedSteamAutoPurge();
+    this.clearTimedSteamStopTimer();
+    this.timedSteamStopScheduledForMs = scheduledForMs;
+    this.timedSteamStopTimer = window.setTimeout(() => {
+      this.timedSteamStopTimer = null;
+      this.timedSteamStopScheduledForMs = null;
+      void this.requestTimedSteamIdleStop();
     }, delayMs);
   }
 
-  private clearTimedSteamPurgeTimer(): void {
-    if (this.timedSteamPurgeTimer != null) {
-      window.clearTimeout(this.timedSteamPurgeTimer);
-      this.timedSteamPurgeTimer = null;
+  private clearTimedSteamStopTimer(): void {
+    if (this.timedSteamStopTimer != null) {
+      window.clearTimeout(this.timedSteamStopTimer);
+      this.timedSteamStopTimer = null;
     }
-    this.timedSteamPurgeScheduledForMs = null;
+    this.timedSteamStopScheduledForMs = null;
   }
 
-  private async requestTimedSteamAutoPurge(): Promise<void> {
+  private async requestTimedSteamIdleStop(): Promise<void> {
     const state = this.state.machine?.state?.state;
-    if (state === 'steamRinse') return;
-    if (state !== 'steam' && state !== 'idle') return;
-    this.timedSteamPurgeRequestedAtMs = Date.now();
+    if (state !== 'steam') return;
+    this.timedSteamStopRequestedAtMs = Date.now();
+    this.machineStopRequestedFor = 'steam';
+    this.machineStopRequestedAtMs = this.timedSteamStopRequestedAtMs;
     try {
-      await gateway.requestState('steamRinse');
-      this.setState({ status: 'Steam purge requested' });
+      await gateway.requestState('idle');
+      this.setState({ status: 'Timed steam stop requested' });
+      this.armMachineStopFeedbackTimer();
     } catch (error) {
-      console.error('[Beanie] Timed steam purge failed', error);
-      this.timedSteamPurgeRequestedAtMs = null;
-      this.setState({ status: 'Steam purge failed' });
+      console.error('[Beanie] Timed steam stop failed', error);
+      this.timedSteamStopRequestedAtMs = null;
+      this.clearMachineStopRequest();
+      this.setState({ status: 'Timed steam stop failed' });
     }
+  }
+
+  private currentMachineServiceTargetSeconds(): number | null {
+    if (this.machineServiceTargetOverrideSeconds != null) return this.machineServiceTargetOverrideSeconds;
+    const service = this.machineServiceState;
+    if (!service) return null;
+    return machineServiceTargetSeconds(
+      service,
+      this.currentSteamSettings(),
+      this.currentHotWaterData(),
+      this.currentRinseData()
+    );
+  }
+
+  private async extendMachineServiceDuration(seconds: number): Promise<void> {
+    const service = machineServiceState(this.state.machine?.state?.state) ?? this.machineServiceState;
+    if (!service || this.state.demo) return;
+    const elapsedSeconds = this.machineServiceStartedAtMs == null
+      ? 0
+      : Math.max(0, (Date.now() - this.machineServiceStartedAtMs) / 1000);
+    const currentTarget = this.machineServiceTargetOverrideSeconds ?? machineServiceTargetSeconds(
+      service,
+      this.currentSteamSettings(),
+      this.currentHotWaterData(),
+      this.currentRinseData()
+    );
+    const nextTarget = Math.ceil((currentTarget ?? elapsedSeconds) + seconds);
+    this.machineServiceTargetOverrideSeconds = nextTarget;
+    this.captureMachineServiceWorkflowRestore();
+    this.setState({ status: `Added ${seconds}s` });
+    this.updateTimedSteamStopTimer();
+
+    const workflow = this.state.workflow;
+    if (workflow == null) return;
+    const steamSettings = this.currentSteamSettings();
+    const hotWaterData = this.currentHotWaterData();
+    const rinseData = this.currentRinseData();
+    const nextWorkflow: Workflow = { ...workflow, steamSettings, hotWaterData, rinseData };
+    if (service === 'steam') {
+      nextWorkflow.steamSettings = {
+        ...steamSettings,
+        duration: this.usesTwoTapSteamStop()
+          ? nextTarget
+          : paddedSteamDurationSeconds(nextTarget) ?? nextTarget
+      };
+    } else if (service === 'hotWater') {
+      nextWorkflow.hotWaterData = { ...hotWaterData, duration: nextTarget };
+    } else {
+      nextWorkflow.rinseData = { ...rinseData, duration: nextTarget };
+    }
+
+    try {
+      await gateway.updateWorkflow(nextWorkflow);
+    } catch (error) {
+      console.error('[Beanie] Extend service duration failed', error);
+      this.setState({ status: 'Add time failed' });
+    }
+  }
+
+  private async restoreMachineServiceWorkflowAfterEnd(): Promise<void> {
+    const restore = this.machineServiceWorkflowToRestore;
+    if (restore == null || this.state.demo) {
+      this.machineServiceWorkflowToRestore = null;
+      return;
+    }
+    this.machineServiceWorkflowToRestore = null;
+    try {
+      const workflow: Workflow = {
+        ...(this.state.workflow ?? {}),
+        steamSettings: restore.steamSettings,
+        hotWaterData: restore.hotWaterData,
+        rinseData: restore.rinseData
+      };
+      await gateway.updateWorkflow(workflow);
+    } catch (error) {
+      console.error('[Beanie] Machine service settings restore failed', error);
+      this.setState({ status: 'Machine service restore failed' });
+    }
+  }
+
+  private usesTwoTapSteamStop(): boolean {
+    return normalizeSteamPurgeMode(this.state.machineSettings?.steamPurgeMode) === 1;
   }
 
   private clearMachineStopRequest(): void {
@@ -2264,6 +2374,9 @@ export class BeanieApp {
         break;
       case 'stop':
         await this.stopMachineService();
+        break;
+      case 'machine-extend-service':
+        await this.extendMachineServiceDuration(5);
         break;
       case 'sleep':
         await this.machineAction('sleeping');
@@ -4907,12 +5020,13 @@ export class BeanieApp {
     const steam = this.currentSteamSettings();
     const water = this.currentHotWaterData();
     const flush = this.currentRinseData();
-    const targetSeconds = machineServiceTargetSeconds(service, steam, water, flush);
+    const targetSeconds = this.machineServiceTargetOverrideSeconds
+      ?? machineServiceTargetSeconds(service, steam, water, flush);
     const elapsedSeconds = this.machineServiceStartedAtMs == null
       ? 0
       : Math.max(0, (Date.now() - this.machineServiceStartedAtMs) / 1000);
     const machine = this.state.machine;
-    const stats = machineServiceStats(elapsedSeconds, targetSeconds);
+    const stats = machineServiceStats(targetSeconds);
     const meta = machineServiceMeta(service, steam, water, flush, machine);
     const stopRequested = this.machineStopRequestedFor === service;
     const stopAgeSeconds = stopRequested && this.machineStopRequestedAtMs != null
@@ -4922,9 +5036,9 @@ export class BeanieApp {
       ? stopAgeSeconds > 4 && !this.state.busy ? 'Stop again' : 'Stopping...'
       : 'Stop';
     const primaryTime = this.machineServicePhase === 'starting'
-      ? { value: service === 'steam' ? 'Heating' : 'Starting', label: 'getting ready' }
+      ? { value: service === 'steam' ? 'Heating' : 'Starting', label: null }
       : this.machineServicePhase === 'purging'
-        ? { value: 'Purging', label: service === 'steam' ? 'clearing wand' : 'finishing' }
+        ? { value: 'Purging', label: null }
         : machineServicePrimaryTime(elapsedSeconds, targetSeconds);
     return `
       <header class="page-head machine-progress-head">
@@ -4936,7 +5050,7 @@ export class BeanieApp {
             <div class="machine-progress-ring">${machineGraphicIcon(tone)}</div>
             <div class="machine-progress-time">
               <strong>${escapeHtml(primaryTime.value)}</strong>
-              <span>${escapeHtml(primaryTime.label)}</span>
+              ${primaryTime.label == null ? '' : `<span>${escapeHtml(primaryTime.label)}</span>`}
             </div>
             <div class="machine-progress-meta">
               ${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join('')}
@@ -4952,6 +5066,10 @@ export class BeanieApp {
                 </div>
               `).join('')}
             </div>
+            <button type="button" class="machine-progress-add" data-action="machine-extend-service" ${this.state.busy ? 'disabled' : ''}>
+              ${icon('plus')}
+              <span>+5s</span>
+            </button>
             <button type="button" class="machine-progress-stop ${stopRequested ? 'stopping' : ''}" data-action="stop" ${this.state.busy && stopRequested ? 'disabled' : ''}>
               ${icon('square')}
               <span>${escapeHtml(stopLabel)}</span>
@@ -7100,11 +7218,9 @@ function hotWaterVolumeSeconds(water: HotWaterData): number | null {
 }
 
 function machineServiceStats(
-  elapsedSeconds: number,
   targetSeconds: number | null
 ): Array<{ label: string; value: string; unit: string }> {
   return [
-    { label: 'Elapsed', value: formatSecondsValue(elapsedSeconds), unit: 's' },
     { label: 'Target', value: targetSeconds == null ? '--' : formatSecondsValue(targetSeconds), unit: 's' }
   ];
 }
@@ -7155,7 +7271,7 @@ function positiveNumber(value: number | null | undefined): number | null {
 
 function formatSecondsValue(value: number): string {
   if (!Number.isFinite(value)) return '--';
-  return value >= 100 ? value.toFixed(0) : value.toFixed(1);
+  return String(Math.max(0, Math.round(value)));
 }
 
 function machineCommandsAvailable(demo: boolean, info: MachineInfo | null): boolean {

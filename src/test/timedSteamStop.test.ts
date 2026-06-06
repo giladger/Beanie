@@ -1,15 +1,17 @@
 import {
-  timedSteamAutoPurgeDelayMs,
-  timedSteamTargetReached
+  MAX_STEAM_DURATION_SECONDS,
+  STEAM_DURATION_MACHINE_HEADROOM_SECONDS,
+  paddedSteamDurationSeconds,
+  timedSteamStopDelayMs
 } from '../domain/timedSteamStop';
 
-run('schedules auto purge at the configured actual-steam duration', () => {
+run('schedules idle stop at the configured actual-steam duration', () => {
   equal(
-    timedSteamAutoPurgeDelayMs({
+    timedSteamStopDelayMs({
       service: 'steam',
       phase: 'active',
       startedAtMs: 1_000,
-      purgeRequested: false,
+      stopRequested: false,
       targetSeconds: 30,
       nowMs: 10_000
     }),
@@ -19,11 +21,11 @@ run('schedules auto purge at the configured actual-steam duration', () => {
 
 run('fires immediately when Beanie notices steam after the deadline', () => {
   equal(
-    timedSteamAutoPurgeDelayMs({
+    timedSteamStopDelayMs({
       service: 'steam',
       phase: 'active',
       startedAtMs: 1_000,
-      purgeRequested: false,
+      stopRequested: false,
       targetSeconds: 30,
       nowMs: 31_000
     }),
@@ -31,13 +33,13 @@ run('fires immediately when Beanie notices steam after the deadline', () => {
   );
 });
 
-run('does not schedule when Beanie already requested the purge', () => {
+run('does not schedule when Beanie already requested the stop', () => {
   equal(
-    timedSteamAutoPurgeDelayMs({
+    timedSteamStopDelayMs({
       service: 'steam',
       phase: 'active',
       startedAtMs: 1_000,
-      purgeRequested: true,
+      stopRequested: true,
       targetSeconds: 30,
       nowMs: 10_000
     }),
@@ -47,22 +49,22 @@ run('does not schedule when Beanie already requested the purge', () => {
 
 run('does not schedule disabled or non-steam services', () => {
   equal(
-    timedSteamAutoPurgeDelayMs({
+    timedSteamStopDelayMs({
       service: 'hotWater',
       phase: 'active',
       startedAtMs: 1_000,
-      purgeRequested: false,
+      stopRequested: false,
       targetSeconds: 30,
       nowMs: 10_000
     }),
     null
   );
   equal(
-    timedSteamAutoPurgeDelayMs({
+    timedSteamStopDelayMs({
       service: 'steam',
       phase: 'active',
       startedAtMs: 1_000,
-      purgeRequested: false,
+      stopRequested: false,
       targetSeconds: 0,
       nowMs: 10_000
     }),
@@ -72,22 +74,22 @@ run('does not schedule disabled or non-steam services', () => {
 
 run('does not schedule while steam is still heating or already purging', () => {
   equal(
-    timedSteamAutoPurgeDelayMs({
+    timedSteamStopDelayMs({
       service: 'steam',
       phase: 'starting',
       startedAtMs: null,
-      purgeRequested: false,
+      stopRequested: false,
       targetSeconds: 30,
       nowMs: 10_000
     }),
     null
   );
   equal(
-    timedSteamAutoPurgeDelayMs({
+    timedSteamStopDelayMs({
       service: 'steam',
       phase: 'purging',
       startedAtMs: 1_000,
-      purgeRequested: false,
+      stopRequested: false,
       targetSeconds: 30,
       nowMs: 10_000
     }),
@@ -95,23 +97,10 @@ run('does not schedule while steam is still heating or already purging', () => {
   );
 });
 
-run('detects when firmware ended steam after the Beanie target', () => {
-  equal(
-    timedSteamTargetReached({
-      startedAtMs: 1_000,
-      targetSeconds: 30,
-      nowMs: 31_000
-    }),
-    true
-  );
-  equal(
-    timedSteamTargetReached({
-      startedAtMs: 1_000,
-      targetSeconds: 30,
-      nowMs: 30_500
-    }),
-    false
-  );
+run('pads the machine steam max duration without changing the Beanie target', () => {
+  equal(paddedSteamDurationSeconds(50), 50 + STEAM_DURATION_MACHINE_HEADROOM_SECONDS);
+  equal(paddedSteamDurationSeconds(MAX_STEAM_DURATION_SECONDS - 1), MAX_STEAM_DURATION_SECONDS);
+  equal(paddedSteamDurationSeconds(0), null);
 });
 
 function run(name: string, fn: () => void): void {

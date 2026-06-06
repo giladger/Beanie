@@ -5507,23 +5507,37 @@ p {
 
 .machine-progress-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 16px;
+  grid-template-columns: repeat(3, 148px);
+  justify-content: center;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.machine-progress-stop,
+.machine-progress-add {
+  min-width: 0;
+  min-height: 104px;
+  padding: 14px 10px;
+  border-radius: var(--radius);
+  color: var(--ink);
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  font: inherit;
+  font-size: 24px;
+  font-weight: 950;
+  line-height: 1;
 }
 
 .machine-progress-stop {
-  min-width: 0;
-  min-height: 104px;
   border: 1px solid color-mix(in srgb, var(--red) 52%, var(--line));
-  border-radius: var(--radius);
   background: color-mix(in srgb, var(--red) 16%, var(--panel-2));
-  color: var(--ink);
-  display: grid;
-  place-items: center;
-  gap: 10px;
-  font: inherit;
-  font-size: 28px;
-  font-weight: 950;
+}
+
+.machine-progress-add {
+  border: 1px solid color-mix(in srgb, var(--teal) 56%, var(--line));
+  background: color-mix(in srgb, var(--teal) 14%, var(--panel-2));
 }
 
 .machine-progress-stop.stopping {
@@ -5532,15 +5546,32 @@ p {
   color: var(--soft);
 }
 
-.machine-progress-stop .icon {
+.machine-progress-stop .icon,
+.machine-progress-add .icon {
   width: 30px;
   height: 30px;
+}
+
+.machine-progress-stop span,
+.machine-progress-add span {
+  min-width: 0;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.machine-progress-stop .icon {
   color: var(--red);
+}
+
+.machine-progress-add .icon {
+  color: var(--teal);
 }
 
 .machine-progress-stats {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 104px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
@@ -5549,16 +5580,13 @@ p {
 
 .machine-progress-stat {
   min-width: 0;
-  min-height: 104px;
-  padding: 18px;
-  border-right: 1px solid var(--line);
+  min-height: 0;
+  padding: 14px 10px;
   display: grid;
+  justify-items: center;
   align-content: center;
+  text-align: center;
   gap: 6px;
-}
-
-.machine-progress-stat:last-child {
-  border-right: 0;
 }
 
 .machine-progress-stat strong {
@@ -6177,9 +6205,6 @@ p {
     white-space: normal;
   }
 
-  .machine-progress-actions {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 @media (max-width: 640px) {
@@ -6231,7 +6256,12 @@ p {
     font-size: 16px;
   }
 
-  .machine-progress-stop {
+  .machine-progress-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .machine-progress-stop,
+  .machine-progress-add {
     min-height: 96px;
   }
 
@@ -6240,7 +6270,6 @@ p {
   }
 
   .machine-progress-stat {
-    min-height: 82px;
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
