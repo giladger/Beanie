@@ -8,6 +8,9 @@ export type ThemePreference =
   | 'latte'
   | 'nord'
   | 'solarized'
+  | 'dracula'
+  | 'gruvbox'
+  | 'rosepine'
   | 'contrast';
 export type UIScalePreference = 'compact' | 'standard' | 'large';
 
@@ -24,6 +27,9 @@ export const THEME_PREFERENCES: ThemePreference[] = [
   'latte',
   'nord',
   'solarized',
+  'dracula',
+  'gruvbox',
+  'rosepine',
   'contrast'
 ];
 

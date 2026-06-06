@@ -571,6 +571,9 @@ const THEME_OPTIONS: Array<[ThemePreference, string]> = [
   ['latte', 'Latte'],
   ['nord', 'Nord'],
   ['solarized', 'Solarized'],
+  ['dracula', 'Dracula'],
+  ['gruvbox', 'Gruvbox'],
+  ['rosepine', 'Rosé Pine'],
   ['contrast', 'Contrast']
 ];
 

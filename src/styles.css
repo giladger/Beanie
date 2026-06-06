@@ -236,6 +236,69 @@
   --chart-plot-bg: color-mix(in srgb, var(--ink) 6%, transparent);
 }
 
+/* ===== Palette: Dracula (purple dark) ===== */
+:root[data-theme="dracula"],
+[data-theme="dracula"] {
+  color-scheme: dark;
+  --bg: #282a36;
+  --panel: #2d3040;
+  --panel-2: #343746;
+  --panel-3: #424458;
+  --ink: #f8f8f2;
+  --soft: #d6d7e0;
+  --muted: #8f93a8;
+  --accent: #bd93f9;
+  --green: #50fa7b;
+  --red: #ff5555;
+  --blue: #8be9fd;
+  --amber: #ffb86c;
+  --steam: #8be9fd;
+  --water: #82aaff;
+  --on-accent: #21222c;
+}
+
+/* ===== Palette: Gruvbox (warm retro dark) ===== */
+:root[data-theme="gruvbox"],
+[data-theme="gruvbox"] {
+  color-scheme: dark;
+  --bg: #282828;
+  --panel: #32302f;
+  --panel-2: #3c3836;
+  --panel-3: #504945;
+  --ink: #ebdbb2;
+  --soft: #d5c4a1;
+  --muted: #a89984;
+  --accent: #fe8019;
+  --green: #b8bb26;
+  --red: #fb4934;
+  --blue: #83a598;
+  --amber: #fabd2f;
+  --steam: #8ec07c;
+  --water: #83a598;
+  --on-accent: #282828;
+}
+
+/* ===== Palette: Rosé Pine (muted rose dark) ===== */
+:root[data-theme="rosepine"],
+[data-theme="rosepine"] {
+  color-scheme: dark;
+  --bg: #191724;
+  --panel: #1f1d2e;
+  --panel-2: #26233a;
+  --panel-3: #403d52;
+  --ink: #e0def4;
+  --soft: #cdcbe6;
+  --muted: #908caa;
+  --accent: #ebbcba;
+  --green: #9ccfd8;
+  --red: #eb6f92;
+  --blue: #569fb8;
+  --amber: #f6c177;
+  --steam: #9ccfd8;
+  --water: #569fb8;
+  --on-accent: #191724;
+}
+
 :root[data-ui-scale="compact"] {
   --ui-scale: 0.94;
 }
