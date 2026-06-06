@@ -869,7 +869,7 @@ export class BeanieApp {
     if (requestId !== this.beanSelectionRequestId || this.state.selectedBeanId !== bean.id) return;
     const selectedBatch = latestBatch(batches);
 
-    const { records: shots, total: shotsTotal } = await this.loadFirstShots(bean);
+    const { records: shots, total: shotsTotal } = await this.loadFirstShots(bean, selectedBatch);
     if (requestId !== this.beanSelectionRequestId || this.state.selectedBeanId !== bean.id) return;
     const workflowMatches = this.workflowMatchesBean(bean);
     const draft =
@@ -969,12 +969,15 @@ export class BeanieApp {
 
   private readonly shotPageSize = 12;
 
-  private async loadFirstShots(bean: Bean): Promise<{ records: ShotRecord[]; total: number }> {
+  private async loadFirstShots(
+    bean: Bean,
+    batch: BeanBatch | null
+  ): Promise<{ records: ShotRecord[]; total: number }> {
     if (this.state.demo) {
       const records = demoShotsForBean(bean);
       return { records, total: records.length };
     }
-    return this.fetchShotPage(bean, 0);
+    return this.fetchShotPage(bean, batch, 0);
   }
 
   // Fetches one page of shots, caching the page + summaries and reading full
@@ -982,10 +985,11 @@ export class BeanieApp {
   // gateway is unreachable so history stays usable offline.
   private async fetchShotPage(
     bean: Bean,
+    batch: BeanBatch | null,
     offset: number
   ): Promise<{ records: ShotRecord[]; total: number }> {
     const cacheGeneration = this.shotCacheGeneration;
-    const query = shotFilterForBean(bean, null);
+    const query = shotFilterForBean(bean, batch);
     query.set('limit', String(this.shotPageSize));
     query.set('offset', String(offset));
 
@@ -1040,9 +1044,14 @@ export class BeanieApp {
     if (this.state.shots.length >= this.state.shotsTotal) return;
     const requestId = ++this.loadMoreRequestId;
     const offset = this.state.shots.length;
+    const batch = this.selectedBatch();
     this.setState({ shotsLoadingMore: true, status: 'Loading more shots' });
-    const { records } = await this.fetchShotPage(bean, offset);
-    if (requestId !== this.loadMoreRequestId || this.selectedBean()?.id !== bean.id) return;
+    const { records } = await this.fetchShotPage(bean, batch, offset);
+    if (
+      requestId !== this.loadMoreRequestId ||
+      this.selectedBean()?.id !== bean.id ||
+      this.selectedBatch()?.id !== batch?.id
+    ) return;
     const shots = [...this.state.shots, ...records];
     this.setState({ shots, shotsLoadingMore: false, status: `${shots.length} shots` });
   }
@@ -1062,9 +1071,15 @@ export class BeanieApp {
     if (this.state.modal === 'edit-shot') return;
 
     this.shotRefreshInFlight = true;
+    const batch = this.selectedBatch();
     try {
-      const { records, total } = await this.fetchShotPage(bean, 0);
-      if (this.selectedBean()?.id !== bean.id || this.state.liveActive || this.state.liveFinalizing) return;
+      const { records, total } = await this.fetchShotPage(bean, batch, 0);
+      if (
+        this.selectedBean()?.id !== bean.id ||
+        this.selectedBatch()?.id !== batch?.id ||
+        this.state.liveActive ||
+        this.state.liveFinalizing
+      ) return;
 
       const firstPageIds = new Set(records.map((shot) => shot.id));
       const tail = this.state.shots.filter((shot) => !firstPageIds.has(shot.id));
@@ -2212,10 +2227,11 @@ export class BeanieApp {
     }
 
     const bean = this.selectedBean();
+    const batch = this.selectedBatch();
     const optimisticShot = bean
       ? optimisticShotFromLive(
           bean,
-          this.selectedBatch(),
+          batch,
           this.state.workflow,
           normalizeDraft(this.state.draft, this.state.profiles, this.state.grinders),
           shotWindow
@@ -2240,7 +2256,7 @@ export class BeanieApp {
         beans: promoteBean(this.state.beans, bean.id),
         status: 'Saving shot…'
       });
-      void this.refreshShotsAfterLiveShot(bean, refreshContext);
+      void this.refreshShotsAfterLiveShot(bean, batch, refreshContext);
       return;
     }
 
@@ -2259,6 +2275,7 @@ export class BeanieApp {
 
   private async refreshShotsAfterLiveShot(
     bean: Bean,
+    batch: BeanBatch | null,
     context: {
       previousShotIds: Set<string>;
       startedAtMs: number | null;
@@ -2274,12 +2291,16 @@ export class BeanieApp {
       for (let attempt = 0; attempt < delays.length; attempt += 1) {
         const delayMs = delays[attempt]!;
         if (delayMs > 0) await delay(delayMs);
-        if (this.selectedBean()?.id !== bean.id || this.state.liveActive) return;
+        if (
+          this.selectedBean()?.id !== bean.id ||
+          this.selectedBatch()?.id !== batch?.id ||
+          this.state.liveActive
+        ) return;
 
         this.shotCacheGeneration += 1;
         await beanieCache.invalidateShotMutation().catch(() => {});
         const [{ records, total }, latestRecords] = await Promise.all([
-          this.loadFirstShots(bean),
+          this.loadFirstShots(bean, batch),
           this.loadLatestShotCandidates()
         ]);
         lastRecords = records;
