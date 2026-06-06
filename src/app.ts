@@ -620,6 +620,8 @@ export class BeanieApp {
     rinseData: RinseData;
   } | null = null;
   private hotWaterWeightStop: HotWaterWeightStopController | null = null;
+  private hotWaterWeightStopTarePending = false;
+  private hotWaterWeightStopTareFailed = false;
   private sleepBrightnessTimer: number | null = null;
   private sleepBrightnessZeroed = false;
   private applyAfterWake = false;
@@ -1894,6 +1896,38 @@ export class BeanieApp {
     };
   }
 
+  private ensureHotWaterWeightStopArmed(): void {
+    if (this.hotWaterWeightStop || this.hotWaterWeightStopTarePending || this.hotWaterWeightStopTareFailed) return;
+    if (this.machineStopRequestedFor === 'hotWater') return;
+    if (this.state.machine?.state?.state !== 'hotWater') return;
+    const target = this.hotWaterWeightStopTarget();
+    if (!target) return;
+
+    if (this.state.demo) {
+      this.hotWaterWeightStop = this.createHotWaterWeightStop(target, null);
+      return;
+    }
+
+    this.hotWaterWeightStopTarePending = true;
+    this.setState({ status: 'Taring scale' });
+    void this.tareAndArmHotWaterWeightStop(target);
+  }
+
+  private async tareAndArmHotWaterWeightStop(target: { targetWeight: number; configuredFlow: number }): Promise<void> {
+    try {
+      await gateway.tareScale();
+      if (this.disposed || this.state.machine?.state?.state !== 'hotWater') return;
+      if (this.machineStopRequestedFor === 'hotWater') return;
+      this.hotWaterWeightStop = this.createHotWaterWeightStop(target, Date.now());
+    } catch (error) {
+      console.error('[Beanie] Hot water scale tare failed', error);
+      this.hotWaterWeightStopTareFailed = true;
+      this.setState({ status: 'Hot water scale tare failed' });
+    } finally {
+      this.hotWaterWeightStopTarePending = false;
+    }
+  }
+
   private handleHotWaterWeightStop(tMs: number): void {
     const controller = this.hotWaterWeightStop;
     if (!controller) return;
@@ -2230,6 +2264,7 @@ export class BeanieApp {
       }
     }
     const scaleConnectionChanged = previousScaleConnected !== scaleConnected(this.state.scale);
+    this.ensureHotWaterWeightStopArmed();
     this.handleHotWaterWeightStop(tMs);
 
     const wasActive = this.state.liveActive;
@@ -2310,6 +2345,11 @@ export class BeanieApp {
       this.machineServiceStartedAtMs = null;
       this.machineServicePhase = null;
       this.machineServiceTargetOverrideSeconds = null;
+      if (previousService === 'hotWater') {
+        this.hotWaterWeightStop = null;
+        this.hotWaterWeightStopTarePending = false;
+        this.hotWaterWeightStopTareFailed = false;
+      }
       this.clearTimedSteamStopTimer();
       this.clearMachineStopRequest();
       if (previousService) void this.restoreMachineServiceWorkflowAfterEnd();
