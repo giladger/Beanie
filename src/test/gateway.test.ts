@@ -270,6 +270,20 @@ await run('preferred device connect uses Reaprime scan-and-connect endpoint befo
   equal(calls[1]!.url, '/api/v1/devices');
 });
 
+await run('scale tare calls Reaprime tare endpoint', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const restore = installFetchStub(calls, {});
+  try {
+    await gateway.tareScale();
+  } finally {
+    restore();
+  }
+
+  equal(calls.length, 1);
+  equal(calls[0]!.url, '/api/v1/scale/tare');
+  equal(calls[0]!.init?.method, 'PUT');
+});
+
 async function run(name: string, fn: () => void | Promise<void>): Promise<void> {
   try {
     await fn();

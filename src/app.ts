@@ -2815,6 +2815,9 @@ export class BeanieApp {
       case 'water-alert-dismiss':
         this.setState({ waterAlertDismissed: true });
         break;
+      case 'scale-stat':
+        await this.handleScaleStatTap();
+        break;
       case 'stop':
         await this.stopMachineService();
         break;
@@ -4790,7 +4793,13 @@ export class BeanieApp {
             ${topStat('Group', temp(machine?.groupTemperature), 'stat-group')}
             ${topStat('Steam', temp(machine?.steamTemperature), 'stat-steam')}
             ${topStat('Water', water(this.state.waterLevel), 'stat-water', waterTone)}
-            ${topStat('Scale', scale?.status === 'disconnected' ? 'offline' : `${formatNumber(scale?.weight, 1)} g`, 'stat-scale')}
+            ${topStatButton(
+              'Scale',
+              scale?.status === 'disconnected' ? 'offline' : `${formatNumber(scale?.weight, 1)} g`,
+              scaleConnected(scale) ? 'Tare scale' : 'Search for preferred scale',
+              'scale-stat',
+              'stat-scale'
+            )}
           </div>
           ${machineCommands}
           <div class="top-icons" role="toolbar" aria-label="Skin actions">
@@ -6300,6 +6309,33 @@ export class BeanieApp {
     }
   }
 
+  private async handleScaleStatTap(): Promise<void> {
+    if (scaleConnected(this.state.scale)) {
+      await this.tareScale();
+      return;
+    }
+    await this.connectPreferredDevices();
+  }
+
+  private async tareScale(): Promise<void> {
+    if (this.state.demo) {
+      this.setState({ status: 'Tare unavailable in demo mode' });
+      return;
+    }
+    if (!scaleConnected(this.state.scale)) {
+      this.setState({ status: 'Scale disconnected' });
+      return;
+    }
+    this.setState({ status: 'Taring scale…' });
+    try {
+      await gateway.tareScale();
+      this.setState({ status: 'Scale tared' });
+    } catch (error) {
+      console.error('[Beanie] Scale tare failed', error);
+      this.setState({ status: 'Tare failed' });
+    }
+  }
+
   private async connectDevice(id: string, connect: boolean): Promise<void> {
     if (!id || this.settingsLocal) return;
     this.setState({ status: connect ? 'Connecting…' : 'Disconnecting…' });
@@ -7121,6 +7157,16 @@ function topStat(label: string, value: string, id?: string, toneClass?: string):
   const idAttr = id ? ` id="${id}"` : '';
   const cls = toneClass ? ` ${toneClass}` : '';
   return `<div class="top-stat${cls}"><label>${escapeHtml(label)}</label><strong${idAttr}>${escapeHtml(value)}</strong></div>`;
+}
+
+function topStatButton(label: string, value: string, title: string, action: string, id?: string): string {
+  const idAttr = id ? ` id="${id}"` : '';
+  return `
+    <button class="top-stat top-stat-button" data-action="${escapeAttr(action)}" aria-label="${escapeAttr(`${label}: ${value}. ${title}`)}" title="${escapeAttr(title)}">
+      <span class="top-stat-label">${escapeHtml(label)}</span>
+      <strong${idAttr}>${escapeHtml(value)}</strong>
+    </button>
+  `;
 }
 
 function liveReadout(label: string, id: string, value: string, unit = ''): string {
