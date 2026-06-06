@@ -3,6 +3,7 @@ import type {
   BeanBatch,
   De1MachineSettings,
   Grinder,
+  GatewayStartupSnapshot,
   HotWaterData,
   MachineCapabilities,
   MachineInfo,
@@ -721,7 +722,7 @@ export class BeanieApp {
     this.setState({ loading: true, status: 'Loading Decent.app data' });
     try {
       const latestShotQuery = new URLSearchParams({ limit: '50', offset: '0', order: 'desc' });
-      const startup = await loadGatewayStartup({ latestShotQuery });
+      const startup = await this.loadGatewayStartupWithCache(latestShotQuery);
       const workflow = startup.data.workflow;
       const beans = startup.data.beans;
       if (!workflow || !beans) {
@@ -757,11 +758,7 @@ export class BeanieApp {
         asleep: machineSleeping,
         demo: false,
         loading: false,
-        status: machineSleeping
-          ? 'Machine asleep'
-          : startup.status === 'partial-failure'
-            ? 'Connected with limited data'
-            : 'Connected'
+        status: machineSleeping ? 'Machine asleep' : startupStatusLabel(startup.status)
       });
       this.noteUserActivity();
 
@@ -790,6 +787,57 @@ export class BeanieApp {
       console.warn('[Beanie] Gateway unavailable; using demo data', error);
       this.loadDemo();
     }
+  }
+
+  private async loadGatewayStartupWithCache(
+    latestShotQuery: URLSearchParams
+  ): Promise<GatewayStartupSnapshot> {
+    const startup = await loadGatewayStartup({ latestShotQuery });
+    await this.cacheStartupData(startup.data, latestShotQuery);
+    const cached = await this.cachedStartupData(latestShotQuery);
+    return {
+      ...startup,
+      data: {
+        workflow: startup.data.workflow ?? cached.workflow,
+        beans: startup.data.beans ?? cached.beans,
+        grinders: startup.data.grinders ?? cached.grinders,
+        profiles: startup.data.profiles ?? cached.profiles,
+        latestShots: startup.data.latestShots ?? cached.latestShots
+      }
+    };
+  }
+
+  private async cacheStartupData(
+    data: GatewayStartupSnapshot['data'],
+    latestShotQuery: URLSearchParams
+  ): Promise<void> {
+    const writes: Array<Promise<void>> = [];
+    if (data.workflow !== undefined) writes.push(beanieCache.putWorkflow(data.workflow));
+    if (data.beans !== undefined) writes.push(beanieCache.putBeans(data.beans));
+    if (data.grinders !== undefined) writes.push(beanieCache.putGrinders(data.grinders));
+    if (data.profiles !== undefined) writes.push(beanieCache.putProfiles(data.profiles));
+    if (data.latestShots !== undefined) writes.push(beanieCache.putShotPage(latestShotQuery, data.latestShots));
+    await Promise.all(writes.map((write) => write.catch(() => {})));
+  }
+
+  private async cachedStartupData(
+    latestShotQuery: URLSearchParams
+  ): Promise<GatewayStartupSnapshot['data']> {
+    const [workflow, beans, grinders, profiles, latestShots] = await Promise.all([
+      beanieCache.getWorkflow().catch(() => null),
+      beanieCache.getBeans().catch(() => []),
+      beanieCache.getGrinders().catch(() => []),
+      beanieCache.getProfiles().catch(() => []),
+      beanieCache.getShotPage(latestShotQuery).catch(() => null)
+    ]);
+
+    return {
+      workflow: workflow ?? undefined,
+      beans: beans.length > 0 ? beans : undefined,
+      grinders,
+      profiles,
+      latestShots: latestShots ?? undefined
+    };
   }
 
   private loadDemo(): void {
@@ -902,10 +950,12 @@ export class BeanieApp {
   private async loadBatches(bean: Bean): Promise<BeanBatch[]> {
     if (this.state.demo) return this.state.batchesByBean[bean.id] ?? [];
     try {
-      return await gateway.batches(bean.id);
+      const batches = await gateway.batches(bean.id);
+      await beanieCache.putBeanBatches(bean.id, batches).catch(() => {});
+      return batches;
     } catch (error) {
       console.warn('[Beanie] Could not load batches', error);
-      return [];
+      return beanieCache.getBeanBatches(bean.id).catch(() => []);
     }
   }
 
@@ -1160,6 +1210,7 @@ export class BeanieApp {
     try {
       const workflow = await gateway.updateWorkflow(update);
       if (requestId !== this.applyRequestId) return;
+      void beanieCache.putWorkflow(workflow).catch(() => {});
       const currentSignature = draftSignature(
         normalizeDraft(this.state.draft, this.state.profiles, this.state.grinders)
       );
@@ -1472,7 +1523,10 @@ export class BeanieApp {
       return;
     }
     try {
-      tagShot(await gateway.createBean(fields), 'Bean added');
+      const bean = await gateway.createBean(fields);
+      tagShot(bean, 'Bean added');
+      void beanieCache.putBeans(this.state.beans).catch(() => {});
+      void beanieCache.putBeanBatches(bean.id, []).catch(() => {});
     } catch (error) {
       console.error('[Beanie] Add bean failed', error);
       this.setState({ busy: false, status: 'Add bean failed' });
@@ -3034,6 +3088,7 @@ export class BeanieApp {
         busy: false,
         status: cloneOfDefault ? 'Saved a copy' : 'Profile saved'
       });
+      void beanieCache.putProfiles(profiles).catch(() => {});
       this.pickProfile(saved.id);
     } catch (error) {
       console.error('[Beanie] Save profile failed', error);
@@ -3191,11 +3246,15 @@ export class BeanieApp {
       if (editingId) {
         const updated = await gateway.updateBean(editingId, fields);
         const beans = this.state.beans.map((bean) => (bean.id === editingId ? updated : bean));
+        void beanieCache.putBeans(beans).catch(() => {});
         this.setState({ beans, view: 'workbench', editingBeanId: null, busy: false, status: 'Bean saved' });
       } else {
         const bean = await gateway.createBean(fields);
+        const beans = [bean, ...this.state.beans];
+        void beanieCache.putBeans(beans).catch(() => {});
+        void beanieCache.putBeanBatches(bean.id, []).catch(() => {});
         this.setState({
-          beans: [bean, ...this.state.beans],
+          beans,
           view: 'workbench',
           editingBeanId: null,
           busy: false,
@@ -3224,6 +3283,8 @@ export class BeanieApp {
       const beans = editingId
         ? this.state.beans.map((item) => (item.id === editingId ? bean : item))
         : [bean, ...this.state.beans];
+      void beanieCache.putBeans(beans).catch(() => {});
+      if (!editingId) void beanieCache.putBeanBatches(bean.id, []).catch(() => {});
       this.setState({
         beans,
         batchesByBean: editingId ? this.state.batchesByBean : { ...this.state.batchesByBean, [bean.id]: [] },
@@ -3267,6 +3328,9 @@ export class BeanieApp {
       }
     }
     const beans = this.state.beans.filter((bean) => bean.id !== id);
+    if (!this.state.demo) {
+      void beanieCache.invalidateBeanMutation(id).then(() => beanieCache.putBeans(beans)).catch(() => {});
+    }
     this.setState({
       beans,
       view: 'workbench',
@@ -3305,6 +3369,7 @@ export class BeanieApp {
     try {
       const batch = await gateway.createBatch(bean.id, batchInput);
       const batches = [batch, ...(this.state.batchesByBean[bean.id] ?? [])];
+      void beanieCache.putBeanBatches(bean.id, batches).catch(() => {});
       this.setState({
         batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
         selectedBatchId: batch.id,
@@ -3349,6 +3414,7 @@ export class BeanieApp {
     try {
       const batch = await gateway.createBatch(bean.id, batchInput);
       const batches = [batch, ...(this.state.batchesByBean[bean.id] ?? [])];
+      void beanieCache.putBeanBatches(bean.id, batches).catch(() => {});
       this.setState({
         batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
         selectedBatchId: bean.id === this.state.selectedBeanId ? batch.id : this.state.selectedBatchId,
@@ -3384,10 +3450,12 @@ export class BeanieApp {
     try {
       const saved = await gateway.updateBatch(batchId, batchInput);
       const latest = this.state.batchesByBean[bean.id] ?? [];
+      const batches = latest.map((item) => (item.id === batchId ? saved : item));
+      void beanieCache.putBeanBatches(bean.id, batches).catch(() => {});
       this.setState({
         batchesByBean: {
           ...this.state.batchesByBean,
-          [bean.id]: latest.map((item) => (item.id === batchId ? saved : item))
+          [bean.id]: batches
         },
         status: 'Batch saved'
       });
@@ -3435,10 +3503,12 @@ export class BeanieApp {
     try {
       const saved = await gateway.updateBatch(batchId, batchInput);
       const latest = this.state.batchesByBean[bean.id] ?? [];
+      const batches = latest.map((item) => (item.id === batchId ? saved : item));
+      void beanieCache.putBeanBatches(bean.id, batches).catch(() => {});
       this.setState({
         batchesByBean: {
           ...this.state.batchesByBean,
-          [bean.id]: latest.map((item) => (item.id === batchId ? saved : item))
+          [bean.id]: batches
         },
         status: 'Batch saved'
       });
@@ -3475,6 +3545,7 @@ export class BeanieApp {
 
     try {
       await gateway.deleteBatch(batchId);
+      void beanieCache.putBeanBatches(bean.id, batches).catch(() => {});
     } catch (error) {
       console.error('[Beanie] Delete batch failed', error);
       this.setState({
@@ -3519,6 +3590,7 @@ export class BeanieApp {
       const batches = batchId
         ? current.map((item) => (item.id === batchId ? batch : item))
         : [batch, ...current];
+      void beanieCache.putBeanBatches(bean.id, batches).catch(() => {});
       this.setState({
         batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
         selectedBatchId: bean.id === this.state.selectedBeanId && !batchId ? batch.id : this.state.selectedBatchId,
@@ -3575,9 +3647,11 @@ export class BeanieApp {
       if (editingId) {
         const grinder = await gateway.updateGrinder(editingId, grinderInput);
         const grinders = this.state.grinders.map((item) => (item.id === editingId ? grinder : item));
+        void beanieCache.putGrinders(grinders).catch(() => {});
         selectGrinder(grinder, 'Grinder saved', grinders);
       } else {
         const grinder = await gateway.createGrinder(grinderInput);
+        void beanieCache.putGrinders([grinder, ...this.state.grinders]).catch(() => {});
         selectGrinder(grinder, 'Grinder added');
       }
     } catch (error) {
@@ -6337,6 +6411,12 @@ function readSecondTapHintPrefs(): SecondTapHintPrefs {
   } catch {
     return { beanUsed: false, shotUsed: false };
   }
+}
+
+function startupStatusLabel(status: GatewayStartupSnapshot['status']): string {
+  if (status === 'partial-failure') return 'Connected with limited data';
+  if (status === 'gateway-unavailable') return 'Offline with cached data';
+  return 'Connected';
 }
 
 function writeSecondTapHintPrefs(prefs: SecondTapHintPrefs): void {
