@@ -1,6 +1,6 @@
 # Beanie
 
-<img src="public/icon.png" alt="Beanie coffee bean icon" width="240" />
+<img src="docs/icon.png" alt="Beanie coffee bean icon" width="240" />
 
 Beanie is a Decent.app skin built around your beans.
 

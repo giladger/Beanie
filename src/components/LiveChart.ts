@@ -1,7 +1,7 @@
 import type { LiveChartModel, LiveChartSeries } from './liveChartModel';
 
-// Imperative canvas renderer for live espresso-shot charts. Unlike ShotGraph.ts
-// (which rebuilds an SVG string), this draws into a single <canvas> in one pass,
+// Imperative canvas renderer for espresso-shot charts. It draws into a single
+// <canvas> in one pass instead of rebuilding DOM for every frame,
 // which is dramatically cheaper on slow Android tablets driving a coalesced
 // requestAnimationFrame loop. The coordinate / scale math is extracted into the
 // pure functions below so it can be unit-tested without a DOM.
