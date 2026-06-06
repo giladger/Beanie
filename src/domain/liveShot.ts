@@ -19,7 +19,7 @@ export interface LiveFrame {
 
 export type LiveShotPhase = 'idle' | 'active' | 'ended';
 
-export type LiveShotCompletionReason = 'manual-stop' | 'target-weight' | 'state-change';
+export type LiveShotCompletionReason = 'manual-stop' | 'target-weight';
 
 export interface LiveSeriesAccumulator {
   key: LiveChartSeries['key'];
