@@ -530,6 +530,8 @@ export class BeanieApp {
   private waterSocket: WebSocket | null = null;
   private shotRefreshInFlight = false;
   private applyRequestId = 0;
+  private beanSelectionRequestId = 0;
+  private loadMoreRequestId = 0;
 
   private readonly liveShot = new LiveShotSession();
   private liveChart: LiveChart | null = null;
@@ -824,6 +826,7 @@ export class BeanieApp {
   ): Promise<void> {
     const bean = this.state.beans.find((item) => item.id === beanId);
     if (!bean) return;
+    const requestId = ++this.beanSelectionRequestId;
 
     writeLastBeanId(bean.id);
     this.setState({
@@ -833,9 +836,11 @@ export class BeanieApp {
     });
 
     const batches = await this.loadBatches(bean);
+    if (requestId !== this.beanSelectionRequestId || this.state.selectedBeanId !== bean.id) return;
     const selectedBatch = latestBatch(batches);
 
     const { records: shots, total: shotsTotal } = await this.loadFirstShots(bean);
+    if (requestId !== this.beanSelectionRequestId || this.state.selectedBeanId !== bean.id) return;
     const workflowMatches = this.workflowMatchesBean(bean);
     const draft =
       options.preferWorkflow && workflowMatches
@@ -990,8 +995,11 @@ export class BeanieApp {
     const bean = this.selectedBean();
     if (!bean || this.state.demo || this.state.shotsLoadingMore) return;
     if (this.state.shots.length >= this.state.shotsTotal) return;
+    const requestId = ++this.loadMoreRequestId;
+    const offset = this.state.shots.length;
     this.setState({ shotsLoadingMore: true, status: 'Loading more shots' });
-    const { records } = await this.fetchShotPage(bean, this.state.shots.length);
+    const { records } = await this.fetchShotPage(bean, offset);
+    if (requestId !== this.loadMoreRequestId || this.selectedBean()?.id !== bean.id) return;
     const shots = [...this.state.shots, ...records];
     this.setState({ shots, shotsLoadingMore: false, status: `${shots.length} shots` });
   }
