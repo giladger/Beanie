@@ -218,7 +218,7 @@ const initialSettingsPreferences = readSettingsPreferences();
 const FOCUSABLE_SEARCH = new Set(['search', 'profile-search', 'settings-search']);
 
 // Scrollable containers whose scroll position must survive a re-render.
-const SCROLL_SELECTORS = ['.bean-picker-list', '.bean-picker-batch-list', '.shot-list', '.profile-list', '.page-body'];
+const SCROLL_SELECTORS = ['.bean-picker-list', '.bean-picker-batch-list', '.shot-list', '.shot-bean-list', '.profile-list', '.page-body'];
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 15_000;
 const SHOT_REFRESH_INTERVAL_MS = 60_000;
 const NO_SCALE_SHOT_MESSAGE = 'Shot blocked: connect a scale to start.';
@@ -324,6 +324,14 @@ interface ShotEditDraft {
   annotationExtras: Record<string, unknown> | null;
 }
 
+// The combined bean/roaster/batch picker shown inside the shot editor. Editing a
+// shot's bean is one act, like everywhere else in the skin: pick a bag (which
+// carries its roaster) and then one of its batches. focusBeanId tracks which
+// bag's batches the dialog is currently showing.
+interface ShotBeanEditState {
+  focusBeanId: string | null;
+}
+
 interface ShotFieldOption {
   label: string;
   value: string;
@@ -391,6 +399,7 @@ interface AppState {
   editDialog: InputDialogState | null;
   shotEdit: ShotEditDraft | null;
   shotEditField: ShotEditField | null;
+  shotBeanEdit: ShotBeanEditState | null;
   profileEdit: ProfileEditTarget | null;
   machineEdit: MachineEditTarget | null;
   numberEdit: NumberEditTarget | null;
@@ -483,6 +492,7 @@ export class BeanieApp {
     editDialog: null,
     shotEdit: null,
     shotEditField: null,
+    shotBeanEdit: null,
     profileEdit: null,
     machineEdit: null,
     numberEdit: null,
@@ -1138,6 +1148,7 @@ export class BeanieApp {
       editDialog: null,
       shotEdit: shotEditDraftFromShot(shot),
       shotEditField: null,
+      shotBeanEdit: null,
       profileEdit: null
     });
   }
@@ -1175,6 +1186,7 @@ export class BeanieApp {
       editDialog: null,
       shotEdit: null,
       shotEditField: null,
+      shotBeanEdit: null,
       busy: false,
       status
     });
@@ -1196,6 +1208,7 @@ export class BeanieApp {
         editDialog: null,
         shotEdit: null,
         shotEditField: null,
+        shotBeanEdit: null,
         busy: false,
         status
       });
@@ -1271,9 +1284,7 @@ export class BeanieApp {
   private applyShotEditField(field: ShotEditField, value: string): void {
     const draft = this.state.shotEdit;
     if (!draft) return;
-    const next = updateShotEditDraftField(draft, field, value, this.state.grinders, this.state.beans, (batchId) =>
-      this.batchAndBeanForId(batchId)
-    );
+    const next = updateShotEditDraftField(draft, field, value, this.state.grinders);
     this.setState({ shotEdit: next, shotEditField: null, status: 'Shot draft changed' });
   }
 
@@ -1282,6 +1293,75 @@ export class BeanieApp {
     if (!draft) return;
     this.setState({
       shotEdit: { ...draft, enjoyment: value },
+      status: 'Shot draft changed'
+    });
+  }
+
+  // Find the library bag a shot draft currently points at, by its saved
+  // batch first, then by matching roaster + name. Returns null for shots whose
+  // bean is free text not in the library.
+  private shotDraftBean(draft: ShotEditDraft): Bean | null {
+    const fromBatch = this.batchAndBeanForId(draft.beanBatchId)?.bean;
+    if (fromBatch) return fromBatch;
+    return (
+      this.state.beans.find(
+        (bean) => bean.name === draft.coffeeName && bean.roaster === draft.coffeeRoaster
+      ) ?? null
+    );
+  }
+
+  private async openShotBeanDialog(): Promise<void> {
+    const draft = this.state.shotEdit;
+    if (!draft) return;
+    const focusBeanId = this.shotDraftBean(draft)?.id ?? null;
+    this.setState({ shotBeanEdit: { focusBeanId }, shotEditField: null });
+    if (focusBeanId) await this.ensureBatchesLoaded(focusBeanId);
+  }
+
+  // Pick a bag in the combined dialog: adopt its roaster + name and reveal its
+  // batches. Drop the batch only when it belonged to a different bag. An empty
+  // id clears the bean entirely.
+  private async pickShotBean(beanId: string): Promise<void> {
+    const draft = this.state.shotEdit;
+    if (!draft) return;
+    if (!beanId) {
+      this.setState({
+        shotEdit: { ...draft, coffeeRoaster: null, coffeeName: null, beanBatchId: null },
+        shotBeanEdit: { focusBeanId: null },
+        status: 'Shot draft changed'
+      });
+      return;
+    }
+    const bean = this.state.beans.find((item) => item.id === beanId);
+    if (!bean) return;
+    const keepBatch = this.batchAndBeanForId(draft.beanBatchId)?.bean.id === beanId;
+    this.setState({
+      shotEdit: {
+        ...draft,
+        coffeeRoaster: bean.roaster,
+        coffeeName: bean.name,
+        beanBatchId: keepBatch ? draft.beanBatchId : null
+      },
+      shotBeanEdit: { focusBeanId: beanId },
+      status: 'Shot draft changed'
+    });
+    await this.ensureBatchesLoaded(beanId);
+  }
+
+  // Choose (or clear) a batch and close the dialog — the batch is the final step
+  // of picking a bag. Re-sync roaster + name from the batch's bag for safety.
+  private selectShotBatch(batchId: string): void {
+    const draft = this.state.shotEdit;
+    if (!draft) return;
+    const match = batchId ? this.batchAndBeanForId(batchId) : null;
+    this.setState({
+      shotEdit: {
+        ...draft,
+        beanBatchId: batchId || null,
+        coffeeRoaster: match?.bean.roaster ?? draft.coffeeRoaster,
+        coffeeName: match?.bean.name ?? draft.coffeeName
+      },
+      shotBeanEdit: null,
       status: 'Shot draft changed'
     });
   }
@@ -2175,13 +2255,25 @@ export class BeanieApp {
         if (id) await this.deleteShot(id);
         break;
       case 'open-shot-field':
-        if (isShotEditField(field)) this.setState({ shotEditField: field });
+        if (isShotEditField(field)) this.setState({ shotEditField: field, shotBeanEdit: null });
         break;
       case 'close-shot-field':
         this.setState({ shotEditField: null });
         break;
       case 'shot-field-option':
         if (isShotEditField(field)) this.applyShotEditField(field, value ?? '');
+        break;
+      case 'open-shot-bean':
+        await this.openShotBeanDialog();
+        break;
+      case 'close-shot-bean':
+        this.setState({ shotBeanEdit: null });
+        break;
+      case 'shot-bean-pick':
+        await this.pickShotBean(id ?? '');
+        break;
+      case 'shot-bean-batch':
+        this.selectShotBatch(id ?? '');
         break;
       case 'shot-edit-score':
         this.setShotEditEnjoyment(scoreValueFromTap(value, this.state.shotEdit?.enjoyment ?? null));
@@ -2362,6 +2454,7 @@ export class BeanieApp {
             editDialog: null,
             shotEdit: returnModal === 'edit-shot' ? this.state.shotEdit : null,
             shotEditField: returnModal === 'edit-shot' ? this.state.shotEditField : null,
+            shotBeanEdit: returnModal === 'edit-shot' ? this.state.shotBeanEdit : null,
             profileEdit: null,
             machineEdit: null,
             numberEdit: null,
@@ -2377,6 +2470,7 @@ export class BeanieApp {
           editDialog: null,
           shotEdit: null,
           shotEditField: null,
+          shotBeanEdit: null,
           profileEdit: null,
           machineEdit: null,
           numberEdit: null,
@@ -3821,14 +3915,7 @@ export class BeanieApp {
       const returnModal = numberEdit.returnModal ?? null;
       if (numberEdit.target === 'shot-edit' && numberEdit.field) {
         const shotEdit = this.state.shotEdit
-          ? updateShotEditDraftField(
-              this.state.shotEdit,
-              numberEdit.field,
-              value,
-              this.state.grinders,
-              this.state.beans,
-              (batchId) => this.batchAndBeanForId(batchId)
-            )
+          ? updateShotEditDraftField(this.state.shotEdit, numberEdit.field, value, this.state.grinders)
           : null;
         this.setState({
           modal: returnModal,
@@ -5074,9 +5161,7 @@ export class BeanieApp {
             <fieldset class="shot-edit-section">
               <legend>Bean</legend>
               <div class="shot-edit-fields">
-                ${field('coffeeRoaster', 'Roaster', draft.coffeeRoaster)}
-                ${field('coffeeName', 'Bean', draft.coffeeName)}
-                ${field('beanBatchId', 'Batch', batchDisplayLabel(draft.beanBatchId, this.state.beans, this.state.batchesByBean))}
+                ${this.shotBeanControl(draft)}
                 ${field('finalBeverageType', 'Drink', draft.finalBeverageType)}
                 ${field('baristaName', 'Barista', draft.baristaName)}
                 ${field('drinkerName', 'Drinker', draft.drinkerName)}
@@ -5115,6 +5200,88 @@ export class BeanieApp {
           </div>
         </form>
         ${this.renderShotFieldDialog(draft)}
+        ${this.renderShotBeanDialog(draft)}
+      </div>
+    `;
+  }
+
+  // One wide control standing in for roaster + bean + batch. Tapping it opens
+  // the combined picker; on its own it just summarises the current bag.
+  private shotBeanControl(draft: ShotEditDraft): string {
+    const beanText = shotBeanLabel(draft);
+    const batch = this.batchAndBeanForId(draft.beanBatchId)?.batch ?? null;
+    const batchText = batch ? batchOptionLabel(batch) : draft.beanBatchId ? 'Saved batch' : null;
+    return `
+      <label class="wide">
+        <span>Bean</span>
+        <button type="button" class="shot-edit-value shot-bean-value" data-action="open-shot-bean">
+          <strong>${escapeHtml(beanText)}</strong>
+          <small>${escapeHtml(batchText ?? 'No batch')}</small>
+        </button>
+      </label>
+    `;
+  }
+
+  private renderShotBeanDialog(draft: ShotEditDraft): string {
+    const state = this.state.shotBeanEdit;
+    if (!state) return '';
+    const selectedBean = this.shotDraftBean(draft);
+    const focusId = state.focusBeanId ?? selectedBean?.id ?? null;
+    const beans = this.sortedBeansForPicker();
+    const beanButton = (bean: Bean) => `
+      <button type="button" class="${bean.id === focusId ? 'active' : ''}" data-action="shot-bean-pick" data-id="${escapeAttr(bean.id)}">
+        <strong>${escapeHtml(bean.name)}</strong>
+        <small>${escapeHtml(bean.roaster)}${bean.country ? ` · ${escapeHtml(bean.country)}` : ''}</small>
+      </button>
+    `;
+    const beanList = `
+      <div class="shot-bean-section">
+        <span class="eyebrow">Bag</span>
+        <div class="shot-field-options shot-bean-list" aria-label="Beans">
+          <button type="button" class="${focusId ? '' : 'active'}" data-action="shot-bean-pick" data-id="">
+            <strong>No bean</strong>
+          </button>
+          ${beans.length === 0 ? '<p class="empty-history">No beans yet.</p>' : beans.map(beanButton).join('')}
+        </div>
+      </div>
+    `;
+    const focusBean = focusId ? this.state.beans.find((bean) => bean.id === focusId) ?? null : null;
+    const batches = focusBean ? recentBatches(this.state.batchesByBean[focusBean.id] ?? [], 12) : [];
+    const batchButton = (batch: BeanBatch) => `
+      <button type="button" class="${batch.id === draft.beanBatchId ? 'active' : ''}" data-action="shot-bean-batch" data-id="${escapeAttr(batch.id)}">
+        <strong>${escapeHtml(batchOptionLabel(batch))}</strong>
+        ${batch.roastLevel ? `<small>${escapeHtml(batch.roastLevel)}</small>` : ''}
+      </button>
+    `;
+    const batchList = !focusBean
+      ? ''
+      : `
+        <div class="shot-bean-section">
+          <span class="eyebrow">Batch</span>
+          <div class="shot-field-options shot-bean-batch-options" aria-label="Batches">
+            <button type="button" class="${draft.beanBatchId ? '' : 'active'}" data-action="shot-bean-batch" data-id="">
+              <strong>No batch</strong>
+            </button>
+            ${batches.length === 0 ? '<p class="empty-history">No batches yet.</p>' : batches.map(batchButton).join('')}
+          </div>
+        </div>
+      `;
+    return `
+      <div class="modal-backdrop shot-field-backdrop shot-bean-backdrop" data-action="close-shot-bean">
+        <section class="modal panel shot-field-dialog shot-bean-dialog" role="dialog" aria-modal="true" aria-label="Choose bean" data-action="noop">
+          <div class="modal-head shot-edit-head">
+            <div>
+              <span class="eyebrow">Edit</span>
+              <h2>Bean</h2>
+            </div>
+            <button type="button" class="icon-button" data-action="close-shot-bean" aria-label="Close">${icon('x')}</button>
+          </div>
+          ${beanList}
+          ${batchList}
+          <div class="modal-actions shot-edit-actions">
+            <button type="button" class="command primary" data-action="close-shot-bean">Done</button>
+          </div>
+        </section>
       </div>
     `;
   }
@@ -5122,14 +5289,7 @@ export class BeanieApp {
   private renderShotFieldDialog(draft: ShotEditDraft): string {
     const field = this.state.shotEditField;
     if (!field) return '';
-    const spec = shotFieldSpec(
-      field,
-      draft,
-      this.state.grinders,
-      this.state.beans,
-      this.state.batchesByBean,
-      this.state.shots
-    );
+    const spec = shotFieldSpec(field, draft, this.state.grinders, this.state.shots);
     const input =
       spec.kind === 'textarea'
         ? `<textarea name="value" rows="5" spellcheck="true">${escapeHtml(spec.value)}</textarea>`
@@ -6463,30 +6623,11 @@ function updateShotEditDraftField(
   draft: ShotEditDraft,
   field: ShotEditField,
   value: string,
-  grinders: Grinder[],
-  beans: Bean[],
-  batchForId: (batchId: string | null) => { batch: BeanBatch; bean: Bean } | null
+  grinders: Grinder[]
 ): ShotEditDraft {
   const text = textOrNull(value);
   const number = numberOrNullInput(value);
   if (isShotNumberField(field)) return { ...draft, [field]: number };
-  if (field === 'beanBatchId') {
-    const match = batchForId(text);
-    return {
-      ...draft,
-      beanBatchId: text,
-      coffeeName: match?.bean.name ?? draft.coffeeName,
-      coffeeRoaster: match?.bean.roaster ?? draft.coffeeRoaster
-    };
-  }
-  if (field === 'coffeeName') {
-    const bean = text ? beans.find((item) => optionKey(item.name) === optionKey(text)) : null;
-    return {
-      ...draft,
-      coffeeName: text,
-      coffeeRoaster: bean?.roaster ?? draft.coffeeRoaster
-    };
-  }
   if (field === 'grinderId') {
     const grinder = text ? grinders.find((item) => item.id === text) : null;
     return {
@@ -6502,14 +6643,9 @@ function shotFieldSpec(
   field: ShotEditField,
   draft: ShotEditDraft,
   grinders: Grinder[],
-  beans: Bean[],
-  batchesByBean: Record<string, BeanBatch[]>,
   shots: ShotRecord[]
 ): ShotFieldSpec {
   const label = shotFieldLabel(field);
-  if (field === 'beanBatchId') {
-    return { label, kind: 'text', value: draft.beanBatchId ?? '', options: batchFieldOptions(beans, batchesByBean) };
-  }
   if (field === 'grinderId') {
     return {
       label,
@@ -6548,17 +6684,7 @@ function shotFieldSpec(
       options: numericShotFieldOptions(field)
     };
   }
-  return { label, kind: 'text', value: inputValue(value), options: textShotFieldOptions(field, beans, shots, grinders) };
-}
-
-function batchFieldOptions(beans: Bean[], batchesByBean: Record<string, BeanBatch[]>): ShotFieldOption[] {
-  const options: ShotFieldOption[] = [{ label: 'No batch', value: '' }];
-  for (const bean of beans) {
-    for (const batch of batchesByBean[bean.id] ?? []) {
-      options.push({ label: `${bean.roaster} ${bean.name}`, value: batch.id, detail: batchOptionLabel(batch) });
-    }
-  }
-  return options;
+  return { label, kind: 'text', value: inputValue(value), options: textShotFieldOptions(field, shots, grinders) };
 }
 
 function numericShotFieldOptions(field: ShotEditField): ShotFieldOption[] {
@@ -6575,30 +6701,9 @@ function numericShotFieldOptions(field: ShotEditField): ShotFieldOption[] {
 
 function textShotFieldOptions(
   field: ShotEditField,
-  beans: Bean[],
   shots: ShotRecord[],
   grinders: Grinder[]
 ): ShotFieldOption[] {
-  if (field === 'coffeeRoaster') {
-    return uniqueTextOptions([
-      ...beans.map((bean) => ({ label: bean.roaster, value: bean.roaster, detail: bean.name })),
-      ...shots.map((shot) => ({
-        label: shot.workflow?.context?.coffeeRoaster ?? '',
-        value: shot.workflow?.context?.coffeeRoaster ?? '',
-        detail: shot.workflow?.context?.coffeeName ?? ''
-      }))
-    ]);
-  }
-  if (field === 'coffeeName') {
-    return uniqueTextOptions([
-      ...beans.map((bean) => ({ label: bean.name, value: bean.name, detail: bean.roaster })),
-      ...shots.map((shot) => ({
-        label: shot.workflow?.context?.coffeeName ?? '',
-        value: shot.workflow?.context?.coffeeName ?? '',
-        detail: shot.workflow?.context?.coffeeRoaster ?? ''
-      }))
-    ]);
-  }
   if (field === 'finalBeverageType') {
     return uniqueTextOptions([
       { label: 'Espresso', value: 'espresso' },
@@ -6701,17 +6806,11 @@ function grinderDisplayLabel(grinderId: string | null, grinders: Grinder[]): str
   return grinders.find((grinder) => grinder.id === grinderId)?.model ?? grinderId;
 }
 
-function batchDisplayLabel(
-  batchId: string | null,
-  beans: Bean[],
-  batchesByBean: Record<string, BeanBatch[]>
-): string | null {
-  if (!batchId) return null;
-  for (const bean of beans) {
-    const batch = (batchesByBean[bean.id] ?? []).find((item) => item.id === batchId);
-    if (batch) return `${bean.name} · ${batchOptionLabel(batch)}`;
-  }
-  return batchId;
+function shotBeanLabel(draft: ShotEditDraft): string {
+  const roaster = (draft.coffeeRoaster ?? '').trim();
+  const name = (draft.coffeeName ?? '').trim();
+  if (roaster && name) return `${roaster} · ${name}`;
+  return name || roaster || 'No bean';
 }
 
 function isShotNumberField(field: ShotEditField): field is Extract<
