@@ -159,6 +159,20 @@ import {
   writeSettingsPreferences
 } from './domain/settings';
 import {
+  bumpShots,
+  cleaningDue,
+  CLEANING_THRESHOLD_OPTIONS,
+  markCleaned,
+  readCleaningProfileOverride,
+  readCleaningState,
+  readCleaningThreshold,
+  resolveCleaningProfile,
+  writeCleaningProfileOverride,
+  writeCleaningState,
+  writeCleaningThreshold,
+  type CleaningState
+} from './domain/cleaning';
+import {
   DEFAULT_HOT_WATER,
   DEFAULT_RINSE,
   DEFAULT_STEAM,
@@ -429,6 +443,9 @@ interface AppState {
   flowCalBase: number | null;
   flowCalShotId: string | null;
   flowCalShots: ShotRecord[];
+  cleaning: CleaningState;
+  cleaningProfileOverride: string | null;
+  cleaningThreshold: number;
 }
 
 interface LiveReadoutEls {
@@ -520,7 +537,10 @@ export class BeanieApp {
     flowCalDraft: null,
     flowCalBase: null,
     flowCalShotId: null,
-    flowCalShots: []
+    flowCalShots: [],
+    cleaning: readCleaningState(),
+    cleaningProfileOverride: readCleaningProfileOverride(),
+    cleaningThreshold: readCleaningThreshold()
   };
 
   private applyTimer: number | null = null;
@@ -546,6 +566,9 @@ export class BeanieApp {
   private liveDirty = false;
   private simTimer: number | null = null;
   private machineServiceState: MachineServiceState | null = null;
+  // True while a cleaning/backflush cycle is running as an espresso pull, so the
+  // shot-end handler records a cleaning (not a bean shot) and restores the recipe.
+  private cleaningInProgress = false;
   private machineServiceStartedAtMs: number | null = null;
   private machineServicePhase: MachineServicePhase | null = null;
   private machineProgressReturnView: View | null = null;
@@ -1565,9 +1588,12 @@ export class BeanieApp {
     return null;
   }
 
-  private async machineAction(state: MachineState): Promise<void> {
+  private async machineAction(
+    state: MachineState,
+    opts: { skipScaleCheck?: boolean } = {}
+  ): Promise<void> {
     const service = machineServiceState(state);
-    if (state === 'espresso' && this.shouldPreflightBlockShotForScale()) {
+    if (state === 'espresso' && !opts.skipScaleCheck && this.shouldPreflightBlockShotForScale()) {
       this.showNoScaleShotWarning({ busy: false });
       return;
     }
@@ -1612,6 +1638,87 @@ export class BeanieApp {
         status: 'Machine command failed'
       });
     }
+  }
+
+  // Backflush / cleaning cycle: load the cleaning profile (bean-independent),
+  // then run it as an espresso pull. The user's dial-in `draft` is left intact,
+  // so finishCleaningCycle() can restore the real recipe afterwards.
+  private async runCleaningCycle(): Promise<void> {
+    if (this.state.busy || this.state.liveActive || this.state.liveFinalizing) return;
+    const record = resolveCleaningProfile(this.state.profiles, this.state.cleaningProfileOverride);
+    if (!record?.profile) {
+      this.setState({ status: 'No cleaning profile installed' });
+      return;
+    }
+    if (!this.state.demo && this.machineIsSleeping()) {
+      this.setState({ status: 'Machine asleep — tap Wake first' });
+      return;
+    }
+
+    const cleaningWorkflow: Workflow = {
+      ...(this.state.workflow ?? {}),
+      profile: record.profile,
+      context: {
+        ...(this.state.workflow?.context ?? {}),
+        // Bean-independent: drop any bean identity and tag it as a cleaning run
+        // so the resulting record is treated as a service shot (isServiceShot).
+        coffeeName: null,
+        coffeeRoaster: null,
+        beanBatchId: null,
+        finalBeverageType: 'cleaning'
+      }
+    };
+
+    this.cleaningInProgress = true;
+    this.setState({ busy: true, status: 'Loading cleaning profile…' });
+    try {
+      if (this.state.demo) this.state.workflow = cleaningWorkflow;
+      else this.state.workflow = await gateway.updateWorkflow(cleaningWorkflow);
+    } catch (error) {
+      this.cleaningInProgress = false;
+      console.error('[Beanie] Cleaning profile load failed', error);
+      this.setState({ busy: false, status: 'Cleaning profile load failed' });
+      return;
+    }
+    // Run as an espresso pull; a backflush has no yield, so skip the scale gate.
+    await this.machineAction('espresso', { skipScaleCheck: true });
+  }
+
+  // A cleaning pull just ended: reset the counter, restore the real recipe.
+  private finishCleaningCycle(): void {
+    this.cleaningInProgress = false;
+    this.liveShot.reset();
+    const cleaning = markCleaned(new Date().toISOString());
+    writeCleaningState(cleaning);
+    this.setState({
+      cleaning,
+      liveActive: false,
+      liveFinalizing: false,
+      status: 'Cleaning cycle complete'
+    });
+    // The draft was never touched by cleaning, so re-applying it restores the
+    // user's profile/dose/yield on the machine (no-op if no bean is selected).
+    void this.applyDraft();
+  }
+
+  // Count a completed espresso pull toward the next cleaning reminder.
+  private countShotForCleaning(): void {
+    const cleaning = bumpShots(this.state.cleaning);
+    writeCleaningState(cleaning);
+    this.state.cleaning = cleaning;
+  }
+
+  private setCleaningProfileOverride(profileId: string): void {
+    const resolved = resolveCleaningProfile(this.state.profiles, null);
+    // Selecting the auto-detected profile clears the override; otherwise store it.
+    const override = profileId && profileId !== resolved?.id ? profileId : null;
+    writeCleaningProfileOverride(override);
+    this.setState({ cleaningProfileOverride: override, status: 'Cleaning profile set' });
+  }
+
+  private setCleaningThreshold(shots: number): void {
+    writeCleaningThreshold(shots);
+    this.setState({ cleaningThreshold: shots, status: 'Cleaning reminder updated' });
   }
 
   private async prepareMachineForTimedSteamStop(): Promise<void> {
@@ -2266,6 +2373,13 @@ export class BeanieApp {
   }
 
   private onShotEnded(): void {
+    // A cleaning/backflush pull is not a bean shot: reset the reminder counter
+    // and restore the recipe instead of saving it to history.
+    if (this.cleaningInProgress) {
+      this.finishCleaningCycle();
+      return;
+    }
+
     const shotWindow = this.liveShot.snapshot;
     if (this.isNoScaleBlockedLiveAbort(shotWindow)) {
       this.liveShot.reset();
@@ -2275,6 +2389,9 @@ export class BeanieApp {
       });
       return;
     }
+
+    // A real espresso pull completed — count it toward the next cleaning.
+    this.countShotForCleaning();
 
     const bean = this.selectedBean();
     const batch = this.selectedBatch();
@@ -2567,6 +2684,14 @@ export class BeanieApp {
       case 'machine-command':
         if (isMachineCommand(value)) await this.toggleMachineCommand(value);
         break;
+      case 'run-cleaning':
+        await this.runCleaningCycle();
+        break;
+      case 'cleaning-threshold': {
+        const shots = Number(value);
+        if (Number.isFinite(shots)) this.setCleaningThreshold(shots);
+        break;
+      }
       case 'stop':
         await this.stopMachineService();
         break;
@@ -3115,6 +3240,10 @@ export class BeanieApp {
     if (target.dataset.action === 'settings-field') {
       const raw = target instanceof HTMLInputElement && target.type === 'checkbox' ? target.checked : target.value;
       void this.onSettingsField(target.dataset.group ?? '', target.dataset.key ?? '', raw);
+      return;
+    }
+    if (target.dataset.action === 'cleaning-profile') {
+      this.setCleaningProfileOverride(target.value);
       return;
     }
     if (target.dataset.action === 'no-scale-block-toggle') {
@@ -4495,6 +4624,8 @@ export class BeanieApp {
     const powerAction = this.state.asleep ? 'wake' : 'sleep';
     const powerLabel = this.state.asleep ? 'Wake' : 'Sleep';
     const showWakeText = this.state.asleep && this.usesWebSleepControls();
+    const cleaningDueNow = cleaningDue(this.state.cleaning, this.state.cleaningThreshold);
+    const machineSettingsLabel = cleaningDueNow ? 'Machine settings (cleaning due)' : 'Machine settings';
     return `
       <header class="topbar">
         <div class="top-inline">
@@ -4507,7 +4638,7 @@ export class BeanieApp {
           </div>
           ${machineCommands}
           <div class="top-icons" role="toolbar" aria-label="Skin actions">
-            <button class="icon-tool" data-action="open-machine-settings" aria-label="Machine settings" title="Machine settings">${icon('droplet')}</button>
+            <button class="icon-tool ${cleaningDueNow ? 'has-badge' : ''}" data-action="open-machine-settings" aria-label="${escapeAttr(machineSettingsLabel)}" title="${escapeAttr(machineSettingsLabel)}">${icon('droplet')}${cleaningDueNow ? '<span class="icon-tool-badge" aria-hidden="true"></span>' : ''}</button>
             <button class="icon-tool" data-action="open-settings" aria-label="Settings" title="Settings">${icon('settings')}</button>
             <button class="icon-tool ${this.state.asleep ? 'icon-tool-wake' : ''} ${showWakeText ? 'icon-tool-text' : ''}" data-action="${powerAction}" aria-label="${powerLabel}" title="${powerLabel}">
               ${icon('power')}${showWakeText ? '<span>Wake</span>' : ''}
@@ -5179,7 +5310,7 @@ export class BeanieApp {
     const flushPreset = matchingPreset(flush, flushPresets);
     return `
       ${this.pageHeader('Steam · Water · Flush')}
-      <main class="page-body machine-page no-scroll-page">
+      <main class="page-body machine-page">
         <div class="machine-lanes">
           ${renderMachineLane({
             tone: 'steam',
@@ -5226,7 +5357,80 @@ export class BeanieApp {
             ]
           })}
         </div>
+        ${this.renderCleaningCard()}
       </main>
+    `;
+  }
+
+  private cleaningDateLabel(iso: string): string {
+    const date = new Date(iso);
+    if (Number.isNaN(date.valueOf())) return iso;
+    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  }
+
+  private renderCleaningCard(): string {
+    const profiles = this.state.profiles;
+    const resolved = resolveCleaningProfile(profiles, this.state.cleaningProfileOverride);
+    const cleaning = this.state.cleaning;
+    const threshold = this.state.cleaningThreshold;
+    const due = cleaningDue(cleaning, threshold);
+    const blocked = this.state.busy || this.state.liveActive || this.state.liveFinalizing;
+
+    const profileSelect = profiles.length
+      ? `<select class="settings-select" data-action="cleaning-profile" aria-label="Cleaning profile">
+          ${profiles
+            .map(
+              (p) =>
+                `<option value="${escapeAttr(p.id)}" ${resolved?.id === p.id ? 'selected' : ''}>${escapeHtml(
+                  p.profile?.title ?? 'Untitled profile'
+                )}</option>`
+            )
+            .join('')}
+        </select>`
+      : '<em class="cleaning-missing">No profiles loaded</em>';
+
+    const count = cleaning.shotsSinceClean;
+    const countLabel = `${count} ${count === 1 ? 'shot' : 'shots'} since last clean`;
+    const sinceLine = cleaning.lastCleanedAt
+      ? `${countLabel} · last cleaned ${this.cleaningDateLabel(cleaning.lastCleanedAt)}`
+      : `${countLabel} · never cleaned`;
+
+    const thresholdButtons = CLEANING_THRESHOLD_OPTIONS.map((n) => {
+      const active = threshold === n;
+      return `<button type="button" class="${active ? 'active' : ''}" data-action="cleaning-threshold" data-value="${n}" aria-pressed="${active}">${
+        n === 0 ? 'Off' : String(n)
+      }</button>`;
+    }).join('');
+
+    return `
+      <section class="cleaning-card ${due ? 'due' : ''}">
+        <div class="cleaning-head">
+          <div>
+            <span class="eyebrow">Maintenance</span>
+            <h2>Backflush cleaning</h2>
+          </div>
+          <span class="cleaning-stat ${due ? 'due' : ''}">${escapeHtml(sinceLine)}</span>
+        </div>
+        <p class="cleaning-explain">Insert a blind basket with a little detergent and lock in the portafilter, then run a forward-flush cycle — no beans needed. Your dial-in recipe is restored automatically when it finishes.</p>
+        <div class="cleaning-controls">
+          <label class="cleaning-field">
+            <span>Profile</span>
+            ${profileSelect}
+          </label>
+          <div class="cleaning-field">
+            <span>Remind after</span>
+            <div class="settings-segmented cleaning-threshold" role="group" aria-label="Cleaning reminder threshold">${thresholdButtons}</div>
+          </div>
+          <button type="button" class="cleaning-run" data-action="run-cleaning" ${resolved && !blocked ? '' : 'disabled'}>
+            ${icon('refresh-cw')}<span>Run cleaning cycle</span>
+          </button>
+        </div>
+        ${
+          resolved
+            ? ''
+            : '<p class="cleaning-hint">Install a “Cleaning / forward flush ×5” profile (beverage type “cleaning”) to enable this.</p>'
+        }
+      </section>
     `;
   }
 

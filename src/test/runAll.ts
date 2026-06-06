@@ -15,3 +15,4 @@ import './gateway.test';
 import './settings.test';
 import './pluginSettings.test';
 import './waterTank.test';
+import './cleaning.test';

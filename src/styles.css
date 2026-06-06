@@ -6613,3 +6613,143 @@ p {
     border-bottom: 0;
   }
 }
+
+/* ---- Cleaning / backflush card (machine page) ---- */
+.cleaning-card {
+  margin-top: 12px;
+  padding: 14px 16px 16px;
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.cleaning-card.due {
+  border-color: color-mix(in srgb, var(--amber) 55%, var(--line));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 26%, transparent);
+}
+
+.cleaning-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cleaning-head h2 {
+  margin: 2px 0 0;
+  color: var(--ink);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.cleaning-stat {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.cleaning-stat.due {
+  color: var(--amber);
+}
+
+.cleaning-explain {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.cleaning-controls {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.4fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.cleaning-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.cleaning-field > span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.cleaning-threshold {
+  height: 38px;
+}
+
+.cleaning-missing {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  font-style: normal;
+}
+
+.cleaning-run {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--teal);
+  color: var(--on-accent);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.cleaning-run .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.cleaning-run:disabled {
+  background: var(--panel-2);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.cleaning-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* Cleaning-due badge on the machine-settings (droplet) icon */
+.icon-tool {
+  position: relative;
+}
+
+.icon-tool-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--amber);
+  box-shadow: 0 0 0 2px var(--panel);
+}
+
+@media (max-width: 720px) {
+  .cleaning-controls {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+}
