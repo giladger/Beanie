@@ -534,6 +534,7 @@ export class BeanieApp {
   private machineSocket: WebSocket | null = null;
   private scaleSocket: WebSocket | null = null;
   private waterSocket: WebSocket | null = null;
+  private disposed = false;
   private shotRefreshInFlight = false;
   private applyRequestId = 0;
   private beanSelectionRequestId = 0;
@@ -607,6 +608,7 @@ export class BeanieApp {
   constructor(private readonly root: HTMLElement) {}
 
   start(): void {
+    this.disposed = false;
     applySettingsPreferences(this.state.settingsPreferences);
     this.root.addEventListener('click', this.handleClick);
     this.root.addEventListener('input', this.handleInput);
@@ -621,6 +623,7 @@ export class BeanieApp {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.root.removeEventListener('click', this.handleClick);
     this.root.removeEventListener('input', this.handleInput);
     this.root.removeEventListener('change', this.handleChange);
@@ -638,9 +641,16 @@ export class BeanieApp {
     if (this.timedSteamStopTimer != null) window.clearTimeout(this.timedSteamStopTimer);
     if (this.sleepBrightnessTimer != null) window.clearTimeout(this.sleepBrightnessTimer);
     if (this.liveRaf != null) window.cancelAnimationFrame(this.liveRaf);
-    this.machineSocket?.close();
-    this.scaleSocket?.close();
-    this.waterSocket?.close();
+    this.applyTimer = null;
+    this.machineRetryTimer = null;
+    this.scaleRetryTimer = null;
+    this.waterRetryTimer = null;
+    this.shotRefreshTimer = null;
+    this.simTimer = null;
+    this.timedSteamStopTimer = null;
+    this.sleepBrightnessTimer = null;
+    this.liveRaf = null;
+    this.closeLiveSockets();
   }
 
   private onScrollGesture(event: WheelEvent): void {
@@ -733,6 +743,7 @@ export class BeanieApp {
         console.warn('[Beanie] Could not load machine state', error);
         return null;
       });
+      if (this.disposed) return;
       const machineSleeping = machine?.state?.state === 'sleeping';
 
       this.setState({
@@ -775,6 +786,7 @@ export class BeanieApp {
       this.connectWaterLevelSocket();
       this.startShotRefreshTimer();
     } catch (error) {
+      if (this.disposed) return;
       console.warn('[Beanie] Gateway unavailable; using demo data', error);
       this.loadDemo();
     }
@@ -1709,9 +1721,32 @@ export class BeanieApp {
     }
   }
 
+  private closeLiveSockets(): void {
+    const machineSocket = this.machineSocket;
+    const scaleSocket = this.scaleSocket;
+    const waterSocket = this.waterSocket;
+    this.machineSocket = null;
+    this.scaleSocket = null;
+    this.waterSocket = null;
+    this.closeSocket(machineSocket);
+    this.closeSocket(scaleSocket);
+    this.closeSocket(waterSocket);
+  }
+
+  private closeSocket(socket: WebSocket | null): void {
+    if (!socket) return;
+    socket.onopen = null;
+    socket.onmessage = null;
+    socket.onerror = null;
+    socket.onclose = null;
+    socket.close();
+  }
+
   private connectMachineSocket(): void {
-    if (this.state.demo) return;
-    this.machineSocket?.close();
+    if (this.disposed || this.state.demo) return;
+    const previous = this.machineSocket;
+    this.machineSocket = null;
+    this.closeSocket(previous);
     const ws = new WebSocket(`${gatewayWsOrigin()}/ws/v1/machine/snapshot`);
     this.machineSocket = ws;
     ws.onmessage = (event) => {
@@ -1723,15 +1758,21 @@ export class BeanieApp {
       }
     };
     ws.onclose = () => {
+      if (this.disposed) return;
       if (this.machineSocket !== ws) return;
       if (this.machineRetryTimer != null) window.clearTimeout(this.machineRetryTimer);
-      this.machineRetryTimer = window.setTimeout(() => this.connectMachineSocket(), 2500);
+      this.machineRetryTimer = window.setTimeout(() => {
+        this.machineRetryTimer = null;
+        this.connectMachineSocket();
+      }, 2500);
     };
   }
 
   private connectScaleSocket(): void {
-    if (this.state.demo) return;
-    this.scaleSocket?.close();
+    if (this.disposed || this.state.demo) return;
+    const previous = this.scaleSocket;
+    this.scaleSocket = null;
+    this.closeSocket(previous);
     const ws = new WebSocket(`${gatewayWsOrigin()}/ws/v1/scale/snapshot`);
     this.scaleSocket = ws;
     ws.onmessage = (event) => {
@@ -1743,9 +1784,13 @@ export class BeanieApp {
       }
     };
     ws.onclose = () => {
+      if (this.disposed) return;
       if (this.scaleSocket !== ws) return;
       if (this.scaleRetryTimer != null) window.clearTimeout(this.scaleRetryTimer);
-      this.scaleRetryTimer = window.setTimeout(() => this.connectScaleSocket(), 3000);
+      this.scaleRetryTimer = window.setTimeout(() => {
+        this.scaleRetryTimer = null;
+        this.connectScaleSocket();
+      }, 3000);
     };
   }
 
@@ -1753,8 +1798,10 @@ export class BeanieApp {
   // It changes slowly, so patch the top-bar readout by reference rather than
   // re-rendering the whole app on every frame.
   private connectWaterLevelSocket(): void {
-    if (this.state.demo) return;
-    this.waterSocket?.close();
+    if (this.disposed || this.state.demo) return;
+    const previous = this.waterSocket;
+    this.waterSocket = null;
+    this.closeSocket(previous);
     const ws = new WebSocket(`${gatewayWsOrigin()}/ws/v1/machine/waterLevels`);
     this.waterSocket = ws;
     ws.onmessage = (event) => {
@@ -1770,9 +1817,13 @@ export class BeanieApp {
       }
     };
     ws.onclose = () => {
+      if (this.disposed) return;
       if (this.waterSocket !== ws) return;
       if (this.waterRetryTimer != null) window.clearTimeout(this.waterRetryTimer);
-      this.waterRetryTimer = window.setTimeout(() => this.connectWaterLevelSocket(), 3000);
+      this.waterRetryTimer = window.setTimeout(() => {
+        this.waterRetryTimer = null;
+        this.connectWaterLevelSocket();
+      }, 3000);
     };
   }
 
@@ -6236,6 +6287,7 @@ export class BeanieApp {
   }
 
   private setState(next: Partial<AppState>): void {
+    if (this.disposed) return;
     this.state = { ...this.state, ...next };
     this.render();
   }
