@@ -248,6 +248,7 @@ const SCALE_FRESH_WINDOW_MS = 5_000;
 const NO_SCALE_WARNING_VISIBLE_MS = 6_000;
 const DEFAULT_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS = 1;
 const HOT_WATER_WEIGHT_NATIVE_HEADROOM_SECONDS = 30;
+const HOT_WATER_WEIGHT_NATIVE_VOLUME_ML = 500;
 
 const SHOT_SCORE_OPTIONS = [
   { value: 20, label: 'Bad', tone: 'bad' },
@@ -4524,6 +4525,7 @@ export class BeanieApp {
       hotWaterData,
       rinseData
     };
+    writeHotWaterWeightTarget(hotWaterData.volume);
     const nativeHotWaterData = hotWaterDataForNativeWorkflow(
       hotWaterData,
       this.state.hotWaterStopMode,
@@ -4581,8 +4583,18 @@ export class BeanieApp {
   }
 
   private currentHotWaterData(): HotWaterData {
-    if (this.state.workflow?.hotWaterData) return hotWaterValues(this.state.workflow, null);
-    return hotWaterValues(this.state.workflow, this.state.machineSettings);
+    const values = this.state.workflow?.hotWaterData
+      ? hotWaterValues(this.state.workflow, null)
+      : hotWaterValues(this.state.workflow, this.state.machineSettings);
+    const savedTarget = readHotWaterWeightTarget();
+    if (
+      this.state.hotWaterStopMode === 'volume' &&
+      savedTarget != null &&
+      values.volume === HOT_WATER_WEIGHT_NATIVE_VOLUME_ML
+    ) {
+      return { ...values, volume: savedTarget };
+    }
+    return values;
   }
 
   private currentRinseData(): RinseData {
@@ -7090,6 +7102,7 @@ export class BeanieApp {
 const machinePresetLabelsStorageKey = 'beanie:machine-preset-labels';
 const machinePresetValuesStorageKey = 'beanie:machine-preset-values';
 const hotWaterStopModeStorageKey = 'beanie:hot-water-stop-mode';
+const hotWaterWeightTargetStorageKey = 'beanie:hot-water-weight-target';
 const secondTapHintStorageKey = 'beanie:second-tap-hint-v2';
 
 type MachinePresetValueOverrides = Record<string, Record<string, number>>;
@@ -7195,6 +7208,24 @@ function readHotWaterStopMode(): HotWaterStopMode {
 
 function writeHotWaterStopMode(mode: HotWaterStopMode): void {
   localStorage.setItem(hotWaterStopModeStorageKey, mode);
+}
+
+function readHotWaterWeightTarget(): number | null {
+  try {
+    const value = Number(localStorage.getItem(hotWaterWeightTargetStorageKey));
+    return Number.isFinite(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeHotWaterWeightTarget(value: number | null | undefined): void {
+  try {
+    if (value == null || !Number.isFinite(value) || value <= 0) return;
+    localStorage.setItem(hotWaterWeightTargetStorageKey, String(value));
+  } catch {
+    // Local target persistence is best-effort; the live in-memory state remains authoritative.
+  }
 }
 
 function machinePresetLabelKey(name: string, presetId: string): string {
@@ -7441,9 +7472,15 @@ function hotWaterDataForNativeWorkflow(
 ): HotWaterData {
   if (hotWaterStopMode !== 'volume' || !hotWaterScaleConnected) return water;
   const nativeDuration = hotWaterWeightNativeDuration(water);
+  if (nativeDuration == null) return water;
   const currentDuration = positiveNumber(water.duration) ?? 0;
-  if (nativeDuration == null || currentDuration >= nativeDuration) return water;
-  return { ...water, duration: nativeDuration };
+  const duration = Math.max(currentDuration, nativeDuration);
+  if (water.volume === HOT_WATER_WEIGHT_NATIVE_VOLUME_ML && water.duration === duration) return water;
+  return {
+    ...water,
+    volume: HOT_WATER_WEIGHT_NATIVE_VOLUME_ML,
+    duration
+  };
 }
 
 function hotWaterWeightNativeDuration(water: HotWaterData): number | null {
