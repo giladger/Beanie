@@ -4788,7 +4788,9 @@ export class BeanieApp {
     const powerAction = this.state.asleep ? 'wake' : 'sleep';
     const powerLabel = this.state.asleep ? 'Wake' : 'Sleep';
     const cleaningDueNow = cleaningDue(this.state.cleaning, this.state.cleaningThreshold);
-    const machineSettingsLabel = cleaningDueNow ? 'Machine settings (cleaning due)' : 'Machine settings';
+    const machineSettingsLabel = cleaningDueNow
+      ? 'Water - steam, water, flush (cleaning due)'
+      : 'Water - steam, water, flush';
     const waterAlert = this.currentWaterAlert();
     const waterTone = waterAlert === 'hard' ? 'stat-alert' : waterAlert === 'soft' ? 'stat-warn' : '';
     return `
@@ -4809,7 +4811,7 @@ export class BeanieApp {
           </div>
           ${machineCommands}
           <div class="top-icons" role="toolbar" aria-label="Skin actions">
-            <button class="icon-tool icon-tool-labeled ${cleaningDueNow ? 'has-badge' : ''}" data-action="open-machine-settings" aria-label="${escapeAttr(machineSettingsLabel)}" title="${escapeAttr(machineSettingsLabel)}">${icon('droplet')}<span class="icon-tool-label">Machine</span>${cleaningDueNow ? '<span class="icon-tool-badge" aria-hidden="true"></span>' : ''}</button>
+            <button class="icon-tool icon-tool-labeled ${cleaningDueNow ? 'has-badge' : ''}" data-action="open-machine-settings" aria-label="${escapeAttr(machineSettingsLabel)}" title="${escapeAttr(machineSettingsLabel)}">${icon('droplet')}<span class="icon-tool-label">Water</span>${cleaningDueNow ? '<span class="icon-tool-badge" aria-hidden="true"></span>' : ''}</button>
             <button class="icon-tool icon-tool-labeled" data-action="open-settings" aria-label="Settings" title="Settings">${icon('settings')}<span class="icon-tool-label">Settings</span></button>
             <button class="icon-tool icon-tool-labeled ${this.state.asleep ? 'icon-tool-wake' : ''}" data-action="${powerAction}" aria-label="${powerLabel}" title="${powerLabel}">${icon('power')}<span class="icon-tool-label">${escapeHtml(powerLabel)}</span></button>
           </div>

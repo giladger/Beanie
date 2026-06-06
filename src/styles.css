@@ -1267,6 +1267,10 @@ p {
   font-weight: 900;
   line-height: 1;
   white-space: nowrap;
+  /* Optical centering: the labels have no descenders so the glyphs sit high in
+     the line box — nudge down ~1px to line up with the icon's visual centre. */
+  position: relative;
+  top: 2px;
 }
 
 .sleep-overlay {
@@ -6865,7 +6869,7 @@ p {
 .icon-tool-badge {
   position: absolute;
   top: 6px;
-  right: 6px;
+  left: 6px;
   width: 9px;
   height: 9px;
   border-radius: 50%;
