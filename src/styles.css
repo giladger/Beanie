@@ -6718,9 +6718,41 @@ p {
   text-transform: uppercase;
 }
 
-.cleaning-bar-field .settings-select {
+.cleaning-bar-field .settings-select,
+.cleaning-profile-button {
   height: 34px;
-  max-width: 220px;
+  max-width: 240px;
+}
+
+.cleaning-profile-button {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.cleaning-profile-button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cleaning-profile-button .icon {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
 }
 
 .cleaning-bar-field .cleaning-threshold {
@@ -6741,7 +6773,8 @@ p {
 
 .cleaning-run {
   flex: none;
-  min-height: 38px;
+  align-self: flex-end;
+  min-height: 34px;
   display: inline-flex;
   align-items: center;
   justify-content: center;

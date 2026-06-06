@@ -453,6 +453,8 @@ interface AppState {
   waterAlertDismissed: boolean;
   /** The machine's own refill threshold in mm (from the waterLevels socket). */
   machineRefillLevel: number | null;
+  /** The profiles picker is choosing the cleaning-override profile, not the recipe. */
+  cleaningProfilePicking: boolean;
 }
 
 interface LiveReadoutEls {
@@ -549,7 +551,8 @@ export class BeanieApp {
     cleaningProfileOverride: readCleaningProfileOverride(),
     cleaningThreshold: readCleaningThreshold(),
     waterAlertDismissed: false,
-    machineRefillLevel: null
+    machineRefillLevel: null,
+    cleaningProfilePicking: false
   };
 
   private applyTimer: number | null = null;
@@ -1764,12 +1767,18 @@ export class BeanieApp {
     this.state.cleaning = cleaning;
   }
 
-  private setCleaningProfileOverride(profileId: string): void {
-    const resolved = resolveCleaningProfile(this.state.profiles, null);
-    // Selecting the auto-detected profile clears the override; otherwise store it.
-    const override = profileId && profileId !== resolved?.id ? profileId : null;
+  // Chosen from the profile picker (cleaning mode): store the override and return
+  // to the machine page. Selecting the auto-detected profile clears the override.
+  private pickCleaningProfile(profileId: string): void {
+    const autoResolved = resolveCleaningProfile(this.state.profiles, null);
+    const override = profileId && profileId !== autoResolved?.id ? profileId : null;
     writeCleaningProfileOverride(override);
-    this.setState({ cleaningProfileOverride: override, status: 'Cleaning profile set' });
+    this.setState({
+      cleaningProfileOverride: override,
+      cleaningProfilePicking: false,
+      view: 'machine',
+      status: 'Cleaning profile set'
+    });
   }
 
   private setCleaningThreshold(shots: number): void {
@@ -2944,9 +2953,19 @@ export class BeanieApp {
       case 'open-profile-picker':
         this.setState({
           view: 'profiles',
+          cleaningProfilePicking: false,
           profileSearch: '',
           profilePage: 0,
           profileFocusId: this.profileIdForDraft()
+        });
+        break;
+      case 'open-cleaning-profile-picker':
+        this.setState({
+          view: 'profiles',
+          cleaningProfilePicking: true,
+          profileSearch: '',
+          profilePage: 0,
+          profileFocusId: resolveCleaningProfile(this.state.profiles, this.state.cleaningProfileOverride)?.id ?? null
         });
         break;
       case 'open-bean-picker':
@@ -2963,7 +2982,10 @@ export class BeanieApp {
         void this.loadMachineControlState();
         break;
       case 'pick-profile':
-        if (id) this.pickProfile(id);
+        if (id) {
+          if (this.state.cleaningProfilePicking) this.pickCleaningProfile(id);
+          else this.pickProfile(id);
+        }
         break;
       case 'toggle-favorite-profile':
         if (id) this.toggleFavoriteProfile(id);
@@ -3354,10 +3376,6 @@ export class BeanieApp {
     if (target.dataset.action === 'settings-field') {
       const raw = target instanceof HTMLInputElement && target.type === 'checkbox' ? target.checked : target.value;
       void this.onSettingsField(target.dataset.group ?? '', target.dataset.key ?? '', raw);
-      return;
-    }
-    if (target.dataset.action === 'cleaning-profile') {
-      this.setCleaningProfileOverride(target.value);
       return;
     }
     if (target.dataset.action === 'no-scale-block-toggle') {
@@ -5093,9 +5111,12 @@ export class BeanieApp {
   }
 
   private renderProfilesPage(): string {
+    const cleaningMode = this.state.cleaningProfilePicking;
     const query = this.state.profileSearch.trim().toLowerCase();
     const favorites = new Set(this.state.favoriteProfiles);
-    const selectedId = this.profileIdForDraft();
+    const selectedId = cleaningMode
+      ? resolveCleaningProfile(this.state.profiles, this.state.cleaningProfileOverride)?.id ?? null
+      : this.profileIdForDraft();
     const matches = this.state.profiles.filter((record) => {
       const title = (record.profile.title ?? '').toLowerCase();
       const author = (record.profile.author ?? '').toLowerCase();
@@ -5119,10 +5140,12 @@ export class BeanieApp {
       sorted.find((record) => record.id === selectedId) ??
       sorted[0] ??
       null;
-    const actions = `<button class="icon-button" data-action="new-profile" aria-label="New profile" title="New profile">${icon('plus')}</button>`;
+    const actions = cleaningMode
+      ? ''
+      : `<button class="icon-button" data-action="new-profile" aria-label="New profile" title="New profile">${icon('plus')}</button>`;
 
     return `
-      ${this.pageHeader('Profiles', 'workbench', actions)}
+      ${this.pageHeader(cleaningMode ? 'Cleaning profile' : 'Profiles', cleaningMode ? 'machine' : 'workbench', actions)}
       <main class="page-body profiles-page no-scroll-page">
         <label class="search">
           ${icon('search')}
@@ -5545,17 +5568,11 @@ export class BeanieApp {
     const due = cleaningDue(cleaning, threshold);
     const blocked = this.state.busy || this.state.liveActive || this.state.liveFinalizing;
 
-    const profileSelect = profiles.length
-      ? `<select class="settings-select" data-action="cleaning-profile" aria-label="Cleaning profile">
-          ${profiles
-            .map(
-              (p) =>
-                `<option value="${escapeAttr(p.id)}" ${resolved?.id === p.id ? 'selected' : ''}>${escapeHtml(
-                  p.profile?.title ?? 'Untitled profile'
-                )}</option>`
-            )
-            .join('')}
-        </select>`
+    const profileControl = profiles.length
+      ? `<button type="button" class="cleaning-profile-button" data-action="open-cleaning-profile-picker" aria-label="Choose cleaning profile">
+          <span>${escapeHtml(resolved?.profile?.title ?? 'Choose…')}</span>
+          ${icon('chevron-down')}
+        </button>`
       : '<em class="cleaning-missing">No profiles loaded</em>';
 
     const count = cleaning.shotsSinceClean;
@@ -5581,10 +5598,10 @@ export class BeanieApp {
             <small class="${due ? 'due' : ''}">${escapeHtml(stat)}</small>
           </div>
         </div>
-        <label class="cleaning-bar-field">
+        <div class="cleaning-bar-field">
           <span>Profile</span>
-          ${profileSelect}
-        </label>
+          ${profileControl}
+        </div>
         <div class="cleaning-bar-field">
           <span>Remind</span>
           <div class="settings-segmented cleaning-threshold" role="group" aria-label="Cleaning reminder threshold">${thresholdButtons}</div>
