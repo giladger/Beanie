@@ -4773,7 +4773,6 @@ export class BeanieApp {
     const machineCommands = this.renderMachineCommands();
     const powerAction = this.state.asleep ? 'wake' : 'sleep';
     const powerLabel = this.state.asleep ? 'Wake' : 'Sleep';
-    const showWakeText = this.state.asleep && this.usesWebSleepControls();
     const cleaningDueNow = cleaningDue(this.state.cleaning, this.state.cleaningThreshold);
     const machineSettingsLabel = cleaningDueNow ? 'Machine settings (cleaning due)' : 'Machine settings';
     const waterAlert = this.currentWaterAlert();
@@ -4790,11 +4789,9 @@ export class BeanieApp {
           </div>
           ${machineCommands}
           <div class="top-icons" role="toolbar" aria-label="Skin actions">
-            <button class="icon-tool ${cleaningDueNow ? 'has-badge' : ''}" data-action="open-machine-settings" aria-label="${escapeAttr(machineSettingsLabel)}" title="${escapeAttr(machineSettingsLabel)}">${icon('droplet')}${cleaningDueNow ? '<span class="icon-tool-badge" aria-hidden="true"></span>' : ''}</button>
-            <button class="icon-tool" data-action="open-settings" aria-label="Settings" title="Settings">${icon('settings')}</button>
-            <button class="icon-tool ${this.state.asleep ? 'icon-tool-wake' : ''} ${showWakeText ? 'icon-tool-text' : ''}" data-action="${powerAction}" aria-label="${powerLabel}" title="${powerLabel}">
-              ${icon('power')}${showWakeText ? '<span>Wake</span>' : ''}
-            </button>
+            <button class="icon-tool icon-tool-labeled ${cleaningDueNow ? 'has-badge' : ''}" data-action="open-machine-settings" aria-label="${escapeAttr(machineSettingsLabel)}" title="${escapeAttr(machineSettingsLabel)}">${icon('droplet')}<span class="icon-tool-label">Machine</span>${cleaningDueNow ? '<span class="icon-tool-badge" aria-hidden="true"></span>' : ''}</button>
+            <button class="icon-tool icon-tool-labeled" data-action="open-settings" aria-label="Settings" title="Settings">${icon('settings')}<span class="icon-tool-label">Settings</span></button>
+            <button class="icon-tool icon-tool-labeled ${this.state.asleep ? 'icon-tool-wake' : ''}" data-action="${powerAction}" aria-label="${powerLabel}" title="${powerLabel}">${icon('power')}<span class="icon-tool-label">${escapeHtml(powerLabel)}</span></button>
           </div>
         </div>
       </header>

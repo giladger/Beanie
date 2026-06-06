@@ -35,7 +35,7 @@
 
   /* ---- Layout (not theme related) ---- */
   --radius: 8px;
-  --topbar: 54px;
+  --topbar: 60px;
   --workbench-max: 1366px;
   --workbench-gap: 8px;
   --rail-width: 248px;
@@ -305,7 +305,7 @@
 
 :root[data-ui-scale="large"] {
   --ui-scale: 1.08;
-  --topbar: 58px;
+  --topbar: 64px;
 }
 
 * {
@@ -480,8 +480,8 @@ p {
 }
 
 .machine-command {
-  height: 38px;
-  min-width: 62px;
+  height: 44px;
+  min-width: 64px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -522,10 +522,15 @@ p {
 }
 
 .icon-tool {
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
+}
+
+.icon-tool .icon {
+  width: 19px;
+  height: 19px;
 }
 
 .command.primary {
@@ -1226,20 +1231,21 @@ p {
   color: var(--ink);
 }
 
-.icon-tool-text {
+/* Labeled topbar action buttons (Machine · Settings · Sleep/Wake): icon + text. */
+.icon-tool-labeled {
   width: auto;
-  min-width: 78px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  padding: 0 11px;
+  gap: 8px;
+  padding: 0 15px;
 }
 
-.icon-tool-text span {
-  font-size: 12px;
+.icon-tool-label {
+  font-size: 12.5px;
   font-weight: 900;
   line-height: 1;
+  white-space: nowrap;
 }
 
 .sleep-overlay {
@@ -5430,12 +5436,22 @@ p {
   }
 
   .machine-command {
-    width: 38px;
-    min-width: 38px;
+    width: 44px;
+    min-width: 44px;
     padding: 0;
   }
 
   .machine-command span {
+    display: none;
+  }
+
+  /* Collapse the labeled action buttons back to icon-only squares to save room. */
+  .icon-tool-labeled {
+    width: 44px;
+    padding: 0;
+  }
+
+  .icon-tool-label {
     display: none;
   }
 }
