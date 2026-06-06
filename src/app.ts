@@ -3564,6 +3564,8 @@ export class BeanieApp {
       const beans = editingId
         ? this.state.beans.map((item) => (item.id === editingId ? bean : item))
         : [bean, ...this.state.beans];
+      void beanieCache.putBeans(beans).catch(() => {});
+      if (!editingId) void beanieCache.putBeanBatches(bean.id, []).catch(() => {});
       this.setState({
         beans,
         batchesByBean: editingId ? this.state.batchesByBean : { ...this.state.batchesByBean, [bean.id]: [] },

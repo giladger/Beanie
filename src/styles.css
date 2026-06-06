@@ -5431,13 +5431,21 @@ p {
 }
 
 @media (max-width: 1100px) {
+  .topbar {
+    padding: 7px 10px;
+  }
+
+  .top-inline {
+    gap: 6px;
+  }
+
   .top-stat {
-    padding: 0 9px;
+    padding: 0 8px;
   }
 
   .machine-command {
-    width: 44px;
-    min-width: 44px;
+    width: 42px;
+    min-width: 42px;
     padding: 0;
   }
 
@@ -5445,14 +5453,11 @@ p {
     display: none;
   }
 
-  /* Collapse the labeled action buttons back to icon-only squares to save room. */
+  /* Keep the action labels (the whole point of the buttons) but tighten the
+     spacing so they still fit once the Shot/Steam/Flush/Water commands appear. */
   .icon-tool-labeled {
-    width: 44px;
-    padding: 0;
-  }
-
-  .icon-tool-label {
-    display: none;
+    gap: 6px;
+    padding: 0 11px;
   }
 }
 
