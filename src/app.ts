@@ -217,11 +217,6 @@ type ShotEditField =
 type ApplyState = 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
 type LiveChartMode = 'preset30' | 'auto';
 type HotWaterStopMode = 'volume' | 'time';
-// Backing-store resolution floor for every espresso chart (see LiveChart.resize).
-// The live chart and the historical detail chart share it so the trace looks
-// identically crisp whether it is streaming or saved, rather than the live one
-// rendering at a softer devicePixelRatio-only resolution.
-const CHART_PIXEL_SCALE = 3;
 // 'starting' = machine ramping up (substate preparingForShot), before flow;
 // 'active' = actually flowing (substate pouring); 'purging' = flow stopped but
 // still in the service state (the DE1 steam puff / purge).
@@ -2637,7 +2632,6 @@ export class BeanieApp {
       this.liveCanvas = canvas;
       this.liveChart = new LiveChart(canvas, {
         detailed: true,
-        pixelScale: CHART_PIXEL_SCALE,
         hideMaxTimeLabel: this.state.liveChartMode === 'auto'
       });
     }
@@ -4824,7 +4818,7 @@ export class BeanieApp {
     if (!canvas) return;
     const shot = this.selectedHistoryShot();
     if (!shot) return;
-    const chart = new LiveChart(canvas, { detailed: true, pixelScale: CHART_PIXEL_SCALE });
+    const chart = new LiveChart(canvas, { detailed: true, pixelScale: 3 });
     chart.setModel(chartModelFromShot(shot));
     // Draw after layout so the canvas has its CSS box for DPR sizing.
     window.requestAnimationFrame(() => {
@@ -4863,7 +4857,7 @@ export class BeanieApp {
         }
         return item;
       });
-    const chart = new LiveChart(canvas, { detailed: true, pixelScale: CHART_PIXEL_SCALE });
+    const chart = new LiveChart(canvas, { detailed: true, pixelScale: 3 });
     chart.setModel({ ...model, series });
     window.requestAnimationFrame(() => {
       chart.resize();

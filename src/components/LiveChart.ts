@@ -177,12 +177,7 @@ export class LiveChart {
     const cssWidth = this.canvas.clientWidth;
     const cssHeight = this.canvas.clientHeight;
     const deviceRatio = typeof window !== 'undefined' && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
-    // pixelScale is a resolution floor, not a devicePixelRatio multiplier: take
-    // whichever of the two is larger. This keeps lines crisp on low-DPI tablets
-    // (where the raw devicePixelRatio of 1 looks jagged) while bounding the
-    // backing-store size on high-DPI screens, so a chart redrawn every frame
-    // never balloons to dpr*scale (e.g. 6x on a retina panel) and stutters.
-    const ratio = Math.max(deviceRatio, this.pixelScale, 1);
+    const ratio = deviceRatio * Math.max(1, this.pixelScale);
     if (cssWidth === this.cssWidth && cssHeight === this.cssHeight && ratio === this.dpr) {
       return;
     }
