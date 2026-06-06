@@ -5710,9 +5710,13 @@ p {
   width: min(1120px, 100%);
   padding: 8px 12px 10px;
   gap: 8px;
+  /* Lanes fill the available height; the cleaning bar is pinned to the bottom
+     so the whole page fits a no-scroll tablet screen. */
+  grid-template-rows: minmax(0, 1fr) auto;
 }
 
 .machine-lanes {
+  min-height: 0;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
@@ -6631,82 +6635,104 @@ p {
   }
 }
 
-/* ---- Cleaning / backflush card (machine page) ---- */
-.cleaning-card {
-  margin-top: 12px;
-  padding: 14px 16px 16px;
-  display: grid;
-  gap: 10px;
+/* ---- Cleaning / backflush bar (machine page footer) ---- */
+.cleaning-bar {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
 }
 
-.cleaning-card.due {
+.cleaning-bar.due {
   border-color: color-mix(in srgb, var(--amber) 55%, var(--line));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 26%, transparent);
 }
 
-.cleaning-head {
+.cleaning-bar-info {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+  align-items: center;
+  gap: 10px;
 }
 
-.cleaning-head h2 {
-  margin: 2px 0 0;
-  color: var(--ink);
-  font-size: 20px;
-  line-height: 1;
-}
-
-.cleaning-stat {
+.cleaning-bar-icon {
   flex: none;
-  color: var(--muted);
-  font-size: 12px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--teal) 16%, var(--panel-2));
+  color: var(--teal);
+}
+
+.cleaning-bar-icon .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.cleaning-bar-text {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.cleaning-bar-text strong {
+  color: var(--ink);
+  font-size: 14px;
   font-weight: 900;
+  line-height: 1.1;
+}
+
+.cleaning-bar-text small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.cleaning-stat.due {
+.cleaning-bar-text small.due {
   color: var(--amber);
 }
 
-.cleaning-explain {
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.4;
-}
-
-.cleaning-controls {
+.cleaning-bar-field {
+  flex: none;
   display: grid;
-  grid-template-columns: minmax(180px, 1.4fr) minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 12px;
+  gap: 4px;
+  align-content: center;
 }
 
-.cleaning-field {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-}
-
-.cleaning-field > span {
+.cleaning-bar-field > span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 900;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
-.cleaning-threshold {
-  height: 38px;
+.cleaning-bar-field .settings-select {
+  height: 34px;
+  max-width: 220px;
 }
 
-.cleaning-missing {
+.cleaning-bar-field .cleaning-threshold {
+  width: 184px;
+  height: 34px;
+}
+
+.cleaning-bar-field .cleaning-threshold button {
+  padding: 0 4px;
+}
+
+.cleaning-bar .cleaning-missing {
   color: var(--muted);
   font-size: 13px;
   font-weight: 800;
@@ -6714,12 +6740,13 @@ p {
 }
 
 .cleaning-run {
+  flex: none;
   min-height: 38px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 7px;
-  padding: 0 18px;
+  padding: 0 16px;
   border: 0;
   border-radius: var(--radius);
   background: var(--teal);
@@ -6741,11 +6768,18 @@ p {
   cursor: not-allowed;
 }
 
-.cleaning-hint {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
+@media (max-width: 900px) {
+  .cleaning-bar {
+    flex-wrap: wrap;
+  }
+
+  .cleaning-bar-info {
+    flex-basis: 100%;
+  }
+
+  .cleaning-run {
+    margin-left: auto;
+  }
 }
 
 /* Cleaning-due badge on the machine-settings (droplet) icon */
@@ -6762,13 +6796,6 @@ p {
   border-radius: 50%;
   background: var(--amber);
   box-shadow: 0 0 0 2px var(--panel);
-}
-
-@media (max-width: 720px) {
-  .cleaning-controls {
-    grid-template-columns: 1fr;
-    align-items: stretch;
-  }
 }
 
 /* ---- Low-water alerts ---- */

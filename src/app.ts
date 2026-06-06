@@ -5479,7 +5479,7 @@ export class BeanieApp {
     const flushPreset = matchingPreset(flush, flushPresets);
     return `
       ${this.pageHeader('Steam · Water · Flush')}
-      <main class="page-body machine-page">
+      <main class="page-body machine-page no-scroll-page">
         <div class="machine-lanes">
           ${renderMachineLane({
             tone: 'steam',
@@ -5526,7 +5526,7 @@ export class BeanieApp {
             ]
           })}
         </div>
-        ${this.renderCleaningCard()}
+        ${this.renderCleaningBar()}
       </main>
     `;
   }
@@ -5537,7 +5537,7 @@ export class BeanieApp {
     return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
   }
 
-  private renderCleaningCard(): string {
+  private renderCleaningBar(): string {
     const profiles = this.state.profiles;
     const resolved = resolveCleaningProfile(profiles, this.state.cleaningProfileOverride);
     const cleaning = this.state.cleaning;
@@ -5571,36 +5571,28 @@ export class BeanieApp {
       }</button>`;
     }).join('');
 
+    const stat = resolved ? sinceLine : 'Install a “Cleaning / forward flush ×5” profile to enable';
     return `
-      <section class="cleaning-card ${due ? 'due' : ''}">
-        <div class="cleaning-head">
-          <div>
-            <span class="eyebrow">Maintenance</span>
-            <h2>Backflush cleaning</h2>
+      <section class="cleaning-bar ${due ? 'due' : ''}">
+        <div class="cleaning-bar-info">
+          <span class="cleaning-bar-icon">${icon('refresh-cw')}</span>
+          <div class="cleaning-bar-text">
+            <strong>Backflush cleaning</strong>
+            <small class="${due ? 'due' : ''}">${escapeHtml(stat)}</small>
           </div>
-          <span class="cleaning-stat ${due ? 'due' : ''}">${escapeHtml(sinceLine)}</span>
         </div>
-        <p class="cleaning-explain">Insert a blind basket with a little detergent and lock in the portafilter, then run a forward-flush cycle — no beans needed. Your dial-in recipe is restored automatically when it finishes.</p>
-        <div class="cleaning-controls">
-          <label class="cleaning-field">
-            <span>Profile</span>
-            ${profileSelect}
-          </label>
-          <div class="cleaning-field">
-            <span>Remind after</span>
-            <div class="settings-segmented cleaning-threshold" role="group" aria-label="Cleaning reminder threshold">${thresholdButtons}</div>
-          </div>
-          <button type="button" class="cleaning-run" data-action="run-cleaning" ${resolved && !blocked ? '' : 'disabled'}>
-            ${icon('refresh-cw')}<span>Run cleaning cycle</span>
-          </button>
+        <label class="cleaning-bar-field">
+          <span>Profile</span>
+          ${profileSelect}
+        </label>
+        <div class="cleaning-bar-field">
+          <span>Remind</span>
+          <div class="settings-segmented cleaning-threshold" role="group" aria-label="Cleaning reminder threshold">${thresholdButtons}</div>
         </div>
-        ${
-          resolved
-            ? ''
-            : '<p class="cleaning-hint">Install a “Cleaning / forward flush ×5” profile (beverage type “cleaning”) to enable this.</p>'
-        }
-      </section>
-    `;
+        <button type="button" class="cleaning-run" data-action="run-cleaning" title="Insert a blind basket with detergent, then run a forward-flush cycle (no beans). Your recipe is restored afterwards." ${resolved && !blocked ? '' : 'disabled'}>
+          ${icon('refresh-cw')}<span>Run cleaning cycle</span>
+        </button>
+      </section>`;
   }
 
   private renderMachineProgressPage(service: MachineServiceState): string {
