@@ -168,6 +168,36 @@ run('simulated frames feed the session to a completed shot', () => {
   equal(session.elapsedSeconds > 0, true);
 });
 
+run('faster scale frames do not duplicate the held machine series', () => {
+  const session = new LiveShotSession();
+  session.ingest(machineFrame(0, { pressure: 9, flow: 2 }));
+  // The scale socket ticks several times between machine ticks.
+  session.ingest(scaleFrame(100, { weightFlow: 1 }));
+  session.ingest(scaleFrame(200, { weightFlow: 1.1 }));
+  session.ingest(scaleFrame(300, { weightFlow: 1.2 }));
+  session.ingest(machineFrame(400, { pressure: 8, flow: 2.4 }));
+
+  // Pressure was sampled only on the two machine frames — the three scale frames
+  // in between must not re-append the held pressure value (the staircase bug).
+  equal(session.model().series.find((s) => s.key === 'pressure')!.points.length, 2);
+  // Every scale tick still contributes a weight-flow point.
+  equal(session.model().series.find((s) => s.key === 'weightFlow')!.points.length, 3);
+});
+
+run('a scale-only frame never starts or ends a shot', () => {
+  const session = new LiveShotSession();
+  // No machine pour yet: a scale update alone must not start a shot.
+  session.ingest(scaleFrame(0, { weightFlow: 0.5 }));
+  equal(session.isActive, false);
+  equal(session.model().series.length, 0);
+
+  // Mid-shot, scale updates keep it live (only a machine idle frame ends it).
+  session.ingest(machineFrame(1000, { pressure: 6 }));
+  session.ingest(scaleFrame(1100, { weightFlow: 1.4 }));
+  equal(session.isActive, true);
+  equal(session.model().series.find((s) => s.key === 'weightFlow')!.points.length, 1);
+});
+
 function machineSnapshot(overrides: Partial<MachineSnapshot>): MachineSnapshot {
   return {
     timestamp: '2026-06-01T10:00:00.000Z',
@@ -223,6 +253,32 @@ function idleFrame(tMs: number): LiveFrame {
     tMs,
     machine: machineSnapshot({ state: { state: 'idle' } }),
     scale: scaleSnapshot({ weight: 0 })
+  };
+}
+
+// Single-source frames, mirroring the real app: the machine and scale sockets
+// each deliver their own snapshot with the other side absent.
+function machineFrame(
+  tMs: number,
+  values: { pressure?: number; flow?: number; groupTemperature?: number }
+): LiveFrame {
+  return {
+    tMs,
+    machine: machineSnapshot({
+      state: { state: 'espresso', substate: 'pouring' },
+      pressure: values.pressure ?? 0,
+      flow: values.flow ?? 0,
+      groupTemperature: values.groupTemperature ?? 92
+    }),
+    scale: null
+  };
+}
+
+function scaleFrame(tMs: number, values: { weight?: number; weightFlow?: number }): LiveFrame {
+  return {
+    tMs,
+    machine: null,
+    scale: scaleSnapshot({ weight: values.weight ?? 0, weightFlow: values.weightFlow ?? 0 })
   };
 }
 

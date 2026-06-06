@@ -2257,7 +2257,11 @@ export class BeanieApp {
     this.handleHotWaterWeightStop(tMs);
 
     const wasActive = this.state.liveActive;
-    const frame: LiveFrame = { tMs, machine: this.state.machine, scale: this.state.scale };
+    // Sample only the snapshot that actually arrived on this tick. The machine
+    // (~4 Hz) and scale (~10 Hz) sockets fire independently; feeding both cached
+    // snapshots every time re-samples the source that did *not* update, appending
+    // its held value at a fresh timestamp and drawing a flat-segment staircase.
+    const frame: LiveFrame = { tMs, machine, scale };
     this.liveShot.ingest(frame);
     const active = this.liveShot.isActive;
 

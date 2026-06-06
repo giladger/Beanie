@@ -3,11 +3,14 @@ import type { LiveChartModel, LiveChartSeries, LiveChartPoint } from '../compone
 import { LIVE_SERIES } from '../components/liveChartModel';
 
 // Pure live-shot data layer. Ingests live machine + scale WebSocket snapshots,
-// runs a small shot-detection state machine, and accumulates every telemetry
-// frame (no decimation) into a LiveChartModel that mirrors the historical
-// shotGraphModel conventions (temp/10 scaling, max(10, ceil(/2)*2)
-// Y flooring). All heavy logic lives in pure functions; the LiveShotSession
-// class is a thin mutable wrapper over them.
+// runs a small shot-detection state machine, and accumulates telemetry into a
+// LiveChartModel that mirrors the historical shotGraphModel conventions
+// (temp/10 scaling, max(10, ceil(/2)*2) Y flooring). The two sockets tick at
+// different rates, so each frame samples only the series its own snapshot
+// carries (machine frame -> pressure/flow/temp; scale frame -> weight flow);
+// holding the other source's last value would draw a flat-segment staircase.
+// All heavy logic lives in pure functions; the LiveShotSession class is a thin
+// mutable wrapper over them.
 
 export interface LiveFrame {
   // Wall-clock millisecond timestamp the frame arrived. Passed in by the caller
@@ -104,6 +107,15 @@ export function nextLiveShotState(
   frame: LiveFrame,
   options?: LiveShotOptions
 ): LiveShotState {
+  // A frame with no machine snapshot is a scale-only update: it carries no phase
+  // signal and none of the machine series. Sampling it through the normal path
+  // would re-read the *held* machine values (pressure/flow/temp) and append them
+  // again at a new timestamp — the flat-segment "staircase". So it must not start
+  // or end a shot; just fold its scale sample (weight flow) in while one is live.
+  if (frame.machine == null) {
+    return state.phase === 'active' ? accumulate(state, frame) : state;
+  }
+
   const pouring = isEspressoPour(frame.machine);
 
   if (state.phase === 'idle') {
