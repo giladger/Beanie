@@ -1559,6 +1559,41 @@ export class BeanieApp {
     }
   }
 
+  // The "Copy from" dropdown shared by both new-bean forms (shot editor and bean
+  // picker). Lists existing bags so a new one can start from a previous bag's
+  // details instead of a blank form.
+  private beanPrefillSelect(): string {
+    const beans = this.sortedBeansForPicker();
+    if (beans.length === 0) return '';
+    return `
+      <label class="bean-prefill">
+        <span>Copy from</span>
+        <select data-action="bean-prefill" aria-label="Copy details from an existing bean">
+          <option value="">Start blank</option>
+          ${beans.map((bean) => `<option value="${escapeAttr(bean.id)}">${escapeHtml(beanLabel(bean))}</option>`).join('')}
+        </select>
+      </label>
+    `;
+  }
+
+  // Fill a new-bean form's inputs from an existing bag, directly (no re-render)
+  // so the user's later edits to the prefilled values aren't clobbered. Only
+  // fields the given form actually contains are touched.
+  private prefillBeanForm(form: HTMLFormElement | null, beanId: string): void {
+    const bean = beanId ? this.state.beans.find((item) => item.id === beanId) : null;
+    if (!form || !bean) return;
+    const set = (name: string, value: string) => {
+      const el = form.elements.namedItem(name);
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.value = value;
+    };
+    set('roaster', bean.roaster);
+    set('name', bean.name);
+    set('country', inputValue(bean.country));
+    set('region', inputValue(bean.region));
+    set('processing', inputValue(bean.processing));
+    set('notes', inputValue(bean.notes));
+  }
+
   private async updateShotEnjoyment(shotId: string, value: number | null): Promise<void> {
     const shot = this.state.shots.find((item) => item.id === shotId);
     if (!shot) return;
@@ -3333,6 +3368,12 @@ export class BeanieApp {
       if (form) await this.saveBeanPickerBatch(form);
       return;
     }
+    if (target.dataset.action === 'bean-prefill') {
+      const select = target as HTMLSelectElement;
+      this.prefillBeanForm(select.closest<HTMLFormElement>('form'), select.value);
+      select.value = '';
+      return;
+    }
     const field = target.dataset.field;
     if (!field) return;
 
@@ -4885,6 +4926,7 @@ export class BeanieApp {
             ${editing ? '' : `<button type="submit" class="primary-button compact">${icon('check')}<span>Save</span></button>`}
           </div>
         </div>
+        ${editing ? '' : this.beanPrefillSelect()}
         <div class="bean-picker-fields">
           <label>Roaster<input name="roaster" required autocomplete="off" value="${escapeAttr(editing ? bean.roaster : '')}" /></label>
           <label>Bean<input name="name" required autocomplete="off" value="${escapeAttr(editing ? bean.name : '')}" /></label>
@@ -5882,10 +5924,13 @@ export class BeanieApp {
     `;
     return `
       <form class="shot-bean-create" data-form="shot-bean-create" data-action="noop">
+        ${this.beanPrefillSelect()}
         <div class="shot-bean-create-fields">
           ${text('roaster', 'Roaster', true)}
           ${text('name', 'Bean', true)}
           ${text('country', 'Country')}
+          ${text('region', 'Region')}
+          ${text('processing', 'Process')}
         </div>
         <div class="modal-actions shot-edit-actions">
           <button type="button" class="command" data-action="shot-bean-cancel-new">Cancel</button>

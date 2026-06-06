@@ -2616,6 +2616,23 @@ p {
   gap: 10px;
 }
 
+/* "Copy from existing bean" dropdown atop both new-bean forms. */
+.bean-prefill {
+  display: grid;
+  gap: 6px;
+}
+
+.bean-prefill select {
+  width: 100%;
+  min-width: 0;
+  height: 46px;
+  padding: 0 10px;
+}
+
+.bean-picker-bean-form .bean-prefill {
+  margin-top: 8px;
+}
+
 .commit-action {
   min-height: 42px;
   min-width: 0;
