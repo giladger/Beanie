@@ -247,6 +247,7 @@ const NO_SCALE_ABORT_WINDOW_MS = 3_000;
 const SCALE_FRESH_WINDOW_MS = 5_000;
 const NO_SCALE_WARNING_VISIBLE_MS = 6_000;
 const DEFAULT_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS = 1;
+const HOT_WATER_WEIGHT_NATIVE_HEADROOM_SECONDS = 30;
 
 const SHOT_SCORE_OPTIONS = [
   { value: 20, label: 'Bad', tone: 'bad' },
@@ -1903,7 +1904,31 @@ export class BeanieApp {
 
     this.hotWaterWeightStopTarePending = true;
     this.setState({ status: 'Taring scale' });
+    void this.refreshHotWaterNativeTimeoutForWeightMode();
     void this.tareAndArmHotWaterWeightStop(target);
+  }
+
+  private async refreshHotWaterNativeTimeoutForWeightMode(): Promise<void> {
+    if (this.state.demo || this.state.workflow == null) return;
+    const steamSettings = this.currentSteamSettings();
+    const hotWaterData = this.currentHotWaterData();
+    const rinseData = this.currentRinseData();
+    const nativeHotWaterData = hotWaterDataForNativeWorkflow(
+      hotWaterData,
+      this.state.hotWaterStopMode,
+      scaleConnected(this.state.scale)
+    );
+    if (nativeHotWaterData.duration === hotWaterData.duration) return;
+    try {
+      await gateway.updateWorkflow({
+        ...this.state.workflow,
+        steamSettings,
+        hotWaterData: nativeHotWaterData,
+        rinseData
+      });
+    } catch (error) {
+      console.warn('[Beanie] Hot water native timeout refresh failed', error);
+    }
   }
 
   private async tareAndArmHotWaterWeightStop(target: { targetWeight: number; configuredFlow: number }): Promise<void> {
@@ -2253,6 +2278,9 @@ export class BeanieApp {
       }
     }
     const scaleConnectionChanged = previousScaleConnected !== scaleConnected(this.state.scale);
+    if (scaleConnectionChanged && scaleConnected(this.state.scale)) {
+      void this.refreshHotWaterNativeTimeoutForWeightMode();
+    }
     this.ensureHotWaterWeightStopArmed();
     this.handleHotWaterWeightStop(tMs);
 
@@ -2898,7 +2926,7 @@ export class BeanieApp {
         await this.setSteamPurgeMode(Number(value));
         break;
       case 'machine-water-stop-mode':
-        this.setHotWaterStopMode(value === 'time' ? 'time' : 'volume');
+        await this.setHotWaterStopMode(value === 'time' ? 'time' : 'volume');
         break;
       case 'machine-edit-label':
         this.openMachineLabelDialog(el);
@@ -4437,12 +4465,18 @@ export class BeanieApp {
     }
   }
 
-  private setHotWaterStopMode(mode: HotWaterStopMode): void {
+  private async setHotWaterStopMode(mode: HotWaterStopMode): Promise<void> {
     writeHotWaterStopMode(mode);
     this.setState({
       hotWaterStopMode: mode,
       status: mode === 'time' ? 'Water stops by time' : 'Water stops by weight when scale is connected'
     });
+    await this.setMachineWorkflow(
+      this.currentSteamSettings(),
+      this.currentHotWaterData(),
+      this.currentRinseData(),
+      'Water stop mode saved'
+    );
   }
 
   private savePresetValuesAfterMachineEdit(
@@ -4490,6 +4524,15 @@ export class BeanieApp {
       hotWaterData,
       rinseData
     };
+    const nativeHotWaterData = hotWaterDataForNativeWorkflow(
+      hotWaterData,
+      this.state.hotWaterStopMode,
+      scaleConnected(this.state.scale)
+    );
+    const workflowForGateway: Workflow = {
+      ...workflow,
+      hotWaterData: nativeHotWaterData
+    };
     const machineSettings = machineSettingsFromWorkflow(steamSettings, hotWaterData, rinseData, this.state.machineSettings);
     const machinePatch = machineSettingsPatchFromWorkflow(steamSettings, hotWaterData, rinseData);
     this.setState({
@@ -4503,7 +4546,7 @@ export class BeanieApp {
       return;
     }
     try {
-      const saved = await gateway.updateWorkflow(workflow);
+      const saved = await gateway.updateWorkflow(workflowForGateway);
       let directMachineSaved = true;
       try {
         await gateway.updateMachineSettings(machinePatch);
@@ -7389,6 +7432,25 @@ function machineSettingsPatchFromWorkflow(
     flushFlow: flush.flow,
     flushTimeout: flush.duration
   };
+}
+
+function hotWaterDataForNativeWorkflow(
+  water: HotWaterData,
+  hotWaterStopMode: HotWaterStopMode,
+  hotWaterScaleConnected: boolean
+): HotWaterData {
+  if (hotWaterStopMode !== 'volume' || !hotWaterScaleConnected) return water;
+  const nativeDuration = hotWaterWeightNativeDuration(water);
+  const currentDuration = positiveNumber(water.duration) ?? 0;
+  if (nativeDuration == null || currentDuration >= nativeDuration) return water;
+  return { ...water, duration: nativeDuration };
+}
+
+function hotWaterWeightNativeDuration(water: HotWaterData): number | null {
+  const targetWeight = positiveNumber(water.volume);
+  const flow = positiveNumber(water.flow) ?? positiveNumber(DEFAULT_HOT_WATER.flow);
+  if (targetWeight == null || flow == null) return null;
+  return Math.min(180, Math.ceil(targetWeight / flow + HOT_WATER_WEIGHT_NATIVE_HEADROOM_SECONDS));
 }
 
 function formatMachineValue(value: number | undefined): string {
