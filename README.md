@@ -49,9 +49,7 @@ Beanie is a static WebUI skin:
 - No UI framework runtime.
 - Direct REST and WebSocket calls to the Decent.app gateway.
 - Static files served by Decent.app on port 3000.
-- Local storage only for skin-owned conveniences such as bean presets and the last selected bean.
-
-See [docs/workplan.md](docs/workplan.md) for the product and engineering plan.
+- Local storage only for skin-owned conveniences such as favorite profiles and the last selected bean.
 
 ### Local Dev
 
