@@ -5393,7 +5393,7 @@ export class BeanieApp {
     return `
       <div class="water-warning-banner" role="status">
         ${icon('droplet')}
-        <strong>Water low</strong>
+        <strong>Low water</strong>
         <span>${ml ? `About ${escapeHtml(ml)} left · refill soon` : 'Refill soon'}</span>
       </div>
     `;
