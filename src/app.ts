@@ -252,8 +252,6 @@ const NO_SCALE_ABORT_WINDOW_MS = 3_000;
 const SCALE_FRESH_WINDOW_MS = 5_000;
 const NO_SCALE_WARNING_VISIBLE_MS = 6_000;
 const DEFAULT_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS = 1;
-const MIN_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS = 1.6;
-const HOT_WATER_WEIGHT_STOP_MARGIN_GRAMS = 1.5;
 
 const SHOT_SCORE_OPTIONS = [
   { value: 20, label: 'Bad', tone: 'bad' },
@@ -1950,15 +1948,11 @@ export class BeanieApp {
     const scale = this.state.scale;
     const weight = finiteNumber(scale?.weight) ?? 0;
     const scaleFlow = positiveNumber(scale?.weightFlow);
-    const flow = Math.max(scaleFlow ?? 0, controller.configuredFlow);
-    const lookahead = Math.max(
-      positiveNumber(this.state.settingsBundle?.rea.weightFlowMultiplier)
-        ?? DEFAULT_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS,
-      MIN_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS
-    );
+    const flow = scaleFlow ?? controller.configuredFlow;
+    const lookahead = positiveNumber(this.state.settingsBundle?.rea.weightFlowMultiplier)
+      ?? DEFAULT_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS;
     const projectedWeight = weight + flow * lookahead;
-    const stopAtWeight = Math.max(0, controller.targetWeight - HOT_WATER_WEIGHT_STOP_MARGIN_GRAMS);
-    if (projectedWeight < stopAtWeight) return;
+    if (projectedWeight < controller.targetWeight) return;
 
     controller.stopRequested = true;
     void this.stopHotWaterAtWeight(controller.targetWeight, weight, projectedWeight);
