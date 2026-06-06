@@ -538,6 +538,7 @@ export class BeanieApp {
   private applyRequestId = 0;
   private beanSelectionRequestId = 0;
   private loadMoreRequestId = 0;
+  private shotCacheGeneration = 0;
 
   private readonly liveShot = new LiveShotSession();
   private liveChart: LiveChart | null = null;
@@ -971,15 +972,19 @@ export class BeanieApp {
     bean: Bean,
     offset: number
   ): Promise<{ records: ShotRecord[]; total: number }> {
+    const cacheGeneration = this.shotCacheGeneration;
     const query = shotFilterForBean(bean, null);
     query.set('limit', String(this.shotPageSize));
     query.set('offset', String(offset));
 
     try {
       const page = await gateway.shots(query);
-      void beanieCache.putShotPage(query, page);
-      void beanieCache.putShotSummaries(page.items);
-      const records = await Promise.all(page.items.map((shot) => this.loadFullShot(shot)));
+      if (this.canWriteShotCache(cacheGeneration)) {
+        await beanieCache.putShotPage(query, page);
+      }
+      const records = await Promise.all(
+        page.items.map((shot) => this.loadFullShot(shot, cacheGeneration))
+      );
       return { records, total: page.total };
     } catch (error) {
       console.warn('[Beanie] Could not load shots', error);
@@ -992,16 +997,25 @@ export class BeanieApp {
     }
   }
 
-  private async loadFullShot(shot: ShotSummary): Promise<ShotRecord> {
-    const cached = await beanieCache.getShotRecord(shot.id).catch(() => null);
+  private async loadFullShot(
+    shot: ShotSummary,
+    cacheGeneration = this.shotCacheGeneration
+  ): Promise<ShotRecord> {
+    const cached = this.canWriteShotCache(cacheGeneration)
+      ? await beanieCache.getShotRecord(shot.id).catch(() => null)
+      : null;
     if (cached) {
       const merged = mergeShotSummaryIntoRecord(cached, shot);
-      void beanieCache.putShotRecord(merged);
+      if (this.canWriteShotCache(cacheGeneration)) {
+        await beanieCache.putShotRecord(merged);
+      }
       return merged;
     }
     try {
       const record = await gateway.shot(shot.id);
-      void beanieCache.putShotRecord(record);
+      if (this.canWriteShotCache(cacheGeneration)) {
+        await beanieCache.putShotRecord(record);
+      }
       return record;
     } catch {
       return { ...shot, measurements: [] };
@@ -1065,18 +1079,24 @@ export class BeanieApp {
   }
 
   private async loadLatestShotCandidates(limit = 6): Promise<ShotRecord[]> {
+    const cacheGeneration = this.shotCacheGeneration;
     const query = new URLSearchParams({ limit: String(limit), offset: '0', order: 'desc' });
     try {
       const page = await gateway.shots(query);
-      void beanieCache.putShotPage(query, page);
-      void beanieCache.putShotSummaries(page.items);
-      return Promise.all(page.items.map((shot) => this.loadFullShot(shot)));
+      if (this.canWriteShotCache(cacheGeneration)) {
+        await beanieCache.putShotPage(query, page);
+      }
+      return Promise.all(page.items.map((shot) => this.loadFullShot(shot, cacheGeneration)));
     } catch (error) {
       console.warn('[Beanie] Could not load latest shot candidates', error);
       const cached = await beanieCache.getShotPage(query).catch(() => null);
       if (!cached) return [];
       return Promise.all(cached.items.map((shot) => this.loadFullShot(shot)));
     }
+  }
+
+  private canWriteShotCache(generation: number): boolean {
+    return generation === this.shotCacheGeneration;
   }
 
   private async applyDraft(): Promise<void> {
@@ -1222,6 +1242,7 @@ export class BeanieApp {
 
     try {
       const saved = await gateway.updateShot(shot.id, update);
+      this.shotCacheGeneration += 1;
       await beanieCache.invalidateShotMutation(saved.id);
       await beanieCache.putShotRecord(saved);
       this.replaceShotRecord(saved, 'Shot saved');
@@ -1276,6 +1297,7 @@ export class BeanieApp {
 
     try {
       await gateway.deleteShot(shotId);
+      this.shotCacheGeneration += 1;
       await beanieCache.invalidateShotMutation(shotId);
       applyDeletedShot('Shot deleted');
     } catch (error) {
@@ -1447,6 +1469,7 @@ export class BeanieApp {
 
     try {
       const saved = await gateway.updateShot(shot.id, update);
+      this.shotCacheGeneration += 1;
       await beanieCache.invalidateShotMutation(saved.id);
       await beanieCache.putShotRecord(saved);
       this.replaceShotRecord(saved, 'Score saved');
@@ -2202,6 +2225,7 @@ export class BeanieApp {
         if (delayMs > 0) await delay(delayMs);
         if (this.selectedBean()?.id !== bean.id || this.state.liveActive) return;
 
+        this.shotCacheGeneration += 1;
         await beanieCache.invalidateShotMutation().catch(() => {});
         const [{ records, total }, latestRecords] = await Promise.all([
           this.loadFirstShots(bean),
