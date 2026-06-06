@@ -1,5 +1,5 @@
 import type { MachineSnapshot, ScaleSnapshot } from '../api/types';
-import { DEFAULT_WATER_HARD_ML, DEFAULT_WATER_SOFT_ML } from './waterAlert';
+import { DEFAULT_WATER_SOFT_ML } from './waterAlert';
 
 export type ThemePreference =
   | 'system'
@@ -37,10 +37,9 @@ export const THEME_PREFERENCES: ThemePreference[] = [
 export interface SettingsPreferences {
   theme: ThemePreference;
   uiScale: UIScalePreference;
-  /** Soft low-water warning threshold in ml (0 = off). */
+  /** Soft low-water warning threshold in ml (0 = off). The hard block is the
+   * machine's own refill threshold (configured via gateway.setRefillLevel). */
   waterSoftLimitMl: number;
-  /** Hard low-water block threshold in ml (0 = rely on the machine's own block). */
-  waterHardLimitMl: number;
 }
 
 export interface GatewayStatusModel {
@@ -65,6 +64,8 @@ export interface SettingsShellModel {
   gateway: GatewayStatusModel;
   version: VersionInfoModel;
   cacheKeyCount: number;
+  /** The machine's own low-water refill threshold (mm), or null if unknown. */
+  machineRefillLevelMm: number | null;
 }
 
 export interface BuildSettingsShellModelOptions {
@@ -76,25 +77,23 @@ export interface BuildSettingsShellModelOptions {
   gatewayHost: string;
   machine: MachineSnapshot | null;
   scale: ScaleSnapshot | null;
+  machineRefillLevelMm: number | null;
 }
 
 const themeKey = 'beanie:settings:theme';
 const uiScaleKey = 'beanie:settings:ui-scale';
 const waterSoftKey = 'beanie:settings:water-soft-ml';
-const waterHardKey = 'beanie:settings:water-hard-ml';
 const preservedResetKeys = new Set([
   themeKey,
   uiScaleKey,
-  waterSoftKey,
-  waterHardKey
+  waterSoftKey
 ]);
 
 export function readSettingsPreferences(): SettingsPreferences {
   return {
     theme: readEnum(themeKey, THEME_PREFERENCES, 'dark'),
     uiScale: readEnum(uiScaleKey, ['compact', 'standard', 'large'], 'standard'),
-    waterSoftLimitMl: readNonNegativeNumber(waterSoftKey, DEFAULT_WATER_SOFT_ML),
-    waterHardLimitMl: readNonNegativeNumber(waterHardKey, DEFAULT_WATER_HARD_ML)
+    waterSoftLimitMl: readNonNegativeNumber(waterSoftKey, DEFAULT_WATER_SOFT_ML)
   };
 }
 
@@ -102,7 +101,6 @@ export function writeSettingsPreferences(next: SettingsPreferences): void {
   localStorage.setItem(themeKey, next.theme);
   localStorage.setItem(uiScaleKey, next.uiScale);
   localStorage.setItem(waterSoftKey, String(next.waterSoftLimitMl));
-  localStorage.setItem(waterHardKey, String(next.waterHardLimitMl));
 }
 
 export function applySettingsPreferences(preferences: SettingsPreferences): void {
@@ -123,7 +121,8 @@ export function buildSettingsShellModel(
       buildTime: formatBuildTime(__BUILD_TIME__),
       defaultSkinStatus: 'Not checked by Beanie yet'
     },
-    cacheKeyCount: listResettableBeanieKeys().length
+    cacheKeyCount: listResettableBeanieKeys().length,
+    machineRefillLevelMm: options.machineRefillLevelMm
   };
 }
 

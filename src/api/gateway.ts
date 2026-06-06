@@ -397,6 +397,15 @@ export const gateway = {
     fetchEmpty('machine', `/api/v1/machine/state/${encodeURIComponent(state)}`, {
       method: 'PUT'
     }),
+
+  // Set the DE1's own low-water refill threshold (mm). The machine raises the
+  // `needsWater` state when the tank drops to this level.
+  setRefillLevel: (refillLevel: number) =>
+    fetchEmpty('machine', '/api/v1/machine/waterLevels', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refillLevel: Math.round(refillLevel) })
+    }),
   machineState: () =>
     fetchJson<MachineSnapshot>('machine', '/api/v1/machine/state', readMachineSnapshot),
   machineCapabilities: () =>

@@ -584,7 +584,11 @@ p {
   padding: 8px 10px 10px;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
+  /* Row 1 holds the optional low-water banner (0px when absent); the surface is
+     pinned to row 2 so it always fills regardless of the banner. */
+  grid-template-rows: auto minmax(0, 1fr);
   gap: var(--workbench-gap);
+  row-gap: 0;
   min-width: 0;
   min-height: 0;
 }
@@ -600,6 +604,7 @@ p {
 }
 
 .surface {
+  grid-row: 2;
   display: grid;
   grid-template-rows: 50px 62px minmax(190px, 1fr);
   gap: var(--workbench-gap);
@@ -6772,7 +6777,48 @@ p {
 }
 
 /* ---- Low-water alerts ---- */
-/* Soft = amber tint on the topbar water reading; hard = red. */
+/* Soft warning: a prominent amber banner across the top of the workbench. */
+.water-warning-banner {
+  grid-row: 1;
+  margin-bottom: var(--workbench-gap);
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 14px;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--amber) 60%, var(--line));
+  background: color-mix(in srgb, var(--amber) 20%, var(--panel));
+  color: var(--ink);
+}
+
+.water-warning-banner .icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--amber);
+}
+
+.water-warning-banner strong {
+  flex: none;
+  font-size: 13px;
+  font-weight: 950;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--amber) 70%, var(--ink));
+}
+
+.water-warning-banner span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--soft);
+}
+
+/* Topbar reading: amber tint when soft, red when hard. */
 .top-stat.stat-warn strong {
   color: var(--amber);
 }

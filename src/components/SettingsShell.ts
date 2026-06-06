@@ -18,7 +18,15 @@ import {
   type PluginSettingField,
   type PluginSettingsSpec
 } from '../domain/pluginSettings';
-import { WATER_HARD_OPTIONS_ML, WATER_SOFT_OPTIONS_ML } from '../domain/waterAlert';
+import {
+  MACHINE_REFILL_MAX_MM,
+  MACHINE_REFILL_MIN_MM,
+  MACHINE_REFILL_STEP_MM,
+  WATER_SOFT_MAX_ML,
+  WATER_SOFT_MIN_ML,
+  WATER_SOFT_STEP_ML,
+  waterLevelMl
+} from '../domain/waterAlert';
 import type { PluginInfo } from '../api/settings';
 import type { DecentAccountStatus } from '../api/settings';
 import { icon } from './icons';
@@ -90,7 +98,7 @@ function settingsSections(
       terms: 'appearance theme ui skin update diagnostics about version brightness screen display water level low tank refill warning block alert',
       html: [
         renderSection('Beanie display', renderAppearanceRows(model.preferences)),
-        renderSection('Water level alerts', renderWaterAlertRows(model.preferences)),
+        renderSection('Water level alerts', renderWaterAlertRows(model)),
         bundle ? renderDisplayRuntimeSection(bundle) : '',
         bundle ? renderSpecSectionById('app-skin', bundle) : '',
         renderSection('About', renderAboutRows(model))
@@ -508,19 +516,60 @@ function renderAppearanceRows(preferences: SettingsPreferences): string {
   `;
 }
 
-function renderWaterAlertRows(preferences: SettingsPreferences): string {
-  const mlOptions = (values: readonly number[], zeroLabel: string): Array<[string, string]> =>
-    values.map((ml) => [String(ml), ml === 0 ? zeroLabel : `${ml} ml`] as [string, string]);
+function numberEditButton(opts: {
+  target: string;
+  title: string;
+  value: string;
+  display: string;
+  min: number;
+  max: number;
+  step: number;
+  unit: string;
+  disabled?: boolean;
+}): string {
+  if (opts.disabled) {
+    return `<button type="button" class="settings-input number-edit-button settings-number-button" disabled><span>${escapeHtml(opts.display)}</span></button>`;
+  }
+  return `<button type="button" class="settings-input number-edit-button settings-number-button" data-action="open-number-edit" data-target="${escapeAttr(opts.target)}" data-title="${escapeAttr(opts.title)}" data-value="${escapeAttr(opts.value)}" data-min="${opts.min}" data-max="${opts.max}" data-step="${opts.step}" data-unit="${escapeAttr(opts.unit)}"><span>${escapeHtml(opts.display)}</span></button>`;
+}
+
+function renderWaterAlertRows(model: SettingsShellModel): string {
+  const soft = model.preferences.waterSoftLimitMl;
+  const refill = model.machineRefillLevelMm;
+  const refillKnown = refill != null;
+  const refillMm = refillKnown ? Math.round(refill) : 0;
+  const refillMl = refillKnown ? waterLevelMl(refill) : null;
   return `
     ${settingControlRow(
       'Low-water warning',
-      'Tint the water reading when the tank drops to this level',
-      segmentedControl('settings-water-soft', String(preferences.waterSoftLimitMl), mlOptions(WATER_SOFT_OPTIONS_ML, 'Off'))
+      'Show a banner and flag the tank reading when it drops to this level',
+      numberEditButton({
+        target: 'water-soft',
+        title: 'Low-water warning',
+        value: String(soft),
+        display: soft > 0 ? `${soft} ml` : 'Off',
+        min: WATER_SOFT_MIN_ML,
+        max: WATER_SOFT_MAX_ML,
+        step: WATER_SOFT_STEP_ML,
+        unit: 'ml'
+      })
     )}
     ${settingControlRow(
-      'Block shots at',
-      'Show a full-screen refill popup. The machine also blocks on its own (“Machine”).',
-      segmentedControl('settings-water-hard', String(preferences.waterHardLimitMl), mlOptions(WATER_HARD_OPTIONS_ML, 'Machine'))
+      'Machine refill level',
+      refillKnown
+        ? `The DE1 pauses shots and shows the refill popup at this tank level${refillMl != null ? ` (≈ ${refillMl} ml)` : ''}`
+        : 'Connect the machine to set its refill level',
+      numberEditButton({
+        target: 'machine-refill',
+        title: 'Machine refill level',
+        value: String(refillMm),
+        display: refillKnown ? `${refillMm} mm` : '--',
+        min: MACHINE_REFILL_MIN_MM,
+        max: MACHINE_REFILL_MAX_MM,
+        step: MACHINE_REFILL_STEP_MM,
+        unit: 'mm',
+        disabled: !refillKnown
+      })
     )}
   `;
 }

@@ -309,7 +309,9 @@ interface NumberEditTarget {
     | 'flow-calibration'
     | 'bean-picker-batch'
     | 'shot-edit'
-    | 'form-field';
+    | 'form-field'
+    | 'water-soft'
+    | 'machine-refill';
   group?: string;
   key?: string;
   beanId?: string;
@@ -449,6 +451,8 @@ interface AppState {
   cleaningThreshold: number;
   /** User dismissed the current hard low-water block (re-arms when it recovers). */
   waterAlertDismissed: boolean;
+  /** The machine's own refill threshold in mm (from the waterLevels socket). */
+  machineRefillLevel: number | null;
 }
 
 interface LiveReadoutEls {
@@ -544,7 +548,8 @@ export class BeanieApp {
     cleaning: readCleaningState(),
     cleaningProfileOverride: readCleaningProfileOverride(),
     cleaningThreshold: readCleaningThreshold(),
-    waterAlertDismissed: false
+    waterAlertDismissed: false,
+    machineRefillLevel: null
   };
 
   private applyTimer: number | null = null;
@@ -2029,12 +2034,19 @@ export class BeanieApp {
     this.waterSocket = ws;
     ws.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data) as { currentLevel?: unknown };
+        const data = JSON.parse(event.data) as { currentLevel?: unknown; refillLevel?: unknown };
         const level = typeof data.currentLevel === 'number' && Number.isFinite(data.currentLevel) ? data.currentLevel : null;
+        const refill = typeof data.refillLevel === 'number' && Number.isFinite(data.refillLevel) ? data.refillLevel : null;
+        // The machine's own refill threshold rarely changes; re-render when it
+        // does so the Settings control reflects the live value.
+        if (refill !== this.state.machineRefillLevel) {
+          this.state.machineRefillLevel = refill;
+          if (this.state.view === 'settings') this.setState({});
+        }
         if (level === this.state.waterLevel) return;
         this.state.waterLevel = level;
-        // A band crossing (soft/hard) restyles the topbar + toggles the blocking
-        // overlay, so re-render; otherwise just patch the readout text cheaply.
+        // A soft-band crossing restyles the topbar + toggles the warning banner,
+        // so re-render; otherwise just patch the readout text cheaply.
         if (this.syncWaterAlert()) {
           this.setState({});
           return;
@@ -2371,8 +2383,7 @@ export class BeanieApp {
     return waterAlertLevel({
       levelMm: this.state.waterLevel,
       machineState: this.state.machine?.state?.state ?? null,
-      softLimitMl: this.state.settingsPreferences.waterSoftLimitMl,
-      hardLimitMl: this.state.settingsPreferences.waterHardLimitMl
+      softLimitMl: this.state.settingsPreferences.waterSoftLimitMl
     });
   }
 
@@ -2385,6 +2396,24 @@ export class BeanieApp {
     this.lastWaterAlert = next;
     if (next !== 'hard') this.state.waterAlertDismissed = false;
     return true;
+  }
+
+  // Push a new refill threshold (mm) to the machine; the DE1 then raises
+  // `needsWater` (and the blocking popup) once the tank reaches it.
+  private async setMachineRefillLevel(mm: number): Promise<void> {
+    const previous = this.state.machineRefillLevel;
+    this.setState({ machineRefillLevel: mm, status: 'Updating machine refill level…' });
+    if (this.state.demo) {
+      this.setState({ status: 'Machine refill level set (demo)' });
+      return;
+    }
+    try {
+      await gateway.setRefillLevel(mm);
+      this.setState({ status: 'Machine refill level set' });
+    } catch (error) {
+      console.error('[Beanie] Set refill level failed', error);
+      this.setState({ machineRefillLevel: previous, status: 'Set refill level failed' });
+    }
   }
 
   // Coalesce many incoming frames into at most one canvas draw per animation
@@ -2777,16 +2806,6 @@ export class BeanieApp {
       case 'water-alert-dismiss':
         this.setState({ waterAlertDismissed: true });
         break;
-      case 'settings-water-soft': {
-        const ml = Number(value);
-        if (Number.isFinite(ml)) this.updateSettingsPreferences({ waterSoftLimitMl: ml });
-        break;
-      }
-      case 'settings-water-hard': {
-        const ml = Number(value);
-        if (Number.isFinite(ml)) this.updateSettingsPreferences({ waterHardLimitMl: ml });
-        break;
-      }
       case 'stop':
         await this.stopMachineService();
         break;
@@ -4409,6 +4428,16 @@ export class BeanieApp {
       this.setFlowCalibrationDraft(Number(value));
       return;
     }
+    if (edit.target === 'water-soft') {
+      const ml = Number(value);
+      if (Number.isFinite(ml)) this.updateSettingsPreferences({ waterSoftLimitMl: Math.max(0, ml) });
+      return;
+    }
+    if (edit.target === 'machine-refill') {
+      const mm = Number(value);
+      if (Number.isFinite(mm)) await this.setMachineRefillLevel(Math.max(0, mm));
+      return;
+    }
     if (edit.target === 'bean-picker-batch' && edit.beanId && edit.batchId && edit.name) {
       await this.saveBeanPickerBatchValue(edit.beanId, edit.batchId, edit.name, value);
       return;
@@ -4535,6 +4564,7 @@ export class BeanieApp {
     return `
       ${this.renderTopbar()}
       <main class="workbench">
+        ${this.renderWaterWarningBanner()}
         <section class="surface">
           ${this.renderHero(bean)}
           ${this.renderRecipeEditor()}
@@ -5357,6 +5387,18 @@ export class BeanieApp {
     `;
   }
 
+  private renderWaterWarningBanner(): string {
+    if (this.currentWaterAlert() !== 'soft') return '';
+    const ml = this.state.waterLevel != null ? water(this.state.waterLevel) : null;
+    return `
+      <div class="water-warning-banner" role="status">
+        ${icon('droplet')}
+        <strong>Water low</strong>
+        <span>${ml ? `About ${escapeHtml(ml)} left — refill soon to avoid a pause.` : 'Refill soon to avoid a pause.'}</span>
+      </div>
+    `;
+  }
+
   private renderWaterAlert(): string {
     if (this.currentWaterAlert() !== 'hard' || this.state.waterAlertDismissed) return '';
     const machineBlocked = this.state.machine?.state?.state === 'needsWater';
@@ -5999,7 +6041,8 @@ export class BeanieApp {
       status: this.state.status,
       gatewayHost: gatewayHttpOrigin() || location.origin,
       machine: this.state.machine,
-      scale: this.state.scale
+      scale: this.state.scale,
+      machineRefillLevelMm: this.state.machineRefillLevel
     });
   }
 

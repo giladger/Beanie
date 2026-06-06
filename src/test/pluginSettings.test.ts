@@ -136,7 +136,8 @@ function equal<T>(actual: T, expected: T): void {
 function settingsModel(): SettingsShellModel {
   return {
     query: '',
-    preferences: { theme: 'dark', uiScale: 'standard', waterSoftLimitMl: 400, waterHardLimitMl: 0 },
+    preferences: { theme: 'dark', uiScale: 'standard', waterSoftLimitMl: 400 },
+    machineRefillLevelMm: null,
     gateway: {
       label: 'Connected',
       detail: 'Test gateway',
