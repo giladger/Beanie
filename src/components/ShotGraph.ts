@@ -175,7 +175,7 @@ function renderStepMarkers(
           detailed && index < labelLimit
             ? `<text class="chart-axis-label" x="${(x + 4).toFixed(1)}" y="${(plot.y + 13 + (index % 2) * 14).toFixed(1)}">${escapeHtml(marker.label)}</text>`
             : '';
-        return `<path class="chart-step-marker" d="${verticalDashPath(x, plot.y, plot.y + plot.height, 5, 5, plot.y)}" stroke="rgba(255,255,255,0.44)" fill="none" />
+        return `<path class="chart-step-marker" d="${verticalDashPath(x, plot.y, plot.y + plot.height, 5, 5, plot.y)}" fill="none" />
           ${label}`;
       })
       .join('')}
@@ -277,12 +277,12 @@ function renderLegend(width: number, series: ShotGraphSeries[]): string {
 function renderMissingNotice(model: ShotGraphModel, plot: PlotArea): string {
   if (model.missingSeries.length === 0 || model.missingSeries.length === 8) return '';
   const missing = model.missingSeries.map((series) => series.shortLabel.toLowerCase()).join(', ');
-  return `<text class="legend-label" x="${plot.x + 8}" y="${plot.y + plot.height - 9}" fill="rgba(255,255,255,0.5)">Missing: ${escapeHtml(missing)}</text>`;
+  return `<text class="legend-label chart-missing-label" x="${plot.x + 8}" y="${plot.y + plot.height - 9}">Missing: ${escapeHtml(missing)}</text>`;
 }
 
 function renderNoData(width: number, height: number, detailed: boolean): string {
   if (!detailed) {
-    return `<line x1="16" y1="${height - 16}" x2="${width - 16}" y2="16" stroke="rgba(255,255,255,0.18)" stroke-width="2" />`;
+    return `<line class="chart-nodata-line" x1="16" y1="${height - 16}" x2="${width - 16}" y2="16" stroke-width="2" />`;
   }
   return `<rect class="chart-plot" x="42" y="42" width="${width - 64}" height="${height - 80}" />
     <text class="legend-label" x="${width / 2}" y="${height / 2}" text-anchor="middle">No chart data</text>`;

@@ -145,6 +145,7 @@ import {
   buildSettingsShellModel,
   readSettingsPreferences,
   resetBeanieCache,
+  THEME_PREFERENCES,
   type SettingsPreferences,
   type ThemePreference,
   type UIScalePreference,
@@ -7377,7 +7378,7 @@ function signatureOf(
 }
 
 function isThemePreference(value: string | undefined): value is ThemePreference {
-  return value === 'system' || value === 'dark' || value === 'light';
+  return value != null && (THEME_PREFERENCES as string[]).includes(value);
 }
 
 function isUIScalePreference(value: string | undefined): value is UIScalePreference {

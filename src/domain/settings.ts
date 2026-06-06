@@ -1,7 +1,31 @@
 import type { MachineSnapshot, ScaleSnapshot } from '../api/types';
 
-export type ThemePreference = 'system' | 'dark' | 'light';
+export type ThemePreference =
+  | 'system'
+  | 'dark'
+  | 'light'
+  | 'espresso'
+  | 'latte'
+  | 'nord'
+  | 'solarized'
+  | 'contrast';
 export type UIScalePreference = 'compact' | 'standard' | 'large';
+
+/**
+ * Every selectable theme. Each value (except `system`) must have a matching
+ * `[data-theme="<value>"]` palette block in styles.css. `system` follows the OS
+ * light/dark preference. Used for validation and to render the Settings picker.
+ */
+export const THEME_PREFERENCES: ThemePreference[] = [
+  'system',
+  'dark',
+  'light',
+  'espresso',
+  'latte',
+  'nord',
+  'solarized',
+  'contrast'
+];
 
 export interface SettingsPreferences {
   theme: ThemePreference;
@@ -52,7 +76,7 @@ const preservedResetKeys = new Set([
 
 export function readSettingsPreferences(): SettingsPreferences {
   return {
-    theme: readEnum(themeKey, ['system', 'dark', 'light'], 'dark'),
+    theme: readEnum(themeKey, THEME_PREFERENCES, 'dark'),
     uiScale: readEnum(uiScaleKey, ['compact', 'standard', 'large'], 'standard')
   };
 }

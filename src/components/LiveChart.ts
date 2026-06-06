@@ -29,12 +29,50 @@ export interface LiveChartOptions {
 const MARGIN_DETAILED = { top: 18, right: 22, bottom: 64, left: 42 };
 const MARGIN_COMPACT = { top: 7, right: 7, bottom: 7, left: 7 };
 
-const AXIS_LINE = 'rgba(255,255,255,0.22)';
-const GRID_LINE = 'rgba(255,255,255,0.1)';
-const MARKER_LINE = 'rgba(255,255,255,0.44)';
-const TEXT_COLOR = 'rgba(245,247,248,0.82)';
-const MUTED_TEXT = 'rgba(255,255,255,0.5)';
-const NODATA_LINE = 'rgba(255,255,255,0.18)';
+// Chart chrome colors. These are resolved from CSS theme tokens at draw time
+// (see refreshThemeColors) so the canvas tracks the active skin theme. The
+// literals below are the dark-theme fallbacks used before the first resolve and
+// in non-DOM (unit-test) environments.
+let AXIS_LINE = 'rgba(255,255,255,0.22)';
+let GRID_LINE = 'rgba(255,255,255,0.1)';
+let MARKER_LINE = 'rgba(255,255,255,0.44)';
+let TEXT_COLOR = 'rgba(245,247,248,0.82)';
+let MUTED_TEXT = 'rgba(255,255,255,0.5)';
+let NODATA_LINE = 'rgba(255,255,255,0.18)';
+let themeCacheKey = '';
+
+// Resolve the chart CSS custom properties (which are color-mix()/var()
+// expressions) into concrete color strings the canvas understands, by letting
+// the browser compute them on a throwaway probe element. Cached by the active
+// theme so the DOM work runs once per theme switch rather than once per frame.
+function refreshThemeColors(): void {
+  if (typeof document === 'undefined' || document.body == null) return;
+  const root = document.documentElement;
+  const prefersDark =
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-color-scheme: dark)').matches
+      : true;
+  const key = `${root.dataset.theme ?? ''}|${prefersDark}`;
+  if (key === themeCacheKey) return;
+
+  const probe = document.createElement('span');
+  probe.style.cssText = 'position:absolute;opacity:0;pointer-events:none';
+  document.body.appendChild(probe);
+  const read = (token: string, fallback: string): string => {
+    probe.style.color = `var(${token})`;
+    const value = getComputedStyle(probe).color;
+    return value ? value : fallback;
+  };
+  AXIS_LINE = read('--chart-axis', AXIS_LINE);
+  GRID_LINE = read('--chart-grid', GRID_LINE);
+  MARKER_LINE = read('--chart-marker', MARKER_LINE);
+  TEXT_COLOR = read('--chart-text', TEXT_COLOR);
+  MUTED_TEXT = read('--chart-text-muted', MUTED_TEXT);
+  NODATA_LINE = read('--chart-nodata', NODATA_LINE);
+  probe.remove();
+  themeCacheKey = key;
+}
+
 const TARGET_JUMP_MIN_DELTA = 0.5;
 const TARGET_JUMP_MAX_SECONDS = 0.35;
 
@@ -152,6 +190,7 @@ export class LiveChart {
   }
 
   draw(): void {
+    refreshThemeColors();
     const ctx = this.ctx;
     const width = this.cssWidth;
     const height = this.cssHeight;

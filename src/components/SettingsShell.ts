@@ -491,12 +491,8 @@ function renderAppearanceRows(preferences: SettingsPreferences): string {
   return `
     ${settingControlRow(
       'Theme',
-      'Skin color mode preference',
-      segmentedControl('settings-theme', preferences.theme, [
-        ['dark', 'Dark'],
-        ['light', 'Light'],
-        ['system', 'System']
-      ] satisfies Array<[ThemePreference, string]>)
+      'Skin color theme (tap a swatch to preview it live)',
+      themePicker(preferences.theme)
     )}
     ${settingControlRow(
       'UI scale',
@@ -563,6 +559,37 @@ function settingControlRow(label: string, detail: string, control: string): stri
         <small>${escapeHtml(detail)}</small>
       </div>
       ${control}
+    </div>
+  `;
+}
+
+const THEME_OPTIONS: Array<[ThemePreference, string]> = [
+  ['system', 'System'],
+  ['dark', 'Dark'],
+  ['light', 'Light'],
+  ['espresso', 'Espresso'],
+  ['latte', 'Latte'],
+  ['nord', 'Nord'],
+  ['solarized', 'Solarized'],
+  ['contrast', 'Contrast']
+];
+
+// A grid of theme swatches. Each preview carries data-theme="<value>" so the
+// theme's palette tokens cascade into it (styles.css), letting the chip render
+// the real colors without duplicating any palette here.
+function themePicker(activeValue: ThemePreference): string {
+  return `
+    <div class="theme-picker" role="group" aria-label="Theme">
+      ${THEME_OPTIONS.map(([value, label]) => `
+        <button type="button" class="theme-swatch ${activeValue === value ? 'active' : ''}" data-action="settings-theme" data-value="${escapeAttr(value)}" aria-pressed="${activeValue === value}">
+          <span class="theme-swatch-preview ${value === 'system' ? 'system' : ''}" data-theme="${escapeAttr(value)}" aria-hidden="true">
+            <i class="theme-swatch-dot"></i>
+            <i class="theme-swatch-bar"></i>
+            <i class="theme-swatch-ink"></i>
+          </span>
+          <span class="theme-swatch-name">${escapeHtml(label)}</span>
+        </button>
+      `).join('')}
     </div>
   `;
 }

@@ -1,19 +1,39 @@
+/*
+ * ============================================================================
+ * THEMING
+ * ----------------------------------------------------------------------------
+ * A theme is just a small set of PALETTE tokens. Everything else (lines,
+ * overlays, accent tints, chart chrome) is DERIVED from the palette below via
+ * color-mix(), so a new theme only has to override ~15 source colors.
+ *
+ * To add a theme: copy a `[data-theme="…"]` block near the bottom of this file
+ * and change the palette values. The picker in Settings (SettingsShell.ts) and
+ * the ThemePreference union (domain/settings.ts) list the available themes.
+ *
+ * The dual selector `:root[data-theme="x"], [data-theme="x"]` lets the same
+ * palette drive both the whole app (on <html>) and the little theme-swatch
+ * previews in Settings (on a nested element).
+ * ============================================================================
+ */
+
 :root {
-  color-scheme: dark;
-  --bg: #07090b;
-  --panel: #11171c;
-  --panel-2: #171e24;
-  --panel-3: #222b32;
-  --ink: #f5f7f8;
-  --soft: #d4dde2;
-  --muted: #93a0a8;
-  --line: rgba(255, 255, 255, 0.12);
-  --line-strong: rgba(255, 255, 255, 0.22);
-  --teal: #5bd8c8;
-  --green: #87de81;
-  --red: #ff7468;
-  --blue: #7aa8ff;
-  --amber: #ffc260;
+  /* ---- Derived from the palette — themes should not need to touch these ---- */
+  --line: color-mix(in srgb, var(--ink) 12%, transparent);
+  --line-strong: color-mix(in srgb, var(--ink) 22%, transparent);
+  --line-soft: color-mix(in srgb, var(--ink) 8%, transparent);
+
+  --teal: var(--accent); /* legacy alias: the skin refers to the accent as --teal */
+
+  /* Chart chrome — the SVG/canvas renderers read these so graphs match the theme */
+  --chart-plot-bg: rgba(0, 0, 0, 0.16);
+  --chart-axis: color-mix(in srgb, var(--ink) 22%, transparent);
+  --chart-grid: color-mix(in srgb, var(--ink) 10%, transparent);
+  --chart-marker: color-mix(in srgb, var(--ink) 44%, transparent);
+  --chart-text: color-mix(in srgb, var(--ink) 82%, transparent);
+  --chart-text-muted: color-mix(in srgb, var(--ink) 50%, transparent);
+  --chart-nodata: color-mix(in srgb, var(--ink) 18%, transparent);
+
+  /* ---- Layout (not theme related) ---- */
   --radius: 8px;
   --topbar: 54px;
   --workbench-max: 1366px;
@@ -24,7 +44,36 @@
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-:root[data-theme="light"] {
+/* ===== Palette: Dark (default) ===== */
+:root,
+:root[data-theme="dark"],
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #07090b;
+  --panel: #11171c;
+  --panel-2: #171e24;
+  --panel-3: #222b32;
+  --ink: #f5f7f8;
+  --soft: #d4dde2;
+  --muted: #93a0a8;
+  --accent: #5bd8c8;
+  --green: #87de81;
+  --red: #ff7468;
+  --blue: #7aa8ff;
+  --amber: #ffc260;
+  --steam: #79cbd6;
+  --water: #8baee8;
+  --on-accent: #071015; /* text/icon sitting on a bright accent or ink button */
+  --scrim: rgba(0, 0, 0, 0.64); /* modal / overlay backdrop */
+  /* Profile-shape series (profile preview + de1 editor) */
+  --profile-pressure: #47e098;
+  --profile-flow: #98c5ff;
+  --profile-temp: #ff888c;
+}
+
+/* ===== Palette: Light ===== */
+:root[data-theme="light"],
+[data-theme="light"] {
   color-scheme: light;
   --bg: #f4f6f7;
   --panel: #ffffff;
@@ -33,10 +82,22 @@
   --ink: #12191e;
   --soft: #2c3a42;
   --muted: #64727a;
-  --line: rgba(10, 20, 26, 0.14);
-  --line-strong: rgba(10, 20, 26, 0.24);
+  --accent: #18b6a3;
+  --green: #2f9e44;
+  --red: #e23b32;
+  --blue: #3b6fd4;
+  --amber: #c8881a;
+  --steam: #3a9aab;
+  --water: #3f6fc4;
+  --on-accent: #ffffff;
+  --scrim: rgba(12, 20, 26, 0.42);
+  --chart-plot-bg: rgba(12, 20, 26, 0.06);
+  --profile-pressure: #2f9e44;
+  --profile-flow: #3b6fd4;
+  --profile-temp: #e23b32;
 }
 
+/* System = follow the OS; only the light side needs overriding (dark is default) */
 @media (prefers-color-scheme: light) {
   :root[data-theme="system"] {
     color-scheme: light;
@@ -47,9 +108,132 @@
     --ink: #12191e;
     --soft: #2c3a42;
     --muted: #64727a;
-    --line: rgba(10, 20, 26, 0.14);
-    --line-strong: rgba(10, 20, 26, 0.24);
+    --accent: #18b6a3;
+    --green: #2f9e44;
+    --red: #e23b32;
+    --blue: #3b6fd4;
+    --amber: #c8881a;
+    --steam: #3a9aab;
+    --water: #3f6fc4;
+    --on-accent: #ffffff;
+    --scrim: rgba(12, 20, 26, 0.42);
+    --chart-plot-bg: rgba(12, 20, 26, 0.06);
+    --profile-pressure: #2f9e44;
+    --profile-flow: #3b6fd4;
+    --profile-temp: #e23b32;
   }
+}
+
+/* ===== Palette: Espresso (warm dark, crema accent) ===== */
+:root[data-theme="espresso"],
+[data-theme="espresso"] {
+  color-scheme: dark;
+  --bg: #1a1310;
+  --panel: #241a15;
+  --panel-2: #2f231b;
+  --panel-3: #3d2e23;
+  --ink: #f3e7da;
+  --soft: #d6c0ac;
+  --muted: #a78b76;
+  --accent: #e0a96b;
+  --green: #a7d083;
+  --red: #f07a60;
+  --blue: #98b6e6;
+  --amber: #f0b757;
+  --steam: #9cc6c0;
+  --water: #98b6e6;
+  --on-accent: #2a1a0e;
+}
+
+/* ===== Palette: Latte (warm light, espresso-brown accent) ===== */
+:root[data-theme="latte"],
+[data-theme="latte"] {
+  color-scheme: light;
+  --bg: #f3ece2;
+  --panel: #fffaf3;
+  --panel-2: #efe5d7;
+  --panel-3: #e2d4c1;
+  --ink: #2c2018;
+  --soft: #4f3f33;
+  --muted: #8a7765;
+  --accent: #9c5a2c;
+  --green: #4a8a3c;
+  --red: #c2412f;
+  --blue: #3f6fb0;
+  --amber: #b9791b;
+  --steam: #3f8a92;
+  --water: #3f6fb0;
+  --on-accent: #fff6ec;
+  --scrim: rgba(40, 28, 18, 0.4);
+  --chart-plot-bg: rgba(44, 32, 24, 0.06);
+  --profile-pressure: #4a8a3c;
+  --profile-flow: #3f6fb0;
+  --profile-temp: #c2412f;
+}
+
+/* ===== Palette: Nord (cool arctic blue-gray) ===== */
+:root[data-theme="nord"],
+[data-theme="nord"] {
+  color-scheme: dark;
+  --bg: #2e3440;
+  --panel: #343b49;
+  --panel-2: #3b4252;
+  --panel-3: #434c5e;
+  --ink: #eceff4;
+  --soft: #d8dee9;
+  --muted: #9099ab;
+  --accent: #88c0d0;
+  --green: #a3be8c;
+  --red: #bf616a;
+  --blue: #81a1c1;
+  --amber: #ebcb8b;
+  --steam: #8fbcbb;
+  --water: #81a1c1;
+  --on-accent: #2e3440;
+}
+
+/* ===== Palette: Solarized (dark) ===== */
+:root[data-theme="solarized"],
+[data-theme="solarized"] {
+  color-scheme: dark;
+  --bg: #002b36;
+  --panel: #073642;
+  --panel-2: #0a4150;
+  --panel-3: #0e4d5e;
+  --ink: #eee8d5;
+  --soft: #93a1a1;
+  --muted: #768e92;
+  --accent: #2aa198;
+  --green: #859900;
+  --red: #dc322f;
+  --blue: #268bd2;
+  --amber: #b58900;
+  --steam: #2aa198;
+  --water: #268bd2;
+  --on-accent: #002b36;
+}
+
+/* ===== Palette: High contrast (accessibility) ===== */
+:root[data-theme="contrast"],
+[data-theme="contrast"] {
+  color-scheme: dark;
+  --bg: #000000;
+  --panel: #0c0c0c;
+  --panel-2: #161616;
+  --panel-3: #242424;
+  --ink: #ffffff;
+  --soft: #ececec;
+  --muted: #b9b9b9;
+  --accent: #ffd400;
+  --green: #38e06a;
+  --red: #ff5252;
+  --blue: #4db5ff;
+  --amber: #ffb300;
+  --steam: #4fd6e0;
+  --water: #4db5ff;
+  --on-accent: #000000;
+  --scrim: rgba(0, 0, 0, 0.8);
+  --chart-plot-bg: color-mix(in srgb, var(--ink) 6%, transparent);
 }
 
 :root[data-ui-scale="compact"] {
@@ -128,8 +312,8 @@ p {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   background:
-    linear-gradient(120deg, rgba(91, 216, 200, 0.08), transparent 45%),
-    linear-gradient(250deg, rgba(122, 168, 255, 0.08), transparent 48%),
+    linear-gradient(120deg, color-mix(in srgb, var(--teal) 8%, transparent), transparent 45%),
+    linear-gradient(250deg, color-mix(in srgb, var(--blue) 8%, transparent), transparent 48%),
     var(--bg);
 }
 
@@ -147,7 +331,7 @@ p {
   min-height: var(--topbar);
   padding: 7px 14px;
   border-bottom: 1px solid var(--line);
-  background: rgba(7, 9, 11, 0.94);
+  background: color-mix(in srgb, var(--bg) 94%, transparent);
 }
 
 .eyebrow,
@@ -194,7 +378,7 @@ p {
 }
 
 .top-stat + .top-stat {
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
 }
 
 .top-stat label {
@@ -257,9 +441,9 @@ p {
 
 .machine-command.active {
   border-color: color-mix(in srgb, var(--teal) 72%, var(--line));
-  background: rgba(91, 216, 200, 0.16);
+  background: color-mix(in srgb, var(--teal) 16%, transparent);
   color: var(--ink);
-  box-shadow: inset 0 0 0 1px rgba(91, 216, 200, 0.16);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--teal) 16%, transparent);
 }
 
 .command,
@@ -284,7 +468,7 @@ p {
 .command.primary {
   background: var(--ink);
   border-color: var(--ink);
-  color: #071015;
+  color: var(--bg);
 }
 
 .primary-button,
@@ -302,7 +486,7 @@ p {
 .primary-button {
   border-color: var(--ink);
   background: var(--ink);
-  color: #071015;
+  color: var(--bg);
 }
 
 .secondary-button {
@@ -320,13 +504,13 @@ p {
 }
 
 .danger-icon {
-  border-color: rgba(255, 116, 104, 0.44);
+  border-color: color-mix(in srgb, var(--red) 44%, transparent);
   background: color-mix(in srgb, var(--red) 10%, var(--panel-2));
   color: var(--red);
 }
 
 .command.danger {
-  border-color: rgba(255, 116, 104, 0.42);
+  border-color: color-mix(in srgb, var(--red) 42%, transparent);
   color: var(--red);
 }
 
@@ -349,7 +533,7 @@ p {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 5%, transparent);
 }
 
 .surface {
@@ -387,7 +571,7 @@ p {
   padding: 0 9px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.045);
+  background: color-mix(in srgb, var(--ink) 4.5%, transparent);
 }
 
 .search input,
@@ -422,7 +606,7 @@ p {
 }
 
 .bean-row.active {
-  background: rgba(91, 216, 200, 0.13);
+  background: color-mix(in srgb, var(--teal) 13%, transparent);
   box-shadow: inset 3px 0 0 var(--teal);
 }
 
@@ -552,7 +736,7 @@ p {
 
 .switch {
   padding: 0 9px;
-  background: rgba(91, 216, 200, 0.12);
+  background: color-mix(in srgb, var(--teal) 12%, transparent);
   cursor: pointer;
 }
 
@@ -569,8 +753,8 @@ p {
   min-width: 0;
   min-height: 0;
   padding: 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
 .control,
@@ -592,7 +776,7 @@ p {
 
 .control,
 .select-control {
-  border-left: 1px solid rgba(255, 255, 255, 0.09);
+  border-left: 1px solid color-mix(in srgb, var(--ink) 9%, transparent);
 }
 
 .select-control:first-child {
@@ -620,7 +804,7 @@ p {
   place-items: center;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: rgba(255, 255, 255, 0.06);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
   color: var(--soft);
 }
 
@@ -669,7 +853,7 @@ p {
   padding: 0 7px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: #202830;
+  background: var(--panel-3);
   font-weight: 900;
 }
 
@@ -679,7 +863,7 @@ p {
   display: grid;
   grid-template-rows: auto 1fr;
   gap: 6px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
 .quick-head {
@@ -714,7 +898,7 @@ p {
   padding: 4px 8px;
   border: 0;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.075);
+  background: color-mix(in srgb, var(--ink) 7.5%, transparent);
   color: var(--soft);
   font-size: 11px;
   font-weight: 900;
@@ -730,7 +914,7 @@ p {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 6px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
 .command {
@@ -780,11 +964,11 @@ p {
 }
 
 .shot-item:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
 }
 
 .shot-item.active {
-  background: rgba(91, 216, 200, 0.13);
+  background: color-mix(in srgb, var(--teal) 13%, transparent);
   box-shadow: inset 3px 0 0 var(--teal);
 }
 
@@ -975,7 +1159,7 @@ p {
 
 .icon-tool-wake {
   border-color: color-mix(in srgb, var(--teal) 62%, var(--line));
-  background: rgba(91, 216, 200, 0.14);
+  background: color-mix(in srgb, var(--teal) 14%, transparent);
   color: var(--ink);
 }
 
@@ -1015,7 +1199,7 @@ p {
   align-items: stretch;
   justify-content: center;
   padding: 18px;
-  background: rgba(4, 6, 8, 0.82);
+  background: var(--scrim);
   backdrop-filter: blur(2px);
 }
 
@@ -1060,7 +1244,7 @@ p {
 }
 
 .live-stop-button:not(:disabled) {
-  border-color: rgba(255, 116, 104, 0.46);
+  border-color: color-mix(in srgb, var(--red) 46%, transparent);
   color: var(--red);
 }
 
@@ -1144,10 +1328,10 @@ p {
   display: block;
   border-radius: 7px;
   background:
-    linear-gradient(to right, rgba(255, 255, 255, 0.07) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.07) 1px, transparent 1px);
+    linear-gradient(to right, color-mix(in srgb, var(--ink) 7%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--ink) 7%, transparent) 1px, transparent 1px);
   background-size: 52px 100%, 100% 28px;
-  background-color: rgba(0, 0, 0, 0.16);
+  background-color: var(--chart-plot-bg);
 }
 
 .shot-graph-large {
@@ -1181,12 +1365,12 @@ p {
 }
 
 .chart-plot {
-  fill: rgba(0, 0, 0, 0.08);
-  stroke: rgba(255, 255, 255, 0.12);
+  fill: var(--chart-plot-bg);
+  stroke: color-mix(in srgb, var(--ink) 12%, transparent);
 }
 
 .chart-grid-line {
-  stroke: rgba(255, 255, 255, 0.09);
+  stroke: color-mix(in srgb, var(--ink) 9%, transparent);
   stroke-width: 1;
 }
 
@@ -1200,6 +1384,18 @@ p {
 .legend-line {
   stroke-width: 4;
   stroke-linecap: round;
+}
+
+.chart-step-marker {
+  stroke: var(--chart-marker);
+}
+
+.chart-missing-label {
+  fill: var(--chart-text-muted);
+}
+
+.chart-nodata-line {
+  stroke: var(--chart-nodata);
 }
 
 .page-body.flow-cal-page {
@@ -1229,11 +1425,11 @@ p {
 }
 
 .flow-cal-ink-machine {
-  color: #7ca8ff;
+  color: var(--blue);
 }
 
 .flow-cal-ink-scale {
-  color: #c79a3a;
+  color: var(--amber);
 }
 
 .flow-cal-split {
@@ -1256,7 +1452,7 @@ p {
 }
 
 .flow-cal-shot.active {
-  background: rgba(91, 216, 200, 0.13);
+  background: color-mix(in srgb, var(--teal) 13%, transparent);
   box-shadow: inset 3px 0 0 var(--teal);
 }
 
@@ -1417,7 +1613,7 @@ p {
   border: 1px solid var(--teal);
   border-radius: var(--radius);
   background: var(--teal);
-  color: #062420;
+  color: var(--on-accent);
   font-size: 15px;
   font-weight: 900;
   white-space: nowrap;
@@ -1473,7 +1669,7 @@ p {
   display: grid;
   place-items: center;
   padding: 20px;
-  background: rgba(0, 0, 0, 0.64);
+  background: var(--scrim);
   z-index: 20;
 }
 
@@ -1554,7 +1750,7 @@ p {
   width: min(480px, 100%);
   gap: 20px;
   padding: 24px 22px 26px;
-  border-color: rgba(244, 127, 91, 0.45);
+  border-color: color-mix(in srgb, var(--red) 45%, transparent);
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
 }
 
@@ -1601,16 +1797,16 @@ p {
 .no-scale-ok {
   width: 132px;
   min-height: 56px;
-  border-color: rgba(244, 127, 91, 0.65);
-  background: #f47f5b;
-  color: #1d120f;
+  border-color: color-mix(in srgb, var(--red) 65%, transparent);
+  background: var(--red);
+  color: var(--on-accent);
   font-size: 15px;
   font-weight: 1000;
-  box-shadow: 0 12px 28px rgba(244, 127, 91, 0.22);
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--red) 22%, transparent);
 }
 
 .no-scale-ok:hover {
-  background: #ff966f;
+  background: color-mix(in srgb, var(--red) 80%, var(--ink));
 }
 
 .bean-picker-backdrop {
@@ -1706,7 +1902,7 @@ p {
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.025);
+  background: color-mix(in srgb, var(--ink) 2.5%, transparent);
 }
 
 .bean-picker-section-head {
@@ -1887,7 +2083,7 @@ p {
   padding: 0 7px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.03);
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
   color: var(--soft) !important;
   text-transform: none !important;
 }
@@ -2074,7 +2270,7 @@ p {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.02);
+  background: color-mix(in srgb, var(--ink) 2%, transparent);
 }
 
 .shot-edit-section legend {
@@ -2368,7 +2564,7 @@ p {
   border: 0;
   border-radius: 999px;
   background: var(--teal);
-  color: #071015;
+  color: var(--on-accent);
   font: inherit;
   font-weight: 900;
 }
@@ -2655,16 +2851,16 @@ p {
 }
 
 .profile-preview-pressure {
-  stroke: #47e098;
+  stroke: var(--profile-pressure);
 }
 
 .profile-preview-flow {
-  stroke: #98c5ff;
+  stroke: var(--profile-flow);
   stroke-width: 6;
 }
 
 .profile-preview-temp {
-  stroke: #ff888c;
+  stroke: var(--profile-temp);
 }
 
 .profile-preview-thermo-tube {
@@ -2757,7 +2953,7 @@ p {
 .pa-select {
   border: 0;
   background: var(--teal);
-  color: #071015;
+  color: var(--on-accent);
 }
 
 .pa-select.is-selected {
@@ -2805,11 +3001,11 @@ p {
 }
 
 .profile-preview-legend-dot.pressure {
-  fill: #47e098;
+  fill: var(--profile-pressure);
 }
 
 .profile-preview-legend-dot.flow {
-  fill: #98c5ff;
+  fill: var(--profile-flow);
 }
 
 .modal-head-actions {
@@ -2877,7 +3073,7 @@ p {
   height: 100%;
   min-height: 0;
   color: var(--ink);
-  --de1-blue: #7aa8ff;
+  --de1-blue: var(--blue);
   --stage-1: #7fb6dd;
   --stage-2: #d9c596;
   --stage-3: #8ccfa0;
@@ -2932,7 +3128,7 @@ p {
 .pe-de1-graph {
   min-height: 0;
   border-radius: var(--radius);
-  background: #272d32;
+  background: var(--panel-3);
   overflow: hidden;
 }
 
@@ -2948,18 +3144,18 @@ p {
 }
 
 .pe-de1-graph .pe-de1-plot {
-  fill: rgba(255, 255, 255, 0.02);
-  stroke: rgba(255, 255, 255, 0.16);
+  fill: color-mix(in srgb, var(--ink) 2%, transparent);
+  stroke: color-mix(in srgb, var(--ink) 16%, transparent);
   stroke-width: 1;
 }
 
 .pe-de1-graph .pe-de1-grid {
-  stroke: rgba(255, 255, 255, 0.1);
+  stroke: color-mix(in srgb, var(--ink) 10%, transparent);
   stroke-width: 1;
 }
 
 .pe-de1-graph .pe-de1-grid.x {
-  stroke: rgba(255, 255, 255, 0.05);
+  stroke: color-mix(in srgb, var(--ink) 5%, transparent);
 }
 
 .pe-de1-graph .pe-de1-tick,
@@ -2982,7 +3178,7 @@ p {
 
 .pe-de1-graph .pe-de1-main-line {
   fill: none;
-  stroke: rgba(245, 247, 248, 0.88);
+  stroke: color-mix(in srgb, var(--ink) 88%, transparent);
   stroke-width: 2.5;
   stroke-linejoin: round;
   stroke-linecap: round;
@@ -2990,7 +3186,7 @@ p {
 
 .pe-de1-graph .pe-de1-node {
   fill: var(--panel);
-  stroke: rgba(245, 247, 248, 0.7);
+  stroke: color-mix(in srgb, var(--ink) 70%, transparent);
   stroke-width: 2;
 }
 
@@ -3077,13 +3273,13 @@ p {
   border-radius: 999px;
   background:
     linear-gradient(var(--track, var(--de1-blue)), var(--track, var(--de1-blue))) left center / var(--fill, 50%) 100% no-repeat,
-    rgba(255, 255, 255, 0.1);
+    color-mix(in srgb, var(--ink) 10%, transparent);
 }
 
 .pe-de1-slider.vertical input[type="range"]::-webkit-slider-runnable-track {
   width: 10px;
   height: auto;
-  background: rgba(255, 255, 255, 0.12);
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
 }
 
 .pe-de1-slider input[type="range"]::-webkit-slider-thumb {
@@ -3106,7 +3302,7 @@ p {
 .pe-de1-slider input[type="range"]::-moz-range-track {
   height: 10px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
 }
 
 .pe-de1-slider input[type="range"]::-moz-range-progress {
@@ -3178,7 +3374,7 @@ p {
 .pe-de1-temp input[type="range"]::-webkit-slider-runnable-track {
   width: 10px;
   border-radius: 999px;
-  background: rgba(255, 116, 104, 0.3);
+  background: color-mix(in srgb, var(--red) 30%, transparent);
 }
 
 .pe-de1-temp input[type="range"]::-webkit-slider-thumb {
@@ -3289,18 +3485,18 @@ p {
 }
 
 .pe-de1-main-line {
-  stroke: #8c929c;
+  stroke: var(--muted);
   stroke-width: 3;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
 .pe-de1-main-line.pressure {
-  stroke: #47e098;
+  stroke: var(--profile-pressure);
 }
 
 .pe-de1-main-line.flow {
-  stroke: #98c5ff;
+  stroke: var(--profile-flow);
 }
 
 .pe-de1-main-fill {
@@ -3308,25 +3504,25 @@ p {
 }
 
 .pe-de1-main-fill.pressure {
-  fill: #47e098;
+  fill: var(--profile-pressure);
 }
 
 .pe-de1-main-fill.flow {
-  fill: #98c5ff;
+  fill: var(--profile-flow);
 }
 
 .pe-de1-node {
-  fill: #a8adb7;
+  fill: var(--soft);
   stroke: var(--panel-2);
   stroke-width: 3;
 }
 
 .pe-de1-node.pressure {
-  fill: #47e098;
+  fill: var(--profile-pressure);
 }
 
 .pe-de1-node.flow {
-  fill: #98c5ff;
+  fill: var(--profile-flow);
 }
 
 .pe-temperature-rail {
@@ -3344,7 +3540,7 @@ p {
   place-items: center;
   border: 0;
   border-radius: 50%;
-  background: #128bd9;
+  background: var(--blue);
   color: white;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
   cursor: pointer;
@@ -3764,12 +3960,12 @@ p {
 }
 
 .pe-chart-bg {
-  fill: rgba(0, 0, 0, 0.12);
+  fill: var(--chart-plot-bg);
   stroke: var(--line);
 }
 
 .pe-chart-grid {
-  stroke: rgba(255, 255, 255, 0.08);
+  stroke: color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
 .pe-chart-selected {
@@ -3863,7 +4059,7 @@ p {
   padding: 10px 10px 11px;
   border-radius: 12px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent),
+    linear-gradient(180deg, color-mix(in srgb, var(--ink) 3%, transparent), transparent),
     var(--panel-2);
   box-shadow: inset 0 0 0 1px var(--line);
   text-align: center;
@@ -4059,7 +4255,7 @@ p {
 
 .pe-toggle button.active {
   background: var(--teal);
-  color: #04201c;
+  color: var(--on-accent);
 }
 
 .pe-choice-control {
@@ -4163,7 +4359,7 @@ p {
   height: 40px;
   flex: none;
   border-radius: 6px;
-  background: rgba(0, 0, 0, 0.16);
+  background: var(--chart-plot-bg);
 }
 
 .settings-row {
@@ -4208,7 +4404,7 @@ p {
   padding: 0 9px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.045);
+  background: color-mix(in srgb, var(--ink) 4.5%, transparent);
 }
 
 .settings-search input {
@@ -4253,7 +4449,7 @@ p {
 }
 
 .settings-section-danger .settings-line {
-  border-top-color: color-mix(in srgb, var(--red) 20%, rgba(255, 255, 255, 0.08));
+  border-top-color: color-mix(in srgb, var(--red) 20%, color-mix(in srgb, var(--ink) 8%, transparent));
 }
 
 .settings-section-rows {
@@ -4268,7 +4464,7 @@ p {
   align-items: center;
   gap: 16px;
   padding: 7px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
 :root[data-theme="light"] .settings-line {
@@ -4611,6 +4807,82 @@ p {
   color: var(--red);
 }
 
+/* Theme swatch picker (Settings → Appearance) */
+.theme-picker {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 8px;
+}
+
+.theme-swatch {
+  display: grid;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--soft);
+  font: inherit;
+  cursor: pointer;
+}
+
+.theme-swatch:hover {
+  border-color: color-mix(in srgb, var(--soft) 40%, var(--line));
+}
+
+.theme-swatch.active {
+  border-color: var(--teal);
+  box-shadow: inset 0 0 0 1px var(--teal);
+  color: var(--ink);
+}
+
+.theme-swatch-preview {
+  height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 16%, transparent);
+  overflow: hidden;
+}
+
+.theme-swatch-preview.system {
+  background: linear-gradient(120deg, #11171c 0 50%, #f4f6f7 50% 100%);
+}
+
+.theme-swatch-dot {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.theme-swatch-bar {
+  flex: 1 1 auto;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--panel-3);
+}
+
+.theme-swatch-ink {
+  flex: none;
+  width: 16px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--ink);
+}
+
+.theme-swatch-name {
+  font-size: 11px;
+  font-weight: 900;
+  text-align: center;
+}
+
 .settings-segmented {
   width: 100%;
   min-width: 0;
@@ -4741,7 +5013,7 @@ p {
   padding: 9px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.045);
+  background: color-mix(in srgb, var(--ink) 4.5%, transparent);
 }
 
 .input-dialog-display strong {
@@ -4887,8 +5159,8 @@ p {
 
 .input-dialog-choices button.active,
 .input-dialog-choice.active {
-  border-color: rgba(91, 216, 200, 0.55);
-  background: rgba(91, 216, 200, 0.12);
+  border-color: color-mix(in srgb, var(--teal) 55%, transparent);
+  background: color-mix(in srgb, var(--teal) 12%, transparent);
 }
 
 .input-dialog-choices strong,
@@ -5005,7 +5277,7 @@ p {
   place-items: center;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.045);
+  background: color-mix(in srgb, var(--ink) 4.5%, transparent);
   font-size: 34px;
   font-weight: 950;
   line-height: 1;
@@ -5063,7 +5335,7 @@ p {
 .keypad .commit-key {
   background: var(--ink);
   border-color: var(--ink);
-  color: #071015;
+  color: var(--bg);
 }
 
 .icon {
@@ -5391,11 +5663,11 @@ p {
 }
 
 .machine-lane.steam {
-  --accent: #79cbd6;
+  --accent: var(--steam);
 }
 
 .machine-lane.water {
-  --accent: #8baee8;
+  --accent: var(--water);
 }
 
 .machine-lane.flush {
@@ -5426,11 +5698,11 @@ p {
 }
 
 .machine-progress.steam {
-  --accent: #79cbd6;
+  --accent: var(--steam);
 }
 
 .machine-progress.water {
-  --accent: #8baee8;
+  --accent: var(--water);
 }
 
 .machine-progress.flush {
@@ -5690,7 +5962,7 @@ p {
 .machine-preset.active {
   border-color: color-mix(in srgb, var(--accent) 58%, var(--line));
   background: color-mix(in srgb, var(--accent) 14%, var(--panel-2));
-  box-shadow: inset 0 0 0 1px rgba(135, 222, 129, 0.16);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green) 16%, transparent);
 }
 
 .machine-preset-select,
@@ -5792,7 +6064,7 @@ p {
   padding: 9px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: #151b1f;
+  background: var(--panel-2);
   color: var(--ink);
   text-align: left;
   font: inherit;
@@ -6006,7 +6278,7 @@ p {
   border: 0;
   border-radius: 999px;
   background: var(--teal);
-  color: #071015;
+  color: var(--on-accent);
   font: inherit;
   font-weight: 800;
   cursor: pointer;
@@ -6037,7 +6309,7 @@ p {
 .pe-mode-btn.active,
 .pe-kind-btn.active {
   background: var(--teal);
-  color: #071015;
+  color: var(--on-accent);
 }
 
 .pe-mode-btn:disabled {
