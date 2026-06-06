@@ -170,8 +170,9 @@ import {
   type WaterPreset
 } from './domain/waterSettings';
 import {
-  paddedSteamDurationSeconds,
-  timedSteamStopDelayMs,
+  TIMED_STEAM_PURGE_DELAY_MS,
+  timedSteamAutoPurgeDelayMs,
+  timedSteamTargetReached,
   type MachineServicePhase,
   type MachineServiceState
 } from './domain/timedSteamStop';
@@ -543,10 +544,9 @@ export class BeanieApp {
   private machineStopRequestedFor: MachineServiceState | null = null;
   private machineStopRequestedAtMs: number | null = null;
   private machineStopFeedbackTimer: number | null = null;
-  private timedSteamStopTimer: number | null = null;
-  private timedSteamStopScheduledForMs: number | null = null;
-  private steamSettingsToRestoreAfterSteam: SteamSettings | null = null;
-  private steamPurgeModeToRestoreAfterSteam: number | null = null;
+  private timedSteamPurgeTimer: number | null = null;
+  private timedSteamPurgeScheduledForMs: number | null = null;
+  private timedSteamPurgeRequestedAtMs: number | null = null;
   private sleepBrightnessTimer: number | null = null;
   private sleepBrightnessZeroed = false;
   private applyAfterWake = false;
@@ -619,7 +619,7 @@ export class BeanieApp {
     if (this.waterRetryTimer != null) window.clearTimeout(this.waterRetryTimer);
     if (this.shotRefreshTimer != null) window.clearInterval(this.shotRefreshTimer);
     if (this.simTimer != null) window.clearTimeout(this.simTimer);
-    if (this.timedSteamStopTimer != null) window.clearTimeout(this.timedSteamStopTimer);
+    if (this.timedSteamPurgeTimer != null) window.clearTimeout(this.timedSteamPurgeTimer);
     if (this.sleepBrightnessTimer != null) window.clearTimeout(this.sleepBrightnessTimer);
     if (this.liveRaf != null) window.cancelAnimationFrame(this.liveRaf);
     this.machineSocket?.close();
@@ -1424,7 +1424,6 @@ export class BeanieApp {
       return;
     }
     try {
-      if (state === 'steam') await this.prepareMachineForBeanieTimedSteam();
       await gateway.requestState(state);
       this.rememberMachineProgressReturnView(service);
       this.trackMachineServiceState(state);
@@ -1447,37 +1446,6 @@ export class BeanieApp {
         busy: false,
         status: 'Machine command failed'
       });
-    }
-  }
-
-  private async prepareMachineForBeanieTimedSteam(): Promise<void> {
-    const workflow = this.state.workflow;
-    if (workflow == null || this.steamSettingsToRestoreAfterSteam != null) return;
-    const steamSettings = this.currentSteamSettings();
-    const userDuration = positiveNumber(steamSettings.duration);
-    const paddedDuration = paddedSteamDurationSeconds(userDuration);
-    if (paddedDuration == null || userDuration == null || paddedDuration <= userDuration) return;
-
-    this.steamSettingsToRestoreAfterSteam = { ...steamSettings };
-    try {
-      const liveMachineSettings = await gateway.machineSettings().catch(() => this.state.machineSettings);
-      const currentPurgeMode = normalizeSteamPurgeMode(liveMachineSettings?.steamPurgeMode);
-      if (currentPurgeMode !== 0) {
-        this.steamPurgeModeToRestoreAfterSteam = currentPurgeMode;
-        const verifiedMachineSettings = await this.updateSteamPurgeModeAndReadBack(0);
-        this.setState({
-          machineSettings: verifiedMachineSettings
-        });
-      }
-      await gateway.updateWorkflow({
-        ...workflow,
-        steamSettings: { ...steamSettings, duration: paddedDuration }
-      });
-    } catch (error) {
-      this.steamSettingsToRestoreAfterSteam = null;
-      this.steamPurgeModeToRestoreAfterSteam = null;
-      console.error('[Beanie] Steam duration padding failed', error);
-      throw error;
     }
   }
 
@@ -1596,7 +1564,7 @@ export class BeanieApp {
 
     this.machineStopRequestedFor = service;
     this.machineStopRequestedAtMs = Date.now();
-    if (service === 'steam') this.clearTimedSteamStopTimer();
+    if (service === 'steam') this.clearTimedSteamPurgeTimer();
     this.setState({ busy: true, status: 'Stopping machine' });
     if (this.state.demo) {
       const returnView = this.consumeMachineProgressReturnView();
@@ -1779,18 +1747,27 @@ export class BeanieApp {
     const service = machineServiceState(state);
     if (!service) {
       const previousService = this.machineServiceState;
+      const shouldAutoPurgeSteam =
+        previousService === 'steam' && this.shouldRequestTimedSteamPurgeAfterEnd(nowMs);
       this.machineServiceState = null;
       this.machineServiceStartedAtMs = null;
       this.machineServicePhase = null;
-      this.clearTimedSteamStopTimer();
+      this.clearTimedSteamPurgeTimer();
       this.clearMachineStopRequest();
-      if (previousService === 'steam') void this.restoreMachineSteamDurationAfterSteam();
+      if (shouldAutoPurgeSteam) this.scheduleTimedSteamAutoPurge(TIMED_STEAM_PURGE_DELAY_MS);
       return;
     }
     if (this.machineServiceState !== service) {
       this.machineServiceState = service;
       this.machineServiceStartedAtMs = null;
       this.machineServicePhase = 'starting';
+      if (service === 'steam' && state !== 'steamRinse') this.timedSteamPurgeRequestedAtMs = null;
+    }
+    if (state === 'steamRinse') {
+      this.machineServicePhase = 'purging';
+      this.clearTimedSteamPurgeTimer();
+      if (this.timedSteamPurgeRequestedAtMs == null) this.timedSteamPurgeRequestedAtMs = nowMs;
+      return;
     }
     // The machine spends a couple of seconds ramping up (substate
     // 'preparingForShot') before steam/water actually flows ('pouring').
@@ -1806,93 +1783,78 @@ export class BeanieApp {
       this.machineServicePhase = 'purging';
     }
     if (this.machineStopRequestedFor && this.machineStopRequestedFor !== service) this.clearMachineStopRequest();
-    this.updateTimedSteamStopTimer(nowMs);
+    this.updateTimedSteamPurgeTimer(nowMs);
   }
 
-  private updateTimedSteamStopTimer(nowMs = Date.now()): void {
+  private shouldRequestTimedSteamPurgeAfterEnd(nowMs: number): boolean {
+    if (this.timedSteamPurgeRequestedAtMs != null) return false;
+    if (this.machineStopRequestedFor === 'steam') return false;
+    if (this.machineServicePhase !== 'active') return false;
+    return timedSteamTargetReached({
+      startedAtMs: this.machineServiceStartedAtMs,
+      targetSeconds: positiveNumber(this.currentSteamSettings().duration),
+      nowMs
+    });
+  }
+
+  private updateTimedSteamPurgeTimer(nowMs = Date.now()): void {
     if (this.state.demo) {
-      this.clearTimedSteamStopTimer();
+      this.clearTimedSteamPurgeTimer();
       return;
     }
-    const delayMs = timedSteamStopDelayMs({
+    const delayMs = timedSteamAutoPurgeDelayMs({
       service: this.machineServiceState,
       phase: this.machineServicePhase,
       startedAtMs: this.machineServiceStartedAtMs,
-      stopRequested: this.machineStopRequestedFor === 'steam',
+      purgeRequested: this.timedSteamPurgeRequestedAtMs != null,
       targetSeconds: positiveNumber(this.currentSteamSettings().duration),
       nowMs
     });
     if (delayMs == null) {
-      this.clearTimedSteamStopTimer();
+      this.clearTimedSteamPurgeTimer();
       return;
     }
+    this.scheduleTimedSteamAutoPurge(delayMs, nowMs);
+  }
+
+  private scheduleTimedSteamAutoPurge(delayMs: number, nowMs = Date.now()): void {
     const scheduledForMs = nowMs + delayMs;
     if (
-      this.timedSteamStopTimer != null &&
-      this.timedSteamStopScheduledForMs != null &&
-      Math.abs(this.timedSteamStopScheduledForMs - scheduledForMs) < 250
+      this.timedSteamPurgeTimer != null &&
+      this.timedSteamPurgeScheduledForMs != null &&
+      Math.abs(this.timedSteamPurgeScheduledForMs - scheduledForMs) < 250
     ) {
       return;
     }
-    this.clearTimedSteamStopTimer();
-    this.timedSteamStopScheduledForMs = scheduledForMs;
-    this.timedSteamStopTimer = window.setTimeout(() => {
-      this.timedSteamStopTimer = null;
-      this.timedSteamStopScheduledForMs = null;
-      void this.requestTimedSteamIdleStop();
+    this.clearTimedSteamPurgeTimer();
+    this.timedSteamPurgeScheduledForMs = scheduledForMs;
+    this.timedSteamPurgeTimer = window.setTimeout(() => {
+      this.timedSteamPurgeTimer = null;
+      this.timedSteamPurgeScheduledForMs = null;
+      void this.requestTimedSteamAutoPurge();
     }, delayMs);
   }
 
-  private clearTimedSteamStopTimer(): void {
-    if (this.timedSteamStopTimer != null) {
-      window.clearTimeout(this.timedSteamStopTimer);
-      this.timedSteamStopTimer = null;
+  private clearTimedSteamPurgeTimer(): void {
+    if (this.timedSteamPurgeTimer != null) {
+      window.clearTimeout(this.timedSteamPurgeTimer);
+      this.timedSteamPurgeTimer = null;
     }
-    this.timedSteamStopScheduledForMs = null;
+    this.timedSteamPurgeScheduledForMs = null;
   }
 
-  private async requestTimedSteamIdleStop(): Promise<void> {
-    if (this.state.machine?.state?.state !== 'steam') return;
-    this.machineStopRequestedFor = 'steam';
-    this.machineStopRequestedAtMs = Date.now();
+  private async requestTimedSteamAutoPurge(): Promise<void> {
+    const state = this.state.machine?.state?.state;
+    if (state === 'steamRinse') return;
+    if (state !== 'steam' && state !== 'idle') return;
+    this.timedSteamPurgeRequestedAtMs = Date.now();
     try {
-      await gateway.requestState('idle');
-      this.setState({ status: 'Timed steam stop requested' });
-      this.armMachineStopFeedbackTimer();
+      await gateway.requestState('steamRinse');
+      this.setState({ status: 'Steam purge requested' });
     } catch (error) {
-      console.error('[Beanie] Timed steam stop failed', error);
-      this.clearMachineStopRequest();
-      this.setState({ status: 'Timed steam stop failed' });
-    }
-  }
-
-  private async restoreMachineSteamDurationAfterSteam(): Promise<void> {
-    const steamSettings = this.steamSettingsToRestoreAfterSteam;
-    const purgeMode = this.steamPurgeModeToRestoreAfterSteam;
-    if ((steamSettings == null && purgeMode == null) || this.state.demo) {
-      this.steamSettingsToRestoreAfterSteam = null;
-      this.steamPurgeModeToRestoreAfterSteam = null;
-      return;
-    }
-    this.steamSettingsToRestoreAfterSteam = null;
-    this.steamPurgeModeToRestoreAfterSteam = null;
-    try {
-      if (steamSettings != null) {
-        const workflow: Workflow = {
-          ...(this.state.workflow ?? {}),
-          steamSettings
-        };
-        await gateway.updateWorkflow(workflow);
-      }
-      if (purgeMode != null) {
-        const verifiedMachineSettings = await this.updateSteamPurgeModeAndReadBack(purgeMode);
-        this.setState({
-          machineSettings: verifiedMachineSettings
-        });
-      }
-    } catch (error) {
-      console.error('[Beanie] Steam settings restore failed', error);
-      this.setState({ status: 'Steam settings restore failed' });
+      console.error('[Beanie] Timed steam purge failed', error);
+      this.timedSteamPurgeRequestedAtMs = null;
+      this.setState({ status: 'Steam purge failed' });
     }
   }
 
@@ -7078,6 +7040,7 @@ function isMachineCommand(value: string | undefined): value is MachineState {
 }
 
 function machineServiceState(state: MachineState | undefined): MachineServiceState | null {
+  if (state === 'steamRinse') return 'steam';
   if (state === 'steam' || state === 'flush' || state === 'hotWater') return state;
   return null;
 }

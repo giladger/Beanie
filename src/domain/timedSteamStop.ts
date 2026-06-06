@@ -1,45 +1,45 @@
 export type MachineServiceState = 'steam' | 'flush' | 'hotWater';
 export type MachineServicePhase = 'starting' | 'active' | 'purging';
 
-export const TIMED_STEAM_STOP_LEAD_MS = 750;
-export const STEAM_DURATION_MACHINE_PAD_SECONDS = 10;
-export const MAX_STEAM_DURATION_SECONDS = 180;
+export const TIMED_STEAM_PURGE_DELAY_MS = 250;
 
-interface TimedSteamStopDelayInput {
+interface TimedSteamAutoPurgeDelayInput {
   service: MachineServiceState | null;
   phase: MachineServicePhase | null;
   startedAtMs: number | null;
-  stopRequested: boolean;
+  purgeRequested: boolean;
   targetSeconds: number | null;
   nowMs: number;
 }
 
-export function timedSteamStopDelayMs({
+export function timedSteamAutoPurgeDelayMs({
   service,
   phase,
   startedAtMs,
-  stopRequested,
+  purgeRequested,
   targetSeconds,
   nowMs
-}: TimedSteamStopDelayInput): number | null {
+}: TimedSteamAutoPurgeDelayInput): number | null {
   if (service !== 'steam') return null;
   if (phase !== 'active') return null;
-  if (stopRequested) return null;
+  if (purgeRequested) return null;
   if (startedAtMs == null) return null;
   if (targetSeconds == null || targetSeconds <= 0) return null;
 
-  const fireAtMs = startedAtMs + targetSeconds * 1000 - TIMED_STEAM_STOP_LEAD_MS;
+  const fireAtMs = startedAtMs + targetSeconds * 1000;
   return Math.max(0, fireAtMs - nowMs);
 }
 
-export function paddedSteamDurationSeconds(
-  userSeconds: number | null | undefined
-): number | null {
-  if (typeof userSeconds !== 'number' || !Number.isFinite(userSeconds) || userSeconds <= 0) {
-    return null;
-  }
-  return Math.min(
-    MAX_STEAM_DURATION_SECONDS,
-    Math.ceil(userSeconds + STEAM_DURATION_MACHINE_PAD_SECONDS)
-  );
+export function timedSteamTargetReached({
+  startedAtMs,
+  targetSeconds,
+  nowMs
+}: {
+  startedAtMs: number | null;
+  targetSeconds: number | null;
+  nowMs: number;
+}): boolean {
+  if (startedAtMs == null) return false;
+  if (targetSeconds == null || targetSeconds <= 0) return false;
+  return nowMs - startedAtMs >= targetSeconds * 1000;
 }
