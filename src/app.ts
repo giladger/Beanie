@@ -246,7 +246,7 @@ const NO_SCALE_MACHINE_STATUS = 'Connect scale';
 const NO_SCALE_ABORT_WINDOW_MS = 3_000;
 const SCALE_FRESH_WINDOW_MS = 5_000;
 const NO_SCALE_WARNING_VISIBLE_MS = 6_000;
-const DEFAULT_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS = 1;
+const DEFAULT_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS = 0.3;
 const HOT_WATER_WEIGHT_NATIVE_HEADROOM_SECONDS = 30;
 const HOT_WATER_WEIGHT_NATIVE_VOLUME_ML = 500;
 
@@ -1970,7 +1970,7 @@ export class BeanieApp {
     const weight = finiteNumber(scale?.weight) ?? 0;
     const scaleFlow = positiveNumber(scale?.weightFlow);
     const flow = scaleFlow ?? controller.configuredFlow;
-    const lookahead = positiveNumber(this.state.settingsBundle?.rea.weightFlowMultiplier)
+    const lookahead = nonNegativeNumber(this.state.settingsBundle?.rea.volumeFlowMultiplier)
       ?? DEFAULT_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS;
     const projectedWeight = weight + flow * lookahead;
     if (projectedWeight < controller.targetWeight) return;
@@ -8290,6 +8290,10 @@ function machineServicePrimaryTime(
 
 function positiveNumber(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function nonNegativeNumber(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 function finiteNumber(value: number | null | undefined): number | null {
