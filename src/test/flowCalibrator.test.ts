@@ -44,7 +44,20 @@ run('roundCalibration applies two-digit DE1 slider precision', () => {
   equal(roundCalibration(0), 0.13);
 });
 
-run('recordedFlowMultiplier reads the value reaprime stamps into annotations.extras', () => {
+run('recordedFlowMultiplier reads workflow.machine.flowCalibration (current reaprime)', () => {
+  const shot = { ...shotWith({}), workflow: { machine: { flowCalibration: 1.05 } } } as ShotRecord;
+  equal(recordedFlowMultiplier(shot), 1.05);
+});
+
+run('recordedFlowMultiplier prefers workflow.machine over legacy annotations.extras', () => {
+  const shot = {
+    ...shotWith({ extras: { flowCalibrationMultiplier: 0.8 } }),
+    workflow: { machine: { flowCalibration: 1.1 } }
+  } as ShotRecord;
+  equal(recordedFlowMultiplier(shot), 1.1);
+});
+
+run('recordedFlowMultiplier falls back to legacy annotations.extras', () => {
   equal(recordedFlowMultiplier(shotWith({ extras: { flowCalibrationMultiplier: 1.05 } })), 1.05);
 });
 

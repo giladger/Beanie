@@ -180,6 +180,13 @@ export interface Workflow {
   steamSettings?: SteamSettings;
   hotWaterData?: HotWaterData;
   rinseData?: RinseData;
+  /** Snapshot of machine settings active when the shot was pulled. */
+  machine?: WorkflowMachine | null;
+}
+
+export interface WorkflowMachine {
+  /** The DE1's flow-estimation calibration (calibration_flow_multiplier) at shot time. */
+  flowCalibration?: number | null;
 }
 
 export interface ShotAnnotations {

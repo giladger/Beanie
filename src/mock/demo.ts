@@ -184,8 +184,8 @@ export function demoShotsForBean(bean: Bean): ShotRecord[] {
     const dose = base.dose + (index % 3 === 0 ? 0 : index % 2 === 0 ? 0.2 : -0.2);
     const yieldWeight = base.yield + (index % 2 === 0 ? index * 0.4 : -index * 0.3);
     // Recent shots carry the flow calibration the machine was on when pulled
-    // (reaprime stamps it into annotations.extras). Older shots predate that, so
-    // they have none — exercising the backwards-compatible fallback.
+    // (reaprime snapshots it onto workflow.machine). Older shots predate it,
+    // exercising the no-stamp fallback.
     const recordedCalibration = index < 3 ? [1, 0.95, 1.05][index]! : null;
     return {
       id: `${bean.id}-shot-${index}`,
@@ -203,16 +203,16 @@ export function demoShotsForBean(bean: Bean): ShotRecord[] {
           coffeeRoaster: bean.roaster,
           coffeeName: bean.name,
           finalBeverageType: 'espresso'
-        }
+        },
+        ...(recordedCalibration != null
+          ? { machine: { flowCalibration: recordedCalibration } }
+          : {})
       },
       annotations: {
         actualDoseWeight: Number(dose.toFixed(1)),
         actualYield: Number((yieldWeight + (index % 2 ? -0.6 : 0.4)).toFixed(1)),
         enjoyment: Math.max(62, 92 - index * 4),
-        espressoNotes: index === 0 ? 'clean, sweet finish' : index === 1 ? 'a little sharp' : 'reference shot',
-        ...(recordedCalibration != null
-          ? { extras: { flowCalibrationMultiplier: recordedCalibration } }
-          : {})
+        espressoNotes: index === 0 ? 'clean, sweet finish' : index === 1 ? 'a little sharp' : 'reference shot'
       },
       measurements: buildMeasurements(index)
     };
