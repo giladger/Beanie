@@ -7,9 +7,6 @@ import type {
   Workflow
 } from '../api/types';
 
-export type WaterField = 'targetTemperature' | 'duration' | 'flow' | 'volume' | 'stopAtTemperature';
-export type WaterSection = 'steam' | 'hotWater' | 'flush';
-
 export interface NumberSpec {
   min: number;
   max: number;

@@ -117,8 +117,6 @@ const META_NUMBER_KEYS: ProfileMetaKey[] = [
   'target_volume_count_start'
 ];
 
-export const PROFILE_TYPES = ['advanced', 'pressure', 'flow'] as const;
-
 // de1app caps advanced profiles at 20 steps.
 export const MAX_STEPS = 20;
 
@@ -164,8 +162,6 @@ export const FIELD_SPECS = {
   targetVolume: { min: 0, max: 2000, step: 1, default: 36, unit: 'ml' },
   targetVolumeCountStart: { min: 0, max: 10, step: 1, default: 0, unit: '' }
 } as const satisfies Record<string, FieldSpec>;
-
-export type FieldSpecKey = keyof typeof FIELD_SPECS;
 
 const TOP_LEVEL_PROFILE_KEYS = new Set([
   'title',

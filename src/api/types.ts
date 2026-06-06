@@ -182,12 +182,6 @@ export interface Workflow {
   rinseData?: RinseData;
 }
 
-export interface WorkflowUpdate {
-  name?: string;
-  profile?: Profile | null;
-  context?: WorkflowContext;
-}
-
 export interface ShotAnnotations {
   actualDoseWeight?: number | null;
   actualYield?: number | null;
@@ -255,15 +249,6 @@ export interface RecipeDraft {
   sourceShotId?: string | null;
   sourceLabel?: string | null;
 }
-
-export interface BeanPreset {
-  id: string;
-  name: string;
-  createdAt: string;
-  recipe: RecipeDraft;
-}
-
-export type ApiRuntimeMode = 'real' | 'demo';
 
 export type ApiRuntimeStatus =
   | 'connected'
@@ -364,5 +349,3 @@ export interface DemoStartupSnapshot {
     shots?: ShotRecord[];
   };
 }
-
-export type ApiStartupSnapshot = GatewayStartupSnapshot | DemoStartupSnapshot;

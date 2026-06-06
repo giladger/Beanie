@@ -1,5 +1,3 @@
-import type { BeanPreset } from '../api/types';
-
 const lastBeanKey = 'beanie:last-bean-id';
 
 export function readLastBeanId(): string | null {
@@ -8,23 +6,6 @@ export function readLastBeanId(): string | null {
 
 export function writeLastBeanId(beanId: string): void {
   localStorage.setItem(lastBeanKey, beanId);
-}
-
-export function readPresets(beanId: string): BeanPreset[] {
-  try {
-    const raw = localStorage.getItem(presetKey(beanId));
-    return raw ? (JSON.parse(raw) as BeanPreset[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-export function writePresets(beanId: string, presets: BeanPreset[]): void {
-  localStorage.setItem(presetKey(beanId), JSON.stringify(presets));
-}
-
-function presetKey(beanId: string): string {
-  return `beanie:presets:${beanId}`;
 }
 
 const favoriteProfilesKey = 'beanie:favorite-profiles';

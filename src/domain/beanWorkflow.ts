@@ -1,7 +1,6 @@
 import type {
   Bean,
   BeanBatch,
-  BeanPreset,
   Grinder,
   Profile,
   ProfileRecord,
@@ -308,18 +307,6 @@ function shiftStepTemperature(step: unknown, delta: number): unknown {
   const value = record.temperature;
   if (typeof value !== 'number' || !Number.isFinite(value)) return step;
   return { ...record, temperature: value + delta };
-}
-
-export function presetName(draft: RecipeDraft): string {
-  const profile = draft.profileTitle ?? 'No profile';
-  const dose = formatGrams(draft.dose);
-  const out = formatGrams(draft.yield);
-  const grind = draft.grinderSetting ? ` / ${draft.grinderSetting}` : '';
-  return `${profile} ${dose} -> ${out}${grind}`;
-}
-
-export function newestPreset(presets: BeanPreset[]): BeanPreset | null {
-  return [...presets].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0] ?? null;
 }
 
 function numberOrNull(value: unknown): number | null {
