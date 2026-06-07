@@ -10,6 +10,7 @@ import './labelScannerView.test';
 import './profilePickerView.test';
 import './alertsView.test';
 import './historyView.test';
+import './phoneView.test';
 import './shotEditorView.test';
 import './shotMetadataController.test';
 import './profileEditor.test';

@@ -265,6 +265,7 @@ import {
   renderPageHeader,
   renderWorkbench as renderWorkbenchView
 } from './views/workbenchView';
+import { renderPhoneShell, type PhoneTab } from './views/phoneView';
 import { scoreValueFromTap } from './components/shotScore';
 import { isServiceShot } from './domain/shotRecord';
 import {
@@ -394,7 +395,8 @@ const initialSettingsPreferences = readSettingsPreferences();
 const FOCUSABLE_SEARCH = new Set(['search', 'profile-search', 'settings-search']);
 
 // Scrollable containers whose scroll position must survive a re-render.
-const SCROLL_SELECTORS = ['.bean-picker-list', '.bean-picker-batch-list', '.shot-list', '.shot-bean-list', '.profile-list', '.page-body'];
+const SCROLL_SELECTORS = ['.bean-picker-list', '.bean-picker-batch-list', '.shot-list', '.shot-bean-list', '.profile-list', '.page-body', '.phone-main', '.phone-list'];
+const PHONE_MEDIA_QUERY = '(max-width: 640px), (max-height: 500px) and (max-width: 900px)';
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 15_000;
 const SHOT_REFRESH_INTERVAL_MS = 60_000;
 const NO_SCALE_SHOT_MESSAGE = 'Shot blocked: connect a scale to start.';
@@ -498,6 +500,7 @@ interface AppState {
   status: string;
   secondTapHint: SecondTapHintState | null;
   view: View;
+  phoneTab: PhoneTab;
   settingsSection: string;
   settingsBundle: SettingsBundle | null;
   settingsSource: 'gateway' | 'demo' | 'loading' | null;
@@ -574,6 +577,10 @@ function accountLoginErrorMessage(error: GatewayRequestError): string {
   return detail || 'Could not link Decent account.';
 }
 
+function isPhoneTab(value: string | undefined): value is PhoneTab {
+  return value === 'home' || value === 'scan' || value === 'beans' || value === 'shots' || value === 'settings';
+}
+
 export class BeanieApp {
   private readonly settingsController = createSettingsController(gateway);
   private state: AppState = {
@@ -603,6 +610,7 @@ export class BeanieApp {
     status: 'Starting',
     secondTapHint: null,
     view: 'workbench',
+    phoneTab: 'home',
     settingsSection: 'app',
     settingsBundle: null,
     settingsSource: null,
@@ -703,6 +711,12 @@ export class BeanieApp {
   private lastScaleFrameMs: number | null = null;
   private noScaleBrewFlashStartedMs: number | null = null;
   private noScaleShotWarningUntilMs = 0;
+  private readonly phoneMedia = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia(PHONE_MEDIA_QUERY)
+    : null;
+  private readonly handlePhoneMediaChange = () => {
+    this.render();
+  };
 
   private readonly handleClick = (event: Event) => {
     this.noteUserActivity();
@@ -750,6 +764,7 @@ export class BeanieApp {
     this.root.addEventListener('wheel', this.handleWheel, { passive: false });
     this.root.addEventListener('touchstart', this.handleTouchStart, { passive: true });
     this.root.addEventListener('touchmove', this.handleTouchMove, { passive: false });
+    this.phoneMedia?.addEventListener('change', this.handlePhoneMediaChange);
     this.render();
     void this.load();
     if (isHandoffArrival(location.search)) {
@@ -768,6 +783,7 @@ export class BeanieApp {
     this.root.removeEventListener('wheel', this.handleWheel);
     this.root.removeEventListener('touchstart', this.handleTouchStart);
     this.root.removeEventListener('touchmove', this.handleTouchMove);
+    this.phoneMedia?.removeEventListener('change', this.handlePhoneMediaChange);
     if (this.applyTimer != null) window.clearTimeout(this.applyTimer);
     if (this.machineRetryTimer != null) window.clearTimeout(this.machineRetryTimer);
     if (this.scaleRetryTimer != null) window.clearTimeout(this.scaleRetryTimer);
@@ -1377,11 +1393,7 @@ export class BeanieApp {
     }
   }
 
-  private shotUpdateFromForm(form: HTMLFormElement, shot: ShotRecord): ShotUpdate {
-    const draft = shotEditDraftWithFormNumbers(
-      this.state.shotEdit?.shotId === shot.id ? this.state.shotEdit : shotEditDraftFromShot(shot),
-      form
-    );
+  private shotUpdateFromDraft(shot: ShotRecord, draft: ShotEditDraft): ShotUpdate {
     const grinderId = draft.grinderId;
     const selectedGrinder = grinderId ? this.state.grinders.find((grinder) => grinder.id === grinderId) : null;
     const beanBatchId = draft.beanBatchId;
@@ -1421,6 +1433,14 @@ export class BeanieApp {
     };
   }
 
+  private shotUpdateFromForm(form: HTMLFormElement, shot: ShotRecord): ShotUpdate {
+    const draft = shotEditDraftWithFormNumbers(
+      this.state.shotEdit?.shotId === shot.id ? this.state.shotEdit : shotEditDraftFromShot(shot),
+      form
+    );
+    return this.shotUpdateFromDraft(shot, draft);
+  }
+
   private commitShotFieldDialog(form: HTMLFormElement): void {
     const field = form.dataset.field;
     if (!isShotEditField(field)) return;
@@ -1433,6 +1453,50 @@ export class BeanieApp {
     if (!draft) return;
     const next = updateShotEditDraftField(draft, field, value, this.state.grinders);
     this.setState({ shotEdit: next, shotEditField: null, status: 'Shot draft changed' });
+  }
+
+  private applyPhoneShotField(shotId: string, field: ShotEditField, value: string): void {
+    const shot = this.state.shots.find((item) => item.id === shotId);
+    if (!shot) return;
+    const draft = this.state.shotEdit?.shotId === shotId ? this.state.shotEdit : shotEditDraftFromShot(shot);
+    const next = updateShotEditDraftField(draft, field, value, this.state.grinders);
+    this.setState({ shotEdit: next, status: 'Shot draft changed' });
+  }
+
+  private applyPhoneShotScore(shotId: string, value: number | null): void {
+    const shot = this.state.shots.find((item) => item.id === shotId);
+    if (!shot) return;
+    const draft = this.state.shotEdit?.shotId === shotId ? this.state.shotEdit : shotEditDraftFromShot(shot);
+    this.setState({ shotEdit: { ...draft, enjoyment: value }, status: 'Shot draft changed' });
+  }
+
+  private async savePhoneShotDraft(shotId: string): Promise<void> {
+    const shot = this.state.shots.find((item) => item.id === shotId);
+    const draft = this.state.shotEdit?.shotId === shotId ? this.state.shotEdit : null;
+    if (!shot || !draft) return;
+    const update = this.shotUpdateFromDraft(shot, draft);
+
+    this.setState({ busy: true, status: 'Saving shot' });
+    const result = await saveShotUpdate({
+      shot,
+      update,
+      demo: this.state.demo,
+      successStatus: 'Shot saved',
+      demoStatus: 'Shot saved (demo)',
+      failureStatus: 'Save shot failed'
+    }, {
+      updateShot: (id, nextUpdate) => gateway.updateShot(id, nextUpdate),
+      invalidateShotMutation: (id) => beanieCache.invalidateShotMutation(id),
+      putShotRecord: (saved) => beanieCache.putShotRecord(saved)
+    });
+
+    if (result.type === 'saved') {
+      if (result.remote) this.shotCacheGeneration += 1;
+      this.replaceShotRecord(result.shot, result.status);
+    } else {
+      console.error('[Beanie] Save shot failed', result.error);
+      this.setState({ busy: false, status: result.status });
+    }
   }
 
   private setShotEditEnjoyment(value: number | null): void {
@@ -2729,6 +2793,7 @@ export class BeanieApp {
       value: el.dataset.value
     };
 
+    if (await this.handlePhoneClickAction(action, context)) return;
     if (await this.handleBeanClickAction(action, context)) return;
     if (await this.handleScannerClickAction(action, context)) return;
     if (await this.handleRecipeClickAction(action, context)) return;
@@ -2737,6 +2802,46 @@ export class BeanieApp {
     if (await this.handleSettingsClickAction(action, context)) return;
     if (await this.handleNavigationClickAction(action, context)) return;
     if (await this.handleProfileEditorClickAction(action, context)) return;
+  }
+
+  private async handlePhoneClickAction(action: string | undefined, context: ClickActionContext): Promise<boolean> {
+    const { id, value } = context;
+    switch (action) {
+      case 'phone-tab': {
+        if (!isPhoneTab(value)) return true;
+        this.setState({ phoneTab: value, view: 'workbench' });
+        if (value === 'settings') {
+          this.openSettingsForPhone();
+        }
+        return true;
+      }
+      case 'phone-select-bean':
+        if (id) {
+          this.setState({ secondTapHint: null });
+          await this.selectBean(id, { apply: false, preferWorkflow: false });
+        }
+        return true;
+      case 'phone-select-shot':
+        if (id) this.setState({ detailShotId: id, secondTapHint: null, status: 'Shot selected' });
+        return true;
+      case 'phone-edit-shot':
+        if (id) this.setState({ detailShotId: id, secondTapHint: null });
+        this.openShotEditor();
+        return true;
+      case 'phone-shot-score': {
+        if (id) {
+          const shot = this.state.shots.find((item) => item.id === id);
+          const draft = this.state.shotEdit?.shotId === id ? this.state.shotEdit : shot ? shotEditDraftFromShot(shot) : null;
+          this.applyPhoneShotScore(id, scoreValueFromTap(value, draft?.enjoyment ?? null));
+        }
+        return true;
+      }
+      case 'phone-save-shot':
+        if (id) await this.savePhoneShotDraft(id);
+        return true;
+      default:
+        return false;
+    }
   }
 
   private async handleBeanClickAction(action: string | undefined, context: ClickActionContext): Promise<boolean> {
@@ -3256,6 +3361,11 @@ export class BeanieApp {
     const { el, id, value } = context;
     switch (action) {
       case 'open-settings':
+        if (this.isPhoneLayout()) {
+          this.setState({ phoneTab: 'settings', view: 'workbench' });
+          this.openSettingsForPhone();
+          return true;
+        }
         this.setState({
           view: 'settings',
           settingsBundle: this.state.settingsBundle ?? demoSettingsBundle(),
@@ -3340,6 +3450,19 @@ export class BeanieApp {
       default:
         return false;
     }
+  }
+
+  private openSettingsForPhone(): void {
+    this.setState({
+      settingsBundle: this.state.settingsBundle ?? demoSettingsBundle(),
+      settingsSource: this.state.settingsBundle
+        ? this.state.settingsSource
+        : this.state.demo
+          ? 'demo'
+          : 'loading'
+    });
+    void this.loadReaSettings();
+    void this.loadDecentAccount();
   }
 
   private async handleNavigationClickAction(action: string | undefined, context: ClickActionContext): Promise<boolean> {
@@ -3542,7 +3665,17 @@ export class BeanieApp {
   }
 
   private onInput(event: Event): void {
-    const target = event.target as HTMLInputElement;
+    const target = event.target as HTMLInputElement | HTMLTextAreaElement;
+    if (target.dataset.action === 'phone-recipe-field') {
+      if (isEditField(target.dataset.field)) this.applyPhoneRecipeField(target.dataset.field, target.value);
+      return;
+    }
+    if (target.dataset.action === 'phone-shot-field') {
+      if (target.dataset.id && isShotEditField(target.dataset.field)) {
+        this.applyPhoneShotField(target.dataset.id, target.dataset.field, target.value);
+      }
+      return;
+    }
     if (target.dataset.action === 'search') {
       this.setState({ search: target.value });
     }
@@ -3760,7 +3893,17 @@ export class BeanieApp {
   }
 
   private async onChange(event: Event): Promise<void> {
-    const target = event.target as HTMLInputElement | HTMLSelectElement;
+    const target = event.target as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+    if (target.dataset.action === 'phone-recipe-field') {
+      if (isEditField(target.dataset.field)) this.applyPhoneRecipeField(target.dataset.field, target.value);
+      return;
+    }
+    if (target.dataset.action === 'phone-shot-field') {
+      if (target.dataset.id && isShotEditField(target.dataset.field)) {
+        this.applyPhoneShotField(target.dataset.id, target.dataset.field, target.value);
+      }
+      return;
+    }
     if (target.dataset.action === 'shot-edit-number') {
       const field = target.dataset.field;
       if (isShotEditField(field) && isShotNumberField(field)) this.applyShotEditField(field, target.value);
@@ -4412,6 +4555,21 @@ export class BeanieApp {
     });
   }
 
+  private applyPhoneRecipeField(field: EditField, rawValue: string): void {
+    const draft = { ...this.state.draft };
+    if (field === 'dose') draft.dose = parseNumberInput(rawValue);
+    if (field === 'yield') draft.yield = parseNumberInput(rawValue);
+    if (field === 'grinderSetting') draft.grinderSetting = rawValue.trim() || null;
+    if (field === 'ratio') {
+      const ratio = parseNumberInput(rawValue);
+      const nextYield = ratio == null ? null : yieldForRatio(draft.dose, ratio);
+      if (nextYield != null) draft.yield = nextYield;
+    }
+    if (field === 'temperature') draft.brewTemp = parseNumberInput(rawValue);
+    this.setState({ draft, status: 'Draft changed' });
+    this.scheduleApply();
+  }
+
   // Tap a control's value → numpad dialog bound to that editor field.
   private openProfileValueDialog(el: HTMLElement): void {
     const target = el.dataset.target;
@@ -4907,11 +5065,13 @@ export class BeanieApp {
     const bean = this.selectedBean();
     const focus = this.captureFocus();
     const scroll = this.captureScroll();
-    const isPage = this.state.view !== 'workbench';
+    const isPhone = this.isPhoneLayout();
+    const renderPhone = isPhone && (this.state.view === 'workbench' || this.state.view === 'settings');
+    const isPage = this.state.view !== 'workbench' && !renderPhone;
     this.root.innerHTML = `
-      <div class="app-shell ${isPage ? 'app-shell-page' : ''}">
-        ${isPage ? this.renderPage() : this.renderWorkbench(bean)}
-        ${isPage ? '' : this.renderLivePanel()}
+      <div class="app-shell ${renderPhone ? 'app-shell-phone' : isPage ? 'app-shell-page' : ''}">
+        ${renderPhone ? this.renderPhoneApp(bean) : isPage ? this.renderPage() : this.renderWorkbench(bean)}
+        ${isPage || renderPhone ? '' : this.renderLivePanel()}
         ${this.renderModal()}
         ${isPage ? '' : this.renderWaterAlert()}
         ${this.renderWaterWarningBanner()}
@@ -4924,6 +5084,51 @@ export class BeanieApp {
     this.bindCalibratorChart();
     this.restoreFocus(focus);
     this.restoreScroll(scroll);
+  }
+
+  private isPhoneLayout(): boolean {
+    return this.phoneMedia?.matches === true;
+  }
+
+  private renderPhoneApp(bean: Bean | null): string {
+    const brewTemp = this.brewTempValue();
+    const selectedShot = this.selectedHistoryShot();
+    const selectedShotDraft = selectedShot
+      ? this.state.shotEdit?.shotId === selectedShot.id
+        ? this.state.shotEdit
+        : shotEditDraftFromShot(selectedShot)
+      : null;
+    const settingsHtml = this.state.phoneTab === 'settings'
+      ? renderSettingsShell(
+          this.settingsShellModel(),
+          this.state.settingsSection,
+          this.state.settingsBundle,
+          this.state.pluginConfig,
+          this.decentAccountPanelState(),
+          ['app', 'account', 'plugins', 'connection']
+        )
+      : '';
+    return renderPhoneShell({
+      activeTab: this.state.phoneTab,
+      status: this.state.status,
+      machineStatus: this.machineStatusLabel(),
+      asleep: this.state.asleep,
+      selectedBean: bean,
+      batchesByBean: this.state.batchesByBean,
+      beans: this.state.beans,
+      beanSearch: this.state.search,
+      shots: this.state.shots,
+      selectedShot,
+      selectedShotDraft,
+      selectedShotDirty: Boolean(selectedShot && this.state.shotEdit?.shotId === selectedShot.id),
+      shotsTotal: this.state.shotsTotal,
+      shotsLoadingMore: this.state.shotsLoadingMore,
+      demo: this.state.demo,
+      draft: this.state.draft,
+      ratioLabel: formatRatio(ratioFor(this.state.draft.dose, this.state.draft.yield)),
+      brewTempLabel: brewTemp == null ? '--' : brewTemp.toFixed(1),
+      settingsHtml
+    });
   }
 
   // Re-rendering replaces innerHTML, which resets the scroll position of every
@@ -5072,6 +5277,8 @@ export class BeanieApp {
     if (
       !FOCUSABLE_SEARCH.has(action) &&
       !action.startsWith('pe-') &&
+      action !== 'phone-recipe-field' &&
+      action !== 'phone-shot-field' &&
       action !== 'shot-edit-number' &&
       action !== 'bean-picker-batch-field'
     ) {

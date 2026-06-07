@@ -1,0 +1,131 @@
+import type { Bean, BeanBatch, ShotRecord } from '../api/types';
+import { renderPhoneShell, type PhoneShellModel } from '../views/phoneView';
+
+run('phone shell exposes helper workflows without machine service controls', () => {
+  const html = [
+    renderPhoneShell(model()),
+    renderPhoneShell({ ...model(), activeTab: 'scan' }),
+    renderPhoneShell({ ...model(), activeTab: 'beans' }),
+    renderPhoneShell({ ...model(), activeTab: 'shots' })
+  ].join('');
+
+  includes(html, '<h1>Home</h1>');
+  includes(html, 'data-action="open-label-scanner"');
+  includes(html, 'data-action="phone-select-bean"');
+  includes(html, 'data-action="phone-select-shot"');
+  includes(html, 'data-action="phone-shot-field"');
+  includes(html, 'data-action="phone-save-shot"');
+  includes(html, 'data-action="phone-recipe-field"');
+  includes(html, 'data-action="sleep"');
+  excludes(html, 'data-action="machine-command"');
+  excludes(html, 'data-action="run-cleaning"');
+  excludes(html, 'data-action="open-machine-settings"');
+  excludes(html, 'data-action="machine-extend-service"');
+  excludes(html, 'data-action="stop"');
+  excludes(html, 'data-action="select-history-shot"');
+  excludes(html, 'data-action="edit-field"');
+  excludes(html, 'data-action="phone-edit-shot"');
+});
+
+run('phone settings renders filtered settings content inside the tab', () => {
+  const html = renderPhoneShell({
+    ...model(),
+    activeTab: 'settings',
+    settingsHtml: '<main class="settings-page"><button data-action="settings-section" data-value="app">App</button></main>'
+  });
+
+  includes(html, 'phone-settings');
+  includes(html, 'data-value="app"');
+});
+
+function model(): PhoneShellModel {
+  const bean: Bean = { id: 'bean-1', roaster: 'Kawa', name: 'Pink Bourbon' };
+  const batch: BeanBatch = { id: 'batch-1', beanId: bean.id, roastDate: '2026-06-01T00:00:00.000Z', weightRemaining: 180 };
+  return {
+    activeTab: 'home',
+    status: 'Ready',
+    machineStatus: 'Ready',
+    asleep: false,
+    selectedBean: bean,
+    batchesByBean: { [bean.id]: [batch] },
+    beans: [bean],
+    beanSearch: '',
+    shots: [shot('shot-1', 'espresso'), shot('flush-1', 'flush')],
+    selectedShot: shot('shot-1', 'espresso'),
+    selectedShotDraft: {
+      shotId: 'shot-1',
+      coffeeRoaster: 'Kawa',
+      coffeeName: 'Pink Bourbon',
+      beanBatchId: batch.id,
+      finalBeverageType: 'espresso',
+      baristaName: null,
+      drinkerName: null,
+      targetDoseWeight: 18,
+      targetYield: 40,
+      actualDoseWeight: 18,
+      actualYield: 40,
+      grinderId: null,
+      grinderModel: null,
+      grinderSetting: '12',
+      drinkTds: null,
+      drinkEy: null,
+      enjoyment: 80,
+      espressoNotes: 'Sweet and clean',
+      contextExtras: null,
+      annotationExtras: null
+    },
+    selectedShotDirty: false,
+    shotsTotal: 2,
+    shotsLoadingMore: false,
+    demo: false,
+    draft: {
+      dose: 18,
+      yield: 40,
+      grinderSetting: '12',
+      brewTemp: 93,
+      profileTitle: 'Blooming espresso'
+    },
+    ratioLabel: '1:2.2',
+    brewTempLabel: '93.0',
+    settingsHtml: ''
+  };
+}
+
+function shot(id: string, beverageType: string): ShotRecord {
+  return {
+    id,
+    timestamp: '2026-06-05T10:00:00.000Z',
+    workflow: {
+      profile: { title: `Profile ${id}`, beverage_type: beverageType },
+      context: {
+        targetDoseWeight: 18,
+        targetYield: 40,
+        finalBeverageType: beverageType
+      }
+    },
+    annotations: { enjoyment: 80 },
+    measurements: []
+  };
+}
+
+function run(name: string, fn: () => void): void {
+  try {
+    fn();
+    console.log(`ok - ${name}`);
+  } catch (error) {
+    console.error(`not ok - ${name}`);
+    throw error;
+  }
+}
+
+function includes(text: string, expected: string): void {
+  if (!text.includes(expected)) {
+    throw new Error(`Expected ${JSON.stringify(text.slice(0, 240))} to include ${expected}`);
+  }
+}
+
+function excludes(text: string, expected: string): void {
+  if (text.includes(expected)) {
+    throw new Error(`Expected rendered output not to include ${expected}`);
+  }
+}

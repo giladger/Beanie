@@ -53,9 +53,13 @@ export function renderSettingsShell(
   activeSection: string,
   bundle: SettingsBundle | null,
   pluginConfig: PluginConfigState | null,
-  decentAccount: DecentAccountPanelState
+  decentAccount: DecentAccountPanelState,
+  allowedSectionIds?: string[]
 ): string {
-  const sections = settingsSections(model, bundle, pluginConfig, decentAccount);
+  const allSections = settingsSections(model, bundle, pluginConfig, decentAccount);
+  const sections = allowedSectionIds?.length
+    ? allSections.filter((section) => allowedSectionIds.includes(section.id))
+    : allSections;
   const active = sections.find((section) => section.id === activeSection) ?? sections[0]!;
 
   return `

@@ -24,7 +24,7 @@ export function enjoymentBadge(shot: ShotRecord, size: 'row' | 'detail' = 'row')
 
 export function shotScoreControl(
   value: number | null,
-  options: { action: 'shot-edit-score' | 'set-shot-score'; shotId?: string; variant: 'edit' | 'detail' }
+  options: { action: 'shot-edit-score' | 'set-shot-score' | 'phone-shot-score'; shotId?: string; variant: 'edit' | 'detail' }
 ): string {
   const current = scoreOptionForValue(value);
   const idAttr = options.shotId ? ` data-id="${escapeAttr(options.shotId)}"` : '';
