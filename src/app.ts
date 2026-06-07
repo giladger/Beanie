@@ -2220,7 +2220,7 @@ export class BeanieApp {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data) as { currentLevel?: unknown; refillLevel?: unknown };
-        const level = typeof data.currentLevel === 'number' && Number.isFinite(data.currentLevel) ? data.currentLevel : null;
+        const hasLevel = typeof data.currentLevel === 'number' && Number.isFinite(data.currentLevel);
         const refill = typeof data.refillLevel === 'number' && Number.isFinite(data.refillLevel) ? data.refillLevel : null;
         // The machine's own refill threshold rarely changes; re-render when it
         // does so the Settings control reflects the live value.
@@ -2228,6 +2228,8 @@ export class BeanieApp {
           this.state.machineRefillLevel = refill;
           if (this.state.view === 'settings') this.setState({});
         }
+        if (!hasLevel) return;
+        const level = Number(data.currentLevel);
         if (level === this.state.waterLevel) return;
         this.state.waterLevel = level;
         // A soft-band crossing restyles the topbar + toggles the warning banner,
