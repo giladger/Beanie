@@ -90,16 +90,14 @@ function renderStep(model: LabelScannerViewModel): string {
 
 function renderOnboard(model: LabelScannerViewModel): string {
   if (model.handoff) {
+    const body = model.qrSvg
+      ? `<p>Signing in to Google and pasting a key is easier on your phone — point your phone's camera at this to set up and scan there:</p>
+         <div class="scan-qr">${model.qrSvg}</div>
+         ${model.qrUrl ? `<p class="scan-qr-url">${escapeHtml(model.qrUrl)}</p>` : ''}`
+      : `<p>Scanning is easiest on your phone. Open Beanie on your phone — Decent's <strong>quick settings</strong> screen shows this tablet's QR — then tap the bean scanner.</p>`;
     return `
       <div class="label-scanner-onboard">
-        <p>Signing in to Google and pasting a key is easier on your phone. Point your phone's camera at this to set up and scan there:</p>
-        ${
-          model.qrSvg
-            ? `<div class="scan-qr">${model.qrSvg}</div>${
-                model.qrUrl ? `<p class="scan-qr-url">${escapeHtml(model.qrUrl)}</p>` : ''
-              }`
-            : `<p class="scan-message is-warn">Open Beanie from the tablet's network address (like http://192.168.x.x:3000) so your phone can reach it.</p>`
-        }
+        ${body}
         <div class="label-scanner-actions">
           <button type="button" class="secondary-button" data-action="scanner-setup-here">Set up on this device</button>
         </div>

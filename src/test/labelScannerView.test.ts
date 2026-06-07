@@ -36,9 +36,10 @@ run('onboard shows a QR hand-off on the tablet, hiding the on-device key form', 
   notIncludes(html, 'name="apiKey"');
 });
 
-run('onboard hand-off shows a network-address hint when the origin is loopback', () => {
+run('onboard hand-off points the user to their phone when there is no QR', () => {
   const html = renderLabelScannerModal(model({ step: 'onboard', handoff: true, qrSvg: null }));
-  includes(html, 'network address');
+  includes(html, 'on your phone');
+  includes(html, 'quick settings');
   includes(html, 'data-action="scanner-setup-here"');
   notIncludes(html, 'name="apiKey"');
 });
