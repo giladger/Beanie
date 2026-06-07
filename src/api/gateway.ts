@@ -350,6 +350,34 @@ export const gateway = {
     }
   },
 
+  // Generic gateway KV store (/api/v1/store/{namespace}/{key}) — used to share the
+  // scanner's API key across devices. Fail-soft: callers fall back to localStorage.
+  storeGet: async (namespace: string, key: string): Promise<unknown> => {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2500);
+      const res = await fetch(
+        `${gatewayHttpOrigin()}/api/v1/store/${encodeURIComponent(namespace)}/${encodeURIComponent(key)}`,
+        { signal: controller.signal }
+      );
+      clearTimeout(timer);
+      if (!res.ok) return null;
+      return await res.json().catch(() => null);
+    } catch {
+      return null;
+    }
+  },
+  storeSet: async (namespace: string, key: string, value: unknown): Promise<void> => {
+    try {
+      await fetch(
+        `${gatewayHttpOrigin()}/api/v1/store/${encodeURIComponent(namespace)}/${encodeURIComponent(key)}`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) }
+      );
+    } catch {
+      // fail-soft
+    }
+  },
+
   // --- devices (pairing) ---
   devices: () => fetchJson<DeviceInfo[]>('settings', '/api/v1/devices', readDevices),
   scanDevices: async (): Promise<DeviceInfo[]> => {

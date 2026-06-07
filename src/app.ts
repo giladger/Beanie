@@ -453,6 +453,11 @@ interface SecondTapHintState {
   id: string;
 }
 
+// Where the scanner's Gemini key lives in the gateway KV store, so it's entered
+// once and shared across every device that loads Beanie.
+const GEMINI_KEY_NAMESPACE = 'beanie';
+const GEMINI_KEY_NAME = 'geminiApiKey';
+
 interface LabelScannerState {
   step: LabelScannerStep;
   handoff: boolean;
@@ -2959,12 +2964,33 @@ export class BeanieApp {
   }
 
   /**
+   * Share the Gemini key across devices via the gateway's KV store: the gateway
+   * is the source of truth, localStorage is a per-device cache. So the key is
+   * entered once (on any device) and every other device picks it up.
+   */
+  private async syncGeminiKey(): Promise<void> {
+    if (this.state.demo) return;
+    try {
+      const remote = await gateway.storeGet(GEMINI_KEY_NAMESPACE, GEMINI_KEY_NAME);
+      if (typeof remote === 'string' && remote.trim()) {
+        writeGeminiApiKey(remote.trim());
+        return;
+      }
+      const local = readGeminiApiKey();
+      if (local) await gateway.storeSet(GEMINI_KEY_NAMESPACE, GEMINI_KEY_NAME, local);
+    } catch {
+      // fail-soft: fall back to the local cache
+    }
+  }
+
+  /**
    * Open the scanner. The Decent tablet (whose webview user agent is exactly
    * "Decent") can't take photos well, so it hands off to a phone via QR. A phone
    * or normal browser — including the one that scanned the QR — runs the flow
    * on-device. Demo and the QR-arrival both go straight to the on-device flow.
    */
   private async openLabelScanner(options: { fromHandoff?: boolean } = {}): Promise<void> {
+    await this.syncGeminiKey();
     const hasKey = readGeminiApiKey() != null;
     const handoff = isDecentAppWebView() && options.fromHandoff !== true && !this.state.demo;
     // Build the QR from the gateway's LAN IP (the tablet webview is on localhost).
@@ -3088,6 +3114,7 @@ export class BeanieApp {
       return;
     }
     writeGeminiApiKey(key);
+    void gateway.storeSet(GEMINI_KEY_NAMESPACE, GEMINI_KEY_NAME, key);
     this.setScanner({ step: 'capture', keyDraft: '', verifyMessage: null });
   }
 
