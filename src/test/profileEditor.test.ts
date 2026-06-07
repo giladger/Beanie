@@ -12,9 +12,9 @@ import {
   setSimpleProfileField,
   setSimpleProfileType,
   setStepField,
-  setStepPump,
-  PROFILE_BEVERAGE_TYPES
+  setStepPump
 } from '../components/profileEditor';
+import { PROFILE_BEVERAGE_TYPES } from '../domain/profileModel';
 import { canEditAsBasic } from '../domain/simpleProfile';
 
 run('reads de1app Tcl-derived metadata, steps, and flat exit conditions', () => {

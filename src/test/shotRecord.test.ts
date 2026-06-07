@@ -1,5 +1,5 @@
 import type { ShotRecord, ShotSummary } from '../api/types';
-import { mergeShotSummaryIntoRecord } from '../domain/shotRecord';
+import { isServiceShot, mergeShotSummaryIntoRecord } from '../domain/shotRecord';
 
 interface TestCase {
   name: string;
@@ -62,6 +62,13 @@ run('keeps cached measurements while applying fresh summary metadata', () => {
   equal(merged.measurements, cached.measurements);
 });
 
+run('isServiceShot only hides records explicitly marked as service drinks', () => {
+  equal(isServiceShot(shotWithBeverage('espresso')), false);
+  equal(isServiceShot(shotWithBeverage(null)), false);
+  equal(isServiceShot(shotWithBeverage(' hot_water ')), true);
+  equal(isServiceShot(shotWithBeverage('steam', 'espresso')), true);
+});
+
 for (const test of tests) {
   try {
     await test.fn();
@@ -80,4 +87,16 @@ function equal<T>(actual: T, expected: T): void {
   if (actual !== expected) {
     throw new Error(`Expected ${String(expected)}, received ${String(actual)}`);
   }
+}
+
+function shotWithBeverage(finalBeverageType: string | null, profileBeverageType?: string): ShotRecord {
+  return {
+    id: 'shot-kind',
+    timestamp: '2026-06-05T10:00:00.000Z',
+    workflow: {
+      context: { finalBeverageType },
+      profile: profileBeverageType ? { beverage_type: profileBeverageType } : null
+    },
+    measurements: []
+  };
 }

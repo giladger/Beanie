@@ -1,4 +1,5 @@
 import type { Grinder } from '../api/types';
+import { escapeAttr, escapeHtml } from './html';
 import { icon } from './icons';
 
 export type InputDialogKind = 'dose' | 'yield' | 'ratio' | 'grind' | 'temperature';
@@ -392,17 +393,4 @@ function formatNumber(value: number, digits: number): string {
 function round(value: number, digits: number): number {
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
-function escapeAttr(value: string): string {
-  return escapeHtml(value);
 }

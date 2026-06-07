@@ -1,0 +1,68 @@
+import { markSecondTapHintUsed, shouldShowSecondTapHint } from '../domain/interactionHints';
+
+class FakeStorage {
+  private readonly values = new Map<string, string>();
+
+  getItem(key: string): string | null {
+    return this.values.get(key) ?? null;
+  }
+
+  setItem(key: string, value: string): void {
+    this.values.set(key, String(value));
+  }
+
+  clear(): void {
+    this.values.clear();
+  }
+}
+
+const storage = new FakeStorage();
+Object.defineProperty(globalThis, 'localStorage', {
+  configurable: true,
+  writable: true,
+  value: storage
+});
+
+run('second tap hints show by default', () => {
+  storage.clear();
+
+  equal(shouldShowSecondTapHint('bean'), true);
+  equal(shouldShowSecondTapHint('shot'), true);
+});
+
+run('marking one hint used hides only that hint', () => {
+  storage.clear();
+
+  markSecondTapHintUsed('bean');
+
+  equal(shouldShowSecondTapHint('bean'), false);
+  equal(shouldShowSecondTapHint('shot'), true);
+
+  markSecondTapHintUsed('shot');
+
+  equal(shouldShowSecondTapHint('shot'), false);
+});
+
+run('malformed hint preferences recover to defaults', () => {
+  storage.clear();
+  localStorage.setItem('beanie:second-tap-hint-v2', '{');
+
+  equal(shouldShowSecondTapHint('bean'), true);
+  equal(shouldShowSecondTapHint('shot'), true);
+});
+
+function run(name: string, fn: () => void): void {
+  try {
+    fn();
+    console.log(`ok - ${name}`);
+  } catch (error) {
+    console.error(`not ok - ${name}`);
+    throw error;
+  }
+}
+
+function equal<T>(actual: T, expected: T): void {
+  if (actual !== expected) {
+    throw new Error(`Expected ${String(expected)}, received ${String(actual)}`);
+  }
+}

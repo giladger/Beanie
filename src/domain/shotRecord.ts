@@ -1,5 +1,23 @@
 import type { ShotRecord, ShotSummary } from '../api/types';
 
+// Flush / steam / hot-water actions can end up in the shot store (e.g. imported
+// de1app history) tagged with a non-espresso beverage type. Keep them out of a
+// bean's shot history. Only records explicitly marked as service are hidden, so
+// real espresso shots (beverage type espresso, or unlabelled) are untouched.
+const SERVICE_BEVERAGE_TYPES = new Set([
+  'steam',
+  'water',
+  'hot_water',
+  'hotwater',
+  'hot water',
+  'flush',
+  'rinse',
+  'clean',
+  'cleaning',
+  'calibrate',
+  'calibration'
+]);
+
 export function mergeShotSummaryIntoRecord(
   cached: ShotRecord,
   summary: ShotSummary
@@ -9,4 +27,9 @@ export function mergeShotSummaryIntoRecord(
     ...summary,
     measurements: cached.measurements
   };
+}
+
+export function isServiceShot(shot: ShotRecord): boolean {
+  const types = [shot.workflow?.context?.finalBeverageType, shot.workflow?.profile?.beverage_type];
+  return types.some((type) => type != null && SERVICE_BEVERAGE_TYPES.has(String(type).toLowerCase().trim()));
 }

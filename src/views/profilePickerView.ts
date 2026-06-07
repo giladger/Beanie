@@ -1,0 +1,176 @@
+import type { ProfileRecord } from '../api/types';
+import { createProfileEditorState } from '../components/profileEditor';
+import { renderProfilePreview } from '../components/profilePreview';
+import { escapeAttr, escapeHtml } from '../components/html';
+import { icon } from '../components/icons';
+
+export interface ProfilePickerViewModel {
+  profiles: ProfileRecord[];
+  search: string;
+  favoriteProfileIds: readonly string[];
+  selectedId: string | null;
+  focusId: string | null;
+  cleaningMode: boolean;
+}
+
+export function renderProfilesPage(model: ProfilePickerViewModel): string {
+  const cleaningMode = model.cleaningMode;
+  const query = model.search.trim().toLowerCase();
+  const favorites = new Set(model.favoriteProfileIds);
+  const matches = model.profiles.filter((record) => {
+    const title = (record.profile.title ?? '').toLowerCase();
+    const author = (record.profile.author ?? '').toLowerCase();
+    return !query || title.includes(query) || author.includes(query);
+  });
+  const sorted = [...matches].sort((a, b) => {
+    const fa = favorites.has(a.id) ? 0 : 1;
+    const fb = favorites.has(b.id) ? 0 : 1;
+    if (fa !== fb) return fa - fb;
+    const ga = profileGroupLabel(a, favorites);
+    const gb = profileGroupLabel(b, favorites);
+    if (ga !== gb) return ga.localeCompare(gb, undefined, { sensitivity: 'base' });
+    return profileShortTitle(a.profile.title ?? a.id).localeCompare(
+      profileShortTitle(b.profile.title ?? b.id),
+      undefined,
+      { sensitivity: 'base' }
+    );
+  });
+  const focus =
+    sorted.find((record) => record.id === model.focusId) ??
+    sorted.find((record) => record.id === model.selectedId) ??
+    sorted[0] ??
+    null;
+  const actions = cleaningMode
+    ? ''
+    : `<button class="icon-button" data-action="new-profile" aria-label="New profile" title="New profile">${icon('plus')}</button>`;
+
+  return `
+    ${profilePageHeader(cleaningMode ? 'Cleaning profile' : 'Profiles', cleaningMode ? 'machine' : 'workbench', actions)}
+    <main class="page-body profiles-page no-scroll-page">
+      <label class="search">
+        ${icon('search')}
+        <input type="search" data-action="profile-search" value="${escapeAttr(model.search)}" placeholder="Search profiles" />
+      </label>
+      <section class="profile-selector-shell">
+        <div class="profile-list">
+          ${
+            sorted.length === 0
+              ? '<p class="empty">No profiles match.</p>'
+              : renderProfileRows(sorted, favorites, model.selectedId, focus?.id ?? null)
+          }
+        </div>
+        ${renderProfilePreviewPane(focus, favorites.has(focus?.id ?? ''), focus?.id === model.selectedId)}
+      </section>
+    </main>
+  `;
+}
+
+function profilePageHeader(title: string, back: string, actions: string): string {
+  return `
+    <header class="page-head">
+      <button class="page-back" data-action="go-view" data-value="${escapeAttr(back)}" aria-label="Back" title="Back">
+        ${icon('chevron-left')}<span>Back</span>
+      </button>
+      <h1 class="page-title">${escapeHtml(title)}</h1>
+      <div class="page-head-actions">${actions}</div>
+    </header>
+  `;
+}
+
+// Group key for the picker: favorites cluster first, otherwise group by the
+// title's folder prefix (e.g. "A-Flow/...") or, lacking one, by author.
+export function profileGroupLabel(record: ProfileRecord, favorites: Set<string>): string {
+  if (favorites.has(record.id)) return 'Favorites';
+  return profileGroup(record.profile.title ?? record.id, record.profile.author);
+}
+
+function renderProfileRows(
+  records: ProfileRecord[],
+  favorites: Set<string>,
+  selectedId: string | null,
+  focusId: string | null
+): string {
+  let lastGroup = '';
+  return records.map((record) => {
+    const group = profileGroupLabel(record, favorites);
+    const header = group !== lastGroup ? `<div class="profile-group-header">${escapeHtml(group)}</div>` : '';
+    lastGroup = group;
+    return `${header}${renderProfileRow(record, favorites.has(record.id), record.id === selectedId, record.id === focusId)}`;
+  }).join('');
+}
+
+function renderProfileRow(record: ProfileRecord, favorite: boolean, active: boolean, focused = false): string {
+  const title = record.profile.title ?? record.id;
+  const shortTitle = profileShortTitle(title);
+  return `
+    <div class="profile-row ${active ? 'active' : ''} ${focused ? 'focused' : ''}">
+      <button type="button" class="profile-pick" data-action="focus-profile" data-id="${escapeAttr(record.id)}">
+        <span class="profile-row-title">${favorite ? '<span class="profile-row-fav">★</span> ' : ''}${escapeHtml(shortTitle)}</span>
+      </button>
+      ${active ? '<span class="profile-selected-dot">Selected</span>' : ''}
+    </div>
+  `;
+}
+
+function renderProfilePreviewPane(record: ProfileRecord | null, favorite: boolean, active: boolean): string {
+  if (!record) {
+    return `
+      <aside class="profile-preview-pane">
+        <p class="empty">No profile selected.</p>
+      </aside>
+    `;
+  }
+  const title = record.profile.title ?? record.id;
+  const author = record.profile.author ?? '';
+  // reaprime drops `type`, so derive the real kind from the steps.
+  const type = createProfileEditorState(record.profile).type;
+  return `
+    <aside class="profile-preview-pane">
+      <div class="profile-preview-head">
+        <div>
+          <span class="eyebrow">${escapeHtml(author || 'Profile')}</span>
+          <h2>${escapeHtml(title)}</h2>
+          <span class="profile-type-chip">${escapeHtml(displayProfileType(type))}</span>
+        </div>
+        <button type="button" class="profile-fav ${favorite ? 'on' : ''}" data-action="toggle-favorite-profile" data-id="${escapeAttr(record.id)}" aria-label="${favorite ? 'Unfavorite' : 'Favorite'} ${escapeAttr(title)}" aria-pressed="${favorite}">${favorite ? '★' : '☆'}</button>
+      </div>
+      <section class="profile-preview-block">
+        <span class="eyebrow">Preview</span>
+        <div class="profile-preview-large">
+          ${renderProfilePreview(record.profile)}
+        </div>
+      </section>
+      <section class="profile-description-block">
+        <span class="eyebrow">Description</span>
+        <p class="profile-preview-notes">${escapeHtml(record.profile.notes || 'No description.')}</p>
+      </section>
+      <div class="profile-preview-actions">
+        <button type="button" class="pa-edit" data-action="edit-profile" data-id="${escapeAttr(record.id)}">${icon('pencil')}<span>Edit</span></button>
+        <button type="button" class="pa-select ${active ? 'is-selected' : ''}" data-action="pick-profile" data-id="${escapeAttr(record.id)}">${active ? 'Selected' : 'Select'}</button>
+      </div>
+    </aside>
+  `;
+}
+
+function profileGroup(title: string, author?: string): string {
+  const slash = title.indexOf('/');
+  if (slash > 0) return title.slice(0, slash).trim();
+  return author?.trim() || 'Profiles';
+}
+
+export function profileShortTitle(title: string): string {
+  const slash = title.indexOf('/');
+  return slash > 0 ? title.slice(slash + 1).trim() : title;
+}
+
+export function displayProfileType(value: string): string {
+  const legacy =
+    value === 'settings_2a'
+      ? 'pressure'
+      : value === 'settings_2b'
+        ? 'flow'
+        : value === 'settings_2c' || value === 'settings_2c2'
+          ? 'advanced'
+          : value;
+  return legacy.charAt(0).toUpperCase() + legacy.slice(1);
+}

@@ -1,6 +1,6 @@
 import type { MachineSnapshot, ScaleSnapshot } from '../api/types';
-import type { LiveChartModel, LiveChartSeries, LiveChartPoint } from '../components/liveChartModel';
-import { LIVE_SERIES } from '../components/liveChartModel';
+import type { LiveChartModel, LiveChartSeries, LiveChartPoint } from './liveChartModel';
+import { LIVE_SERIES } from './liveChartModel';
 
 // Pure live-shot data layer. Ingests live machine + scale WebSocket snapshots,
 // runs a small shot-detection state machine, and accumulates telemetry into a

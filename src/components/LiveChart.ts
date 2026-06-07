@@ -1,4 +1,4 @@
-import type { LiveChartModel, LiveChartSeries } from './liveChartModel';
+import type { LiveChartModel, LiveChartSeries } from '../domain/liveChartModel';
 
 // Imperative canvas renderer for espresso-shot charts. It draws into a single
 // <canvas> in one pass instead of rebuilding DOM for every frame,

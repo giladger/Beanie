@@ -1,4 +1,5 @@
 import type { ShotRecord } from '../api/types';
+import { escapeAttr, escapeHtml } from './html';
 import { icon } from './icons';
 
 export const FLOW_CALIBRATION_MIN = 0.13;
@@ -224,17 +225,4 @@ function dateLabel(value: string): string {
     hour: '2-digit',
     minute: '2-digit'
   });
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
-
-function escapeAttr(value: string): string {
-  return escapeHtml(value);
 }

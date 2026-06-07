@@ -1,6 +1,6 @@
 import type { Profile } from '../api/types';
 import { createProfileEditorState } from '../components/profileEditor';
-import type { EditorStep } from '../components/profileEditor';
+import type { EditorStep } from '../domain/profileModel';
 import {
   canEditAsBasic,
   compileSimpleToSteps,

@@ -3,12 +3,12 @@ import type {
   BeanBatch,
   De1MachineSettings,
   Grinder,
-  GatewayStartupSnapshot,
   HotWaterData,
   MachineCapabilities,
   MachineInfo,
   MachineSnapshot,
   MachineState,
+  Profile,
   ProfileRecord,
   RecipeDraft,
   RinseData,
@@ -16,7 +16,6 @@ import type {
   ShotAnnotations,
   ShotMeasurement,
   ShotRecord,
-  ShotSummary,
   ShotUpdate,
   SteamSettings,
   Workflow,
@@ -26,14 +25,37 @@ import {
   GatewayRequestError,
   gateway,
   gatewayHttpOrigin,
-  gatewayWsOrigin,
-  loadGatewayStartup
+  gatewayWsOrigin
 } from './api/gateway';
+import {
+  capitalize,
+  defaultExitValueForApp,
+  draftSignature,
+  formatNumber,
+  isBrewState,
+  isDecentAppWebView,
+  isMachineCommand,
+  isNoScaleShotBlockError,
+  isThemePreference,
+  isUIScalePreference,
+  liveChartHideMaxTimeLabel,
+  liveChartModelOptions,
+  machineCommandsAvailable,
+  machineStatus,
+  nonNegativeNumber,
+  positiveNumber,
+  round,
+  scaleConnected,
+  startupStatusLabel,
+  temp,
+  water,
+  workflowSignature,
+  type LiveChartMode
+} from './appShell';
 import {
   beanLabel,
   buildWorkflowUpdate,
   emptyRecipe,
-  formatGrams,
   formatRatio,
   latestBatch,
   normalizeDraft,
@@ -41,12 +63,12 @@ import {
   profileBaseTemperature,
   ratioFor,
   recipeFromShot,
-  recipeFromWorkflow,
   roastFreshnessLabel,
   selectInitialBean,
   shotFilterForBean,
   yieldForRatio
 } from './domain/beanWorkflow';
+import { batchOptionLabel } from './domain/beanDisplay';
 import {
   readFavoriteProfiles,
   readLastBeanId,
@@ -86,21 +108,54 @@ import {
   setBundleField,
   type SettingsBundle
 } from './domain/settingsModel';
-import { STEAM_PURGE_MODES, demoDecentAccountStatus, demoPluginSettings } from './api/settings';
-import type {
-  De1AdvancedSettingsPatch,
-  DecentAccountStatus,
-  PluginSettings,
-  PresenceSettingsPatch,
-  ReaSettingsPatch
-} from './api/settings';
+import type { DecentAccountStatus, PluginSettings } from './api/settings';
+import { createSettingsController } from './controllers/settingsController';
+import {
+  BeanWorkflowController,
+  beanUsageFromShots
+} from './controllers/beanWorkflowController';
+import {
+  editProfileEditorInput,
+  newProfileEditorInput,
+  saveProfile,
+  selectProfileForDraft,
+  toggleFavoriteProfile
+} from './controllers/profileEditorController';
+import {
+  includeShotInHistory,
+  liveShotEndDecision,
+  waitForCompletedLiveShot,
+  type LiveShotCompletionContext
+} from './controllers/liveShotController';
+import {
+  saveShotUpdate,
+  shotEnjoymentUpdate
+} from './controllers/shotMetadataController';
+import {
+  cleaningStartPlan,
+  cleaningThresholdPlan,
+  countShotForCleaningPlan,
+  finishCleaningCyclePlan,
+  loadCleaningWorkflow,
+  pickCleaningProfilePlan
+} from './controllers/cleaningWorkflowController';
+import {
+  applyMachinePresetPlan,
+  applyMachineValuePlan,
+  buildMachineWorkflowPlan,
+  machinePresetLabelKey,
+  machinePresetsWithValues,
+  normalizeSteamPurgeMode,
+  persistMachineWorkflowPlan,
+  steamPurgeModePlan,
+  updateSteamPurgeModeAndReadBack
+} from './controllers/machineSettingsWorkflowController';
 import {
   normalizePluginId,
   pluginFieldDefault,
   pluginSettingsSpec,
   type PluginConfigState
 } from './domain/pluginSettings';
-import { renderProfilePreview } from './components/profilePreview';
 import {
   addStep,
   createProfileEditorState,
@@ -124,10 +179,9 @@ import {
   setStepPump,
   setStepTransition,
   type ProfileEditorState,
-  type ProfileMetaKey,
-  type SimpleProfileField,
-  type StepFieldKey
+  type SimpleProfileField
 } from './components/profileEditor';
+import type { ProfileMetaKey, StepFieldKey } from './domain/profileModel';
 import { LiveChart } from './components/LiveChart';
 import { chartModelFromShot } from './components/liveChartModel';
 import {
@@ -137,6 +191,7 @@ import {
   renderFlowCalibrator,
   roundCalibration
 } from './components/flowCalibrator';
+import { escapeAttr } from './components/html';
 import {
   LiveShotSession,
   liveShotDurationMs,
@@ -144,25 +199,63 @@ import {
   type LiveFrame,
   type LiveShotState
 } from './domain/liveShot';
+import {
+  liveShotPanelDecision,
+  liveTelemetryFrameState,
+  liveTelemetryIdleDecision,
+  type LiveTelemetryIdleDecision
+} from './domain/liveTelemetry';
 import { beanieCache } from './domain/cache';
-import { mergeShotSummaryIntoRecord } from './domain/shotRecord';
-import { waterTankMlFromMm } from './domain/waterTank';
+import { loadGatewayStartupWithCache } from './data/startupRepository';
+import {
+  fetchShotPage as fetchShotPageFromRepository,
+  loadLatestShotCandidates as loadLatestShotCandidatesFromRepository
+} from './data/shotRepository';
+import { loadBeanBatches } from './data/beanRepository';
+import { renderProfilesPage as renderProfilePickerPage } from './views/profilePickerView';
+import { renderBeanPickerModal as renderBeanPickerModalView } from './views/beanPickerView';
+import {
+  renderNoScaleShotModal as renderNoScaleShotModalView,
+  renderWaterAlert as renderWaterAlertView,
+  renderWaterWarningBanner as renderWaterWarningBannerView
+} from './views/alertsView';
+import {
+  renderHistoryView,
+  selectedHistoryShot as selectHistoryShot
+} from './views/historyView';
+import { renderShotEditModal as renderShotEditModalView } from './views/shotEditorView';
+import {
+  hotWaterTargetSpec,
+  machineHotWaterStopModeTile,
+  machineSteamPurgeTile,
+  machineValueTile,
+  renderCleaningBar as renderCleaningBarView,
+  renderMachinePage as renderMachinePageView,
+  renderMachineProgressPage as renderMachineProgressPageView
+} from './views/machineView';
+import {
+  renderBatchEditorPage as renderBatchEditorPageView,
+  renderBeanEditorPage as renderBeanEditorPageView,
+  renderGrinderEditorPage as renderGrinderEditorPageView,
+  renderMachineLabelModal as renderMachineLabelModalView
+} from './views/formsView';
+import {
+  renderLivePanel as renderLivePanelView,
+  renderPageHeader,
+  renderWorkbench as renderWorkbenchView
+} from './views/workbenchView';
+import { scoreValueFromTap } from './components/shotScore';
+import { isServiceShot } from './domain/shotRecord';
 import {
   applySettingsPreferences,
   buildSettingsShellModel,
   readSettingsPreferences,
   resetBeanieCache,
-  THEME_PREFERENCES,
   type SettingsPreferences,
-  type ThemePreference,
-  type UIScalePreference,
   writeSettingsPreferences
 } from './domain/settings';
 import {
-  bumpShots,
   cleaningDue,
-  CLEANING_THRESHOLD_OPTIONS,
-  markCleaned,
   readCleaningProfileOverride,
   readCleaningState,
   readCleaningThreshold,
@@ -174,54 +267,89 @@ import {
 } from './domain/cleaning';
 import { waterAlertLevel, type WaterAlertLevel } from './domain/waterAlert';
 import {
-  DEFAULT_HOT_WATER,
-  DEFAULT_RINSE,
-  DEFAULT_STEAM,
   FLUSH_PRESETS,
   HOT_WATER_PRESETS,
   STEAM_PRESETS,
-  clampFlush,
-  clampHotWater,
-  clampSteam,
   flushValues,
   hotWaterValues,
   matchingPreset,
   steamValues,
   waterControlCapabilities,
   type NumberSpec,
-  type WaterControlCapabilities,
-  type WaterPreset
+  type WaterControlCapabilities
 } from './domain/waterSettings';
+import type { MachineServiceState } from './domain/timedSteamStop';
 import {
-  paddedSteamDurationSeconds,
-  timedSteamStopDelayMs,
-  type MachineServicePhase,
-  type MachineServiceState
-} from './domain/timedSteamStop';
+  machineServiceMeta,
+  machineServicePrimaryTime,
+  machineServiceState,
+  machineServiceStats,
+  machineServiceTargetSeconds,
+  machineServiceTone,
+  machineServiceVerb,
+  nextHotWaterWeightStop,
+  type HotWaterWeightStopController
+} from './domain/machineService';
+import { MachineServiceController } from './controllers/machineServiceController';
+import {
+  DEFAULT_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS,
+  HOT_WATER_WEIGHT_NATIVE_VOLUME_ML,
+  captureMachineServiceWorkflowRestore,
+  createHotWaterWeightStopController,
+  extendedMachineServiceWorkflow,
+  hotWaterDataForNativeWorkflow,
+  hotWaterWeightStopTarget as plannedHotWaterWeightStopTarget,
+  machineActionPreflight,
+  machineActionStatus,
+  optimisticMachineSnapshot,
+  restoreMachineServiceWorkflowAfterEnd as restoreMachineServiceWorkflowAfterEndController,
+  sendMachineActionCommand,
+  stopHotWaterAtWeight as stopHotWaterAtWeightController,
+  tareAndArmHotWaterWeightStop as tareAndArmHotWaterWeightStopController,
+  type HotWaterWeightStopTarget,
+  type MachineServiceWorkflowRestore
+} from './controllers/machineExecutionController';
+import {
+  readHotWaterStopMode,
+  readHotWaterWeightTarget,
+  readMachinePresetLabels,
+  readMachinePresetValues,
+  writeHotWaterStopMode,
+  writeHotWaterWeightTarget,
+  writeMachinePresetLabels,
+  writeMachinePresetValues,
+  type HotWaterStopMode,
+  type MachinePresetValueOverrides
+} from './domain/machinePreferences';
+import {
+  markSecondTapHintUsed,
+  shouldShowSecondTapHint,
+  type SecondTapHintKind
+} from './domain/interactionHints';
+import {
+  isShotNumberField,
+  shotNumberFieldStep,
+  type ShotBeanEditState,
+  type ShotEditDraft,
+  type ShotEditField,
+  type ShotFieldOption,
+  type ShotFieldSpec
+} from './domain/shotEditModel';
 
 type Modal = 'bean-picker' | 'edit-number' | 'edit-shot' | 'machine-label' | 'no-scale-shot' | null;
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
-type ShotEditField =
-  | 'finalBeverageType'
-  | 'baristaName'
-  | 'drinkerName'
-  | 'targetDoseWeight'
-  | 'targetYield'
-  | 'actualDoseWeight'
-  | 'actualYield'
-  | 'grinderId'
-  | 'grinderSetting'
-  | 'drinkTds'
-  | 'drinkEy'
-  | 'espressoNotes';
+interface ClickActionContext {
+  el: HTMLElement;
+  id?: string;
+  field?: string;
+  index?: string;
+  value?: string;
+}
 type ApplyState = 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
-type LiveChartMode = 'preset30' | 'auto';
-type HotWaterStopMode = 'volume' | 'time';
 // 'starting' = machine ramping up (substate preparingForShot), before flow;
 // 'active' = actually flowing (substate pouring); 'purging' = flow stopped but
 // still in the service state (the DE1 steam puff / purge).
 type BeanPickerMode = 'inspect' | 'create';
-type SecondTapHintKind = 'bean' | 'shot';
 type View =
   | 'workbench'
   | 'flow-calibrator'
@@ -246,42 +374,6 @@ const NO_SCALE_MACHINE_STATUS = 'Connect scale';
 const NO_SCALE_ABORT_WINDOW_MS = 3_000;
 const SCALE_FRESH_WINDOW_MS = 5_000;
 const NO_SCALE_WARNING_VISIBLE_MS = 6_000;
-const DEFAULT_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS = 0.3;
-const HOT_WATER_WEIGHT_NATIVE_HEADROOM_SECONDS = 30;
-const HOT_WATER_WEIGHT_NATIVE_VOLUME_ML = 500;
-
-const SHOT_SCORE_OPTIONS = [
-  { value: 20, label: 'Bad', tone: 'bad' },
-  { value: 40, label: 'Meh', tone: 'meh' },
-  { value: 60, label: 'OK', tone: 'ok' },
-  { value: 80, label: 'Good', tone: 'good' },
-  { value: 100, label: 'Great', tone: 'great' }
-] as const;
-
-type ShotScoreOption = (typeof SHOT_SCORE_OPTIONS)[number];
-
-// Flush / steam / hot-water actions can end up in the shot store (e.g. imported
-// de1app history) tagged with a non-espresso beverage type. Keep them out of a
-// bean's shot history. Only records EXPLICITLY marked as a service are hidden,
-// so real espresso shots (beverage type espresso, or unlabelled) are untouched.
-const SERVICE_BEVERAGE_TYPES = new Set([
-  'steam',
-  'water',
-  'hot_water',
-  'hotwater',
-  'hot water',
-  'flush',
-  'rinse',
-  'clean',
-  'cleaning',
-  'calibrate',
-  'calibration'
-]);
-
-function isServiceShot(shot: ShotRecord): boolean {
-  const types = [shot.workflow?.context?.finalBeverageType, shot.workflow?.profile?.beverage_type];
-  return types.some((type) => type != null && SERVICE_BEVERAGE_TYPES.has(String(type).toLowerCase().trim()));
-}
 
 // Which editor field a tap-to-edit numpad dialog is bound to.
 interface ProfileEditTarget {
@@ -324,51 +416,6 @@ interface NumberEditTarget {
   formKey?: string;
   field?: ShotEditField;
   returnModal?: Modal;
-}
-
-interface ShotEditDraft {
-  shotId: string;
-  coffeeRoaster: string | null;
-  coffeeName: string | null;
-  beanBatchId: string | null;
-  finalBeverageType: string | null;
-  baristaName: string | null;
-  drinkerName: string | null;
-  targetDoseWeight: number | null;
-  targetYield: number | null;
-  actualDoseWeight: number | null;
-  actualYield: number | null;
-  grinderId: string | null;
-  grinderModel: string | null;
-  grinderSetting: string | null;
-  drinkTds: number | null;
-  drinkEy: number | null;
-  enjoyment: number | null;
-  espressoNotes: string | null;
-  contextExtras: Record<string, unknown> | null;
-  annotationExtras: Record<string, unknown> | null;
-}
-
-// The combined bean/roaster picker shown inside the shot editor. Editing a
-// shot's bean is one act, like everywhere else in the skin: pick a bag, which
-// carries its roaster and the latest batch. `creating` swaps the bag list for
-// an inline new-bean form.
-interface ShotBeanEditState {
-  creating: boolean;
-}
-
-interface ShotFieldOption {
-  label: string;
-  value: string;
-  detail?: string;
-}
-
-interface ShotFieldSpec {
-  label: string;
-  kind: 'text' | 'number' | 'textarea';
-  value: string;
-  step?: string;
-  options: ShotFieldOption[];
 }
 
 interface SecondTapHintState {
@@ -470,15 +517,6 @@ interface LiveReadoutEls {
   temp: HTMLElement | null;
 }
 
-interface HotWaterWeightStopController {
-  targetWeight: number;
-  configuredFlow: number;
-  armedAtMs: number;
-  tareRequestedAtMs: number | null;
-  activeSeen: boolean;
-  stopRequested: boolean;
-}
-
 function accountLoginErrorMessage(error: GatewayRequestError): string {
   if (error.issue.statusCode === 401) return 'Invalid Decent account email or password.';
   if (error.issue.statusCode === 404) return 'Update Reaprime to enable Decent account linking from Beanie.';
@@ -488,6 +526,7 @@ function accountLoginErrorMessage(error: GatewayRequestError): string {
 }
 
 export class BeanieApp {
+  private readonly settingsController = createSettingsController(gateway);
   private state: AppState = {
     beans: [],
     batchesByBean: {},
@@ -581,10 +620,10 @@ export class BeanieApp {
   private disposed = false;
   private shotRefreshInFlight = false;
   private applyRequestId = 0;
-  private beanSelectionRequestId = 0;
   private loadMoreRequestId = 0;
   private shotCacheGeneration = 0;
 
+  private readonly beanWorkflow = new BeanWorkflowController();
   private readonly liveShot = new LiveShotSession();
   private liveChart: LiveChart | null = null;
   private liveCanvas: HTMLCanvasElement | null = null;
@@ -592,28 +631,18 @@ export class BeanieApp {
   private liveRaf: number | null = null;
   private liveDirty = false;
   private simTimer: number | null = null;
-  private machineServiceState: MachineServiceState | null = null;
+  private readonly machineService = new MachineServiceController();
   // True while a cleaning/backflush cycle is running as an espresso pull, so the
   // shot-end handler records a cleaning (not a bean shot) and restores the recipe.
   private cleaningInProgress = false;
   // Last computed water-alert band, used to detect threshold crossings on the
   // telemetry hot path (so we only re-render when the band actually changes).
   private lastWaterAlert: WaterAlertLevel = 'none';
-  private machineServiceStartedAtMs: number | null = null;
-  private machineServicePhase: MachineServicePhase | null = null;
   private machineProgressReturnView: View | null = null;
-  private machineStopRequestedFor: MachineServiceState | null = null;
-  private machineStopRequestedAtMs: number | null = null;
   private machineStopFeedbackTimer: number | null = null;
   private timedSteamStopTimer: number | null = null;
   private timedSteamStopScheduledForMs: number | null = null;
-  private timedSteamStopRequestedAtMs: number | null = null;
-  private machineServiceTargetOverrideSeconds: number | null = null;
-  private machineServiceWorkflowToRestore: {
-    steamSettings: SteamSettings;
-    hotWaterData: HotWaterData;
-    rinseData: RinseData;
-  } | null = null;
+  private machineServiceWorkflowToRestore: MachineServiceWorkflowRestore | null = null;
   private hotWaterWeightStop: HotWaterWeightStopController | null = null;
   private hotWaterWeightStopTarePending = false;
   private hotWaterWeightStopTareFailed = false;
@@ -774,7 +803,7 @@ export class BeanieApp {
     this.setState({ loading: true, status: 'Loading Decent.app data' });
     try {
       const latestShotQuery = new URLSearchParams({ limit: '50', offset: '0', order: 'desc' });
-      const startup = await this.loadGatewayStartupWithCache(latestShotQuery);
+      const startup = await loadGatewayStartupWithCache(latestShotQuery, { cache: beanieCache });
       const workflow = startup.data.workflow;
       const beans = startup.data.beans;
       if (!workflow || !beans) {
@@ -802,7 +831,7 @@ export class BeanieApp {
       this.setState({
         workflow,
         beans,
-        beanUsageAt: this.beanUsageFromShots(beans, latestShots.items),
+        beanUsageAt: beanUsageFromShots(beans, latestShots.items),
         grinders,
         profiles,
         machineInfo,
@@ -841,63 +870,12 @@ export class BeanieApp {
     }
   }
 
-  private async loadGatewayStartupWithCache(
-    latestShotQuery: URLSearchParams
-  ): Promise<GatewayStartupSnapshot> {
-    const startup = await loadGatewayStartup({ latestShotQuery });
-    await this.cacheStartupData(startup.data, latestShotQuery);
-    const cached = await this.cachedStartupData(latestShotQuery);
-    return {
-      ...startup,
-      data: {
-        workflow: startup.data.workflow ?? cached.workflow,
-        beans: startup.data.beans ?? cached.beans,
-        grinders: startup.data.grinders ?? cached.grinders,
-        profiles: startup.data.profiles ?? cached.profiles,
-        latestShots: startup.data.latestShots ?? cached.latestShots
-      }
-    };
-  }
-
-  private async cacheStartupData(
-    data: GatewayStartupSnapshot['data'],
-    latestShotQuery: URLSearchParams
-  ): Promise<void> {
-    const writes: Array<Promise<void>> = [];
-    if (data.workflow !== undefined) writes.push(beanieCache.putWorkflow(data.workflow));
-    if (data.beans !== undefined) writes.push(beanieCache.putBeans(data.beans));
-    if (data.grinders !== undefined) writes.push(beanieCache.putGrinders(data.grinders));
-    if (data.profiles !== undefined) writes.push(beanieCache.putProfiles(data.profiles));
-    if (data.latestShots !== undefined) writes.push(beanieCache.putShotPage(latestShotQuery, data.latestShots));
-    await Promise.all(writes.map((write) => write.catch(() => {})));
-  }
-
-  private async cachedStartupData(
-    latestShotQuery: URLSearchParams
-  ): Promise<GatewayStartupSnapshot['data']> {
-    const [workflow, beans, grinders, profiles, latestShots] = await Promise.all([
-      beanieCache.getWorkflow().catch(() => null),
-      beanieCache.getBeans().catch(() => []),
-      beanieCache.getGrinders().catch(() => []),
-      beanieCache.getProfiles().catch(() => []),
-      beanieCache.getShotPage(latestShotQuery).catch(() => null)
-    ]);
-
-    return {
-      workflow: workflow ?? undefined,
-      beans: beans.length > 0 ? beans : undefined,
-      grinders,
-      profiles,
-      latestShots: latestShots ?? undefined
-    };
-  }
-
   private loadDemo(): void {
     const demoShotUsage = demoBeans.flatMap((bean) => demoShotsForBean(bean));
     this.setState({
       workflow: demoWorkflow,
       beans: demoBeans,
-      beanUsageAt: this.beanUsageFromShots(demoBeans, demoShotUsage),
+      beanUsageAt: beanUsageFromShots(demoBeans, demoShotUsage),
       batchesByBean: demoBatches,
       grinders: demoGrinders,
       profiles: demoProfiles,
@@ -936,62 +914,45 @@ export class BeanieApp {
     if (Object.keys(next).length > 0) this.setState(next);
   }
 
-  private async updateSteamPurgeModeAndReadBack(mode: number): Promise<De1MachineSettings> {
-    const nextMode = normalizeSteamPurgeMode(mode);
-    await gateway.updateMachineSettings({ steamPurgeMode: nextMode });
-    const settings = await gateway.machineSettings();
-    const readBackMode = settings.steamPurgeMode;
-    if (readBackMode !== 0 && readBackMode !== 1) {
-      throw new Error('Steam purge mode read-back was missing');
-    }
-    if (readBackMode !== nextMode) {
-      throw new Error(`Steam purge mode read back as ${readBackMode}, expected ${nextMode}`);
-    }
-    return settings;
-  }
-
   private async selectBean(
     beanId: string,
     options: { apply: boolean; preferWorkflow: boolean }
   ): Promise<void> {
-    const bean = this.state.beans.find((item) => item.id === beanId);
-    if (!bean) return;
-    const requestId = ++this.beanSelectionRequestId;
+    const selection = this.beanWorkflow.beginBeanSelection(beanId, this.state.beans, { writeLastBeanId });
+    if (!selection) return;
+    this.setState(selection.state);
 
-    writeLastBeanId(bean.id);
-    this.setState({
-      selectedBeanId: bean.id,
-      busy: true,
-      status: `Loading ${beanLabel(bean)}`
+    const result = await this.beanWorkflow.completeBeanSelection({
+      selection,
+      options,
+      beans: this.state.beans,
+      workflow: this.state.workflow,
+      profiles: this.state.profiles,
+      grinders: this.state.grinders,
+      loadBatches: (selected) => this.loadBatches(selected),
+      loadFirstShots: (selected, selectedBatch) => this.loadFirstShots(selected, selectedBatch),
+      isCurrent: (current) =>
+        this.beanWorkflow.isCurrentBeanSelection(current) &&
+        this.state.selectedBeanId === current.bean.id,
+      workflowMatchesBean: (selected) => this.workflowMatchesBean(selected)
     });
-
-    const batches = await this.loadBatches(bean);
-    if (requestId !== this.beanSelectionRequestId || this.state.selectedBeanId !== bean.id) return;
-    const selectedBatch = latestBatch(batches);
-
-    const { records: shots, total: shotsTotal } = await this.loadFirstShots(bean, selectedBatch);
-    if (requestId !== this.beanSelectionRequestId || this.state.selectedBeanId !== bean.id) return;
-    const workflowMatches = this.workflowMatchesBean(bean);
-    const draft =
-      options.preferWorkflow && workflowMatches
-        ? recipeFromWorkflow(this.state.workflow)
-        : recipeFromShot(shots[0] ?? null, 'planned');
+    if (result.type === 'stale') return;
 
     this.setState({
-      batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
-      selectedBatchId: selectedBatch?.id ?? null,
-      shots,
-      shotsTotal,
+      batchesByBean: { ...this.state.batchesByBean, [result.bean.id]: result.batches },
+      selectedBatchId: result.selectedBatch?.id ?? null,
+      shots: result.shots,
+      shotsTotal: result.shotsTotal,
       shotsLoadingMore: false,
       beanUsageAt: {
         ...this.state.beanUsageAt,
-        ...this.beanUsageFromShots(this.state.beans, shots)
+        ...result.beanUsageAt
       },
-      draft: normalizeDraft(draft, this.state.profiles, this.state.grinders),
+      draft: result.draft,
       busy: false,
       applyState: 'idle',
       appliedSignature: workflowSignature(this.state.workflow),
-      status: `${shots.length} shots loaded`
+      status: result.status
     });
 
     if (options.apply && this.state.autoLoad) {
@@ -1001,14 +962,7 @@ export class BeanieApp {
 
   private async loadBatches(bean: Bean): Promise<BeanBatch[]> {
     if (this.state.demo) return this.state.batchesByBean[bean.id] ?? [];
-    try {
-      const batches = await gateway.batches(bean.id);
-      await beanieCache.putBeanBatches(bean.id, batches).catch(() => {});
-      return batches;
-    } catch (error) {
-      console.warn('[Beanie] Could not load batches', error);
-      return beanieCache.getBeanBatches(bean.id).catch(() => []);
-    }
+    return loadBeanBatches(bean.id, { gateway, cache: beanieCache });
   }
 
   private async openBeanPicker(
@@ -1024,28 +978,6 @@ export class BeanieApp {
       beanPickerAutofocusSearch: options.autofocusSearch ?? false
     });
     if (id && !options.create) await this.ensureBatchesLoaded(id);
-  }
-
-  private beanUsageFromShots(
-    beans: Bean[],
-    shots: Array<ShotSummary | ShotRecord>
-  ): Record<string, number> {
-    const usage: Record<string, number> = {};
-    for (const shot of shots) {
-      const beanId = this.beanIdForContext(shot.workflow?.context, beans);
-      if (!beanId) continue;
-      const timestamp = Date.parse(shot.timestamp);
-      if (!Number.isFinite(timestamp)) continue;
-      usage[beanId] = Math.max(usage[beanId] ?? 0, timestamp);
-    }
-    return usage;
-  }
-
-  private beanIdForContext(ctx: WorkflowContext | null | undefined, beans = this.state.beans): string | null {
-    if (!ctx?.coffeeName && !ctx?.coffeeRoaster) return null;
-    const byName = beans.find((bean) => bean.name === ctx.coffeeName && bean.roaster === ctx.coffeeRoaster);
-    if (byName) return byName.id;
-    return null;
   }
 
   private async inspectBeanInPicker(beanId: string): Promise<void> {
@@ -1092,52 +1024,14 @@ export class BeanieApp {
   ): Promise<{ records: ShotRecord[]; total: number }> {
     const cacheGeneration = this.shotCacheGeneration;
     const query = shotFilterForBean(bean, batch);
-    query.set('limit', String(this.shotPageSize));
-    query.set('offset', String(offset));
-
-    try {
-      const page = await gateway.shots(query);
-      if (this.canWriteShotCache(cacheGeneration)) {
-        await beanieCache.putShotPage(query, page);
+    return fetchShotPageFromRepository(
+      { query, pageSize: this.shotPageSize, offset },
+      {
+        gateway,
+        cache: beanieCache,
+        canWriteCache: () => cacheGeneration === this.shotCacheGeneration
       }
-      const records = await Promise.all(
-        page.items.map((shot) => this.loadFullShot(shot, cacheGeneration))
-      );
-      return { records, total: page.total };
-    } catch (error) {
-      console.warn('[Beanie] Could not load shots', error);
-      const cached = await beanieCache.getShotPage(query).catch(() => null);
-      if (cached) {
-        const records = await Promise.all(cached.items.map((shot) => this.loadFullShot(shot)));
-        return { records, total: cached.total };
-      }
-      return { records: [], total: offset };
-    }
-  }
-
-  private async loadFullShot(
-    shot: ShotSummary,
-    cacheGeneration = this.shotCacheGeneration
-  ): Promise<ShotRecord> {
-    const cached = this.canWriteShotCache(cacheGeneration)
-      ? await beanieCache.getShotRecord(shot.id).catch(() => null)
-      : null;
-    if (cached) {
-      const merged = mergeShotSummaryIntoRecord(cached, shot);
-      if (this.canWriteShotCache(cacheGeneration)) {
-        await beanieCache.putShotRecord(merged);
-      }
-      return merged;
-    }
-    try {
-      const record = await gateway.shot(shot.id);
-      if (this.canWriteShotCache(cacheGeneration)) {
-        await beanieCache.putShotRecord(record);
-      }
-      return record;
-    } catch {
-      return { ...shot, measurements: [] };
-    }
+    );
   }
 
   private async loadMoreShots(): Promise<void> {
@@ -1197,7 +1091,7 @@ export class BeanieApp {
         detailShotId: selectedShotStillVisible ? this.state.detailShotId : shots.find((shot) => !isServiceShot(shot))?.id ?? null,
         beanUsageAt: {
           ...this.state.beanUsageAt,
-          ...this.beanUsageFromShots(this.state.beans, records)
+          ...beanUsageFromShots(this.state.beans, records)
         }
       });
     } catch (error) {
@@ -1209,23 +1103,11 @@ export class BeanieApp {
 
   private async loadLatestShotCandidates(limit = 6): Promise<ShotRecord[]> {
     const cacheGeneration = this.shotCacheGeneration;
-    const query = new URLSearchParams({ limit: String(limit), offset: '0', order: 'desc' });
-    try {
-      const page = await gateway.shots(query);
-      if (this.canWriteShotCache(cacheGeneration)) {
-        await beanieCache.putShotPage(query, page);
-      }
-      return Promise.all(page.items.map((shot) => this.loadFullShot(shot, cacheGeneration)));
-    } catch (error) {
-      console.warn('[Beanie] Could not load latest shot candidates', error);
-      const cached = await beanieCache.getShotPage(query).catch(() => null);
-      if (!cached) return [];
-      return Promise.all(cached.items.map((shot) => this.loadFullShot(shot)));
-    }
-  }
-
-  private canWriteShotCache(generation: number): boolean {
-    return generation === this.shotCacheGeneration;
+    return loadLatestShotCandidatesFromRepository(limit, {
+      gateway,
+      cache: beanieCache,
+      canWriteCache: () => cacheGeneration === this.shotCacheGeneration
+    });
   }
 
   private async applyDraft(): Promise<void> {
@@ -1365,20 +1247,25 @@ export class BeanieApp {
     const update = this.shotUpdateFromForm(form, shot);
 
     this.setState({ busy: true, status: 'Saving shot' });
-    if (this.state.demo) {
-      this.replaceShotRecord(applyShotUpdate(shot, update), 'Shot saved (demo)');
-      return;
-    }
+    const result = await saveShotUpdate({
+      shot,
+      update,
+      demo: this.state.demo,
+      successStatus: 'Shot saved',
+      demoStatus: 'Shot saved (demo)',
+      failureStatus: 'Save shot failed'
+    }, {
+      updateShot: (id, nextUpdate) => gateway.updateShot(id, nextUpdate),
+      invalidateShotMutation: (id) => beanieCache.invalidateShotMutation(id),
+      putShotRecord: (saved) => beanieCache.putShotRecord(saved)
+    });
 
-    try {
-      const saved = await gateway.updateShot(shot.id, update);
-      this.shotCacheGeneration += 1;
-      await beanieCache.invalidateShotMutation(saved.id);
-      await beanieCache.putShotRecord(saved);
-      this.replaceShotRecord(saved, 'Shot saved');
-    } catch (error) {
-      console.error('[Beanie] Save shot failed', error);
-      this.setState({ busy: false, status: 'Save shot failed' });
+    if (result.type === 'saved') {
+      if (result.remote) this.shotCacheGeneration += 1;
+      this.replaceShotRecord(result.shot, result.status);
+    } else {
+      console.error('[Beanie] Save shot failed', result.error);
+      this.setState({ busy: false, status: result.status });
     }
   }
 
@@ -1585,23 +1472,6 @@ export class BeanieApp {
     }
   }
 
-  // The "Copy from" dropdown shared by both new-bean forms (shot editor and bean
-  // picker). Lists existing bags so a new one can start from a previous bag's
-  // details instead of a blank form.
-  private beanPrefillSelect(): string {
-    const beans = this.sortedBeansForPicker();
-    if (beans.length === 0) return '';
-    return `
-      <label class="bean-prefill">
-        <span>Copy from</span>
-        <select data-action="bean-prefill" aria-label="Copy details from an existing bean">
-          <option value="">Start blank</option>
-          ${beans.map((bean) => `<option value="${escapeAttr(bean.id)}">${escapeHtml(beanLabel(bean))}</option>`).join('')}
-        </select>
-      </label>
-    `;
-  }
-
   // Fill a new-bean form's inputs from an existing bag, directly (no re-render)
   // so the user's later edits to the prefilled values aren't clobbered. Only
   // fields the given form actually contains are touched.
@@ -1623,27 +1493,27 @@ export class BeanieApp {
   private async updateShotEnjoyment(shotId: string, value: number | null): Promise<void> {
     const shot = this.state.shots.find((item) => item.id === shotId);
     if (!shot) return;
-    const update: ShotUpdate = {
-      annotations: {
-        ...(shot.annotations ?? {}),
-        enjoyment: value
-      }
-    };
+    const update = shotEnjoymentUpdate(shot, value);
     this.setState({ busy: true, status: 'Saving score' });
-    if (this.state.demo) {
-      this.replaceShotRecord(applyShotUpdate(shot, update), 'Score saved (demo)');
-      return;
-    }
+    const result = await saveShotUpdate({
+      shot,
+      update,
+      demo: this.state.demo,
+      successStatus: 'Score saved',
+      demoStatus: 'Score saved (demo)',
+      failureStatus: 'Save score failed'
+    }, {
+      updateShot: (id, nextUpdate) => gateway.updateShot(id, nextUpdate),
+      invalidateShotMutation: (id) => beanieCache.invalidateShotMutation(id),
+      putShotRecord: (saved) => beanieCache.putShotRecord(saved)
+    });
 
-    try {
-      const saved = await gateway.updateShot(shot.id, update);
-      this.shotCacheGeneration += 1;
-      await beanieCache.invalidateShotMutation(saved.id);
-      await beanieCache.putShotRecord(saved);
-      this.replaceShotRecord(saved, 'Score saved');
-    } catch (error) {
-      console.error('[Beanie] Save score failed', error);
-      this.setState({ busy: false, status: 'Save score failed' });
+    if (result.type === 'saved') {
+      if (result.remote) this.shotCacheGeneration += 1;
+      this.replaceShotRecord(result.shot, result.status);
+    } else {
+      console.error('[Beanie] Save score failed', result.error);
+      this.setState({ busy: false, status: result.status });
     }
   }
 
@@ -1660,23 +1530,32 @@ export class BeanieApp {
     state: MachineState,
     opts: { skipScaleCheck?: boolean } = {}
   ): Promise<void> {
-    const service = machineServiceState(state);
-    if (state === 'espresso' && !opts.skipScaleCheck && this.shouldPreflightBlockShotForScale()) {
+    const preflight = machineActionPreflight({
+      state,
+      skipScaleCheck: opts.skipScaleCheck === true,
+      noScaleBlocked: this.shouldPreflightBlockShotForScale(),
+      waterAlertHard: this.currentWaterAlert() === 'hard',
+      hotWaterStopMode: this.state.hotWaterStopMode,
+      scaleConnected: scaleConnected(this.state.scale),
+      hotWaterData: this.currentHotWaterData()
+    });
+    if (preflight.type === 'blocked-no-scale') {
       this.showNoScaleShotWarning({ busy: false });
       return;
     }
-    if (state === 'espresso' && this.currentWaterAlert() === 'hard') {
+    if (preflight.type === 'blocked-water') {
       // Re-arm the (dismissable) refill popup instead of starting a shot.
       this.setState({ waterAlertDismissed: false, status: 'Refill the water tank' });
       return;
     }
-    const hotWaterWeightStop = state === 'hotWater' ? this.hotWaterWeightStopTarget() : null;
-    this.setState({ busy: true, status: machineActionStatus(state, 'sending') });
+    const service = preflight.service;
+    const hotWaterWeightStop = preflight.hotWaterWeightStop;
+    this.setState({ busy: true, status: preflight.status });
     if (this.state.demo) {
       if (state !== 'espresso') this.stopSimulatedShot();
       if (state === 'hotWater') {
         this.hotWaterWeightStop = hotWaterWeightStop
-          ? this.createHotWaterWeightStop(hotWaterWeightStop, null)
+          ? createHotWaterWeightStopController(hotWaterWeightStop, null, Date.now())
           : null;
       }
       this.rememberMachineProgressReturnView(service);
@@ -1692,85 +1571,84 @@ export class BeanieApp {
       if (state === 'espresso') this.startSimulatedShot();
       return;
     }
-    try {
-      if (state === 'steam') await this.prepareMachineForTimedSteamStop();
-      if (state === 'hotWater' && hotWaterWeightStop) {
-        this.setState({ status: 'Taring scale' });
-        await gateway.tareScale();
-        this.hotWaterWeightStop = this.createHotWaterWeightStop(hotWaterWeightStop, Date.now());
-      } else if (state === 'hotWater') {
-        this.hotWaterWeightStop = null;
-      }
-      await gateway.requestState(state);
-      this.rememberMachineProgressReturnView(service);
-      this.trackMachineServiceState(state);
-      this.setState({
-        busy: false,
-        machine: optimisticMachineSnapshot(this.state.machine, state),
-        view: service ? 'machine' : this.state.view,
-        asleep: state === 'sleeping',
-        status: machineActionStatus(state, 'sent')
-      });
-      if (state === 'sleeping') this.scheduleSleepBrightnessZero(1000);
-      else this.observeSleepBrightnessState(false);
-    } catch (error) {
-      console.error('[Beanie] Machine action failed', error);
-      if (state === 'hotWater') this.hotWaterWeightStop = null;
-      if (state === 'espresso' && isNoScaleShotBlockError(error)) {
+    if (state === 'hotWater' && hotWaterWeightStop) this.setState({ status: 'Taring scale' });
+    const command = await sendMachineActionCommand({
+      state,
+      hotWaterWeightStop,
+      workflow: this.state.workflow,
+      steamSettings: this.currentSteamSettings(),
+      hotWaterData: this.currentHotWaterData(),
+      rinseData: this.currentRinseData(),
+      twoTapSteamStop: this.usesTwoTapSteamStop()
+    }, {
+      updateWorkflow: (workflow) => gateway.updateWorkflow(workflow),
+      tareScale: () => gateway.tareScale(),
+      requestState: (nextState) => gateway.requestState(nextState),
+      nowMs: () => Date.now(),
+      isNoScaleShotBlockError
+    });
+    if (command.restore) this.captureMachineServiceWorkflowRestore(command.restore);
+    if (command.type === 'failed') {
+      console.error('[Beanie] Machine action failed', command.error);
+      if (state === 'steam' && !command.restore) this.machineServiceWorkflowToRestore = null;
+      if (command.clearHotWaterWeightStop) this.hotWaterWeightStop = null;
+      if (command.noScaleBlocked) {
         this.showNoScaleShotWarning({ busy: false });
         return;
       }
-      this.setState({
-        busy: false,
-        status: 'Machine command failed'
-      });
+      this.setState({ busy: false, status: command.status });
+      return;
     }
+    if (state === 'hotWater') this.hotWaterWeightStop = command.hotWaterWeightStop;
+    this.rememberMachineProgressReturnView(service);
+    this.trackMachineServiceState(state);
+    this.setState({
+      busy: false,
+      machine: optimisticMachineSnapshot(this.state.machine, state),
+      view: service ? 'machine' : this.state.view,
+      asleep: state === 'sleeping',
+      status: command.status
+    });
+    if (state === 'sleeping') this.scheduleSleepBrightnessZero(1000);
+    else this.observeSleepBrightnessState(false);
   }
 
   // Backflush / cleaning cycle: load the cleaning profile (bean-independent),
   // then run it as an espresso pull. The user's dial-in `draft` is left intact,
   // so finishCleaningCycle() can restore the real recipe afterwards.
   private async runCleaningCycle(): Promise<void> {
-    if (this.state.busy || this.state.liveActive || this.state.liveFinalizing) return;
-    const record = resolveCleaningProfile(this.state.profiles, this.state.cleaningProfileOverride);
-    if (!record?.profile) {
-      this.setState({ status: 'No cleaning profile installed' });
+    const plan = cleaningStartPlan({
+      busy: this.state.busy,
+      liveActive: this.state.liveActive,
+      liveFinalizing: this.state.liveFinalizing,
+      profiles: this.state.profiles,
+      cleaningProfileOverride: this.state.cleaningProfileOverride,
+      workflow: this.state.workflow,
+      demo: this.state.demo,
+      machineSleeping: this.machineIsSleeping(),
+      waterAlert: this.currentWaterAlert()
+    });
+    if (plan.type === 'ignored') return;
+    if (plan.type === 'missing-profile' || plan.type === 'sleeping') {
+      this.setState({ status: plan.status });
       return;
     }
-    if (!this.state.demo && this.machineIsSleeping()) {
-      this.setState({ status: 'Machine asleep — tap Wake first' });
+    if (plan.type === 'water-block') {
+      this.setState({ waterAlertDismissed: plan.waterAlertDismissed, status: plan.status });
       return;
     }
-    if (this.currentWaterAlert() === 'hard') {
-      this.setState({ waterAlertDismissed: false, status: 'Refill the water tank' });
-      return;
-    }
-
-    const cleaningWorkflow: Workflow = {
-      ...(this.state.workflow ?? {}),
-      profile: record.profile,
-      context: {
-        ...(this.state.workflow?.context ?? {}),
-        // Bean-independent: drop any bean identity and tag it as a cleaning run
-        // so the resulting record is treated as a service shot (isServiceShot).
-        coffeeName: null,
-        coffeeRoaster: null,
-        beanBatchId: null,
-        finalBeverageType: 'cleaning'
-      }
-    };
-
     this.cleaningInProgress = true;
-    this.setState({ busy: true, status: 'Loading cleaning profile…' });
-    try {
-      if (this.state.demo) this.state.workflow = cleaningWorkflow;
-      else this.state.workflow = await gateway.updateWorkflow(cleaningWorkflow);
-    } catch (error) {
+    this.setState({ busy: true, status: plan.status });
+    const result = await loadCleaningWorkflow(plan.workflow, this.state.demo, {
+      updateWorkflow: (workflow) => gateway.updateWorkflow(workflow)
+    });
+    if (result.type === 'failed') {
       this.cleaningInProgress = false;
-      console.error('[Beanie] Cleaning profile load failed', error);
-      this.setState({ busy: false, status: 'Cleaning profile load failed' });
+      console.error('[Beanie] Cleaning profile load failed', result.error);
+      this.setState({ busy: false, status: result.status });
       return;
     }
+    this.state.workflow = result.workflow;
     // Run as an espresso pull; a backflush has no yield, so skip the scale gate.
     await this.machineAction('espresso', { skipScaleCheck: true });
   }
@@ -1779,13 +1657,13 @@ export class BeanieApp {
   private finishCleaningCycle(): void {
     this.cleaningInProgress = false;
     this.liveShot.reset();
-    const cleaning = markCleaned(new Date().toISOString());
-    writeCleaningState(cleaning);
+    const plan = finishCleaningCyclePlan(new Date().toISOString());
+    writeCleaningState(plan.cleaning);
     this.setState({
-      cleaning,
+      cleaning: plan.cleaning,
       liveActive: false,
       liveFinalizing: false,
-      status: 'Cleaning cycle complete'
+      status: plan.status
     });
     // The draft was never touched by cleaning, so re-applying it restores the
     // user's profile/dose/yield on the machine (no-op if no bean is selected).
@@ -1794,7 +1672,7 @@ export class BeanieApp {
 
   // Count a completed espresso pull toward the next cleaning reminder.
   private countShotForCleaning(): void {
-    const cleaning = bumpShots(this.state.cleaning);
+    const cleaning = countShotForCleaningPlan(this.state.cleaning);
     writeCleaningState(cleaning);
     this.state.cleaning = cleaning;
   }
@@ -1802,51 +1680,29 @@ export class BeanieApp {
   // Chosen from the profile picker (cleaning mode): store the override and return
   // to the machine page. Selecting the auto-detected profile clears the override.
   private pickCleaningProfile(profileId: string): void {
-    const autoResolved = resolveCleaningProfile(this.state.profiles, null);
-    const override = profileId && profileId !== autoResolved?.id ? profileId : null;
-    writeCleaningProfileOverride(override);
+    const plan = pickCleaningProfilePlan(profileId, this.state.profiles);
+    writeCleaningProfileOverride(plan.override);
     this.setState({
-      cleaningProfileOverride: override,
-      cleaningProfilePicking: false,
-      view: 'machine',
-      status: 'Cleaning profile set'
+      cleaningProfileOverride: plan.override,
+      cleaningProfilePicking: plan.cleaningProfilePicking,
+      view: plan.view,
+      status: plan.status
     });
   }
 
   private setCleaningThreshold(shots: number): void {
-    writeCleaningThreshold(shots);
-    this.setState({ cleaningThreshold: shots, status: 'Cleaning reminder updated' });
+    const plan = cleaningThresholdPlan(shots);
+    writeCleaningThreshold(plan.threshold);
+    this.setState({ cleaningThreshold: plan.threshold, status: plan.status });
   }
 
-  private async prepareMachineForTimedSteamStop(): Promise<void> {
-    const workflow = this.state.workflow;
-    if (this.usesTwoTapSteamStop()) return;
-    if (workflow == null) return;
-    const steamSettings = this.currentSteamSettings();
-    const userDuration = positiveNumber(steamSettings.duration);
-    const paddedDuration = paddedSteamDurationSeconds(userDuration);
-    if (paddedDuration == null || userDuration == null || paddedDuration <= userDuration) return;
-
-    this.captureMachineServiceWorkflowRestore();
-    try {
-      await gateway.updateWorkflow({
-        ...workflow,
-        steamSettings: { ...steamSettings, duration: paddedDuration }
-      });
-    } catch (error) {
-      this.machineServiceWorkflowToRestore = null;
-      console.error('[Beanie] Steam max-duration headroom failed', error);
-      throw error;
-    }
-  }
-
-  private captureMachineServiceWorkflowRestore(): void {
+  private captureMachineServiceWorkflowRestore(restore?: MachineServiceWorkflowRestore): void {
     if (this.machineServiceWorkflowToRestore != null) return;
-    this.machineServiceWorkflowToRestore = {
-      steamSettings: { ...this.currentSteamSettings() },
-      hotWaterData: { ...this.currentHotWaterData() },
-      rinseData: { ...this.currentRinseData() }
-    };
+    this.machineServiceWorkflowToRestore = restore ?? captureMachineServiceWorkflowRestore({
+      steamSettings: this.currentSteamSettings(),
+      hotWaterData: this.currentHotWaterData(),
+      rinseData: this.currentRinseData()
+    });
   }
 
   private shouldPreflightBlockShotForScale(): boolean {
@@ -1866,40 +1722,23 @@ export class BeanieApp {
     return this.lastScaleFrameMs != null && tMs - this.lastScaleFrameMs <= SCALE_FRESH_WINDOW_MS;
   }
 
-  private hotWaterWeightStopTarget(): { targetWeight: number; configuredFlow: number } | null {
-    if (this.state.hotWaterStopMode !== 'volume') return null;
-    if (!scaleConnected(this.state.scale)) return null;
-    const water = this.currentHotWaterData();
-    const targetWeight = positiveNumber(water.volume);
-    if (targetWeight == null) return null;
-    return {
-      targetWeight,
-      configuredFlow: positiveNumber(water.flow) ?? 0
-    };
-  }
-
-  private createHotWaterWeightStop(
-    target: { targetWeight: number; configuredFlow: number },
-    tareRequestedAtMs: number | null
-  ): HotWaterWeightStopController {
-    return {
-      ...target,
-      armedAtMs: Date.now(),
-      tareRequestedAtMs,
-      activeSeen: false,
-      stopRequested: false
-    };
+  private hotWaterWeightStopTarget(): HotWaterWeightStopTarget | null {
+    return plannedHotWaterWeightStopTarget(
+      this.currentHotWaterData(),
+      this.state.hotWaterStopMode,
+      scaleConnected(this.state.scale)
+    );
   }
 
   private ensureHotWaterWeightStopArmed(): void {
     if (this.hotWaterWeightStop || this.hotWaterWeightStopTarePending || this.hotWaterWeightStopTareFailed) return;
-    if (this.machineStopRequestedFor === 'hotWater') return;
+    if (this.machineService.stopRequestedFor === 'hotWater') return;
     if (this.state.machine?.state?.state !== 'hotWater') return;
     const target = this.hotWaterWeightStopTarget();
     if (!target) return;
 
     if (this.state.demo) {
-      this.hotWaterWeightStop = this.createHotWaterWeightStop(target, null);
+      this.hotWaterWeightStop = createHotWaterWeightStopController(target, null, Date.now());
       return;
     }
 
@@ -1932,81 +1771,80 @@ export class BeanieApp {
     }
   }
 
-  private async tareAndArmHotWaterWeightStop(target: { targetWeight: number; configuredFlow: number }): Promise<void> {
-    try {
-      await gateway.tareScale();
-      if (this.disposed || this.state.machine?.state?.state !== 'hotWater') return;
-      if (this.machineStopRequestedFor === 'hotWater') return;
-      this.hotWaterWeightStop = this.createHotWaterWeightStop(target, Date.now());
-    } catch (error) {
-      console.error('[Beanie] Hot water scale tare failed', error);
+  private async tareAndArmHotWaterWeightStop(target: HotWaterWeightStopTarget): Promise<void> {
+    const result = await tareAndArmHotWaterWeightStopController({
+      target,
+      shouldArm: () => !this.disposed &&
+        this.state.machine?.state?.state === 'hotWater' &&
+        this.machineService.stopRequestedFor !== 'hotWater'
+    }, {
+      tareScale: () => gateway.tareScale(),
+      nowMs: () => Date.now()
+    });
+    if (result.type === 'armed') {
+      this.hotWaterWeightStop = result.controller;
+    } else if (result.type === 'failed') {
+      console.error('[Beanie] Hot water scale tare failed', result.error);
       this.hotWaterWeightStopTareFailed = true;
-      this.setState({ status: 'Hot water scale tare failed' });
-    } finally {
-      this.hotWaterWeightStopTarePending = false;
+      this.setState({ status: result.status });
     }
+    this.hotWaterWeightStopTarePending = false;
   }
 
   private handleHotWaterWeightStop(tMs: number): void {
     const controller = this.hotWaterWeightStop;
     if (!controller) return;
 
-    const machine = this.state.machine;
-    const state = machine?.state?.state;
-    if (state === 'hotWater') {
-      controller.activeSeen = true;
-    } else if (controller.activeSeen || Date.now() - controller.armedAtMs > 10_000) {
-      this.hotWaterWeightStop = null;
-      return;
-    }
-
-    if (!controller.activeSeen || controller.stopRequested) return;
-    if (!this.hasFreshConnectedScale(tMs)) return;
-    if (controller.tareRequestedAtMs != null && this.lastScaleFrameMs != null && this.lastScaleFrameMs < controller.tareRequestedAtMs) {
-      return;
-    }
-
     const scale = this.state.scale;
-    const weight = finiteNumber(scale?.weight) ?? 0;
-    const scaleFlow = positiveNumber(scale?.weightFlow);
-    const flow = scaleFlow ?? controller.configuredFlow;
     const lookahead = nonNegativeNumber(this.state.settingsBundle?.rea.volumeFlowMultiplier)
       ?? DEFAULT_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS;
-    const projectedWeight = weight + flow * lookahead;
-    if (projectedWeight < controller.targetWeight) return;
+    const decision = nextHotWaterWeightStop(controller, {
+      machineState: this.state.machine?.state?.state,
+      nowMs: Date.now(),
+      freshScale: this.hasFreshConnectedScale(tMs),
+      lastScaleFrameMs: this.lastScaleFrameMs,
+      weight: scale?.weight,
+      weightFlow: scale?.weightFlow,
+      lookaheadSeconds: lookahead
+    });
 
-    controller.stopRequested = true;
-    void this.stopHotWaterAtWeight(controller.targetWeight, weight, projectedWeight);
+    this.hotWaterWeightStop = decision.controller;
+    if (decision.action !== 'stop') return;
+
+    void this.stopHotWaterAtWeight(decision.targetWeight, decision.weight, decision.projectedWeight);
   }
 
   private async stopHotWaterAtWeight(targetWeight: number, weight: number, projectedWeight: number): Promise<void> {
-    this.machineStopRequestedFor = 'hotWater';
-    this.machineStopRequestedAtMs = Date.now();
+    this.machineService.markStopRequested('hotWater', Date.now());
     this.setState({
       status: `Water target ${formatNumber(targetWeight, 0)} g reached`
     });
-    if (this.state.demo) {
+    const result = await stopHotWaterAtWeightController({
+      demo: this.state.demo,
+      weight,
+      projectedWeight
+    }, {
+      requestState: (nextState) => gateway.requestState(nextState)
+    });
+    if (result.type === 'demo') {
       this.hotWaterWeightStop = null;
       this.trackMachineServiceState('idle');
       this.setState({
         machine: optimisticMachineSnapshot(this.state.machine, 'idle'),
         view: this.consumeMachineProgressReturnView(),
-        status: 'Demo water stopped'
+        status: result.status
       });
       return;
     }
-    try {
-      await gateway.requestState('idle');
-      this.setState({
-        status: `Stopping at ${formatNumber(weight, 1)} g (${formatNumber(projectedWeight, 1)} g projected)`
-      });
+    if (result.type === 'requested') {
+      this.setState({ status: result.status });
       this.armMachineStopFeedbackTimer();
-    } catch (error) {
-      console.error('[Beanie] Hot water weight stop failed', error);
-      this.clearMachineStopRequest();
-      this.hotWaterWeightStop = null;
-      this.setState({ status: 'Hot water stop failed' });
+      return;
     }
+    console.error('[Beanie] Hot water weight stop failed', result.error);
+    this.clearMachineStopRequest();
+    this.hotWaterWeightStop = null;
+    this.setState({ status: result.status });
   }
 
   private beginNoScaleBrewFlashIfNeeded(machine: MachineSnapshot, previousState: string | undefined, tMs: number): void {
@@ -2099,15 +1937,14 @@ export class BeanieApp {
   }
 
   private async stopMachineService(): Promise<void> {
-    const service = machineServiceState(this.state.machine?.state?.state) ?? this.machineServiceState;
+    const service = machineServiceState(this.state.machine?.state?.state) ?? this.machineService.service;
     if (!service) {
       await this.machineAction('idle');
       return;
     }
 
     if (service === 'hotWater') this.hotWaterWeightStop = null;
-    this.machineStopRequestedFor = service;
-    this.machineStopRequestedAtMs = Date.now();
+    this.machineService.markStopRequested(service, Date.now());
     if (service === 'steam') this.clearTimedSteamStopTimer();
     this.setState({ busy: true, status: 'Stopping machine' });
     if (this.state.demo) {
@@ -2263,25 +2100,30 @@ export class BeanieApp {
     scale: ScaleSnapshot | null,
     tMs: number
   ): void {
-    const previousService = machineServiceState(this.state.machine?.state?.state);
-    const previousMachineState = this.state.machine?.state?.state;
-    const previousScaleConnected = scaleConnected(this.state.scale);
+    const frameState = liveTelemetryFrameState({
+      currentMachine: this.state.machine,
+      currentScale: this.state.scale,
+      machineFrame: machine,
+      scaleFrame: scale,
+      view: this.state.view,
+      asleep: this.state.asleep,
+      tMs
+    });
     if (machine) {
       this.state.machine = machine;
       this.trackMachineServiceState(machine.state.state, machine.state.substate, tMs);
       this.observeSleepBrightnessState(machine.state.state === 'sleeping');
-      this.beginNoScaleBrewFlashIfNeeded(machine, previousMachineState, tMs);
+      this.beginNoScaleBrewFlashIfNeeded(machine, frameState.previousMachineState, tMs);
     }
     if (scale) {
       this.state.scale = scale;
       this.lastScaleFrameMs = tMs;
-      if (this.hasFreshConnectedScale(tMs)) {
+      if (frameState.freshScaleConnected) {
         this.noScaleBrewFlashStartedMs = null;
         this.noScaleShotWarningUntilMs = 0;
       }
     }
-    const scaleConnectionChanged = previousScaleConnected !== scaleConnected(this.state.scale);
-    if (scaleConnectionChanged && scaleConnected(this.state.scale)) {
+    if (frameState.scaleConnectionChanged && frameState.scaleConnected) {
       void this.refreshHotWaterNativeTimeoutForWeightMode();
     }
     this.ensureHotWaterWeightStopArmed();
@@ -2296,54 +2138,66 @@ export class BeanieApp {
     this.liveShot.ingest(frame);
     const active = this.liveShot.isActive;
 
-    if (active && !wasActive) {
+    const panelDecision = liveShotPanelDecision(wasActive, active);
+    if (panelDecision === 'started') {
       // First active frame: render once to mount the live panel + canvas, then draw.
       // Clear any leftover finalizing from a just-prior shot so this one takes over.
       this.setState({ liveActive: true, liveFinalizing: false, status: 'Live shot' });
       return;
     }
-    if (!active && wasActive) {
+    if (panelDecision === 'ended') {
       this.onShotEnded();
       return;
     }
-    if (!active && machine && this.consumeNoScaleBrewFlashIfNeeded(machine, previousMachineState, tMs)) return;
-    if (active) {
+    if (panelDecision === 'idle' && machine && this.consumeNoScaleBrewFlashIfNeeded(machine, frameState.previousMachineState, tMs)) return;
+    if (panelDecision === 'active') {
       this.scheduleLiveDraw();
       return;
     }
+    const decision = liveTelemetryIdleDecision(frameState.idleDecisionInput);
+    if (this.applyLiveTelemetryIdleDecision(decision)) return;
+
+    const waterAlertChanged = this.syncWaterAlert();
+    const afterWaterAlertDecision = liveTelemetryIdleDecision({
+      ...frameState.idleDecisionInput,
+      waterAlertChanged
+    });
+    this.applyLiveTelemetryIdleDecision(afterWaterAlertDecision);
+  }
+
+  private applyLiveTelemetryIdleDecision(decision: LiveTelemetryIdleDecision): boolean {
     // A sleep/wake transition flips the screensaver — re-render for that. Any
     // other idle telemetry only patches the top-bar readouts by reference, so a
     // streaming snapshot never re-renders the whole app (which would reset
     // scroll position of the bean list / history / pages).
-    const sleeping = this.state.machine?.state?.state === 'sleeping';
-    if (sleeping !== this.state.asleep) {
-      this.setState({ asleep: sleeping });
-      return;
+    if (decision.type === 'set-asleep') {
+      this.setState({ asleep: decision.asleep });
+      return true;
     }
-    const currentService = machineServiceState(this.state.machine?.state?.state);
-    if (currentService && this.state.view !== 'machine') {
-      this.rememberMachineProgressReturnView(currentService);
+    if (decision.type === 'enter-service') {
+      this.rememberMachineProgressReturnView(decision.service);
       this.setState({ view: 'machine' });
-      return;
+      return true;
     }
-    if (this.state.view === 'machine' && currentService) {
+    if (decision.type === 'refresh-service') {
       this.setState({});
-      return;
+      return true;
     }
-    if (previousService && !currentService && this.state.view === 'machine') {
+    if (decision.type === 'leave-service') {
       this.setState({ view: this.consumeMachineProgressReturnView() });
-      return;
+      return true;
     }
-    // The machine entering/leaving `needsWater` flips the water-alert band.
-    if (this.syncWaterAlert()) {
+    if (decision.type === 'check-water-alert') return false;
+    if (decision.type === 'water-alert-changed') {
       this.setState({});
-      return;
+      return true;
     }
-    if (this.state.view === 'machine' && scaleConnectionChanged) {
+    if (decision.type === 'refresh-scale-connection') {
       this.setState({});
-      return;
+      return true;
     }
     this.updateTopbarStats();
+    return true;
   }
 
   private rememberMachineProgressReturnView(service: MachineServiceState | null): void {
@@ -2362,62 +2216,22 @@ export class BeanieApp {
     substate?: string,
     nowMs = Date.now()
   ): void {
-    const service = machineServiceState(state);
-    if (!service) {
-      const previousService = this.machineServiceState;
-      this.machineServiceState = null;
-      this.machineServiceStartedAtMs = null;
-      this.machineServicePhase = null;
-      this.machineServiceTargetOverrideSeconds = null;
-      if (previousService === 'hotWater') {
-        this.hotWaterWeightStop = null;
-        this.hotWaterWeightStopTarePending = false;
-        this.hotWaterWeightStopTareFailed = false;
-      }
-      this.clearTimedSteamStopTimer();
-      this.clearMachineStopRequest();
-      if (previousService) void this.restoreMachineServiceWorkflowAfterEnd();
-      return;
+    const transition = this.machineService.track(state, substate, nowMs);
+
+    if (transition.resetHotWaterWeightStop) {
+      this.hotWaterWeightStop = null;
+      this.hotWaterWeightStopTarePending = false;
+      this.hotWaterWeightStopTareFailed = false;
     }
-    if (this.machineServiceState !== service) {
-      this.machineServiceState = service;
-      this.machineServiceStartedAtMs = null;
-      this.machineServicePhase = 'starting';
-      this.machineServiceTargetOverrideSeconds = null;
-      if (service === 'steam' && state !== 'steamRinse') this.timedSteamStopRequestedAtMs = null;
-    }
-    if (state === 'steamRinse') {
-      this.machineServicePhase = 'purging';
-      this.clearTimedSteamStopTimer();
-      return;
-    }
-    // The machine spends a couple of seconds ramping up (substate
-    // 'preparingForShot') before steam/water actually flows ('pouring').
-    // Start the clock only once it's really flowing, so the countdown matches
-    // reality instead of running through the ramp and overshooting. When flow
-    // stops but we're still in the service state, the DE1 is purging (the
-    // steam puff) — reported as substate 'idle' while state stays 'steam'.
-    const flowing = substate === 'pouring';
-    if (flowing) {
-      if (this.machineServiceStartedAtMs == null) this.machineServiceStartedAtMs = nowMs;
-      this.machineServicePhase = 'active';
-    } else if (this.machineServicePhase === 'active') {
-      this.machineServicePhase = 'purging';
-    }
-    if (this.machineStopRequestedFor && this.machineStopRequestedFor !== service) this.clearMachineStopRequest();
-    this.updateTimedSteamStopTimer(nowMs);
+    if (transition.clearTimedSteamTimer) this.clearTimedSteamStopTimer();
+    if (transition.restoreWorkflowAfterEnd) void this.restoreMachineServiceWorkflowAfterEnd();
+    if (transition.updateTimedSteamStopTimer) this.updateTimedSteamStopTimer(nowMs);
   }
 
   private updateTimedSteamStopTimer(nowMs = Date.now()): void {
-    if (this.state.demo || this.usesTwoTapSteamStop()) {
-      this.clearTimedSteamStopTimer();
-      return;
-    }
-    const delayMs = timedSteamStopDelayMs({
-      service: this.machineServiceState,
-      phase: this.machineServicePhase,
-      startedAtMs: this.machineServiceStartedAtMs,
-      stopRequested: this.timedSteamStopRequestedAtMs != null || this.machineStopRequestedFor === 'steam',
+    const delayMs = this.machineService.timedSteamStopDelay({
+      disabled: this.state.demo,
+      twoTapStop: this.usesTwoTapSteamStop(),
       targetSeconds: this.currentMachineServiceTargetSeconds(),
       nowMs
     });
@@ -2457,24 +2271,21 @@ export class BeanieApp {
   private async requestTimedSteamIdleStop(): Promise<void> {
     const state = this.state.machine?.state?.state;
     if (state !== 'steam') return;
-    this.timedSteamStopRequestedAtMs = Date.now();
-    this.machineStopRequestedFor = 'steam';
-    this.machineStopRequestedAtMs = this.timedSteamStopRequestedAtMs;
+    this.machineService.markTimedSteamStopRequested(Date.now());
     try {
       await gateway.requestState('idle');
       this.setState({ status: 'Timed steam stop requested' });
       this.armMachineStopFeedbackTimer();
     } catch (error) {
       console.error('[Beanie] Timed steam stop failed', error);
-      this.timedSteamStopRequestedAtMs = null;
       this.clearMachineStopRequest();
       this.setState({ status: 'Timed steam stop failed' });
     }
   }
 
   private currentMachineServiceTargetSeconds(): number | null {
-    if (this.machineServiceTargetOverrideSeconds != null) return this.machineServiceTargetOverrideSeconds;
-    const service = this.machineServiceState;
+    if (this.machineService.targetOverrideSeconds != null) return this.machineService.targetOverrideSeconds;
+    const service = this.machineService.service;
     if (!service) return null;
     return machineServiceTargetSeconds(
       service,
@@ -2487,12 +2298,9 @@ export class BeanieApp {
   }
 
   private async extendMachineServiceDuration(seconds: number): Promise<void> {
-    const service = machineServiceState(this.state.machine?.state?.state) ?? this.machineServiceState;
+    const service = machineServiceState(this.state.machine?.state?.state) ?? this.machineService.service;
     if (!service || this.state.demo) return;
-    const elapsedSeconds = this.machineServiceStartedAtMs == null
-      ? 0
-      : Math.max(0, (Date.now() - this.machineServiceStartedAtMs) / 1000);
-    const currentTarget = this.machineServiceTargetOverrideSeconds ?? machineServiceTargetSeconds(
+    const currentTarget = machineServiceTargetSeconds(
       service,
       this.currentSteamSettings(),
       this.currentHotWaterData(),
@@ -2500,30 +2308,22 @@ export class BeanieApp {
       this.state.hotWaterStopMode,
       scaleConnected(this.state.scale)
     );
-    const nextTarget = Math.ceil((currentTarget ?? elapsedSeconds) + seconds);
-    this.machineServiceTargetOverrideSeconds = nextTarget;
+    const nextTarget = this.machineService.extendTarget(seconds, Date.now(), currentTarget);
     this.captureMachineServiceWorkflowRestore();
     this.setState({ status: `Added ${seconds}s` });
     this.updateTimedSteamStopTimer();
 
     const workflow = this.state.workflow;
     if (workflow == null) return;
-    const steamSettings = this.currentSteamSettings();
-    const hotWaterData = this.currentHotWaterData();
-    const rinseData = this.currentRinseData();
-    const nextWorkflow: Workflow = { ...workflow, steamSettings, hotWaterData, rinseData };
-    if (service === 'steam') {
-      nextWorkflow.steamSettings = {
-        ...steamSettings,
-        duration: this.usesTwoTapSteamStop()
-          ? nextTarget
-          : paddedSteamDurationSeconds(nextTarget) ?? nextTarget
-      };
-    } else if (service === 'hotWater') {
-      nextWorkflow.hotWaterData = { ...hotWaterData, duration: nextTarget };
-    } else {
-      nextWorkflow.rinseData = { ...rinseData, duration: nextTarget };
-    }
+    const nextWorkflow = extendedMachineServiceWorkflow({
+      workflow,
+      service,
+      steamSettings: this.currentSteamSettings(),
+      hotWaterData: this.currentHotWaterData(),
+      rinseData: this.currentRinseData(),
+      nextTargetSeconds: nextTarget,
+      twoTapSteamStop: this.usesTwoTapSteamStop()
+    });
 
     try {
       await gateway.updateWorkflow(nextWorkflow);
@@ -2535,22 +2335,17 @@ export class BeanieApp {
 
   private async restoreMachineServiceWorkflowAfterEnd(): Promise<void> {
     const restore = this.machineServiceWorkflowToRestore;
-    if (restore == null || this.state.demo) {
-      this.machineServiceWorkflowToRestore = null;
-      return;
-    }
     this.machineServiceWorkflowToRestore = null;
-    try {
-      const workflow: Workflow = {
-        ...(this.state.workflow ?? {}),
-        steamSettings: restore.steamSettings,
-        hotWaterData: restore.hotWaterData,
-        rinseData: restore.rinseData
-      };
-      await gateway.updateWorkflow(workflow);
-    } catch (error) {
-      console.error('[Beanie] Machine service settings restore failed', error);
-      this.setState({ status: 'Machine service restore failed' });
+    const result = await restoreMachineServiceWorkflowAfterEndController({
+      restore,
+      workflow: this.state.workflow,
+      demo: this.state.demo
+    }, {
+      updateWorkflow: (workflow) => gateway.updateWorkflow(workflow)
+    });
+    if (result.type === 'failed') {
+      console.error('[Beanie] Machine service settings restore failed', result.error);
+      this.setState({ status: result.status });
     }
   }
 
@@ -2559,8 +2354,7 @@ export class BeanieApp {
   }
 
   private clearMachineStopRequest(): void {
-    this.machineStopRequestedFor = null;
-    this.machineStopRequestedAtMs = null;
+    this.machineService.clearStopRequest();
     if (this.machineStopFeedbackTimer != null) {
       window.clearTimeout(this.machineStopFeedbackTimer);
       this.machineStopFeedbackTimer = null;
@@ -2571,7 +2365,7 @@ export class BeanieApp {
     if (this.machineStopFeedbackTimer != null) window.clearTimeout(this.machineStopFeedbackTimer);
     this.machineStopFeedbackTimer = window.setTimeout(() => {
       this.machineStopFeedbackTimer = null;
-      if (!this.machineStopRequestedFor) return;
+      if (!this.machineService.stopRequestedFor) return;
       this.setState({ status: 'Stop not confirmed' });
     }, 4000);
   }
@@ -2695,29 +2489,11 @@ export class BeanieApp {
   }
 
   private onShotEnded(): void {
-    // A cleaning/backflush pull is not a bean shot: reset the reminder counter
-    // and restore the recipe instead of saving it to history.
-    if (this.cleaningInProgress) {
-      this.finishCleaningCycle();
-      return;
-    }
-
     const shotWindow = this.liveShot.snapshot;
-    if (this.isNoScaleBlockedLiveAbort(shotWindow)) {
-      this.liveShot.reset();
-      this.showNoScaleShotWarning({
-        liveActive: false,
-        liveFinalizing: false
-      });
-      return;
-    }
-
-    // A real espresso pull completed — count it toward the next cleaning.
-    this.countShotForCleaning();
-
+    const noScaleBlockedAbort = !this.cleaningInProgress && this.isNoScaleBlockedLiveAbort(shotWindow);
     const bean = this.selectedBean();
     const batch = this.selectedBatch();
-    const optimisticShot = bean
+    const optimisticShot = !this.cleaningInProgress && !noScaleBlockedAbort && bean
       ? optimisticShotFromLive(
           bean,
           batch,
@@ -2726,110 +2502,118 @@ export class BeanieApp {
           shotWindow
         )
       : null;
-    const reason = this.liveShot.completionReason;
 
-    if (bean && !this.state.demo) {
-      // Keep the shot screen up (chart frozen, "Saving…") while the gateway
-      // finishes persisting the shot, so the list never flashes the unsettled
-      // optimistic yield. refreshShotsAfterLiveShot swaps in the real shot —
-      // or falls back to the optimistic one — and only then closes the screen.
-      const refreshContext = {
-        previousShotIds: new Set(this.state.shots.map((shot) => shot.id)),
-        startedAtMs: shotWindow.startMs,
-        endedAtMs: shotWindow.lastActiveMs ?? Date.now(),
-        optimisticShot
-      };
-      this.setState({
-        liveActive: false,
-        liveFinalizing: true,
-        beans: promoteBean(this.state.beans, bean.id),
-        status: 'Saving shot…'
-      });
-      void this.refreshShotsAfterLiveShot(bean, batch, refreshContext);
-      return;
-    }
-
-    // Demo / no bean: nothing to wait for — show the shot immediately.
-    this.setState({
-      liveActive: false,
-      liveFinalizing: false,
-      beans: bean ? promoteBean(this.state.beans, bean.id) : this.state.beans,
-      shots: optimisticShot ? includeShotInHistory(this.state.shots, optimisticShot, this.shotPageSize) : this.state.shots,
-      shotsTotal: optimisticShot ? Math.max(this.state.shotsTotal, this.state.shots.length + 1) : this.state.shotsTotal,
-      detailShotId: optimisticShot?.id ?? this.state.detailShotId,
-      status: reason ? `Shot complete (${reason})` : 'Shot complete'
+    const decision = liveShotEndDecision({
+      cleaningInProgress: this.cleaningInProgress,
+      noScaleBlockedAbort,
+      beanId: bean?.id ?? null,
+      demo: this.state.demo,
+      currentShots: this.state.shots,
+      shotWindow,
+      optimisticShot,
+      completionReason: this.liveShot.completionReason,
+      nowMs: Date.now()
     });
-    this.liveShot.reset();
+
+    switch (decision.type) {
+      case 'cleaning':
+        this.finishCleaningCycle();
+        return;
+      case 'no-scale-abort':
+        this.liveShot.reset();
+        this.showNoScaleShotWarning({
+          liveActive: false,
+          liveFinalizing: false
+        });
+        return;
+      case 'remote-save':
+        if (!bean) return;
+        // Keep the shot screen up (chart frozen, "Saving…") while the gateway
+        // finishes persisting the shot, so the list never flashes the unsettled
+        // optimistic yield. refreshShotsAfterLiveShot swaps in the real shot —
+        // or falls back to the optimistic one — and only then closes the screen.
+        this.countShotForCleaning();
+        this.setState({
+          liveActive: false,
+          liveFinalizing: true,
+          beans: promoteBean(this.state.beans, decision.beanId),
+          status: decision.status
+        });
+        void this.refreshShotsAfterLiveShot(bean, batch, decision.context);
+        return;
+      case 'local-complete':
+        // Demo / no bean: nothing to wait for — show the shot immediately.
+        this.countShotForCleaning();
+        this.setState({
+          liveActive: false,
+          liveFinalizing: false,
+          beans: bean ? promoteBean(this.state.beans, bean.id) : this.state.beans,
+          shots: decision.optimisticShot
+            ? includeShotInHistory(this.state.shots, decision.optimisticShot, this.shotPageSize)
+            : this.state.shots,
+          shotsTotal: decision.optimisticShot
+            ? Math.max(this.state.shotsTotal, this.state.shots.length + 1)
+            : this.state.shotsTotal,
+          detailShotId: decision.optimisticShot?.id ?? this.state.detailShotId,
+          status: decision.status
+        });
+        this.liveShot.reset();
+        return;
+    }
   }
 
   private async refreshShotsAfterLiveShot(
     bean: Bean,
     batch: BeanBatch | null,
-    context: {
-      previousShotIds: Set<string>;
-      startedAtMs: number | null;
-      endedAtMs: number | null;
-      optimisticShot: ShotRecord | null;
-    }
+    context: LiveShotCompletionContext
   ): Promise<void> {
-    const delays = [0, 1000, 2000, 4000, 8000];
-    let lastRecords: ShotRecord[] = [];
-    let lastTotal = this.state.shotsTotal;
-
     try {
-      for (let attempt = 0; attempt < delays.length; attempt += 1) {
-        const delayMs = delays[attempt]!;
-        if (delayMs > 0) await delay(delayMs);
-        if (
-          this.selectedBean()?.id !== bean.id ||
-          this.selectedBatch()?.id !== batch?.id ||
-          this.state.liveActive
-        ) return;
+      const result = await waitForCompletedLiveShot(context, {
+        delay,
+        invalidateShotMutation: async () => {
+          this.shotCacheGeneration += 1;
+          await beanieCache.invalidateShotMutation().catch(() => {});
+        },
+        loadFirstShots: () => this.loadFirstShots(bean, batch),
+        loadLatestShotCandidates: () => this.loadLatestShotCandidates(),
+        stillRelevant: () =>
+          this.selectedBean()?.id === bean.id &&
+          this.selectedBatch()?.id === batch?.id &&
+          !this.state.liveActive
+      });
 
-        this.shotCacheGeneration += 1;
-        await beanieCache.invalidateShotMutation().catch(() => {});
-        const [{ records, total }, latestRecords] = await Promise.all([
-          this.loadFirstShots(bean, batch),
-          this.loadLatestShotCandidates()
-        ]);
-        lastRecords = records;
-        lastTotal = total;
+      if (result.type === 'aborted') return;
 
-        const completedShot =
-          completedLiveShot(records, context, false) ??
-          completedLiveShot(latestRecords, context, attempt === delays.length - 1);
-        if (!completedShot) continue;
-
-        const visibleRecords = includeShotInHistory(records, completedShot, this.shotPageSize);
+      if (result.type === 'completed') {
+        const visibleRecords = includeShotInHistory(result.records, result.shot, this.shotPageSize);
 
         // Real shot is persisted and settled — now close the shot screen onto it.
         this.liveShot.reset();
         this.setState({
           shots: visibleRecords,
-          shotsTotal: Math.max(total, visibleRecords.length),
+          shotsTotal: Math.max(result.total, visibleRecords.length),
           shotsLoadingMore: false,
           liveActive: false,
           liveFinalizing: false,
-          detailShotId: completedShot.id,
+          detailShotId: result.shot.id,
           status: 'Shot saved'
         });
         return;
       }
 
-      if (this.selectedBean()?.id !== bean.id || this.state.liveActive) return;
       // Gave up waiting for the gateway — fall back to the optimistic shot so the
       // screen still closes rather than hanging.
       this.liveShot.reset();
       const visibleRecords = context.optimisticShot
-        ? includeShotInHistory(lastRecords, context.optimisticShot, this.shotPageSize)
-        : lastRecords;
+        ? includeShotInHistory(result.records, context.optimisticShot, this.shotPageSize)
+        : result.records;
       this.setState({
         shots: visibleRecords,
-        shotsTotal: Math.max(lastTotal, visibleRecords.length),
+        shotsTotal: Math.max(result.total, visibleRecords.length),
         shotsLoadingMore: false,
         liveActive: false,
         liveFinalizing: false,
-        detailShotId: context.optimisticShot?.id ?? lastRecords[0]?.id ?? this.state.detailShotId,
+        detailShotId: context.optimisticShot?.id ?? result.records[0]?.id ?? this.state.detailShotId,
         status: 'Shot list updated'
       });
     } finally {
@@ -2883,11 +2667,25 @@ export class BeanieApp {
     const el = target.closest<HTMLElement>('[data-action]');
     if (!el) return;
     const action = el.dataset.action;
-    const id = el.dataset.id;
-    const field = el.dataset.field;
-    const index = el.dataset.index;
-    const value = el.dataset.value;
+    const context: ClickActionContext = {
+      el,
+      id: el.dataset.id,
+      field: el.dataset.field,
+      index: el.dataset.index,
+      value: el.dataset.value
+    };
 
+    if (await this.handleBeanClickAction(action, context)) return;
+    if (await this.handleRecipeClickAction(action, context)) return;
+    if (await this.handleShotClickAction(action, context)) return;
+    if (await this.handleMachineClickAction(action, context)) return;
+    if (await this.handleSettingsClickAction(action, context)) return;
+    if (await this.handleNavigationClickAction(action, context)) return;
+    if (await this.handleProfileEditorClickAction(action, context)) return;
+  }
+
+  private async handleBeanClickAction(action: string | undefined, context: ClickActionContext): Promise<boolean> {
+    const { el, id } = context;
     switch (action) {
       case 'select-bean':
         if (id) {
@@ -2895,7 +2693,7 @@ export class BeanieApp {
           this.setState({ modal: null, secondTapHint: null });
           await this.selectBean(id, { apply: true, preferWorkflow: false });
         }
-        break;
+        return true;
       case 'inspect-bean':
         if (id) {
           const focusedId = this.state.beanPickerBeanId ?? this.state.selectedBeanId;
@@ -2909,129 +2707,177 @@ export class BeanieApp {
             await this.inspectBeanInPicker(id);
           }
         }
-        break;
+        return true;
+      case 'open-add-bean':
+        if (this.state.modal === 'bean-picker') {
+          this.setState({
+            beanPickerBeanId: null,
+            beanPickerMode: 'create',
+            status: 'Adding bean'
+          });
+        } else {
+          await this.openBeanPicker(null, { create: true });
+        }
+        return true;
+      case 'open-edit-bean':
+        await this.openBeanPicker(id ?? this.state.selectedBeanId, { autofocusSearch: false });
+        return true;
+      case 'archive-bean':
+        if (id) await this.archiveBean(id);
+        return true;
+      case 'open-add-batch':
+        await this.openBeanPicker(this.state.selectedBeanId);
+        await this.createBatchInPicker(this.state.selectedBeanId);
+        return true;
+      case 'bean-picker-add-batch':
+        await this.createBatchInPicker(this.state.beanPickerBeanId ?? this.state.selectedBeanId);
+        return true;
+      case 'delete-batch':
+        if (id) await this.deleteBatchFromPicker(el.dataset.beanId ?? null, id);
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private async handleRecipeClickAction(action: string | undefined, context: ClickActionContext): Promise<boolean> {
+    const { el, field, id } = context;
+    switch (action) {
       case 'adjust':
         if (field) this.adjustField(field, Number(el.dataset.delta ?? '0'));
-        break;
+        return true;
       case 'edit-field':
         if (isEditField(field)) this.openEditDialog(field);
-        break;
-      case 'machine-edit-value':
-        this.openMachineValueDialog(el);
-        break;
+        return true;
       case 'open-number-edit':
         this.openNumberEditDialog(el);
-        break;
-      case 'machine-preset':
-        if (el.dataset.name && value) await this.applyMachinePreset(el.dataset.name, value);
-        break;
-      case 'machine-steam-purge-mode':
-        await this.setSteamPurgeMode(Number(value));
-        break;
-      case 'machine-water-stop-mode':
-        await this.setHotWaterStopMode(value === 'time' ? 'time' : 'volume');
-        break;
-      case 'machine-edit-label':
-        this.openMachineLabelDialog(el);
-        break;
-      case 'machine-label-save':
-        this.commitMachineLabelEdit();
-        break;
+        return true;
       case 'dialog-adjust':
         this.adjustDialogValue(Number(el.dataset.delta ?? '0'));
-        break;
+        return true;
       case 'dialog-key':
         this.typeDialogKey(el.dataset.key ?? '');
-        break;
+        return true;
       case 'dialog-backspace':
         this.backspaceDialogValue();
-        break;
+        return true;
       case 'dialog-clear':
         this.clearDialogValue();
-        break;
+        return true;
       case 'dialog-recent':
         this.setDialogValue(el.dataset.value ?? '');
-        break;
+        return true;
       case 'dialog-choice':
         this.selectDialogChoice(id ?? null);
-        break;
+        return true;
       case 'dialog-commit':
         await this.commitEditDialog();
-        break;
-      case 'pe-edit-value':
-        this.openProfileValueDialog(el);
-        break;
-      case 'go-view':
-        if (value) this.goView(value as View);
-        break;
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private async handleShotClickAction(action: string | undefined, context: ClickActionContext): Promise<boolean> {
+    const { field, id, value } = context;
+    switch (action) {
       case 'select-history-shot':
         if (id) this.selectHistoryShot(id);
-        break;
+        return true;
       case 'edit-shot':
         this.openShotEditor();
-        break;
+        return true;
       case 'delete-shot':
         if (id) await this.deleteShot(id);
-        break;
+        return true;
       case 'open-shot-field':
         if (isShotEditField(field)) this.setState({ shotEditField: field, shotBeanEdit: null });
-        break;
+        return true;
       case 'close-shot-field':
         this.setState({ shotEditField: null });
-        break;
+        return true;
       case 'shot-field-option':
         if (isShotEditField(field)) this.applyShotEditField(field, value ?? '');
-        break;
+        return true;
       case 'open-shot-bean':
         await this.openShotBeanDialog();
-        break;
+        return true;
       case 'close-shot-bean':
         this.setState({ shotBeanEdit: null });
-        break;
+        return true;
       case 'shot-bean-pick':
         await this.pickShotBean(id ?? '');
-        break;
+        return true;
       case 'shot-bean-new':
         if (this.state.shotBeanEdit) this.setState({ shotBeanEdit: { creating: true } });
-        break;
+        return true;
       case 'shot-bean-cancel-new':
         if (this.state.shotBeanEdit) this.setState({ shotBeanEdit: { creating: false } });
-        break;
+        return true;
       case 'shot-edit-score':
         this.setShotEditEnjoyment(scoreValueFromTap(value, this.state.shotEdit?.enjoyment ?? null));
-        break;
+        return true;
       case 'set-shot-score':
         if (id) {
           const shot = this.state.shots.find((item) => item.id === id);
           await this.updateShotEnjoyment(id, scoreValueFromTap(value, shot?.annotations?.enjoyment ?? null));
         }
-        break;
+        return true;
+      case 'load-more-shots':
+        await this.loadMoreShots();
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private async handleMachineClickAction(action: string | undefined, context: ClickActionContext): Promise<boolean> {
+    const { el, value } = context;
+    switch (action) {
+      case 'machine-edit-value':
+        this.openMachineValueDialog(el);
+        return true;
+      case 'machine-preset':
+        if (el.dataset.name && value) await this.applyMachinePreset(el.dataset.name, value);
+        return true;
+      case 'machine-steam-purge-mode':
+        await this.setSteamPurgeMode(Number(value));
+        return true;
+      case 'machine-water-stop-mode':
+        await this.setHotWaterStopMode(value === 'time' ? 'time' : 'volume');
+        return true;
+      case 'machine-edit-label':
+        this.openMachineLabelDialog(el);
+        return true;
+      case 'machine-label-save':
+        this.commitMachineLabelEdit();
+        return true;
       case 'machine-command':
         if (isMachineCommand(value)) await this.toggleMachineCommand(value);
-        break;
+        return true;
       case 'run-cleaning':
         await this.runCleaningCycle();
-        break;
+        return true;
       case 'cleaning-threshold': {
         const shots = Number(value);
         if (Number.isFinite(shots)) this.setCleaningThreshold(shots);
-        break;
+        return true;
       }
       case 'water-alert-dismiss':
         this.setState({ waterAlertDismissed: true });
-        break;
+        return true;
       case 'scale-stat':
         await this.handleScaleStatTap();
-        break;
+        return true;
       case 'stop':
         await this.stopMachineService();
-        break;
+        return true;
       case 'machine-extend-service':
         await this.extendMachineServiceDuration(5);
-        break;
+        return true;
       case 'sleep':
         await this.machineAction('sleeping');
-        break;
+        return true;
       case 'wake':
         this.setState({ asleep: false });
         await this.machineAction('idle');
@@ -3039,13 +2885,22 @@ export class BeanieApp {
           this.applyAfterWake = false;
           await this.applyDraft();
         }
-        break;
-      case 'load-more-shots':
-        await this.loadMoreShots();
-        break;
+        return true;
       case 'simulate-shot':
         this.startSimulatedShot();
-        break;
+        return true;
+      case 'open-machine-settings':
+        this.setState({ view: 'machine' });
+        void this.loadMachineControlState();
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private async handleSettingsClickAction(action: string | undefined, context: ClickActionContext): Promise<boolean> {
+    const { el, id, value } = context;
+    switch (action) {
       case 'open-settings':
         this.setState({
           view: 'settings',
@@ -3058,109 +2913,93 @@ export class BeanieApp {
         });
         void this.loadReaSettings();
         void this.loadDecentAccount();
-        break;
+        return true;
       case 'open-flow-calibrator':
         this.openFlowCalibrator();
-        break;
+        return true;
       case 'flow-cal-adjust':
         this.adjustFlowCalibrationDraft(Number(el.dataset.delta ?? '0'));
-        break;
+        return true;
       case 'flow-cal-save-preview':
         await this.saveFlowCalibrationValue(Number(value));
-        break;
+        return true;
       case 'flow-cal-shot':
         if (id) this.selectFlowCalibrationShot(id);
-        break;
+        return true;
       case 'settings-section':
         if (value) this.setState({ settingsSection: value });
-        break;
+        return true;
       case 'settings-reset-machine':
         await this.resetMachineSettings();
-        break;
+        return true;
       case 'settings-plugin-config':
         if (id) await this.togglePluginConfig(id);
-        break;
+        return true;
       case 'settings-plugin-save':
         if (id) await this.savePluginConfig(id);
-        break;
+        return true;
       case 'settings-plugin-verify':
         if (id) await this.verifyPluginConfig(id);
-        break;
+        return true;
       case 'settings-account-login':
         await this.loginDecentAccount();
-        break;
+        return true;
       case 'settings-account-logout':
         await this.logoutDecentAccount();
-        break;
+        return true;
       case 'settings-scan-devices':
         await this.scanDevices();
-        break;
+        return true;
       case 'settings-connect-preferred-devices':
         await this.connectPreferredDevices();
-        break;
+        return true;
       case 'settings-connect-device':
         if (id) await this.connectDevice(id, true);
-        break;
+        return true;
       case 'settings-disconnect-device':
         if (id) await this.connectDevice(id, false);
-        break;
+        return true;
       case 'settings-machine-state':
         if (value) await this.requestMachineState(value);
-        break;
+        return true;
       case 'settings-schedule-add': {
         const timeInput = this.root.querySelector<HTMLInputElement>('[data-action="settings-schedule-time"]');
         await this.addWakeSchedule(timeInput?.value ?? '');
-        break;
+        return true;
       }
       case 'settings-schedule-delete':
         if (id) await this.deleteWakeSchedule(id);
-        break;
+        return true;
       case 'settings-theme':
         if (isThemePreference(el.dataset.value)) {
           this.updateSettingsPreferences({ theme: el.dataset.value });
         }
-        break;
+        return true;
       case 'settings-ui-scale':
         if (isUIScalePreference(el.dataset.value)) {
           this.updateSettingsPreferences({ uiScale: el.dataset.value });
         }
-        break;
+        return true;
       case 'settings-reset-cache':
         await this.resetLocalCache();
-        break;
-      case 'open-add-bean':
-        if (this.state.modal === 'bean-picker') {
-          this.setState({
-            beanPickerBeanId: null,
-            beanPickerMode: 'create',
-            status: 'Adding bean'
-          });
-        } else {
-          await this.openBeanPicker(null, { create: true });
-        }
-        break;
-      case 'open-edit-bean':
-        await this.openBeanPicker(id ?? this.state.selectedBeanId, { autofocusSearch: false });
-        break;
-      case 'archive-bean':
-        if (id) await this.archiveBean(id);
-        break;
-      case 'open-add-batch':
-        await this.openBeanPicker(this.state.selectedBeanId);
-        await this.createBatchInPicker(this.state.selectedBeanId);
-        break;
-      case 'bean-picker-add-batch':
-        await this.createBatchInPicker(this.state.beanPickerBeanId ?? this.state.selectedBeanId);
-        break;
-      case 'delete-batch':
-        if (id) await this.deleteBatchFromPicker(el.dataset.beanId ?? null, id);
-        break;
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private async handleNavigationClickAction(action: string | undefined, context: ClickActionContext): Promise<boolean> {
+    const { id, value } = context;
+    switch (action) {
+      case 'go-view':
+        if (value) this.goView(value as View);
+        return true;
       case 'open-add-grinder':
         this.setState({ view: 'grinder-editor', editingGrinderId: null, modal: null, editDialog: null });
-        break;
+        return true;
       case 'open-edit-grinder':
         if (id) this.setState({ view: 'grinder-editor', editingGrinderId: id, modal: null, editDialog: null });
-        break;
+        return true;
       case 'open-profile-picker':
         this.setState({
           view: 'profiles',
@@ -3169,7 +3008,7 @@ export class BeanieApp {
           profilePage: 0,
           profileFocusId: this.profileIdForDraft()
         });
-        break;
+        return true;
       case 'open-cleaning-profile-picker':
         this.setState({
           view: 'profiles',
@@ -3178,29 +3017,25 @@ export class BeanieApp {
           profilePage: 0,
           profileFocusId: resolveCleaningProfile(this.state.profiles, this.state.cleaningProfileOverride)?.id ?? null
         });
-        break;
+        return true;
       case 'open-bean-picker':
         await this.openBeanPicker(this.state.selectedBeanId);
-        break;
+        return true;
       case 'profiles-page':
         if (value) this.setState({ profilePage: Number(value) });
-        break;
+        return true;
       case 'focus-profile':
         if (id) this.focusProfile(id);
-        break;
-      case 'open-machine-settings':
-        this.setState({ view: 'machine' });
-        void this.loadMachineControlState();
-        break;
+        return true;
       case 'pick-profile':
         if (id) {
           if (this.state.cleaningProfilePicking) this.pickCleaningProfile(id);
           else this.pickProfile(id);
         }
-        break;
+        return true;
       case 'toggle-favorite-profile':
         if (id) this.toggleFavoriteProfile(id);
-        break;
+        return true;
       case 'close-modal':
         if (this.state.profileEdit || this.state.machineEdit || this.state.numberEdit || this.state.machineLabelEdit) {
           const returnModal = this.state.numberEdit?.returnModal ?? null;
@@ -3215,7 +3050,7 @@ export class BeanieApp {
             numberEdit: null,
             machineLabelEdit: null
           });
-          break;
+          return true;
         }
         this.setState({
           modal: null,
@@ -3231,42 +3066,51 @@ export class BeanieApp {
           numberEdit: null,
           machineLabelEdit: null
         });
-        break;
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private async handleProfileEditorClickAction(
+    action: string | undefined,
+    context: ClickActionContext
+  ): Promise<boolean> {
+    const { el, id, index, value } = context;
+    switch (action) {
+      case 'pe-edit-value':
+        this.openProfileValueDialog(el);
+        return true;
       case 'new-profile':
-        this.setState({
-          view: 'profile-editor',
-          editingProfileId: null,
-          profileEditor: createProfileEditorState(null),
-          profileEdit: null
-        });
-        break;
+        this.openNewProfileEditor();
+        return true;
       case 'edit-profile':
         if (id) this.openProfileEditor(id);
-        break;
+        return true;
       case 'save-profile':
         await this.submitProfileEditor();
-        break;
+        return true;
       case 'pe-add-step':
         this.editorDispatch(addStep);
-        break;
+        return true;
       case 'pe-duplicate-step':
         if (index != null) this.editorDispatch((pe) => duplicateStep(pe, Number(index)));
-        break;
+        return true;
       case 'pe-remove-step':
         if (index != null) this.editorDispatch((pe) => removeStep(pe, Number(index)));
-        break;
+        return true;
       case 'pe-move-step':
         if (index != null) this.editorDispatch((pe) => moveStep(pe, Number(index), value === '1' ? 1 : -1));
-        break;
+        return true;
       case 'pe-select-step':
         if (index != null) this.editorDispatch((pe) => selectStep(pe, Number(index)));
-        break;
+        return true;
       case 'pe-step-pump':
         if (index != null) this.editorDispatch((pe) => setStepPump(pe, Number(index), value === 'flow' ? 'flow' : 'pressure'));
-        break;
+        return true;
       case 'pe-step-transition':
         if (index != null) this.editorDispatch((pe) => setStepTransition(pe, Number(index), value === 'smooth' ? 'smooth' : 'fast'));
-        break;
+        return true;
       case 'pe-step-sensor-toggle':
         if (index != null) {
           this.editorDispatch((pe) => {
@@ -3274,7 +3118,7 @@ export class BeanieApp {
             return setStepField(pe, Number(index), 'sensor', step?.sensor === 'water' ? 'coffee' : 'water');
           });
         }
-        break;
+        return true;
       case 'pe-step-transition-toggle':
         if (index != null) {
           this.editorDispatch((pe) => {
@@ -3282,30 +3126,30 @@ export class BeanieApp {
             return setStepTransition(pe, Number(index), step?.transition === 'smooth' ? 'fast' : 'smooth');
           });
         }
-        break;
+        return true;
       case 'pe-step-nudge':
         if (index != null && el.dataset.key) {
           this.editorDispatch((pe) =>
             nudgeStepField(pe, Number(index), el.dataset.key as StepFieldKey, Number(el.dataset.delta ?? '0'))
           );
         }
-        break;
+        return true;
       case 'pe-simple-nudge':
         if (el.dataset.key) {
           this.editorDispatch((pe) =>
             nudgeSimpleProfileField(pe, el.dataset.key as SimpleProfileField, Number(el.dataset.delta ?? '0'))
           );
         }
-        break;
+        return true;
       case 'pe-set-mode':
         this.editorDispatch((pe) => setEditorMode(pe, value === 'basic' ? 'basic' : 'advanced'));
-        break;
+        return true;
       case 'pe-set-simple-type':
         this.editorDispatch((pe) => setSimpleProfileType(pe, value === 'flow' ? 'flow' : 'pressure'));
-        break;
+        return true;
       case 'pe-advanced-tab':
         this.editorDispatch((pe) => setAdvancedTab(pe, value === 'limits' ? 'limits' : 'steps'));
-        break;
+        return true;
       case 'pe-step-exit-nudge':
         if (index != null) {
           this.editorDispatch((pe) => {
@@ -3322,7 +3166,7 @@ export class BeanieApp {
             });
           });
         }
-        break;
+        return true;
       case 'pe-step-exit-preset':
         if (index != null) {
           this.editorDispatch((pe) =>
@@ -3333,12 +3177,12 @@ export class BeanieApp {
             })
           );
         }
-        break;
+        return true;
       case 'pe-step-exit-clear':
         if (index != null) this.editorDispatch((pe) => setStepExit(pe, Number(index), null));
-        break;
+        return true;
       default:
-        break;
+        return false;
     }
   }
 
@@ -3362,37 +3206,32 @@ export class BeanieApp {
   }
 
   private pickProfile(id: string): void {
-    const record = this.state.profiles.find((profile) => profile.id === id);
-    const draft = { ...this.state.draft };
-    if (record) {
-      draft.profileId = record.id;
-      draft.profile = record.profile;
-      draft.profileTitle = record.profile.title ?? null;
-      // A new profile carries its own temperatures, so drop any prior offset.
-      draft.brewTemp = null;
-    }
+    const selection = selectProfileForDraft({
+      draft: this.state.draft,
+      profiles: this.state.profiles,
+      grinders: this.state.grinders,
+      profileId: id
+    });
     this.setState({
-      draft: normalizeDraft(draft, this.state.profiles, this.state.grinders),
+      draft: selection.draft,
       view: 'workbench',
       profileSearch: '',
-      status: 'Profile selected'
+      status: selection.status
     });
     this.scheduleApply();
   }
 
   private focusProfile(id: string): void {
-    const record = this.state.profiles.find((profile) => profile.id === id);
-    const draft = { ...this.state.draft };
-    if (record) {
-      draft.profileId = record.id;
-      draft.profile = record.profile;
-      draft.profileTitle = record.profile.title ?? null;
-      draft.brewTemp = null;
-    }
+    const selection = selectProfileForDraft({
+      draft: this.state.draft,
+      profiles: this.state.profiles,
+      grinders: this.state.grinders,
+      profileId: id
+    });
     this.setState({
-      draft: normalizeDraft(draft, this.state.profiles, this.state.grinders),
+      draft: selection.draft,
       profileFocusId: id,
-      status: 'Profile selected'
+      status: selection.status
     });
   }
 
@@ -3413,12 +3252,22 @@ export class BeanieApp {
   }
 
   private openProfileEditor(id: string): void {
-    const record = this.state.profiles.find((profile) => profile.id === id);
-    if (!record) return;
+    const input = editProfileEditorInput(this.state.profiles, id);
+    if (input.type === 'missing') return;
+    this.openProfileEditorInput(input.editingProfileId, input.profile);
+  }
+
+  private openNewProfileEditor(): void {
+    const input = newProfileEditorInput();
+    if (input.type === 'missing') return;
+    this.openProfileEditorInput(input.editingProfileId, input.profile);
+  }
+
+  private openProfileEditorInput(editingProfileId: string | null, profile: Profile | null): void {
     this.setState({
       view: 'profile-editor',
-      editingProfileId: id,
-      profileEditor: createProfileEditorState(record.profile),
+      editingProfileId,
+      profileEditor: createProfileEditorState(profile),
       profileEdit: null
     });
   }
@@ -3511,65 +3360,47 @@ export class BeanieApp {
     }
     const profile = profileFromEditorState(pe);
     const editingId = this.state.editingProfileId;
-    // reaprime protects bundled defaults — edits to them are saved as a child
-    // clone (createProfile with parentId), never an in-place update.
-    const editingRecord = editingId ? this.state.profiles.find((item) => item.id === editingId) : undefined;
-    const cloneOfDefault = Boolean(editingId) && editingRecord?.isDefault === true;
-    const update = Boolean(editingId) && !cloneOfDefault;
+    const cloneOfDefault = Boolean(editingId) && this.state.profiles.find((item) => item.id === editingId)?.isDefault === true;
     this.setState({ busy: true, status: cloneOfDefault ? 'Saving a copy' : 'Saving profile' });
 
-    if (this.state.demo) {
-      const record: ProfileRecord = { id: update ? editingId! : `demo-profile-${Date.now()}`, profile };
-      const profiles = update
-        ? this.state.profiles.map((item) => (item.id === editingId ? record : item))
-        : [record, ...this.state.profiles];
-      this.setState({
-        profiles,
-        view: 'workbench',
-        profileEditor: null,
-        editingProfileId: null,
-        busy: false,
-        status: cloneOfDefault ? 'Saved a copy (demo)' : 'Profile saved (demo)'
-      });
-      this.pickProfile(record.id);
+    const result = await saveProfile({
+      profiles: this.state.profiles,
+      editingId,
+      profile,
+      demo: this.state.demo,
+      nowMs: Date.now()
+    }, {
+      createProfile: (input) => gateway.createProfile(input),
+      updateProfile: (id, input) => gateway.updateProfile(id, input),
+      loadProfiles: () => gateway.profiles(),
+      invalidateProfileMutation: (profileId) => beanieCache.invalidateProfileMutation(profileId),
+      putProfiles: (profiles) => beanieCache.putProfiles(profiles)
+    });
+
+    if (result.type === 'failed') {
+      console.error('[Beanie] Save profile failed', result.error);
+      this.setState({ busy: false, status: result.status });
       return;
     }
 
-    try {
-      const saved = update
-        ? await gateway.updateProfile(editingId!, { profile })
-        : await gateway.createProfile({ profile, parentId: editingId ?? undefined });
-      void beanieCache.invalidateProfileMutation(saved.id).catch(() => {});
-      let profiles = this.state.profiles;
-      try {
-        profiles = await gateway.profiles();
-      } catch {
-        profiles = this.state.profiles.some((item) => item.id === saved.id)
-          ? this.state.profiles.map((item) => (item.id === saved.id ? saved : item))
-          : [saved, ...this.state.profiles];
-      }
-      this.setState({
-        profiles,
-        view: 'workbench',
-        profileEditor: null,
-        editingProfileId: null,
-        busy: false,
-        status: cloneOfDefault ? 'Saved a copy' : 'Profile saved'
-      });
-      void beanieCache.putProfiles(profiles).catch(() => {});
-      this.pickProfile(saved.id);
-    } catch (error) {
-      console.error('[Beanie] Save profile failed', error);
-      this.setState({ busy: false, status: 'Save profile failed' });
-    }
+    this.setState({
+      profiles: result.profiles,
+      view: 'workbench',
+      profileEditor: null,
+      editingProfileId: result.editingId,
+      busy: false,
+      status: result.status
+    });
+    this.pickProfile(result.profileId);
   }
 
   private toggleFavoriteProfile(id: string): void {
-    const favorites = new Set(this.state.favoriteProfiles);
-    if (favorites.has(id)) favorites.delete(id);
-    else favorites.add(id);
-    const favoriteProfiles = [...favorites];
-    writeFavoriteProfiles(favoriteProfiles);
+    const { favoriteProfileIds: favoriteProfiles } = toggleFavoriteProfile({
+      favoriteProfileIds: this.state.favoriteProfiles,
+      profileId: id
+    }, {
+      writeFavoriteProfiles: (ids) => writeFavoriteProfiles(ids)
+    });
     this.setState({ favoriteProfiles });
   }
 
@@ -3696,49 +3527,36 @@ export class BeanieApp {
     const editingId = this.state.editingBeanId;
     this.setState({ busy: true, status: editingId ? 'Saving bean' : 'Adding bean' });
 
-    if (this.state.demo) {
-      if (editingId) {
-        const beans = this.state.beans.map((bean) =>
-          bean.id === editingId ? { ...bean, ...fields } : bean
-        );
-        this.setState({ beans, view: 'workbench', editingBeanId: null, busy: false, status: 'Bean saved (demo)' });
-      } else {
-        const bean: Bean = { id: `demo-${Date.now()}`, ...fields } as Bean;
-        this.setState({
-          beans: [bean, ...this.state.beans],
-          view: 'workbench',
-          editingBeanId: null,
-          busy: false,
-          status: 'Bean added (demo)'
-        });
-        await this.selectBean(bean.id, { apply: false, preferWorkflow: false });
-      }
+    const result = await this.beanWorkflow.saveBean({
+      beans: this.state.beans,
+      batchesByBean: this.state.batchesByBean,
+      editingId,
+      fields,
+      demo: this.state.demo,
+      nowMs: Date.now()
+    }, {
+      createBean: (input) => gateway.createBean(input),
+      updateBean: (id, input) => gateway.updateBean(id, input),
+      putBeans: (beans) => beanieCache.putBeans(beans),
+      putBeanBatches: (beanId, batches) => beanieCache.putBeanBatches(beanId, batches)
+    });
+
+    if (result.type === 'failed') {
+      console.error('[Beanie] Save bean failed', result.error);
+      this.setState({ busy: false, status: result.status });
       return;
     }
 
-    try {
-      if (editingId) {
-        const updated = await gateway.updateBean(editingId, fields);
-        const beans = this.state.beans.map((bean) => (bean.id === editingId ? updated : bean));
-        void beanieCache.putBeans(beans).catch(() => {});
-        this.setState({ beans, view: 'workbench', editingBeanId: null, busy: false, status: 'Bean saved' });
-      } else {
-        const bean = await gateway.createBean(fields);
-        const beans = [bean, ...this.state.beans];
-        void beanieCache.putBeans(beans).catch(() => {});
-        void beanieCache.putBeanBatches(bean.id, []).catch(() => {});
-        this.setState({
-          beans,
-          view: 'workbench',
-          editingBeanId: null,
-          busy: false,
-          status: 'Bean added'
-        });
-        await this.selectBean(bean.id, { apply: false, preferWorkflow: false });
-      }
-    } catch (error) {
-      console.error('[Beanie] Save bean failed', error);
-      this.setState({ busy: false, status: 'Save bean failed' });
+    this.setState({
+      beans: result.beans,
+      batchesByBean: result.batchesByBean,
+      view: 'workbench',
+      editingBeanId: null,
+      busy: false,
+      status: result.status
+    });
+    if (result.selectBeanId) {
+      await this.selectBean(result.selectBeanId, { apply: false, preferWorkflow: false });
     }
   }
 
@@ -3750,74 +3568,66 @@ export class BeanieApp {
     const editingId = form.dataset.id || null;
     this.setState({ busy: true, status: editingId ? 'Saving bean' : 'Adding bean' });
 
-    if (this.state.demo) {
-      const bean: Bean = editingId
-        ? { ...(this.state.beans.find((item) => item.id === editingId) as Bean), ...fields }
-        : ({ id: `demo-${Date.now()}`, ...fields } as Bean);
-      const beans = editingId
-        ? this.state.beans.map((item) => (item.id === editingId ? bean : item))
-        : [bean, ...this.state.beans];
-      void beanieCache.putBeans(beans).catch(() => {});
-      if (!editingId) void beanieCache.putBeanBatches(bean.id, []).catch(() => {});
-      this.setState({
-        beans,
-        batchesByBean: editingId ? this.state.batchesByBean : { ...this.state.batchesByBean, [bean.id]: [] },
-        beanPickerBeanId: bean.id,
-        beanPickerMode: 'inspect',
-        busy: false,
-        status: editingId ? 'Bean saved (demo)' : 'Bean added (demo)'
-      });
+    const result = await this.beanWorkflow.saveBean({
+      beans: this.state.beans,
+      batchesByBean: this.state.batchesByBean,
+      editingId,
+      fields,
+      demo: this.state.demo,
+      nowMs: Date.now()
+    }, {
+      createBean: (input) => gateway.createBean(input),
+      updateBean: (id, input) => gateway.updateBean(id, input),
+      putBeans: (beans) => beanieCache.putBeans(beans),
+      putBeanBatches: (beanId, batches) => beanieCache.putBeanBatches(beanId, batches)
+    });
+
+    if (result.type === 'failed') {
+      console.error('[Beanie] Save bean failed', result.error);
+      this.setState({ busy: false, status: result.status });
       return;
     }
 
-    try {
-      const bean = editingId ? await gateway.updateBean(editingId, fields) : await gateway.createBean(fields);
-      const beans = editingId
-        ? this.state.beans.map((item) => (item.id === editingId ? bean : item))
-        : [bean, ...this.state.beans];
-      void beanieCache.putBeans(beans).catch(() => {});
-      if (!editingId) void beanieCache.putBeanBatches(bean.id, []).catch(() => {});
-      this.setState({
-        beans,
-        batchesByBean: editingId ? this.state.batchesByBean : { ...this.state.batchesByBean, [bean.id]: [] },
-        beanPickerBeanId: bean.id,
-        beanPickerMode: 'inspect',
-        busy: false,
-        status: editingId ? 'Bean saved' : 'Bean added'
-      });
-    } catch (error) {
-      console.error('[Beanie] Save bean failed', error);
-      this.setState({ busy: false, status: 'Save bean failed' });
-    }
+    this.setState({
+      beans: result.beans,
+      batchesByBean: result.batchesByBean,
+      beanPickerBeanId: result.bean.id,
+      beanPickerMode: 'inspect',
+      busy: false,
+      status: result.status
+    });
   }
 
   private async archiveBean(id: string): Promise<void> {
     if (!window.confirm('Delete this bag? It will be hidden from the bean list.')) return;
     this.setState({ busy: true, status: 'Deleting bag' });
-    if (!this.state.demo) {
-      try {
-        await gateway.updateBean(id, { archived: true });
-      } catch (error) {
-        console.error('[Beanie] Delete bean failed', error);
-        this.setState({ busy: false, status: 'Delete failed' });
-        return;
-      }
+    const result = await this.beanWorkflow.archiveBean({
+      beans: this.state.beans,
+      id,
+      selectedBeanId: this.state.selectedBeanId,
+      demo: this.state.demo
+    }, {
+      updateBean: (beanId, fields) => gateway.updateBean(beanId, fields),
+      invalidateBeanMutation: (beanId) => beanieCache.invalidateBeanMutation(beanId),
+      putBeans: (beans) => beanieCache.putBeans(beans)
+    });
+
+    if (result.type === 'failed') {
+      console.error('[Beanie] Delete bean failed', result.error);
+      this.setState({ busy: false, status: result.status });
+      return;
     }
-    const beans = this.state.beans.filter((bean) => bean.id !== id);
-    if (!this.state.demo) {
-      void beanieCache.invalidateBeanMutation(id).then(() => beanieCache.putBeans(beans)).catch(() => {});
-    }
+
     this.setState({
-      beans,
+      beans: result.beans,
       view: 'workbench',
       editingBeanId: null,
       modal: this.state.modal === 'bean-picker' ? null : this.state.modal,
       busy: false,
-      status: 'Bag deleted'
+      status: result.status
     });
-    if (this.state.selectedBeanId === id) {
-      const next = beans[0];
-      if (next) await this.selectBean(next.id, { apply: false, preferWorkflow: false });
+    if (result.archivedSelectedBean) {
+      if (result.nextSelectedBeanId) await this.selectBean(result.nextSelectedBeanId, { apply: false, preferWorkflow: false });
       else this.setState({ selectedBeanId: null });
     }
   }
@@ -3829,34 +3639,32 @@ export class BeanieApp {
     const batchInput = batchFieldsFromForm(data, bean.id);
 
     this.setState({ busy: true, status: 'Adding batch' });
-    if (this.state.demo) {
-      const batch: BeanBatch = { id: `demo-batch-${Date.now()}`, ...batchInput } as BeanBatch;
-      const batches = [batch, ...(this.state.batchesByBean[bean.id] ?? [])];
-      this.setState({
-        batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
-        selectedBatchId: batch.id,
-        view: 'workbench',
-        busy: false,
-        status: 'Batch added (demo)'
-      });
+    const result = await this.beanWorkflow.createBatch({
+      bean,
+      batchesByBean: this.state.batchesByBean,
+      selectedBeanId: bean.id,
+      selectedBatchId: this.state.selectedBatchId,
+      batchInput,
+      demo: this.state.demo,
+      nowMs: Date.now()
+    }, {
+      createBatch: (beanId, input) => gateway.createBatch(beanId, input),
+      putBeanBatches: (beanId, batches) => beanieCache.putBeanBatches(beanId, batches)
+    });
+
+    if (result.type === 'failed') {
+      console.error('[Beanie] Add batch failed', result.error);
+      this.setState({ busy: false, status: result.status });
       return;
     }
 
-    try {
-      const batch = await gateway.createBatch(bean.id, batchInput);
-      const batches = [batch, ...(this.state.batchesByBean[bean.id] ?? [])];
-      void beanieCache.putBeanBatches(bean.id, batches).catch(() => {});
-      this.setState({
-        batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
-        selectedBatchId: batch.id,
-        view: 'workbench',
-        busy: false,
-        status: 'Batch added'
-      });
-    } catch (error) {
-      console.error('[Beanie] Add batch failed', error);
-      this.setState({ busy: false, status: 'Add batch failed' });
-    }
+    this.setState({
+      batchesByBean: result.batchesByBean,
+      selectedBatchId: result.batch.id,
+      view: 'workbench',
+      busy: false,
+      status: result.status
+    });
   }
 
   private async createBatchInPicker(beanId: string | null): Promise<void> {
@@ -3875,32 +3683,31 @@ export class BeanieApp {
     };
 
     this.setState({ status: 'Adding batch' });
-    if (this.state.demo) {
-      const batch: BeanBatch = { id: `demo-batch-${Date.now()}`, ...batchInput } as BeanBatch;
-      const batches = [batch, ...current];
-      this.setState({
-        batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
-        selectedBatchId: bean.id === this.state.selectedBeanId ? batch.id : this.state.selectedBatchId,
-        status: 'Batch added (demo)'
-      });
-      if (bean.id === this.state.selectedBeanId) this.scheduleApply();
+    const result = await this.beanWorkflow.createBatch({
+      bean,
+      batchesByBean: this.state.batchesByBean,
+      selectedBeanId: this.state.selectedBeanId,
+      selectedBatchId: this.state.selectedBatchId,
+      batchInput,
+      demo: this.state.demo,
+      nowMs: Date.now()
+    }, {
+      createBatch: (beanId, input) => gateway.createBatch(beanId, input),
+      putBeanBatches: (beanId, batches) => beanieCache.putBeanBatches(beanId, batches)
+    });
+
+    if (result.type === 'failed') {
+      console.error('[Beanie] Add batch failed', result.error);
+      this.setState({ status: result.status });
       return;
     }
 
-    try {
-      const batch = await gateway.createBatch(bean.id, batchInput);
-      const batches = [batch, ...(this.state.batchesByBean[bean.id] ?? [])];
-      void beanieCache.putBeanBatches(bean.id, batches).catch(() => {});
-      this.setState({
-        batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
-        selectedBatchId: bean.id === this.state.selectedBeanId ? batch.id : this.state.selectedBatchId,
-        status: 'Batch added'
-      });
-      if (bean.id === this.state.selectedBeanId) this.scheduleApply();
-    } catch (error) {
-      console.error('[Beanie] Add batch failed', error);
-      this.setState({ status: 'Add batch failed' });
-    }
+    this.setState({
+      batchesByBean: result.batchesByBean,
+      selectedBatchId: result.selectedBatchId,
+      status: result.status
+    });
+    if (result.selectedCurrentBean) this.scheduleApply();
   }
 
   private async saveBeanPickerBatch(form: HTMLFormElement): Promise<void> {
@@ -3913,35 +3720,41 @@ export class BeanieApp {
     const previous = current.find((item) => item.id === batchId);
     if (!previous) return;
     const batchInput = batchFieldsFromForm(new FormData(form), bean.id, previous);
-    const optimistic: BeanBatch = { ...previous, ...batchInput, id: batchId, beanId: bean.id };
-    const optimisticBatches = current.map((item) => (item.id === batchId ? optimistic : item));
+    const optimistic = this.beanWorkflow.beginBatchUpdate({
+      bean,
+      batchesByBean: this.state.batchesByBean,
+      selectedBeanId: this.state.selectedBeanId,
+      batchId,
+      batchInput,
+      demo: this.state.demo
+    });
+    if (optimistic.type !== 'optimistic') return;
 
     this.setState({
-      batchesByBean: { ...this.state.batchesByBean, [bean.id]: optimisticBatches },
-      status: 'Batch saved'
+      batchesByBean: optimistic.batchesByBean,
+      status: optimistic.status
     });
-    if (bean.id === this.state.selectedBeanId && latestBatch(optimisticBatches)?.id === batchId) this.scheduleApply();
-    if (this.state.demo) return;
+    if (optimistic.shouldScheduleApply) this.scheduleApply();
+    if (optimistic.complete) return;
 
-    try {
-      const saved = await gateway.updateBatch(batchId, batchInput);
-      const latest = this.state.batchesByBean[bean.id] ?? [];
-      const batches = latest.map((item) => (item.id === batchId ? saved : item));
-      void beanieCache.putBeanBatches(bean.id, batches).catch(() => {});
-      this.setState({
-        batchesByBean: {
-          ...this.state.batchesByBean,
-          [bean.id]: batches
-        },
-        status: 'Batch saved'
-      });
-    } catch (error) {
-      console.error('[Beanie] Save batch failed', error);
-      this.setState({
-        batchesByBean: { ...this.state.batchesByBean, [bean.id]: current },
-        status: 'Save batch failed'
-      });
+    const result = await this.beanWorkflow.finishBatchUpdate({
+      bean,
+      batchId,
+      batchInput,
+      latestBatchesByBean: this.state.batchesByBean,
+      previousBatches: optimistic.previousBatches
+    }, {
+      updateBatch: (id, input) => gateway.updateBatch(id, input),
+      putBeanBatches: (ownerId, batches) => beanieCache.putBeanBatches(ownerId, batches)
+    });
+
+    if (result.type === 'failed') {
+      console.error('[Beanie] Save batch failed', result.error);
     }
+    this.setState({
+      batchesByBean: result.batchesByBean,
+      status: result.status
+    });
   }
 
   private async saveBeanPickerBatchValue(
@@ -3966,35 +3779,41 @@ export class BeanieApp {
     };
     if (name === 'weight') batchInput.weight = nextValue;
     if (name === 'weightRemaining') batchInput.weightRemaining = nextValue;
-    const optimistic: BeanBatch = { ...previous, ...batchInput, id: batchId, beanId: bean.id };
-    const optimisticBatches = current.map((item) => (item.id === batchId ? optimistic : item));
+    const optimistic = this.beanWorkflow.beginBatchUpdate({
+      bean,
+      batchesByBean: this.state.batchesByBean,
+      selectedBeanId: this.state.selectedBeanId,
+      batchId,
+      batchInput,
+      demo: this.state.demo
+    });
+    if (optimistic.type !== 'optimistic') return;
 
     this.setState({
-      batchesByBean: { ...this.state.batchesByBean, [bean.id]: optimisticBatches },
-      status: 'Batch saved'
+      batchesByBean: optimistic.batchesByBean,
+      status: optimistic.status
     });
-    if (bean.id === this.state.selectedBeanId && latestBatch(optimisticBatches)?.id === batchId) this.scheduleApply();
-    if (this.state.demo) return;
+    if (optimistic.shouldScheduleApply) this.scheduleApply();
+    if (optimistic.complete) return;
 
-    try {
-      const saved = await gateway.updateBatch(batchId, batchInput);
-      const latest = this.state.batchesByBean[bean.id] ?? [];
-      const batches = latest.map((item) => (item.id === batchId ? saved : item));
-      void beanieCache.putBeanBatches(bean.id, batches).catch(() => {});
-      this.setState({
-        batchesByBean: {
-          ...this.state.batchesByBean,
-          [bean.id]: batches
-        },
-        status: 'Batch saved'
-      });
-    } catch (error) {
-      console.error('[Beanie] Save batch failed', error);
-      this.setState({
-        batchesByBean: { ...this.state.batchesByBean, [bean.id]: current },
-        status: 'Save batch failed'
-      });
+    const result = await this.beanWorkflow.finishBatchUpdate({
+      bean,
+      batchId,
+      batchInput,
+      latestBatchesByBean: this.state.batchesByBean,
+      previousBatches: optimistic.previousBatches
+    }, {
+      updateBatch: (id, input) => gateway.updateBatch(id, input),
+      putBeanBatches: (ownerId, batches) => beanieCache.putBeanBatches(ownerId, batches)
+    });
+
+    if (result.type === 'failed') {
+      console.error('[Beanie] Save batch failed', result.error);
     }
+    this.setState({
+      batchesByBean: result.batchesByBean,
+      status: result.status
+    });
   }
 
   private async deleteBatchFromPicker(beanId: string | null, batchId: string): Promise<void> {
@@ -4006,30 +3825,30 @@ export class BeanieApp {
     if (!batch) return;
     if (!window.confirm(`Delete ${batchOptionLabel(batch)}?`)) return;
 
-    const previousSelectedBatchId = this.state.selectedBatchId;
-    const batches = current.filter((item) => item.id !== batchId);
-    const selectedBatchId =
-      bean.id === this.state.selectedBeanId ? latestBatch(batches)?.id ?? null : previousSelectedBatchId;
+    const result = await this.beanWorkflow.deleteBatch({
+      bean,
+      batchesByBean: this.state.batchesByBean,
+      selectedBeanId: this.state.selectedBeanId,
+      selectedBatchId: this.state.selectedBatchId,
+      batchId,
+      demo: this.state.demo
+    }, {
+      deleteBatch: (id) => gateway.deleteBatch(id),
+      putBeanBatches: (beanId, batches) => beanieCache.putBeanBatches(beanId, batches)
+    });
+
+    if (result.type === 'failed') {
+      console.error('[Beanie] Delete batch failed', result.error);
+      this.setState({ status: result.status });
+      return;
+    }
 
     this.setState({
-      batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
-      selectedBatchId,
-      status: 'Batch deleted'
+      batchesByBean: result.batchesByBean,
+      selectedBatchId: result.selectedBatchId,
+      status: result.status
     });
-    if (bean.id === this.state.selectedBeanId) this.scheduleApply();
-    if (this.state.demo) return;
-
-    try {
-      await gateway.deleteBatch(batchId);
-      void beanieCache.putBeanBatches(bean.id, batches).catch(() => {});
-    } catch (error) {
-      console.error('[Beanie] Delete batch failed', error);
-      this.setState({
-        batchesByBean: { ...this.state.batchesByBean, [bean.id]: current },
-        selectedBatchId: previousSelectedBatchId,
-        status: 'Delete batch failed'
-      });
-    }
+    if (result.selectedCurrentBean) this.scheduleApply();
   }
 
   private async submitBeanPickerBatch(form: HTMLFormElement): Promise<void> {
@@ -4041,42 +3860,75 @@ export class BeanieApp {
     const batchInput = batchFieldsFromForm(new FormData(form), bean.id);
 
     this.setState({ busy: true, status: batchId ? 'Saving batch' : 'Adding batch' });
-    if (this.state.demo) {
-      const current = this.state.batchesByBean[bean.id] ?? [];
-      const batch: BeanBatch = batchId
-        ? { ...(current.find((item) => item.id === batchId) as BeanBatch), ...batchInput, id: batchId }
-        : ({ id: `demo-batch-${Date.now()}`, ...batchInput } as BeanBatch);
-      const batches = batchId
-        ? current.map((item) => (item.id === batchId ? batch : item))
-        : [batch, ...current];
+    if (!batchId) {
+      const result = await this.beanWorkflow.createBatch({
+        bean,
+        batchesByBean: this.state.batchesByBean,
+        selectedBeanId: this.state.selectedBeanId,
+        selectedBatchId: this.state.selectedBatchId,
+        batchInput,
+        demo: this.state.demo,
+        nowMs: Date.now()
+      }, {
+        createBatch: (beanId, input) => gateway.createBatch(beanId, input),
+        putBeanBatches: (beanId, batches) => beanieCache.putBeanBatches(beanId, batches)
+      });
+
+      if (result.type === 'failed') {
+        console.error('[Beanie] Save batch failed', result.error);
+        this.setState({ busy: false, status: result.status });
+        return;
+      }
+
       this.setState({
-        batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
-        selectedBatchId: bean.id === this.state.selectedBeanId && !batchId ? batch.id : this.state.selectedBatchId,
+        batchesByBean: result.batchesByBean,
+        selectedBatchId: result.selectedBatchId,
         busy: false,
-        status: batchId ? 'Batch saved (demo)' : 'Batch added (demo)'
+        status: result.status
       });
       return;
     }
 
-    try {
-      const batch = batchId
-        ? await gateway.updateBatch(batchId, batchInput)
-        : await gateway.createBatch(bean.id, batchInput);
-      const current = this.state.batchesByBean[bean.id] ?? [];
-      const batches = batchId
-        ? current.map((item) => (item.id === batchId ? batch : item))
-        : [batch, ...current];
-      void beanieCache.putBeanBatches(bean.id, batches).catch(() => {});
-      this.setState({
-        batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
-        selectedBatchId: bean.id === this.state.selectedBeanId && !batchId ? batch.id : this.state.selectedBatchId,
-        busy: false,
-        status: batchId ? 'Batch saved' : 'Batch added'
-      });
-    } catch (error) {
-      console.error('[Beanie] Save batch failed', error);
-      this.setState({ busy: false, status: batchId ? 'Save batch failed' : 'Add batch failed' });
+    const optimistic = this.beanWorkflow.beginBatchUpdate({
+      bean,
+      batchesByBean: this.state.batchesByBean,
+      selectedBeanId: this.state.selectedBeanId,
+      batchId,
+      batchInput,
+      demo: this.state.demo
+    });
+    if (optimistic.type !== 'optimistic') {
+      this.setState({ busy: false });
+      return;
     }
+
+    this.setState({
+      batchesByBean: optimistic.batchesByBean,
+      selectedBatchId: this.state.selectedBatchId,
+      busy: false,
+      status: optimistic.status
+    });
+    if (optimistic.complete) return;
+
+    const result = await this.beanWorkflow.finishBatchUpdate({
+      bean,
+      batchId,
+      batchInput,
+      latestBatchesByBean: this.state.batchesByBean,
+      previousBatches: optimistic.previousBatches
+    }, {
+      updateBatch: (id, input) => gateway.updateBatch(id, input),
+      putBeanBatches: (ownerId, batches) => beanieCache.putBeanBatches(ownerId, batches)
+    });
+
+    if (result.type === 'failed') {
+      console.error('[Beanie] Save batch failed', result.error);
+    }
+    this.setState({
+      batchesByBean: result.batchesByBean,
+      selectedBatchId: this.state.selectedBatchId,
+      status: result.status
+    });
   }
 
   private async submitGrinderEditor(form: HTMLFormElement): Promise<void> {
@@ -4093,47 +3945,35 @@ export class BeanieApp {
 
     const editingId = this.state.editingGrinderId;
     this.setState({ busy: true, status: editingId ? 'Saving grinder' : 'Adding grinder' });
-    const selectGrinder = (grinder: Grinder, status: string, grinders?: Grinder[]) => {
-      this.setState({
-        grinders: grinders ?? [grinder, ...this.state.grinders],
-        draft: { ...this.state.draft, grinderId: grinder.id, grinderModel: grinder.model },
-        view: 'workbench',
-        editingGrinderId: null,
-        editDialog: null,
-        busy: false,
-        status
-      });
-      this.scheduleApply();
-    };
 
-    if (this.state.demo) {
-      if (editingId) {
-        const previous = this.state.grinders.find((grinder) => grinder.id === editingId);
-        const grinder: Grinder = { ...(previous ?? { id: editingId }), ...grinderInput } as Grinder;
-        const grinders = this.state.grinders.map((item) => (item.id === editingId ? grinder : item));
-        selectGrinder(grinder, 'Grinder saved (demo)', grinders);
-      } else {
-        const grinder: Grinder = { id: `demo-grinder-${Date.now()}`, ...grinderInput } as Grinder;
-        selectGrinder(grinder, 'Grinder added (demo)');
-      }
+    const result = await this.beanWorkflow.saveGrinder({
+      grinders: this.state.grinders,
+      editingId,
+      grinderInput,
+      demo: this.state.demo,
+      nowMs: Date.now()
+    }, {
+      createGrinder: (input) => gateway.createGrinder(input),
+      updateGrinder: (id, input) => gateway.updateGrinder(id, input),
+      putGrinders: (grinders) => beanieCache.putGrinders(grinders)
+    });
+
+    if (result.type === 'failed') {
+      console.error('[Beanie] Save grinder failed', result.error);
+      this.setState({ busy: false, status: result.status });
       return;
     }
 
-    try {
-      if (editingId) {
-        const grinder = await gateway.updateGrinder(editingId, grinderInput);
-        const grinders = this.state.grinders.map((item) => (item.id === editingId ? grinder : item));
-        void beanieCache.putGrinders(grinders).catch(() => {});
-        selectGrinder(grinder, 'Grinder saved', grinders);
-      } else {
-        const grinder = await gateway.createGrinder(grinderInput);
-        void beanieCache.putGrinders([grinder, ...this.state.grinders]).catch(() => {});
-        selectGrinder(grinder, 'Grinder added');
-      }
-    } catch (error) {
-      console.error('[Beanie] Save grinder failed', error);
-      this.setState({ busy: false, status: 'Save grinder failed' });
-    }
+    this.setState({
+      grinders: result.grinders,
+      draft: { ...this.state.draft, grinderId: result.grinder.id, grinderModel: result.grinder.model },
+      view: 'workbench',
+      editingGrinderId: null,
+      editDialog: null,
+      busy: false,
+      status: result.status
+    });
+    this.scheduleApply();
   }
 
   private adjustField(field: string, delta: number): void {
@@ -4354,116 +4194,64 @@ export class BeanieApp {
   }
 
   private async applyMachinePreset(name: string, presetId: string): Promise<void> {
-    const capabilities = this.machineCapabilitiesForControls();
-    let steamSettings = this.currentSteamSettings();
-    let hotWaterData = this.currentHotWaterData();
-    let rinseData = this.currentRinseData();
-
-    if (name === 'steamPreset') {
-      const preset = machinePresetsWithValues(name, STEAM_PRESETS, this.state.machinePresetValues)
-        .find((item) => item.id === presetId);
-      if (!preset) return;
-      steamSettings = clampSteam({ ...DEFAULT_STEAM, ...preset.values }, capabilities);
-    }
-    if (name === 'waterPreset') {
-      const preset = machinePresetsWithValues(name, HOT_WATER_PRESETS, this.state.machinePresetValues)
-        .find((item) => item.id === presetId);
-      if (!preset) return;
-      hotWaterData = clampHotWater({ ...DEFAULT_HOT_WATER, ...preset.values }, capabilities);
-    }
-    if (name === 'flushPreset') {
-      const preset = machinePresetsWithValues(name, FLUSH_PRESETS, this.state.machinePresetValues)
-        .find((item) => item.id === presetId);
-      if (!preset) return;
-      rinseData = clampFlush({ ...DEFAULT_RINSE, ...preset.values }, capabilities);
-    }
-
-    await this.setMachineWorkflow(steamSettings, hotWaterData, rinseData, 'Machine preset saved');
+    const plan = applyMachinePresetPlan({
+      name,
+      presetId,
+      machinePresetValues: this.state.machinePresetValues,
+      capabilities: this.machineCapabilitiesForControls(),
+      steamSettings: this.currentSteamSettings(),
+      hotWaterData: this.currentHotWaterData(),
+      rinseData: this.currentRinseData()
+    });
+    if (!plan.applied) return;
+    await this.setMachineWorkflow(plan.steamSettings, plan.hotWaterData, plan.rinseData, plan.status);
   }
 
   private async applyMachineValue(name: string, value: number | null): Promise<void> {
-    if (value == null) return;
-    const capabilities = this.machineCapabilitiesForControls();
-    const steamSettings = this.currentSteamSettings();
-    const hotWaterData = this.currentHotWaterData();
-    const rinseData = this.currentRinseData();
-    const selectedSteamPreset = matchingPreset(
-      steamSettings,
-      machinePresetsWithValues('steamPreset', STEAM_PRESETS, this.state.machinePresetValues)
-    );
-    const selectedWaterPreset = matchingPreset(
-      hotWaterData,
-      machinePresetsWithValues('waterPreset', HOT_WATER_PRESETS, this.state.machinePresetValues)
-    );
-    const selectedFlushPreset = matchingPreset(
-      rinseData,
-      machinePresetsWithValues('flushPreset', FLUSH_PRESETS, this.state.machinePresetValues)
-    );
-
-    if (name === 'steamFlow') steamSettings.flow = value;
-    if (name === 'steamTemp') steamSettings.targetTemperature = value;
-    if (name === 'steamDuration') steamSettings.duration = value;
-    if (name === 'steamStopTemp') steamSettings.stopAtTemperature = value;
-    if (name === 'waterTemp') hotWaterData.targetTemperature = value;
-    if (name === 'waterFlow') hotWaterData.flow = value;
-    if (name === 'waterVolume') hotWaterData.volume = value;
-    if (name === 'waterDuration') hotWaterData.duration = value;
-    if (name === 'flushDuration') rinseData.duration = value;
-    if (name === 'flushFlow') rinseData.flow = value;
-    if (name === 'flushTemp') rinseData.targetTemperature = value;
-
-    const nextSteamSettings = clampSteam(steamSettings, capabilities);
-    const nextHotWaterData = clampHotWater(hotWaterData, capabilities);
-    const nextRinseData = clampFlush(rinseData, capabilities);
-    this.savePresetValuesAfterMachineEdit(
+    const plan = applyMachineValuePlan({
       name,
-      selectedSteamPreset,
-      selectedWaterPreset,
-      selectedFlushPreset,
-      nextSteamSettings,
-      nextHotWaterData,
-      nextRinseData
-    );
-
-    await this.setMachineWorkflow(
-      nextSteamSettings,
-      nextHotWaterData,
-      nextRinseData,
-      'Machine setting saved'
-    );
+      value,
+      machinePresetValues: this.state.machinePresetValues,
+      capabilities: this.machineCapabilitiesForControls(),
+      steamSettings: this.currentSteamSettings(),
+      hotWaterData: this.currentHotWaterData(),
+      rinseData: this.currentRinseData()
+    });
+    if (!plan.applied) return;
+    if (plan.machinePresetValues) {
+      writeMachinePresetValues(plan.machinePresetValues);
+      this.setState({ machinePresetValues: plan.machinePresetValues });
+    }
+    await this.setMachineWorkflow(plan.steamSettings, plan.hotWaterData, plan.rinseData, plan.status);
   }
 
   private async setSteamPurgeMode(mode: number): Promise<void> {
-    const nextMode = normalizeSteamPurgeMode(mode);
-    const machineSettings = {
-      ...(this.state.machineSettings ?? {}),
-      steamPurgeMode: nextMode
-    };
-    const settingsBundle = this.state.settingsBundle
-      ? { ...this.state.settingsBundle, de1: { ...this.state.settingsBundle.de1, steamPurgeMode: nextMode } }
-      : this.state.settingsBundle;
+    const plan = steamPurgeModePlan(mode, this.state.machineSettings, this.state.settingsBundle);
 
     this.setState({
-      machineSettings,
-      settingsBundle,
+      machineSettings: plan.machineSettings,
+      settingsBundle: plan.settingsBundle,
       busy: true,
-      status: 'Steam purge setting...'
+      status: plan.savingStatus
     });
     if (this.state.demo) {
-      this.setState({ busy: false, status: 'Steam purge setting saved (demo)' });
+      this.setState({ busy: false, status: plan.demoStatus });
       return;
     }
 
     try {
-      const verifiedMachineSettings = await this.updateSteamPurgeModeAndReadBack(nextMode);
+      const verifiedMachineSettings = await updateSteamPurgeModeAndReadBack(plan.nextMode, {
+        updateMachineSettings: (patch) => gateway.updateMachineSettings(patch),
+        readMachineSettings: () => gateway.machineSettings()
+      });
       this.setState({
         machineSettings: verifiedMachineSettings,
         busy: false,
-        status: 'Steam purge setting saved'
+        status: plan.successStatus
       });
     } catch (error) {
       console.error('[Beanie] Save steam purge setting failed', error);
-      this.setState({ busy: false, status: 'Steam purge setting failed' });
+      this.setState({ busy: false, status: plan.failedStatus });
       void this.loadMachineControlState();
     }
   }
@@ -4482,93 +4270,52 @@ export class BeanieApp {
     );
   }
 
-  private savePresetValuesAfterMachineEdit(
-    fieldName: string,
-    selectedSteamPreset: string,
-    selectedWaterPreset: string,
-    selectedFlushPreset: string,
-    steamSettings: SteamSettings,
-    hotWaterData: HotWaterData,
-    rinseData: RinseData
-  ): void {
-    let key: string | null = null;
-    let values: object | null = null;
-    if (fieldName.startsWith('steam') && selectedSteamPreset !== 'custom') {
-      key = machinePresetLabelKey('steamPreset', selectedSteamPreset);
-      values = steamSettings;
-    }
-    if (fieldName.startsWith('water') && selectedWaterPreset !== 'custom') {
-      key = machinePresetLabelKey('waterPreset', selectedWaterPreset);
-      values = hotWaterData;
-    }
-    if (fieldName.startsWith('flush') && selectedFlushPreset !== 'custom') {
-      key = machinePresetLabelKey('flushPreset', selectedFlushPreset);
-      values = rinseData;
-    }
-    if (!key || !values) return;
-
-    const machinePresetValues = {
-      ...this.state.machinePresetValues,
-      [key]: numericPresetValues(values)
-    };
-    writeMachinePresetValues(machinePresetValues);
-    this.setState({ machinePresetValues });
-  }
-
   private async setMachineWorkflow(
     steamSettings: SteamSettings,
     hotWaterData: HotWaterData,
     rinseData: RinseData,
     status: string
   ): Promise<void> {
-    const workflow: Workflow = {
-      ...(this.state.workflow ?? {}),
+    const plan = buildMachineWorkflowPlan({
+      workflow: this.state.workflow,
       steamSettings,
       hotWaterData,
-      rinseData
-    };
-    writeHotWaterWeightTarget(hotWaterData.volume);
-    const nativeHotWaterData = hotWaterDataForNativeWorkflow(
-      hotWaterData,
-      this.state.hotWaterStopMode,
-      scaleConnected(this.state.scale)
-    );
-    const workflowForGateway: Workflow = {
-      ...workflow,
-      hotWaterData: nativeHotWaterData
-    };
-    const machineSettings = machineSettingsFromWorkflow(steamSettings, hotWaterData, rinseData, this.state.machineSettings);
-    const machinePatch = machineSettingsPatchFromWorkflow(steamSettings, hotWaterData, rinseData);
-    this.setState({
-      workflow,
-      machineSettings,
-      busy: true,
-      status: `${status}...`
+      rinseData,
+      currentMachineSettings: this.state.machineSettings,
+      hotWaterStopMode: this.state.hotWaterStopMode,
+      hotWaterScaleConnected: scaleConnected(this.state.scale),
+      status
     });
-    if (this.state.demo) {
-      this.setState({ busy: false, status: `${status} (demo)` });
-      return;
-    }
-    try {
-      const saved = await gateway.updateWorkflow(workflowForGateway);
-      let directMachineSaved = true;
-      try {
-        await gateway.updateMachineSettings(machinePatch);
-      } catch (error) {
-        directMachineSaved = false;
+    this.setState({
+      workflow: plan.workflow,
+      machineSettings: plan.machineSettings,
+      busy: true,
+      status: plan.savingStatus
+    });
+    const result = await persistMachineWorkflowPlan(plan, this.state.demo, {
+      writeHotWaterWeightTarget: (value) => writeHotWaterWeightTarget(value),
+      updateWorkflow: (workflow) => gateway.updateWorkflow(workflow),
+      updateMachineSettings: (patch) => gateway.updateMachineSettings(patch),
+      logDirectMachineUpdateFailure: (error) => {
         console.error('[Beanie] Direct machine settings update failed', error);
       }
-      this.setState({
-        workflow: { ...saved, steamSettings, hotWaterData, rinseData },
-        machineSettings,
-        busy: false,
-        status: directMachineSaved ? status : `${status}; direct machine update failed`
-      });
-      if (directMachineSaved) void this.loadMachineControlState();
-    } catch (error) {
-      console.error('[Beanie] Save machine settings failed', error);
-      this.setState({ busy: false, status: 'Machine settings save failed' });
+    });
+    if (result.type === 'demo') {
+      this.setState({ busy: false, status: result.status });
+      return;
     }
+    if (result.type === 'saved') {
+      this.setState({
+        workflow: result.workflow,
+        machineSettings: plan.machineSettings,
+        busy: false,
+        status: result.status
+      });
+      if (result.directMachineSaved) void this.loadMachineControlState();
+      return;
+    }
+    console.error('[Beanie] Save machine settings failed', result.error);
+    this.setState({ busy: false, status: result.status });
   }
 
   private machineCapabilitiesForControls(): WaterControlCapabilities {
@@ -4827,16 +4574,44 @@ export class BeanieApp {
   }
 
   private renderWorkbench(bean: Bean | null): string {
-    return `
-      ${this.renderTopbar()}
-      <main class="workbench">
-        <section class="surface">
-          ${this.renderHero(bean)}
-          ${this.renderRecipeEditor()}
-          ${this.renderHistory()}
-        </section>
-      </main>
-    `;
+    const draft = this.state.draft;
+    const brewTemp = this.brewTempValue();
+    const waterAlert = this.currentWaterAlert();
+    const waterTone = waterAlert === 'hard' ? 'stat-alert' : waterAlert === 'soft' ? 'stat-warn' : '';
+    const cleaningDueNow = cleaningDue(this.state.cleaning, this.state.cleaningThreshold);
+    const scale = this.state.scale;
+    return renderWorkbenchView({
+      topbar: {
+        machineStatus: this.machineStatusLabel(),
+        groupTemperature: temp(this.state.machine?.groupTemperature),
+        steamTemperature: temp(this.state.machine?.steamTemperature),
+        water: water(this.state.waterLevel),
+        waterTone,
+        scale: {
+          label: scale?.status === 'disconnected' ? 'offline' : `${formatNumber(scale?.weight, 1)} g`,
+          title: scaleConnected(scale) ? 'Tare scale' : 'Search for preferred scale'
+        },
+        machineCommands: {
+          available: machineCommandsAvailable(this.state.demo, this.state.machineInfo),
+          current: this.state.machine?.state?.state ?? 'idle',
+          busy: this.state.busy
+        },
+        cleaningDue: cleaningDueNow,
+        asleep: this.state.asleep
+      },
+      hero: {
+        beanTitle: bean ? beanLabel(bean) : 'Pick a bag',
+        freshness: bean ? roastFreshnessLabel(latestBatch(this.state.batchesByBean[bean.id] ?? [])) : null,
+        beanId: bean?.id ?? null
+      },
+      recipe: {
+        draft,
+        grinderStep: this.grinderStep(),
+        ratioLabel: formatRatio(ratioFor(draft.dose, draft.yield)),
+        brewTempLabel: brewTemp == null ? '--' : `${brewTemp.toFixed(1)}`
+      },
+      historyHtml: this.renderHistory()
+    });
   }
 
   private renderPage(): string {
@@ -4863,15 +4638,7 @@ export class BeanieApp {
   }
 
   private pageHeader(title: string, back: View = 'workbench', actions = ''): string {
-    return `
-      <header class="page-head">
-        <button class="page-back" data-action="go-view" data-value="${back}" aria-label="Back" title="Back">
-          ${icon('chevron-left')}<span>Back</span>
-        </button>
-        <h1 class="page-title">${escapeHtml(title)}</h1>
-        <div class="page-head-actions">${actions}</div>
-      </header>
-    `;
+    return renderPageHeader(title, back, actions);
   }
 
   private bindDetailChart(): void {
@@ -4975,118 +4742,11 @@ export class BeanieApp {
   }
 
   private renderLivePanel(): string {
-    if (!this.state.liveActive && !this.state.liveFinalizing) return '';
-    const finalizing = this.state.liveFinalizing;
-    return `
-      <div class="live-panel">
-        <div class="live-card panel ${finalizing ? 'live-finalizing' : ''}">
-          <div class="live-head">
-            <div class="live-title-row">
-              <span class="eyebrow">${finalizing ? 'Saving shot' : 'Live shot'}</span>
-              ${
-                finalizing
-                  ? `<span class="live-saving" role="status"><span class="live-spinner" aria-hidden="true"></span><span>Saving…</span></span>`
-                  : `<button
-                class="live-stop-button"
-                data-action="stop"
-                aria-label="Stop shot"
-                title="Stop shot"
-                ${this.state.busy ? 'disabled' : ''}
-              >
-                ${icon('square')}
-                <span>Stop</span>
-              </button>`
-              }
-            </div>
-            <div class="live-readouts">
-              ${liveReadout('Time', 'live-time', '0.0s')}
-              ${liveReadout('Weight', 'live-weight', '--', 'g')}
-              ${liveReadout('Pressure', 'live-pressure', '--', 'bar')}
-              ${liveReadout('Flow', 'live-flow', '--', 'ml/s')}
-              ${liveReadout('Temp', 'live-temp', '--', 'C')}
-            </div>
-          </div>
-          <div class="live-canvas-wrap">
-            <canvas id="live-canvas" class="live-canvas"></canvas>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  private renderTopbar(): string {
-    const machine = this.state.machine;
-    const scale = this.state.scale;
-    const machineCommands = this.renderMachineCommands();
-    const powerAction = this.state.asleep ? 'wake' : 'sleep';
-    const powerLabel = this.state.asleep ? 'Wake' : 'Sleep';
-    const cleaningDueNow = cleaningDue(this.state.cleaning, this.state.cleaningThreshold);
-    const machineSettingsLabel = cleaningDueNow
-      ? 'Water - steam, water, flush (cleaning due)'
-      : 'Water - steam, water, flush';
-    const waterAlert = this.currentWaterAlert();
-    const waterTone = waterAlert === 'hard' ? 'stat-alert' : waterAlert === 'soft' ? 'stat-warn' : '';
-    return `
-      <header class="topbar">
-        <div class="top-inline">
-          <div class="top-stats" aria-label="Machine metrics">
-            ${topStat('Status', this.machineStatusLabel(), 'stat-machine')}
-            ${topStat('Group', temp(machine?.groupTemperature), 'stat-group')}
-            ${topStat('Steam', temp(machine?.steamTemperature), 'stat-steam')}
-            ${topStat('Water', water(this.state.waterLevel), 'stat-water', waterTone)}
-            ${topStatButton(
-              'Scale',
-              scale?.status === 'disconnected' ? 'offline' : `${formatNumber(scale?.weight, 1)} g`,
-              scaleConnected(scale) ? 'Tare scale' : 'Search for preferred scale',
-              'scale-stat',
-              'stat-scale'
-            )}
-          </div>
-          ${machineCommands}
-          <div class="top-icons" role="toolbar" aria-label="Skin actions">
-            <button class="icon-tool icon-tool-labeled ${cleaningDueNow ? 'has-badge' : ''}" data-action="open-machine-settings" aria-label="${escapeAttr(machineSettingsLabel)}" title="${escapeAttr(machineSettingsLabel)}">${icon('droplet')}<span class="icon-tool-label">Water</span>${cleaningDueNow ? '<span class="icon-tool-badge" aria-hidden="true"></span>' : ''}</button>
-            <button class="icon-tool icon-tool-labeled" data-action="open-settings" aria-label="Settings" title="Settings">${icon('settings')}<span class="icon-tool-label">Settings</span></button>
-            <button class="icon-tool icon-tool-labeled ${this.state.asleep ? 'icon-tool-wake' : ''}" data-action="${powerAction}" aria-label="${powerLabel}" title="${powerLabel}">${icon('power')}<span class="icon-tool-label">${escapeHtml(powerLabel)}</span></button>
-          </div>
-        </div>
-      </header>
-    `;
-  }
-
-  private renderMachineCommands(): string {
-    if (!machineCommandsAvailable(this.state.demo, this.state.machineInfo)) return '';
-    const current = this.state.machine?.state?.state ?? 'idle';
-    const commands: Array<{ state: MachineState; label: string; icon: string }> = [
-      { state: 'espresso', label: 'Shot', icon: 'coffee' },
-      { state: 'steam', label: 'Steam', icon: 'waves' },
-      { state: 'flush', label: 'Flush', icon: 'refresh-cw' },
-      { state: 'hotWater', label: 'Water', icon: 'droplets' }
-    ];
-    return `
-      <div class="top-machine-actions" role="toolbar" aria-label="Machine commands">
-        ${commands
-          .map(({ state, label, icon: iconName }) => {
-            const active = current === state;
-            const disabled = this.state.busy ? ' disabled' : '';
-            const title = active ? `Stop ${label.toLowerCase()}` : label;
-            return `
-              <button
-                class="machine-command ${active ? 'active' : ''}"
-                data-action="machine-command"
-                data-value="${escapeAttr(state)}"
-                aria-pressed="${active ? 'true' : 'false'}"
-                aria-label="${escapeAttr(title)}"
-                title="${escapeAttr(title)}"
-                ${disabled}
-              >
-                ${icon(iconName)}
-                <span>${escapeHtml(label)}</span>
-              </button>
-            `;
-          })
-          .join('')}
-      </div>
-    `;
+    return renderLivePanelView({
+      active: this.state.liveActive,
+      finalizing: this.state.liveFinalizing,
+      busy: this.state.busy
+    });
   }
 
   private usesWebSleepControls(): boolean {
@@ -5095,42 +4755,18 @@ export class BeanieApp {
 
   private renderBeanPickerModal(): string {
     const query = this.state.search.trim().toLowerCase();
-    const matches = this.sortedBeansForPicker().filter((bean) => beanLabel(bean).toLowerCase().includes(query));
-    const focused = this.beanPickerFocusedBean();
-    const focusedId = focused?.id ?? null;
-    const autofocus = this.state.beanPickerAutofocusSearch ? ' autofocus' : '';
-    return `
-      <div class="modal-backdrop bean-picker-backdrop" data-action="close-modal">
-        <section class="modal panel bean-picker-modal" role="dialog" aria-modal="true" aria-label="Pick a bag" data-action="noop">
-          <div class="modal-head bean-picker-head">
-            <div>
-              <span class="eyebrow">Beans</span>
-              <h2>Pick a bag</h2>
-            </div>
-            <div class="modal-head-actions">
-              <button class="icon-button" data-action="open-add-bean" aria-label="Add bean" title="Add bean">${icon('plus')}</button>
-              <button class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
-            </div>
-          </div>
-          <div class="bean-picker-body">
-            <div class="bean-picker-list-panel">
-              <label class="search bean-picker-search">
-                ${icon('search')}
-                <input type="search" data-action="search" value="${escapeAttr(this.state.search)}" placeholder="Search beans"${autofocus} />
-              </label>
-              <div class="bean-picker-list">
-                ${
-                  matches.length === 0
-                    ? '<p class="empty-history">No beans found.</p>'
-                    : matches.map((bean) => this.renderBeanPickerRow(bean, bean.id === focusedId)).join('')
-                }
-              </div>
-            </div>
-            ${this.renderBeanPickerInspector(focused)}
-          </div>
-        </section>
-      </div>
-    `;
+    const beans = this.sortedBeansForPicker();
+    return renderBeanPickerModalView({
+      search: this.state.search,
+      autofocusSearch: this.state.beanPickerAutofocusSearch,
+      matches: beans.filter((bean) => beanLabel(bean).toLowerCase().includes(query)),
+      focusedBean: this.beanPickerFocusedBean(),
+      mode: this.state.beanPickerMode,
+      selectedBeanId: this.state.selectedBeanId,
+      batchesByBean: this.state.batchesByBean,
+      prefillBeans: beans,
+      secondTapHint: this.state.secondTapHint
+    });
   }
 
   private sortedBeansForPicker(): Bean[] {
@@ -5152,374 +4788,19 @@ export class BeanieApp {
     return this.state.beans.find((bean) => bean.id === id) ?? this.selectedBean();
   }
 
-  private renderBeanPickerRow(bean: Bean, focused: boolean): string {
-    const current = bean.id === this.state.selectedBeanId;
-    const hint = this.renderSecondTapHint('bean', bean.id);
-    const origin = bean.country ? `<small>${escapeHtml(bean.country)}</small>` : '';
-    return `
-      <button class="bean-row ${focused ? 'active' : ''} ${hint ? 'has-second-tap-hint' : ''}" data-action="inspect-bean" data-id="${escapeAttr(bean.id)}">
-        <span>
-          ${origin}
-          <b>${escapeHtml(bean.roaster)}</b>
-          <strong>${escapeHtml(bean.name)}</strong>
-        </span>
-        ${current ? '<em>In use</em>' : ''}
-        ${hint}
-      </button>
-    `;
-  }
-
-  private renderBeanPickerInspector(bean: Bean | null): string {
-    if (this.state.beanPickerMode === 'create' || !bean) {
-      return `
-        <div class="bean-picker-inspector">
-          ${this.renderBeanPickerBeanForm(null)}
-          <p class="bean-picker-hint">Save the bag first, then add roast batches.</p>
-        </div>
-      `;
-    }
-
-    const batches = this.state.batchesByBean[bean.id] ?? [];
-    const visibleBatches = recentBatches(batches, 2);
-    const currentBatchId = latestBatch(batches)?.id ?? null;
-    return `
-      <div class="bean-picker-inspector">
-        ${this.renderBeanPickerBeanForm(bean)}
-        <div class="bean-picker-batches">
-          <div class="bean-picker-section-head">
-            <div>
-              <span class="eyebrow">Batches</span>
-              <strong>${escapeHtml(batches.length === 0 ? 'None' : batchOptionLabel(latestBatch(batches)!))}</strong>
-            </div>
-            <button type="button" class="secondary-button compact" data-action="bean-picker-add-batch">${icon('plus')}<span>Batch</span></button>
-          </div>
-          <div class="bean-picker-batch-list">
-            ${
-              batches.length === 0
-                ? '<p class="empty-history">No batches yet.</p>'
-                : visibleBatches.map((batch) => this.renderBeanPickerBatchForm(bean, batch, batch.id === currentBatchId)).join('')
-            }
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  private renderBeanPickerBeanForm(bean: Bean | null): string {
-    const editing = bean != null;
-    const dataId = editing ? ` data-id="${escapeAttr(bean.id)}"` : '';
-    return `
-      <form class="bean-picker-bean-form" data-form="bean-picker-bean"${dataId}>
-        <div class="bean-picker-section-head">
-          <div>
-            <span class="eyebrow">${editing ? 'Bean' : 'New bean'}</span>
-            <strong>${escapeHtml(editing ? beanLabel(bean) : 'Add a bag')}</strong>
-          </div>
-          <div class="bean-picker-actions">
-            ${
-              editing
-                ? `<button type="button" class="secondary-button compact" data-action="select-bean" data-id="${escapeAttr(bean.id)}">${icon('check')}<span>Use</span></button>
-                   <button type="submit" class="primary-button compact">${icon('check')}<span>Save</span></button>
-                   <button type="button" class="icon-button subtle-danger bean-delete-button" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Delete bag" title="Delete bag">${icon('trash-2')}</button>`
-                : `<button type="button" class="secondary-button compact" data-action="close-modal"><span>Cancel</span></button>`
-            }
-            ${editing ? '' : `<button type="submit" class="primary-button compact">${icon('check')}<span>Save</span></button>`}
-          </div>
-        </div>
-        ${editing ? '' : this.beanPrefillSelect()}
-        <div class="bean-picker-fields">
-          <label>Roaster<input name="roaster" required autocomplete="off" value="${escapeAttr(editing ? bean.roaster : '')}" /></label>
-          <label>Bean<input name="name" required autocomplete="off" value="${escapeAttr(editing ? bean.name : '')}" /></label>
-          <label>Country<input name="country" autocomplete="off" value="${escapeAttr(inputValue(editing ? bean.country : ''))}" /></label>
-          <label>Region<input name="region" autocomplete="off" value="${escapeAttr(inputValue(editing ? bean.region : ''))}" /></label>
-          <label>Process<input name="processing" autocomplete="off" value="${escapeAttr(inputValue(editing ? bean.processing : ''))}" /></label>
-          <label class="bean-picker-notes">Notes<textarea name="notes" rows="4" autocomplete="off">${escapeHtml(inputValue(editing ? bean.notes : ''))}</textarea></label>
-        </div>
-      </form>
-    `;
-  }
-
-  private renderBeanPickerBatchForm(bean: Bean, batch: BeanBatch, active: boolean): string {
-    const batchNumber = (name: 'weight' | 'weightRemaining', label: string, value: number | null | undefined) => `
-      <label>${escapeHtml(label)}
-        <input type="hidden" name="${name}" value="${escapeAttr(inputValue(value))}" />
-        <button
-          type="button"
-          class="number-edit-button bean-picker-number"
-          data-action="open-number-edit"
-          data-target="bean-picker-batch"
-          data-bean-id="${escapeAttr(bean.id)}"
-          data-batch-id="${escapeAttr(batch.id)}"
-          data-name="${name}"
-          data-title="${escapeAttr(label)}"
-          data-value="${escapeAttr(inputValue(value))}"
-          data-min="0"
-          data-max="5000"
-          data-step="0.1"
-          data-unit="g"
-          data-return-modal="bean-picker"
-        >${escapeHtml(inputValue(value) || '--')}<em>g</em></button>
-      </label>
-    `;
-    return `
-      <form
-        class="bean-picker-batch ${active ? 'current' : ''}"
-        data-form="bean-picker-batch"
-        data-bean-id="${escapeAttr(bean.id)}"
-        data-batch-id="${escapeAttr(batch.id)}"
-      >
-        <div class="bean-picker-batch-title">
-          <strong>${escapeHtml(batchOptionLabel(batch))}</strong>
-          <small>${escapeHtml(active ? 'Latest' : batch.frozen ? 'Frozen' : batch.roastLevel ?? 'Batch')}</small>
-        </div>
-        <label>Date<input data-action="bean-picker-batch-field" type="date" name="roastDate" value="${escapeAttr(dateInputValue(batch.roastDate))}" /></label>
-        <label>Roast<input data-action="bean-picker-batch-field" name="roastLevel" autocomplete="off" value="${escapeAttr(inputValue(batch.roastLevel))}" /></label>
-        ${batchNumber('weight', 'Bag', batch.weight)}
-        ${batchNumber('weightRemaining', 'Left', batch.weightRemaining)}
-        <label class="bean-picker-check" title="Frozen"><input data-action="bean-picker-batch-field" type="checkbox" name="frozen" ${batch.frozen ? 'checked' : ''} /><span>Frozen</span></label>
-        <button type="button" class="icon-button danger-icon bean-picker-batch-delete" data-action="delete-batch" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}" aria-label="Delete batch" title="Delete batch">${icon('trash-2')}</button>
-      </form>
-    `;
-  }
-
-  private renderHero(bean: Bean | null): string {
-    const title = bean ? beanLabel(bean) : 'Pick a bag';
-    const freshness = bean
-      ? roastFreshnessLabel(latestBatch(this.state.batchesByBean[bean.id] ?? []))
-      : null;
-    return `
-      <section class="hero panel">
-        <div class="hero-main">
-          <div class="hero-title-row">
-            <button class="bean-title-button" data-action="open-bean-picker" aria-label="Choose bean" title="Choose bean">
-              <span>${escapeHtml(title)}</span>
-            </button>
-            ${freshness ? `<span class="hero-roast">${escapeHtml(freshness)}</span>` : ''}
-            ${
-              bean
-                ? `<div class="hero-bean-actions">
-                    <button class="icon-button" data-action="open-edit-bean" data-id="${escapeAttr(bean.id)}" aria-label="Edit bean" title="Edit bean">${icon('pencil')}</button>
-                  </div>`
-                : ''
-            }
-          </div>
-        </div>
-      </section>
-    `;
-  }
-
-  private renderRecipeEditor(): string {
-    const draft = this.state.draft;
-    return `
-      <section class="recipe-grid">
-        ${this.controlProfile()}
-        ${this.controlNumber('Dose', 'dose', draft.dose, 0.5)}
-        ${this.controlNumber('Yield', 'yield', draft.yield, 1)}
-        ${this.controlRatio()}
-        ${this.controlGrind()}
-        ${this.controlTemp()}
-      </section>
-    `;
-  }
-
-  private controlNumber(label: string, field: EditField, value: number | null | undefined, step: number): string {
-    return `
-      <div class="control panel">
-        <label>${escapeHtml(label)}</label>
-        <div class="stepper compact-stepper">
-          <button data-action="adjust" data-field="${field}" data-delta="${-step}" aria-label="Decrease ${escapeAttr(label)}">${icon('minus')}</button>
-          <button class="value-button" data-action="edit-field" data-field="${field}">${escapeHtml(value == null ? '--' : value.toString())}</button>
-          <button data-action="adjust" data-field="${field}" data-delta="${step}" aria-label="Increase ${escapeAttr(label)}">${icon('plus')}</button>
-        </div>
-      </div>
-    `;
-  }
-
-  private controlGrind(): string {
-    const draft = this.state.draft;
-    const step = this.grinderStep();
-    return `
-      <div class="control grind-control panel">
-        <label>Grind</label>
-        <div class="stepper compact-stepper">
-          <button data-action="adjust" data-field="grinderSetting" data-delta="${-step}" aria-label="Decrease grind">${icon('minus')}</button>
-          <button class="value-button" data-action="edit-field" data-field="grinderSetting">${escapeHtml(draft.grinderSetting ?? '--')}</button>
-          <button data-action="adjust" data-field="grinderSetting" data-delta="${step}" aria-label="Increase grind">${icon('plus')}</button>
-        </div>
-      </div>
-    `;
-  }
-
-  private controlProfile(): string {
-    const title = this.state.draft.profileTitle ?? 'No profile';
-    return `
-      <div class="select-control profile-control panel">
-        <label>Profile</label>
-        <button type="button" class="profile-button" data-action="open-profile-picker">
-          <span>${escapeHtml(title)}</span>
-        </button>
-      </div>
-    `;
-  }
-
   private renderProfilesPage(): string {
     const cleaningMode = this.state.cleaningProfilePicking;
-    const query = this.state.profileSearch.trim().toLowerCase();
-    const favorites = new Set(this.state.favoriteProfiles);
     const selectedId = cleaningMode
       ? resolveCleaningProfile(this.state.profiles, this.state.cleaningProfileOverride)?.id ?? null
       : this.profileIdForDraft();
-    const matches = this.state.profiles.filter((record) => {
-      const title = (record.profile.title ?? '').toLowerCase();
-      const author = (record.profile.author ?? '').toLowerCase();
-      return !query || title.includes(query) || author.includes(query);
+    return renderProfilePickerPage({
+      profiles: this.state.profiles,
+      search: this.state.profileSearch,
+      favoriteProfileIds: this.state.favoriteProfiles,
+      selectedId,
+      focusId: this.state.profileFocusId,
+      cleaningMode
     });
-    const sorted = [...matches].sort((a, b) => {
-      const fa = favorites.has(a.id) ? 0 : 1;
-      const fb = favorites.has(b.id) ? 0 : 1;
-      if (fa !== fb) return fa - fb;
-      const ga = this.profileGroupLabel(a, favorites);
-      const gb = this.profileGroupLabel(b, favorites);
-      if (ga !== gb) return ga.localeCompare(gb, undefined, { sensitivity: 'base' });
-      return profileShortTitle(a.profile.title ?? a.id).localeCompare(
-        profileShortTitle(b.profile.title ?? b.id),
-        undefined,
-        { sensitivity: 'base' }
-      );
-    });
-    const focus =
-      sorted.find((record) => record.id === this.state.profileFocusId) ??
-      sorted.find((record) => record.id === selectedId) ??
-      sorted[0] ??
-      null;
-    const actions = cleaningMode
-      ? ''
-      : `<button class="icon-button" data-action="new-profile" aria-label="New profile" title="New profile">${icon('plus')}</button>`;
-
-    return `
-      ${this.pageHeader(cleaningMode ? 'Cleaning profile' : 'Profiles', cleaningMode ? 'machine' : 'workbench', actions)}
-      <main class="page-body profiles-page no-scroll-page">
-        <label class="search">
-          ${icon('search')}
-          <input type="search" data-action="profile-search" value="${escapeAttr(this.state.profileSearch)}" placeholder="Search profiles" />
-        </label>
-        <section class="profile-selector-shell">
-          <div class="profile-list">
-            ${
-              sorted.length === 0
-                ? '<p class="empty">No profiles match.</p>'
-                : this.renderProfileRows(sorted, favorites, selectedId, focus?.id ?? null)
-            }
-          </div>
-          ${this.renderProfilePreviewPane(focus, favorites.has(focus?.id ?? ''), focus?.id === selectedId)}
-        </section>
-      </main>
-    `;
-  }
-
-  // Group key for the picker: favorites cluster first, otherwise group by the
-  // title's folder prefix (e.g. "A-Flow/…") or, lacking one, by author.
-  private profileGroupLabel(record: ProfileRecord, favorites: Set<string>): string {
-    if (favorites.has(record.id)) return 'Favorites';
-    return profileGroup(record.profile.title ?? record.id, record.profile.author);
-  }
-
-  private renderProfileRows(
-    records: ProfileRecord[],
-    favorites: Set<string>,
-    selectedId: string | null,
-    focusId: string | null
-  ): string {
-    let lastGroup = '';
-    return records.map((record) => {
-      const group = this.profileGroupLabel(record, favorites);
-      const header = group !== lastGroup ? `<div class="profile-group-header">${escapeHtml(group)}</div>` : '';
-      lastGroup = group;
-      return `${header}${this.renderProfileRow(record, favorites.has(record.id), record.id === selectedId, record.id === focusId)}`;
-    }).join('');
-  }
-
-  private renderProfileRow(record: ProfileRecord, favorite: boolean, active: boolean, focused = false): string {
-    const title = record.profile.title ?? record.id;
-    const shortTitle = profileShortTitle(title);
-    return `
-      <div class="profile-row ${active ? 'active' : ''} ${focused ? 'focused' : ''}">
-        <button type="button" class="profile-pick" data-action="focus-profile" data-id="${escapeAttr(record.id)}">
-          <span class="profile-row-title">${favorite ? '<span class="profile-row-fav">★</span> ' : ''}${escapeHtml(shortTitle)}</span>
-        </button>
-        ${active ? '<span class="profile-selected-dot">Selected</span>' : ''}
-      </div>
-    `;
-  }
-
-  private renderProfilePreviewPane(record: ProfileRecord | null, favorite: boolean, active: boolean): string {
-    if (!record) {
-      return `
-        <aside class="profile-preview-pane">
-          <p class="empty">No profile selected.</p>
-        </aside>
-      `;
-    }
-    const title = record.profile.title ?? record.id;
-    const author = record.profile.author ?? '';
-    // reaprime drops `type`, so derive the real kind from the steps.
-    const type = createProfileEditorState(record.profile).type;
-    return `
-      <aside class="profile-preview-pane">
-        <div class="profile-preview-head">
-          <div>
-            <span class="eyebrow">${escapeHtml(author || 'Profile')}</span>
-            <h2>${escapeHtml(title)}</h2>
-            <span class="profile-type-chip">${escapeHtml(displayProfileType(type))}</span>
-          </div>
-          <button type="button" class="profile-fav ${favorite ? 'on' : ''}" data-action="toggle-favorite-profile" data-id="${escapeAttr(record.id)}" aria-label="${favorite ? 'Unfavorite' : 'Favorite'} ${escapeAttr(title)}" aria-pressed="${favorite}">${favorite ? '★' : '☆'}</button>
-        </div>
-        <section class="profile-preview-block">
-          <span class="eyebrow">Preview</span>
-          <div class="profile-preview-large">
-            ${renderProfilePreview(record.profile)}
-          </div>
-        </section>
-        <section class="profile-description-block">
-          <span class="eyebrow">Description</span>
-          <p class="profile-preview-notes">${escapeHtml(record.profile.notes || 'No description.')}</p>
-        </section>
-        <div class="profile-preview-actions">
-          <button type="button" class="pa-edit" data-action="edit-profile" data-id="${escapeAttr(record.id)}">${icon('pencil')}<span>Edit</span></button>
-          <button type="button" class="pa-select ${active ? 'is-selected' : ''}" data-action="pick-profile" data-id="${escapeAttr(record.id)}">${active ? 'Selected' : 'Select'}</button>
-        </div>
-      </aside>
-    `;
-  }
-
-  private controlRatio(): string {
-    const draft = this.state.draft;
-    const ratio = ratioFor(draft.dose, draft.yield);
-    return `
-      <div class="control panel">
-        <label>Ratio</label>
-        <div class="stepper compact-stepper">
-          <button data-action="adjust" data-field="ratio" data-delta="-0.1" aria-label="Decrease ratio">${icon('minus')}</button>
-          <button class="value-button" data-action="edit-field" data-field="ratio">${escapeHtml(formatRatio(ratio))}</button>
-          <button data-action="adjust" data-field="ratio" data-delta="0.1" aria-label="Increase ratio">${icon('plus')}</button>
-        </div>
-      </div>
-    `;
-  }
-
-  private controlTemp(): string {
-    const value = this.brewTempValue();
-    const label = value == null ? '--' : `${value.toFixed(1)}`;
-    return `
-      <div class="control panel">
-        <label>Temp</label>
-        <div class="stepper compact-stepper">
-          <button data-action="adjust" data-field="temperature" data-delta="-0.5" aria-label="Decrease temperature">${icon('minus')}</button>
-          <button class="value-button" data-action="edit-field" data-field="temperature">${escapeHtml(label)}</button>
-          <button data-action="adjust" data-field="temperature" data-delta="0.5" aria-label="Increase temperature">${icon('plus')}</button>
-        </div>
-      </div>
-    `;
   }
 
   private brewTempValue(): number | null {
@@ -5529,100 +4810,19 @@ export class BeanieApp {
   }
 
   private renderHistory(): string {
-    // Hide flush/steam/water records from the bean's history (state.shots stays
-    // raw so pagination/offsets are unaffected).
-    const shots = this.state.shots.filter((shot) => !isServiceShot(shot));
-    const selected = this.selectedHistoryShot();
-    return `
-      <section class="history-panel panel">
-        <div class="history-split">
-          <div class="shot-list">
-            ${
-              shots.length === 0
-                ? '<p class="empty-history">No shots found for this bean.</p>'
-                : shots.map((shot) => this.renderShotListItem(shot, shot.id === selected?.id)).join('')
-            }
-            ${this.renderLoadMore()}
-          </div>
-          <div class="shot-detail-pane">
-            ${selected ? this.renderShotDetailPane(selected) : '<p class="empty-history">Select a shot to inspect.</p>'}
-          </div>
-        </div>
-      </section>
-    `;
+    return renderHistoryView({
+      shots: this.state.shots,
+      detailShotId: this.state.detailShotId,
+      demo: this.state.demo,
+      shotsTotal: this.state.shotsTotal,
+      shotsLoadingMore: this.state.shotsLoadingMore,
+      secondTapHint: this.state.secondTapHint
+    });
   }
 
   private selectedHistoryShot(): ShotRecord | null {
-    const shots = this.state.shots.filter((shot) => !isServiceShot(shot));
-    return shots.find((shot) => shot.id === this.state.detailShotId) ?? shots[0] ?? null;
+    return selectHistoryShot(this.state.shots, this.state.detailShotId);
   }
-
-  private renderShotListItem(shot: ShotRecord, active: boolean): string {
-    const recipe = recipeFromShot(shot);
-    const duration = shotDurationLabel(shot);
-    const recipeText = shotRecipeDisplay(shot, recipe);
-    const date = shotDateShortLabel(shot.timestamp);
-    const hint = this.renderSecondTapHint('shot', shot.id);
-    return `
-      <button class="shot-item ${active ? 'active' : ''} ${hint ? 'has-second-tap-hint' : ''}" data-action="select-history-shot" data-id="${escapeAttr(shot.id)}">
-        <span class="shot-item-info">
-          <span class="shot-item-recipe">${escapeHtml(recipeText)}${duration ? ` @ ${escapeHtml(duration)}` : ''}</span>
-          ${enjoymentBadge(shot)}
-        </span>
-        <span class="shot-item-profile">${escapeHtml([recipe.profileTitle ?? 'No profile', date].filter(Boolean).join(' · '))}</span>
-        ${hint}
-      </button>
-    `;
-  }
-
-  private renderSecondTapHint(kind: SecondTapHintKind, id: string): string {
-    const hint = this.state.secondTapHint;
-    if (!hint || hint.kind !== kind || hint.id !== id) return '';
-    return '<span class="second-tap-tooltip">Tap again to load</span>';
-  }
-
-  private renderShotDetailPane(shot: ShotRecord): string {
-    const recipe = recipeFromShot(shot);
-    const date = new Date(shot.timestamp);
-    const dateLabel = Number.isNaN(date.valueOf())
-      ? shot.timestamp
-      : date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    const duration = shotDurationLabel(shot);
-    const grinder = recipe.grinderModel
-      ? `${recipe.grinderModel}${recipe.grinderSetting ? ` ${recipe.grinderSetting}` : ''}`
-      : recipe.grinderSetting
-        ? `grind ${recipe.grinderSetting}`
-        : '';
-    return `
-      <div class="pane-head">
-        <span class="pane-stat pane-lead">${escapeHtml(shotRecipeDisplay(shot, recipe)).replace(' → ', ' <span class="io-arrow">→</span> ')}</span>
-        ${duration ? `<span class="pane-stat">@ ${escapeHtml(duration)}</span>` : ''}
-        ${grinder ? `<span class="pane-stat">${escapeHtml(grinder)}</span>` : ''}
-        <span class="pane-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
-        <span class="pane-time">${escapeHtml(dateLabel)}</span>
-        ${shotScoreControl(shot.annotations?.enjoyment ?? null, {
-          action: 'set-shot-score',
-          shotId: shot.id,
-          variant: 'detail'
-        })}
-        <button class="icon-button shot-edit-button" data-action="edit-shot" aria-label="Edit shot fields" title="Edit shot fields">${icon('pencil')}</button>
-      </div>
-      <div class="detail-chart">
-        <canvas id="detail-canvas" class="live-canvas detail-canvas"></canvas>
-      </div>
-    `;
-  }
-
-  private renderLoadMore(): string {
-    if (this.state.demo || this.state.shots.length >= this.state.shotsTotal) return '';
-    const remaining = this.state.shotsTotal - this.state.shots.length;
-    return `
-      <button class="command load-more" data-action="load-more-shots" ${this.state.shotsLoadingMore ? 'disabled' : ''}>
-        ${this.state.shotsLoadingMore ? 'Loading…' : `Load ${remaining} more`}
-      </button>
-    `;
-  }
-
 
   private renderModal(): string {
     if (this.state.modal === 'bean-picker') return this.renderBeanPickerModal();
@@ -5635,65 +4835,20 @@ export class BeanieApp {
 
   private renderNoScaleShotModal(): string {
     const blockEnabled = this.state.settingsBundle?.rea.blockOnNoScale !== false;
-    return `
-      <div class="modal-backdrop no-scale-backdrop">
-        <section class="modal panel no-scale-modal" role="alertdialog" aria-modal="true" aria-labelledby="no-scale-title">
-          <div class="modal-head no-scale-head">
-            <div>
-              <h2 id="no-scale-title">Connect a scale to start</h2>
-            </div>
-            <button type="button" class="icon-button" data-action="close-modal" aria-label="Close">${icon('x')}</button>
-          </div>
-          <label class="no-scale-toggle-row">
-            <span>
-              <strong>Block shots without a scale</strong>
-              <small>Turn this off to allow shots without a connected scale.</small>
-            </span>
-            <span class="settings-toggle">
-              <input type="checkbox" data-action="no-scale-block-toggle" ${blockEnabled ? 'checked' : ''} />
-              <span></span>
-            </span>
-          </label>
-          <div class="modal-actions no-scale-actions">
-            <button type="button" class="command primary no-scale-ok" data-action="close-modal">OK</button>
-          </div>
-        </section>
-      </div>
-    `;
+    return renderNoScaleShotModalView(blockEnabled);
   }
 
   private renderWaterWarningBanner(): string {
     if (this.currentWaterAlert() !== 'soft') return '';
     const ml = this.state.waterLevel != null ? water(this.state.waterLevel) : null;
-    return `
-      <div class="water-warning-banner" role="status">
-        ${icon('droplet')}
-        <strong>Low water</strong>
-        <span>${ml ? `About ${escapeHtml(ml)} left · refill soon` : 'Refill soon'}</span>
-      </div>
-    `;
+    return renderWaterWarningBannerView(ml);
   }
 
   private renderWaterAlert(): string {
     if (this.currentWaterAlert() !== 'hard' || this.state.waterAlertDismissed) return '';
     const machineBlocked = this.state.machine?.state?.state === 'needsWater';
     const ml = this.state.waterLevel != null ? water(this.state.waterLevel) : null;
-    const detail = machineBlocked
-      ? 'The machine has paused shots until the tank is refilled.'
-      : 'The tank is low — refill it to keep pulling shots.';
-    return `
-      <div class="modal-backdrop water-alert-backdrop" role="alertdialog" aria-modal="true" aria-labelledby="water-alert-title">
-        <section class="modal panel water-alert-modal">
-          <div class="water-alert-icon">${icon('droplet')}</div>
-          <h2 id="water-alert-title">Refill the water tank</h2>
-          <p>${escapeHtml(detail)}${ml ? ` Tank is at about ${escapeHtml(ml)}.` : ''}</p>
-          <div class="modal-actions water-alert-actions">
-            <button type="button" class="secondary-button" data-action="open-settings">Alert settings</button>
-            <button type="button" class="primary-button" data-action="water-alert-dismiss">Dismiss</button>
-          </div>
-        </section>
-      </div>
-    `;
+    return renderWaterAlertView({ machineBlocked, mlLabel: ml });
   }
 
   private renderSettingsPage(): string {
@@ -5753,11 +4908,10 @@ export class BeanieApp {
     const waterPreset = matchingPreset(water, waterPresets);
     const flushPreset = matchingPreset(flush, flushPresets);
     const waterScaleConnected = scaleConnected(this.state.scale);
-    return `
-      ${this.pageHeader('Steam · Water · Flush')}
-      <main class="page-body machine-page no-scroll-page">
-        <div class="machine-lanes">
-          ${renderMachineLane({
+    return renderMachinePageView({
+      headerHtml: this.pageHeader('Steam · Water · Flush'),
+      lanes: [
+        {
             tone: 'steam',
             eyebrow: 'Steam',
             title: 'Milk',
@@ -5771,8 +4925,8 @@ export class BeanieApp {
               machineValueTile('steamDuration', 'Time', steam.duration, capabilities.steam.duration),
               machineSteamPurgeTile(this.state.machineSettings?.steamPurgeMode)
             ]
-          })}
-          ${renderMachineLane({
+          },
+          {
             tone: 'water',
             eyebrow: 'Hot water',
             title: 'Drink',
@@ -5793,8 +4947,8 @@ export class BeanieApp {
                     hotWaterTargetSpec(capabilities.hotWater.volume!, waterScaleConnected)
                   )
             ]
-          })}
-          ${renderMachineLane({
+          },
+          {
             tone: 'flush',
             eyebrow: 'Flush',
             title: 'Clean',
@@ -5807,17 +4961,10 @@ export class BeanieApp {
               machineValueTile('flushFlow', 'Flow', flush.flow, capabilities.flush.flow),
               machineValueTile('flushTemp', 'Temp', flush.targetTemperature, capabilities.flush.targetTemperature)
             ]
-          })}
-        </div>
-        ${this.renderCleaningBar()}
-      </main>
-    `;
-  }
-
-  private cleaningDateLabel(iso: string): string {
-    const date = new Date(iso);
-    if (Number.isNaN(date.valueOf())) return iso;
-    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+          }
+      ],
+      cleaningBarHtml: this.renderCleaningBar()
+    });
   }
 
   private renderCleaningBar(): string {
@@ -5827,49 +4974,15 @@ export class BeanieApp {
     const threshold = this.state.cleaningThreshold;
     const due = cleaningDue(cleaning, threshold);
     const blocked = this.state.busy || this.state.liveActive || this.state.liveFinalizing;
-
-    const profileControl = profiles.length
-      ? `<button type="button" class="cleaning-profile-button" data-action="open-cleaning-profile-picker" aria-label="Choose cleaning profile">
-          <span>${escapeHtml(resolved?.profile?.title ?? 'Choose…')}</span>
-          ${icon('chevron-down')}
-        </button>`
-      : '<em class="cleaning-missing">No profiles loaded</em>';
-
-    const count = cleaning.shotsSinceClean;
-    const countLabel = `${count} ${count === 1 ? 'shot' : 'shots'} since last clean`;
-    const sinceLine = cleaning.lastCleanedAt
-      ? `${countLabel} · last cleaned ${this.cleaningDateLabel(cleaning.lastCleanedAt)}`
-      : `${countLabel} · never cleaned`;
-
-    const thresholdButtons = CLEANING_THRESHOLD_OPTIONS.map((n) => {
-      const active = threshold === n;
-      return `<button type="button" class="${active ? 'active' : ''}" data-action="cleaning-threshold" data-value="${n}" aria-pressed="${active}">${
-        n === 0 ? 'Off' : String(n)
-      }</button>`;
-    }).join('');
-
-    const stat = resolved ? sinceLine : 'Install a “Cleaning / forward flush ×5” profile to enable';
-    return `
-      <section class="cleaning-bar ${due ? 'due' : ''}">
-        <div class="cleaning-bar-info">
-          <span class="cleaning-bar-icon">${icon('refresh-cw')}</span>
-          <div class="cleaning-bar-text">
-            <strong>Backflush cleaning</strong>
-            <small class="${due ? 'due' : ''}">${escapeHtml(stat)}</small>
-          </div>
-        </div>
-        <div class="cleaning-bar-field">
-          <span>Profile</span>
-          ${profileControl}
-        </div>
-        <div class="cleaning-bar-field">
-          <span>Remind</span>
-          <div class="settings-segmented cleaning-threshold" role="group" aria-label="Cleaning reminder threshold">${thresholdButtons}</div>
-        </div>
-        <button type="button" class="cleaning-run" data-action="run-cleaning" title="Insert a blind basket with detergent, then run a forward-flush cycle (no beans). Your recipe is restored afterwards." ${resolved && !blocked ? '' : 'disabled'}>
-          ${icon('refresh-cw')}<span>Run cleaning cycle</span>
-        </button>
-      </section>`;
+    return renderCleaningBarView({
+      due,
+      profileTitle: resolved?.profile?.title ?? null,
+      profilesAvailable: profiles.length > 0,
+      shotsSinceClean: cleaning.shotsSinceClean,
+      lastCleanedAt: cleaning.lastCleanedAt,
+      threshold,
+      canRun: resolved != null && !blocked
+    });
   }
 
   private renderMachineProgressPage(service: MachineServiceState): string {
@@ -5878,7 +4991,8 @@ export class BeanieApp {
     const water = this.currentHotWaterData();
     const flush = this.currentRinseData();
     const waterScaleConnected = scaleConnected(this.state.scale);
-    const targetSeconds = this.machineServiceTargetOverrideSeconds
+    const progress = this.machineService.snapshot();
+    const targetSeconds = progress.targetOverrideSeconds
       ?? machineServiceTargetSeconds(
         service,
         steam,
@@ -5890,22 +5004,22 @@ export class BeanieApp {
     const targetWeight = service === 'hotWater' && this.state.hotWaterStopMode === 'volume' && waterScaleConnected
       ? positiveNumber(water.volume)
       : null;
-    const elapsedSeconds = this.machineServiceStartedAtMs == null
+    const elapsedSeconds = progress.startedAtMs == null
       ? 0
-      : Math.max(0, (Date.now() - this.machineServiceStartedAtMs) / 1000);
+      : Math.max(0, (Date.now() - progress.startedAtMs) / 1000);
     const machine = this.state.machine;
     const stats = machineServiceStats(targetSeconds, targetWeight);
     const meta = machineServiceMeta(service, steam, water, flush, machine, this.state.scale, this.state.hotWaterStopMode);
-    const stopRequested = this.machineStopRequestedFor === service;
-    const stopAgeSeconds = stopRequested && this.machineStopRequestedAtMs != null
-      ? Math.max(0, (Date.now() - this.machineStopRequestedAtMs) / 1000)
+    const stopRequested = progress.stopRequestedFor === service;
+    const stopAgeSeconds = stopRequested && progress.stopRequestedAtMs != null
+      ? Math.max(0, (Date.now() - progress.stopRequestedAtMs) / 1000)
       : 0;
     const stopLabel = stopRequested
       ? stopAgeSeconds > 4 && !this.state.busy ? 'Stop again' : 'Stopping...'
       : 'Stop';
-    const primaryTime = this.machineServicePhase === 'starting'
+    const primaryTime = progress.phase === 'starting'
       ? { value: service === 'steam' ? 'Heating' : 'Starting', label: null }
-      : this.machineServicePhase === 'purging'
+      : progress.phase === 'purging'
         ? { value: 'Purging', label: null }
         : targetWeight != null
           ? {
@@ -5913,98 +5027,33 @@ export class BeanieApp {
               label: `${formatNumber(targetWeight, 0)}g target`
             }
           : machineServicePrimaryTime(elapsedSeconds, targetSeconds);
-    return `
-      <header class="page-head machine-progress-head">
-        <h1 class="page-title">${escapeHtml(machineServiceVerb(service))}</h1>
-      </header>
-      <main class="page-body machine-page machine-progress-page no-scroll-page">
-        <section class="machine-progress ${tone}">
-          <div class="machine-progress-focus">
-            <div class="machine-progress-ring">${machineGraphicIcon(tone)}</div>
-            <div class="machine-progress-time">
-              <strong>${escapeHtml(primaryTime.value)}</strong>
-              ${primaryTime.label == null ? '' : `<span>${escapeHtml(primaryTime.label)}</span>`}
-            </div>
-            <div class="machine-progress-meta">
-              ${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join('')}
-            </div>
-          </div>
-          <div class="machine-progress-actions">
-            <div class="machine-progress-stats">
-              ${stats.map((stat) => `
-                <div class="machine-progress-stat">
-                  <span>${escapeHtml(stat.label)}</span>
-                  <strong>${escapeHtml(stat.value)}</strong>
-                  <em>${escapeHtml(stat.unit)}</em>
-                </div>
-              `).join('')}
-            </div>
-            <button type="button" class="machine-progress-add" data-action="machine-extend-service" ${this.state.busy ? 'disabled' : ''}>
-              ${icon('plus')}
-              <span>+5s</span>
-            </button>
-            <button type="button" class="machine-progress-stop ${stopRequested ? 'stopping' : ''}" data-action="stop" ${this.state.busy && stopRequested ? 'disabled' : ''}>
-              ${icon('square')}
-              <span>${escapeHtml(stopLabel)}</span>
-            </button>
-          </div>
-        </section>
-      </main>
-    `;
+    return renderMachineProgressPageView({
+      title: machineServiceVerb(service),
+      tone,
+      primaryTime,
+      meta,
+      stats,
+      busy: this.state.busy,
+      stopRequested,
+      stopLabel
+    });
   }
 
   private renderBeanEditorPage(): string {
     const editing = this.state.editingBeanId
       ? this.state.beans.find((bean) => bean.id === this.state.editingBeanId) ?? null
       : null;
-    const v = (value: string | null | undefined) => escapeAttr(value ?? '');
     const actions = `
       ${editing ? `<button type="button" class="command danger" data-action="archive-bean" data-id="${escapeAttr(editing.id)}">${icon('trash-2')}<span>Delete</span></button>` : ''}
       <button class="command primary commit-action" type="submit" form="bean-form">${icon(editing ? 'check' : 'plus')}<span>${editing ? 'Save' : 'Add'}</span></button>
     `;
-    return `
-      ${this.pageHeader(editing ? 'Edit Bean' : 'Add Bean', 'workbench', actions)}
-      <form id="bean-form" class="page-body form-page" data-form="bean-editor">
-        <label>Roaster<input name="roaster" required autocomplete="off" value="${v(editing?.roaster)}" /></label>
-        <label>Coffee<input name="name" required autocomplete="off" value="${v(editing?.name)}" /></label>
-        <div class="field-row">
-          <label>Country<input name="country" autocomplete="off" value="${v(editing?.country)}" /></label>
-          <label>Region<input name="region" autocomplete="off" value="${v(editing?.region)}" /></label>
-        </div>
-        <label>Process<input name="processing" autocomplete="off" value="${v(editing?.processing)}" /></label>
-        <label>Notes<textarea name="notes" rows="3">${escapeHtml(editing?.notes ?? '')}</textarea></label>
-      </form>
-    `;
+    return renderBeanEditorPageView(this.pageHeader(editing ? 'Edit Bean' : 'Add Bean', 'workbench', actions), editing);
   }
 
   private renderBatchEditorPage(): string {
     const bean = this.selectedBean();
     const actions = `<button class="command primary commit-action" type="submit" form="batch-form" ${bean ? '' : 'disabled'}>${icon('plus')}<span>Add batch</span></button>`;
-    const formNumber = (name: 'weight' | 'weightRemaining', label: string) => {
-      const formKey = `batch-form:${name}`;
-      const value = this.state.formNumbers[formKey] ?? '';
-      return `
-        <label>${escapeHtml(label)}
-          <input type="hidden" name="${name}" value="${escapeAttr(value)}" />
-          <button type="button" class="number-edit-button form-number-button" data-action="open-number-edit" data-target="form-field" data-form-key="${escapeAttr(formKey)}" data-title="${escapeAttr(label)}" data-value="${escapeAttr(value)}" data-min="0" data-max="5000" data-step="1" data-unit="g">${escapeHtml(value || '--')}<em>g</em></button>
-        </label>
-      `;
-    };
-    return `
-      ${this.pageHeader('Add Batch', 'workbench', actions)}
-      <form id="batch-form" class="page-body form-page" data-form="batch-editor">
-        <p class="modal-hint">${escapeHtml(bean ? beanLabel(bean) : 'No bean selected')}</p>
-        <div class="field-row">
-          <label>Roast date<input type="date" name="roastDate" /></label>
-          <label>Roast level<input name="roastLevel" autocomplete="off" /></label>
-        </div>
-        <div class="field-row">
-          ${formNumber('weight', 'Bag weight')}
-          ${formNumber('weightRemaining', 'Remaining')}
-        </div>
-        <label class="switch inline-switch"><input type="checkbox" name="frozen" /><span>Frozen</span></label>
-      </form>
-    `;
+    return renderBatchEditorPageView(this.pageHeader('Add Batch', 'workbench', actions), bean, this.state.formNumbers);
   }
 
   private renderGrinderEditorPage(): string {
@@ -6013,34 +5062,11 @@ export class BeanieApp {
       : null;
     const actionLabel = editing ? 'Save grinder' : 'Add grinder';
     const actions = `<button class="command primary commit-action" type="submit" form="grinder-form">${icon(editing ? 'check' : 'plus')}<span>${actionLabel}</span></button>`;
-    const grinderKey = editing?.id ?? 'new';
-    const formNumber = (name: 'settingSmallStep' | 'settingBigStep', label: string, fallback: number, step: number) => {
-      const formKey = `grinder-form:${grinderKey}:${name}`;
-      const value = this.state.formNumbers[formKey] ?? String(fallback);
-      return `
-        <label>${escapeHtml(label)}
-          <input type="hidden" name="${name}" value="${escapeAttr(value)}" />
-          <button type="button" class="number-edit-button form-number-button" data-action="open-number-edit" data-target="form-field" data-form-key="${escapeAttr(formKey)}" data-title="${escapeAttr(label)}" data-value="${escapeAttr(value)}" data-min="0" data-max="100" data-step="${step}">${escapeHtml(value || '--')}</button>
-        </label>
-      `;
-    };
-    return `
-      ${this.pageHeader(editing ? 'Edit Grinder' : 'Add Grinder', 'workbench', actions)}
-      <form id="grinder-form" class="page-body form-page" data-form="grinder-editor">
-        <label>Model<input name="model" required autocomplete="off" value="${escapeAttr(editing?.model ?? '')}" /></label>
-        <label>Burrs<input name="burrs" autocomplete="off" value="${escapeAttr(editing?.burrs ?? '')}" /></label>
-        <label>Setting type
-          <select name="settingType">
-            <option value="numeric" ${editing?.settingType === 'numeric' || !editing?.settingType ? 'selected' : ''}>Numeric</option>
-            <option value="preset" ${editing?.settingType === 'preset' ? 'selected' : ''}>Preset</option>
-          </select>
-        </label>
-        <div class="field-row">
-          ${formNumber('settingSmallStep', 'Small step', editing?.settingSmallStep ?? 0.1, 0.01)}
-          ${formNumber('settingBigStep', 'Big step', editing?.settingBigStep ?? 1, 0.1)}
-        </div>
-      </form>
-    `;
+    return renderGrinderEditorPageView(
+      this.pageHeader(editing ? 'Edit Grinder' : 'Add Grinder', 'workbench', actions),
+      editing,
+      this.state.formNumbers
+    );
   }
 
   private renderEditDialog(): string {
@@ -6052,24 +5078,7 @@ export class BeanieApp {
   private renderMachineLabelModal(): string {
     const edit = this.state.machineLabelEdit;
     if (!edit) return '';
-    return `
-      <div class="modal-backdrop" data-action="close-modal">
-        <section class="modal machine-label-modal" role="dialog" aria-modal="true" aria-label="Rename button" data-action="noop">
-          <div class="modal-head">
-            <div>
-              <span class="eyebrow">Button name</span>
-              <h2>Rename</h2>
-            </div>
-            <button type="button" class="icon-button" data-action="close-modal" aria-label="Close">${icon('x')}</button>
-          </div>
-          <input class="machine-label-input" data-action="machine-label-input" value="${escapeAttr(edit.label)}" autocomplete="off" />
-          <div class="modal-actions">
-            <button type="button" class="text-button" data-action="close-modal">Cancel</button>
-            <button type="button" class="command primary" data-action="machine-label-save">${icon('pencil')}<span>Rename</span></button>
-          </div>
-        </section>
-      </div>
-    `;
+    return renderMachineLabelModalView(edit.label);
   }
 
   private renderShotEditModal(): string {
@@ -6081,240 +5090,34 @@ export class BeanieApp {
     const shotLabel = Number.isNaN(shotDate.valueOf())
       ? shot.timestamp
       : shotDate.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    const field = (
-      name: ShotEditField,
-      label: string,
-      value: unknown,
-      wide = false,
-      multiline = false
-    ) => `
-      <label class="${wide ? 'wide' : ''}">
-        <span>${escapeHtml(label)}</span>
-        <button type="button" class="shot-edit-value ${multiline ? 'multiline' : ''}" data-action="open-shot-field" data-field="${escapeAttr(name)}">
-          <strong>${escapeHtml(fieldDisplayValue(name, value))}</strong>
-        </button>
-      </label>
-    `;
-    const numberField = (name: Extract<ShotEditField, 'targetDoseWeight' | 'targetYield' | 'actualDoseWeight' | 'actualYield' | 'drinkTds' | 'drinkEy'>, label: string, value: number | null) => `
-      <label>
-        <span>${escapeHtml(label)}</span>
-        <button
-          type="button"
-          class="shot-edit-value number-edit-button"
-          data-action="open-number-edit"
-          data-target="shot-edit"
-          data-field="${escapeAttr(name)}"
-          data-title="${escapeAttr(label)}"
-          data-value="${escapeAttr(inputValue(value))}"
-          data-min="0"
-          data-max="9999"
-          data-step="${escapeAttr(shotNumberFieldStep(name))}"
-          data-return-modal="edit-shot"
-        ><strong>${escapeHtml(inputValue(value) || '--')}</strong></button>
-      </label>
-    `;
-
-    return `
-      <div class="modal-backdrop" data-action="close-modal">
-        <form class="modal panel shot-edit-modal" data-form="shot-dye-editor" data-id="${escapeAttr(shot.id)}" data-action="noop">
-          <div class="modal-head shot-edit-head">
-            <div>
-              <h2>Edit shot</h2>
-              <p class="modal-hint">${escapeHtml(shotLabel)}</p>
-            </div>
-            <div class="shot-edit-head-actions">
-              <button type="button" class="icon-button danger-icon" data-action="delete-shot" data-id="${escapeAttr(shot.id)}" aria-label="Delete shot" title="Delete shot">${icon('trash-2')}</button>
-              <button type="button" class="icon-button" data-action="close-modal" aria-label="Close">${icon('x')}</button>
-            </div>
-          </div>
-
-          <div class="shot-edit-grid">
-            <fieldset class="shot-edit-section">
-              <legend>Bean</legend>
-              <div class="shot-edit-fields">
-                ${this.shotBeanControl(draft)}
-                ${field('finalBeverageType', 'Drink', draft.finalBeverageType)}
-                ${field('baristaName', 'Barista', draft.baristaName)}
-                ${field('drinkerName', 'Drinker', draft.drinkerName)}
-              </div>
-            </fieldset>
-
-            <fieldset class="shot-edit-section">
-              <legend>Recipe</legend>
-              <div class="shot-edit-fields">
-                ${numberField('targetDoseWeight', 'Target in', draft.targetDoseWeight)}
-                ${numberField('targetYield', 'Target out', draft.targetYield)}
-                ${numberField('actualDoseWeight', 'Actual in', draft.actualDoseWeight)}
-                ${numberField('actualYield', 'Actual out', draft.actualYield)}
-                ${field('grinderId', 'Grinder', grinderDisplayLabel(draft.grinderId, this.state.grinders) ?? draft.grinderModel)}
-                ${field('grinderSetting', 'Grind', draft.grinderSetting)}
-              </div>
-            </fieldset>
-
-            <fieldset class="shot-edit-section">
-              <legend>Result</legend>
-              <div class="shot-edit-fields">
-                ${numberField('drinkTds', 'TDS', draft.drinkTds)}
-                ${numberField('drinkEy', 'EY', draft.drinkEy)}
-                <label class="wide">
-                  <span>Score</span>
-                  ${shotScoreControl(draft.enjoyment, { action: 'shot-edit-score', variant: 'edit' })}
-                </label>
-                ${field('espressoNotes', 'Notes', draft.espressoNotes, true, true)}
-              </div>
-            </fieldset>
-          </div>
-
-          <div class="modal-actions shot-edit-actions">
-            <button type="button" class="command" data-action="close-modal">Cancel</button>
-            <button type="submit" class="command primary commit-action">${icon('check')}<span>Save</span></button>
-          </div>
-        </form>
-        ${this.renderShotFieldDialog(draft)}
-        ${this.renderShotBeanDialog(draft)}
-      </div>
-    `;
-  }
-
-  // One wide control standing in for roaster + bean + batch. Tapping it opens
-  // the combined picker; on its own it just summarises the current bag.
-  private shotBeanControl(draft: ShotEditDraft): string {
-    const beanText = shotBeanLabel(draft);
     const batch = this.batchAndBeanForId(draft.beanBatchId)?.batch ?? null;
     const batchText = batch ? batchOptionLabel(batch) : draft.beanBatchId ? 'Saved batch' : null;
-    return `
-      <label class="wide">
-        <span>Bean</span>
-        <button type="button" class="shot-edit-value shot-bean-value" data-action="open-shot-bean">
-          <strong>${escapeHtml(beanText)}</strong>
-          <small>${escapeHtml(batchText ?? 'No batch')}</small>
-        </button>
-      </label>
-    `;
-  }
-
-  private renderShotBeanDialog(draft: ShotEditDraft): string {
-    const state = this.state.shotBeanEdit;
-    if (!state) return '';
-    const body = state.creating ? this.renderShotBeanCreateForm() : this.renderShotBeanPicker(draft);
-    return `
-      <div class="modal-backdrop shot-field-backdrop shot-bean-backdrop" data-action="close-shot-bean">
-        <section class="modal panel shot-field-dialog shot-bean-dialog" role="dialog" aria-modal="true" aria-label="Choose bean" data-action="noop">
-          <div class="modal-head shot-edit-head">
-            <div>
-              <span class="eyebrow">Edit</span>
-              <h2>${state.creating ? 'New bean' : 'Bean'}</h2>
-            </div>
-            <div class="shot-edit-head-actions">
-              ${
-                state.creating
-                  ? ''
-                  : `<button type="button" class="icon-button" data-action="shot-bean-new" aria-label="Add bean" title="Add bean">${icon('plus')}</button>`
-              }
-              <button type="button" class="icon-button" data-action="close-shot-bean" aria-label="Close">${icon('x')}</button>
-            </div>
-          </div>
-          ${body}
-        </section>
-      </div>
-    `;
-  }
-
-  private renderShotBeanPicker(draft: ShotEditDraft): string {
-    const selectedId = this.shotDraftBean(draft)?.id ?? null;
     const beans = this.sortedBeansForPicker();
-    const beanButton = (bean: Bean) => `
-      <button type="button" class="${bean.id === selectedId ? 'active' : ''}" data-action="shot-bean-pick" data-id="${escapeAttr(bean.id)}">
-        <strong>${escapeHtml(bean.name)}</strong>
-        <small>${escapeHtml(bean.roaster)}${bean.country ? ` · ${escapeHtml(bean.country)}` : ''}</small>
-      </button>
-    `;
-    return `
-      <div class="shot-bean-section">
-        <span class="eyebrow">Bag</span>
-        <div class="shot-field-options shot-bean-list" aria-label="Beans">
-          <button type="button" class="${selectedId ? '' : 'active'}" data-action="shot-bean-pick" data-id="">
-            <strong>No bean</strong>
-          </button>
-          ${beans.length === 0 ? '<p class="empty-history">No beans yet.</p>' : beans.map(beanButton).join('')}
-        </div>
-      </div>
-      <div class="modal-actions shot-edit-actions">
-        <button type="button" class="command primary" data-action="close-shot-bean">Done</button>
-      </div>
-    `;
-  }
-
-  private renderShotBeanCreateForm(): string {
-    const text = (name: string, label: string, required = false) => `
-      <label>${escapeHtml(label)}<input name="${name}" autocomplete="off"${required ? ' required' : ''} /></label>
-    `;
-    return `
-      <form class="shot-bean-create" data-form="shot-bean-create" data-action="noop">
-        ${this.beanPrefillSelect()}
-        <div class="shot-bean-create-fields">
-          ${text('roaster', 'Roaster', true)}
-          ${text('name', 'Bean', true)}
-          ${text('country', 'Country')}
-          ${text('region', 'Region')}
-          ${text('processing', 'Process')}
-        </div>
-        <div class="modal-actions shot-edit-actions">
-          <button type="button" class="command" data-action="shot-bean-cancel-new">Cancel</button>
-          <button type="submit" class="command primary">${icon('check')}<span>Add bean</span></button>
-        </div>
-      </form>
-    `;
-  }
-
-  private renderShotFieldDialog(draft: ShotEditDraft): string {
     const field = this.state.shotEditField;
-    if (!field) return '';
-    const spec = shotFieldSpec(field, draft, this.state.grinders, this.state.shots);
-    const input =
-      spec.kind === 'textarea'
-        ? `<textarea name="value" rows="5" spellcheck="true">${escapeHtml(spec.value)}</textarea>`
-        : spec.kind === 'number'
-          ? `<input name="value" value="${escapeAttr(spec.value)}" inputmode="decimal" autocomplete="off" />`
-          : `<input name="value" value="${escapeAttr(spec.value)}" autocomplete="off" />`;
-    const options =
-      spec.options.length === 0
-        ? ''
-        : `<div class="shot-field-options" aria-label="${escapeAttr(spec.label)} options">
-            ${spec.options
-              .map(
-                (option) => `
-                  <button type="button" data-action="shot-field-option" data-field="${escapeAttr(field)}" data-value="${escapeAttr(option.value)}">
-                    <strong>${escapeHtml(option.label)}</strong>
-                    ${option.detail ? `<small>${escapeHtml(option.detail)}</small>` : ''}
-                  </button>
-                `
-              )
-              .join('')}
-          </div>`;
 
-    return `
-      <div class="modal-backdrop shot-field-backdrop" data-action="close-shot-field">
-        <form class="modal panel shot-field-dialog" data-form="shot-field-dialog" data-field="${escapeAttr(field)}" data-action="noop">
-          <div class="modal-head shot-edit-head">
-            <div>
-              <span class="eyebrow">Edit</span>
-              <h2>${escapeHtml(spec.label)}</h2>
-            </div>
-            <button type="button" class="icon-button" data-action="close-shot-field" aria-label="Close">${icon('x')}</button>
-          </div>
-          <label class="shot-field-input">
-            <span>${escapeHtml(spec.label)}</span>
-            ${input}
-          </label>
-          ${options}
-          <div class="modal-actions shot-edit-actions">
-            <button type="button" class="command" data-action="close-shot-field">Cancel</button>
-            <button type="submit" class="command primary">Done</button>
-          </div>
-        </form>
-      </div>
-    `;
+    return renderShotEditModalView({
+      shotId: shot.id,
+      shotLabel,
+      draft,
+      grinders: this.state.grinders,
+      beanSummary: {
+        batchLabel: batchText
+      },
+      fieldDialog: field
+        ? {
+            field,
+            spec: shotFieldSpec(field, draft, this.state.grinders, this.state.shots)
+          }
+        : null,
+      beanDialog: this.state.shotBeanEdit
+        ? {
+            state: this.state.shotBeanEdit,
+            selectedBeanId: this.shotDraftBean(draft)?.id ?? null,
+            beans,
+            prefillBeans: beans
+          }
+        : null
+    });
   }
 
   private settingsShellModel() {
@@ -6391,31 +5194,11 @@ export class BeanieApp {
   // never blanks the screen; in demo mode the whole bundle is local.
   private async loadReaSettings(): Promise<void> {
     if (this.state.settingsBundle && this.state.settingsSource !== 'loading') return;
-    if (this.state.demo) {
-      this.setState({ settingsBundle: demoSettingsBundle(), settingsSource: 'demo' });
-      return;
-    }
-    const fallback = demoSettingsBundle();
-    let source: 'gateway' | 'demo' = 'gateway';
-    const [rea, de1, advanced, calibration, presence, display, skins, devices, plugins, schedules] = await Promise.all([
-      gateway.settings().catch(() => {
-        source = 'demo';
-        return fallback.rea;
-      }),
-      gateway.machineSettings().catch(() => fallback.de1),
-      gateway.machineAdvancedSettings().catch(() => fallback.advanced),
-      gateway.calibration().catch(() => fallback.calibration),
-      gateway.presenceSettings().catch(() => fallback.presence),
-      gateway.displayState().catch(() => fallback.display),
-      gateway.skins().catch(() => fallback.skins),
-      gateway.devices().catch(() => fallback.devices),
-      gateway.plugins().catch(() => fallback.plugins),
-      gateway.wakeSchedules().catch(() => fallback.schedules)
-    ]);
+    const result = await this.settingsController.loadSettingsBundle(this.state.demo);
     this.setState({
-      settingsBundle: { rea, de1, advanced, calibration, presence, display, skins, devices, plugins, schedules },
-      settingsSource: source,
-      status: source === 'gateway' ? this.state.status : 'Settings unavailable — showing defaults'
+      settingsBundle: result.bundle,
+      settingsSource: result.source,
+      status: result.status ?? this.state.status
     });
   }
 
@@ -6533,45 +5316,19 @@ export class BeanieApp {
 
   private async scanDevices(): Promise<void> {
     this.setState({ status: 'Scanning for devices…' });
-    if (this.settingsLocal) {
-      this.setState({ status: 'Scanning unavailable in demo mode' });
-      return;
-    }
-    try {
-      const devices = await gateway.scanDevices();
-      this.patchBundle({ devices });
-      this.setState({ status: `Found ${devices.length} device${devices.length === 1 ? '' : 's'}` });
-    } catch (error) {
-      console.error('[Beanie] Device scan failed', error);
-      this.setState({ status: 'Scan failed' });
-    }
+    const result = await this.settingsController.scanDevices(this.settingsLocal);
+    if (result.devices) this.patchBundle({ devices: result.devices });
+    this.setState({ status: result.status });
   }
 
   private async connectPreferredDevices(): Promise<void> {
     this.setState({ status: 'Searching for preferred devices…' });
-    if (this.settingsLocal) {
-      this.setState({ status: 'Auto-connect unavailable in demo mode' });
-      return;
-    }
-    try {
-      const devices = await gateway.connectPreferredDevices();
-      this.patchBundle({ devices });
-      const preferredScaleId = this.state.settingsBundle?.rea.preferredScaleId ?? null;
-      const preferredScale = preferredScaleId
-        ? devices.find((device) => device.id === preferredScaleId && device.type === 'scale')
-        : null;
-      const preferredScaleConnected = preferredScale?.state === 'connected';
-      this.setState({
-        status: preferredScaleId
-          ? preferredScaleConnected
-            ? 'Preferred scale connected'
-            : 'Preferred scale not found'
-          : 'Auto-connect complete'
-      });
-    } catch (error) {
-      console.error('[Beanie] Preferred device connect failed', error);
-      this.setState({ status: 'Auto-connect failed' });
-    }
+    const result = await this.settingsController.connectPreferredDevices({
+      local: this.settingsLocal,
+      preferredScaleId: this.state.settingsBundle?.rea.preferredScaleId ?? null
+    });
+    if (result.devices) this.patchBundle({ devices: result.devices });
+    this.setState({ status: result.status });
   }
 
   private async handleScaleStatTap(): Promise<void> {
@@ -6602,16 +5359,16 @@ export class BeanieApp {
   }
 
   private async connectDevice(id: string, connect: boolean): Promise<void> {
-    if (!id || this.settingsLocal) return;
+    if (!id) return;
     this.setState({ status: connect ? 'Connecting…' : 'Disconnecting…' });
-    try {
-      await (connect ? gateway.connectDevice(id) : gateway.disconnectDevice(id));
-      this.patchBundle({ devices: await gateway.devices().catch(() => this.state.settingsBundle?.devices ?? []) });
-      this.setState({ status: connect ? 'Connected' : 'Disconnected' });
-    } catch (error) {
-      console.error('[Beanie] Device connect failed', error);
-      this.setState({ status: connect ? 'Connect failed' : 'Disconnect failed' });
-    }
+    const result = await this.settingsController.connectDevice({
+      id,
+      connect,
+      local: this.settingsLocal,
+      fallbackDevices: this.state.settingsBundle?.devices ?? []
+    });
+    if (result.devices) this.patchBundle({ devices: result.devices });
+    if (result.status) this.setState({ status: result.status });
   }
 
   private async setDisplayBrightness(raw: string): Promise<void> {
@@ -6645,19 +5402,10 @@ export class BeanieApp {
   }
 
   private async requestMachineState(state: string): Promise<void> {
-    if (this.settingsLocal) {
-      this.setState({ status: `${state} unavailable in demo mode` });
-      return;
-    }
-    try {
-      await gateway.setMachineState(state);
-      this.setState({ status: `Machine → ${state}` });
-      if (state === 'sleeping') this.scheduleSleepBrightnessZero(1000);
-      else this.observeSleepBrightnessState(false);
-    } catch (error) {
-      console.error('[Beanie] Machine state change failed', error);
-      this.setState({ status: 'Machine command failed' });
-    }
+    const result = await this.settingsController.requestMachineState({ state, local: this.settingsLocal });
+    this.setState({ status: result.status });
+    if (result.sleepRequested) this.scheduleSleepBrightnessZero(1000);
+    else if (result.status !== 'Machine command failed') this.observeSleepBrightnessState(false);
   }
 
   private async uploadFirmware(file: File): Promise<void> {
@@ -6676,35 +5424,20 @@ export class BeanieApp {
   }
 
   private async addWakeSchedule(time: string): Promise<void> {
-    if (!time) return;
-    if (this.settingsLocal) {
-      const schedules = [
-        ...(this.state.settingsBundle?.schedules ?? []),
-        { id: `local-${time}`, time, daysOfWeek: [], enabled: true, keepAwakeFor: null }
-      ];
-      this.patchBundle({ schedules });
-      return;
-    }
-    try {
-      await gateway.addWakeSchedule({ time, daysOfWeek: [], enabled: true });
-      this.patchBundle({ schedules: await gateway.wakeSchedules() });
-      this.setState({ status: 'Wake schedule added' });
-    } catch (error) {
-      console.error('[Beanie] Add schedule failed', error);
-      this.setState({ status: 'Could not add schedule' });
-    }
+    const result = await this.settingsController.addWakeSchedule({
+      time,
+      local: this.settingsLocal,
+      current: this.state.settingsBundle?.schedules ?? []
+    });
+    if (result.schedules) this.patchBundle({ schedules: result.schedules });
+    if (result.status) this.setState({ status: result.status });
   }
 
   private async deleteWakeSchedule(id: string): Promise<void> {
     const remaining = (this.state.settingsBundle?.schedules ?? []).filter((s) => s.id !== id);
     this.patchBundle({ schedules: remaining });
-    if (this.settingsLocal) return;
-    try {
-      await gateway.deleteWakeSchedule(id);
-    } catch (error) {
-      console.error('[Beanie] Delete schedule failed', error);
-      this.setState({ status: 'Could not delete schedule' });
-    }
+    const result = await this.settingsController.deleteWakeSchedule({ id, local: this.settingsLocal });
+    if (result.status) this.setState({ status: result.status });
   }
 
   private async toggleWakeSchedule(id: string, enabled: boolean): Promise<void> {
@@ -6712,46 +5445,27 @@ export class BeanieApp {
       s.id === id ? { ...s, enabled } : s
     );
     this.patchBundle({ schedules });
-    if (this.settingsLocal) return;
     try {
-      await gateway.updateWakeSchedule(id, { enabled });
-    } catch (error) {
-      console.error('[Beanie] Update schedule failed', error);
+      await this.settingsController.toggleWakeSchedule({ id, enabled, local: this.settingsLocal });
+    } catch {
+      this.setState({ status: 'Could not update schedule' });
     }
   }
 
   private async loadDecentAccount(): Promise<void> {
     if (this.state.decentAccountSource === 'gateway' || this.state.decentAccountSource === 'demo') return;
-    if (this.state.demo || this.settingsLocal) {
-      const account = demoDecentAccountStatus();
-      this.setState({
-        decentAccount: account,
-        decentAccountSource: 'demo',
-        decentAccountEmail: account.email ?? this.state.decentAccountEmail,
-        decentAccountPassword: '',
-        decentAccountMessage: null
-      });
-      return;
-    }
-    this.setState({ decentAccountSource: 'loading' });
-    try {
-      const account = await gateway.decentAccount();
-      this.setState({
-        decentAccount: account,
-        decentAccountSource: 'gateway',
-        decentAccountEmail: account.email ?? this.state.decentAccountEmail,
-        decentAccountPassword: '',
-        decentAccountMessage: null
-      });
-    } catch (error) {
-      console.warn('[Beanie] Decent account API unavailable', error);
-      this.setState({
-        decentAccount: null,
-        decentAccountSource: 'unavailable',
-        decentAccountPassword: '',
-        decentAccountMessage: null
-      });
-    }
+    if (!this.state.demo && !this.settingsLocal) this.setState({ decentAccountSource: 'loading' });
+    const result = await this.settingsController.loadDecentAccount({
+      local: this.state.demo || this.settingsLocal,
+      currentEmail: this.state.decentAccountEmail
+    });
+    this.setState({
+      decentAccount: result.account,
+      decentAccountSource: result.source,
+      decentAccountEmail: result.email,
+      decentAccountPassword: '',
+      decentAccountMessage: result.message
+    });
   }
 
   private updateDecentAccountField(key: string, value: string): void {
@@ -6773,30 +5487,23 @@ export class BeanieApp {
       });
       return;
     }
-    if (this.state.demo || this.settingsLocal) {
-      this.setState({
-        decentAccount: { loggedIn: true, email },
-        decentAccountSource: 'demo',
-        decentAccountPassword: '',
-        decentAccountMessage: { tone: 'good', text: 'Decent account linked (demo).' }
-      });
-      return;
-    }
     this.setState({
       decentAccountSaving: true,
       decentAccountMessage: { tone: 'muted', text: 'Linking Decent account...' }
     });
     try {
-      const account = await gateway.loginDecentAccount(email, password);
+      const result = await this.settingsController.loginDecentAccount({
+        local: this.state.demo || this.settingsLocal,
+        email,
+        password
+      });
       this.setState({
-        decentAccount: account,
-        decentAccountSource: 'gateway',
-        decentAccountEmail: account.email ?? email,
+        decentAccount: result.account,
+        decentAccountSource: result.source,
+        decentAccountEmail: result.email,
         decentAccountPassword: '',
         decentAccountSaving: false,
-        decentAccountMessage: account.loggedIn
-          ? { tone: 'good', text: 'Decent account linked.' }
-          : { tone: 'warn', text: 'Login failed. Check your email and password.' }
+        decentAccountMessage: result.message
       });
     } catch (error) {
       console.error('[Beanie] Decent account login failed', error);
@@ -6812,26 +5519,20 @@ export class BeanieApp {
   }
 
   private async logoutDecentAccount(): Promise<void> {
-    if (this.state.demo || this.settingsLocal) {
-      this.setState({
-        decentAccount: { loggedIn: false, email: null },
-        decentAccountPassword: '',
-        decentAccountMessage: { tone: 'good', text: 'Decent account unlinked (demo).' }
-      });
-      return;
-    }
     this.setState({
       decentAccountSaving: true,
       decentAccountMessage: { tone: 'muted', text: 'Unlinking Decent account...' }
     });
     try {
-      await gateway.logoutDecentAccount();
+      const result = await this.settingsController.logoutDecentAccount({
+        local: this.state.demo || this.settingsLocal
+      });
       this.setState({
-        decentAccount: { loggedIn: false, email: null },
-        decentAccountSource: 'gateway',
+        decentAccount: result.account,
+        decentAccountSource: result.source,
         decentAccountPassword: '',
         decentAccountSaving: false,
-        decentAccountMessage: { tone: 'good', text: 'Decent account unlinked.' }
+        decentAccountMessage: result.message
       });
     } catch (error) {
       console.error('[Beanie] Decent account unlink failed', error);
@@ -6863,15 +5564,7 @@ export class BeanieApp {
       return;
     }
     if (!pluginSettingsSpec(id)) return;
-    let settings: PluginSettings;
-    if (this.settingsLocal) {
-      settings = demoPluginSettings(id);
-    } else {
-      settings = await gateway.pluginSettings(id).catch((error) => {
-        console.error('[Beanie] Load plugin settings failed', error);
-        return demoPluginSettings(id);
-      });
-    }
+    const settings = await this.settingsController.loadPluginSettings({ local: this.settingsLocal, id });
     this.setState({ pluginConfig: this.makePluginConfig(id, settings) });
   }
 
@@ -6930,22 +5623,22 @@ export class BeanieApp {
     }
     const nextSettings: PluginSettings = { values: nextValues, secretsSet: nextSecretsSet };
     if (this.settingsLocal) {
-      this.setState({ pluginConfig: this.makePluginConfig(pluginId, nextSettings), status: 'Plugin settings saved (demo)' });
+      const result = await this.settingsController.savePluginSettings({ local: true, id: pluginId, payload });
+      this.setState({ pluginConfig: this.makePluginConfig(pluginId, nextSettings), status: result.status });
       return;
     }
     this.setState({ pluginConfig: { ...config, saving: true } });
-    try {
-      await gateway.updatePluginSettings(pluginId, payload);
-      this.setState({ pluginConfig: this.makePluginConfig(pluginId, nextSettings), status: 'Plugin settings saved' });
-    } catch (error) {
-      console.error('[Beanie] Save plugin settings failed', error);
+    const result = await this.settingsController.savePluginSettings({ local: false, id: pluginId, payload });
+    if (result.ok) {
+      this.setState({ pluginConfig: this.makePluginConfig(pluginId, nextSettings), status: result.status });
+    } else {
       this.setState({
         pluginConfig: {
           ...config,
           saving: false,
           verify: { tone: 'warn', message: 'Save failed. Check plugin settings are valid.' }
         },
-        status: 'Plugin settings save failed'
+        status: result.status
       });
     }
   }
@@ -6959,31 +5652,14 @@ export class BeanieApp {
       return;
     }
     this.setState({ pluginConfig: { ...config, verify: { tone: 'muted', message: 'Verifying…' } } });
-    if (this.settingsLocal) {
-      const hasUser = String(config.settings.values.Username ?? '') !== '';
-      const ok = hasUser && config.settings.secretsSet.Password === true;
-      this.setState({
-        pluginConfig: {
-          ...config,
-          verify: { tone: ok ? 'good' : 'warn', message: ok ? 'Credentials look valid (demo).' : 'Add an email and password first.' }
-        }
-      });
-      return;
-    }
-    try {
-      const result = await gateway.verifyPlugin(pluginId, {
-        username: String(config.settings.values.Username ?? ''),
-        password: String(config.settings.values.Password ?? '')
-      });
-      const current = this.state.pluginConfig;
-      if (!current || normalizePluginId(current.id) !== normalizePluginId(pluginId)) return;
-      this.setState({ pluginConfig: { ...current, verify: { tone: result.ok ? 'good' : 'warn', message: result.message } } });
-    } catch (error) {
-      console.error('[Beanie] Verify plugin failed', error);
-      const current = this.state.pluginConfig;
-      if (!current || normalizePluginId(current.id) !== normalizePluginId(pluginId)) return;
-      this.setState({ pluginConfig: { ...current, verify: { tone: 'warn', message: 'Verification failed.' } } });
-    }
+    const result = await this.settingsController.verifyPluginSettings({
+      local: this.settingsLocal,
+      id: pluginId,
+      settings: config.settings
+    });
+    const current = this.state.pluginConfig;
+    if (!current || normalizePluginId(current.id) !== normalizePluginId(pluginId)) return;
+    this.setState({ pluginConfig: { ...current, verify: result } });
   }
 
   private async onSettingsField(group: string, key: string, raw: string | boolean): Promise<void> {
@@ -7040,36 +5716,19 @@ export class BeanieApp {
   }
 
   private persistSetting(group: string, key: string, value: string | number | boolean | null): Promise<void> {
-    const patch = { [key]: value };
-    if (group === 'rea') return gateway.updateSettings(patch as unknown as ReaSettingsPatch);
-    if (group === 'de1') return gateway.updateMachineSettings(patch as unknown as Partial<De1MachineSettings>);
-    if (group === 'advanced') return gateway.updateMachineAdvancedSettings(patch as unknown as De1AdvancedSettingsPatch);
-    if (group === 'calibration') return gateway.updateCalibration(Number(value));
-    if (group === 'presence') return gateway.updatePresenceSettings(patch as unknown as PresenceSettingsPatch);
-    return Promise.resolve();
+    return this.settingsController.persistSetting(group, key, value);
   }
 
   private async resetMachineSettings(): Promise<void> {
     const bundle = this.state.settingsBundle;
     if (!bundle) return;
-    if (this.state.demo || this.state.settingsSource === 'demo') {
-      const fallback = demoSettingsBundle();
-      this.setState({
-        settingsBundle: { ...bundle, de1: fallback.de1, advanced: fallback.advanced, calibration: fallback.calibration },
-        status: 'Machine settings reset (demo)'
-      });
-      return;
-    }
     try {
-      await gateway.resetMachineSettings();
-      const [de1, advanced, calibration] = await Promise.all([
-        gateway.machineSettings(),
-        gateway.machineAdvancedSettings(),
-        gateway.calibration()
-      ]);
-      this.setState({ settingsBundle: { ...bundle, de1, advanced, calibration }, status: 'Machine settings reset' });
-    } catch (error) {
-      console.error('[Beanie] Reset machine settings failed', error);
+      const result = await this.settingsController.resetMachineSettings({
+        local: this.state.demo || this.state.settingsSource === 'demo',
+        bundle
+      });
+      this.setState({ settingsBundle: { ...bundle, ...result.bundlePatch }, status: result.status });
+    } catch {
       this.setState({ status: 'Reset failed' });
     }
   }
@@ -7099,477 +5758,6 @@ export class BeanieApp {
     this.render();
   }
 
-}
-
-const machinePresetLabelsStorageKey = 'beanie:machine-preset-labels';
-const machinePresetValuesStorageKey = 'beanie:machine-preset-values';
-const hotWaterStopModeStorageKey = 'beanie:hot-water-stop-mode';
-const hotWaterWeightTargetStorageKey = 'beanie:hot-water-weight-target';
-const secondTapHintStorageKey = 'beanie:second-tap-hint-v2';
-
-type MachinePresetValueOverrides = Record<string, Record<string, number>>;
-
-interface SecondTapHintPrefs {
-  beanUsed: boolean;
-  shotUsed: boolean;
-}
-
-function readSecondTapHintPrefs(): SecondTapHintPrefs {
-  try {
-    const raw = localStorage.getItem(secondTapHintStorageKey);
-    const parsed = raw ? JSON.parse(raw) : {};
-    return {
-      beanUsed: parsed?.beanUsed === true,
-      shotUsed: parsed?.shotUsed === true
-    };
-  } catch {
-    return { beanUsed: false, shotUsed: false };
-  }
-}
-
-function startupStatusLabel(status: GatewayStartupSnapshot['status']): string {
-  if (status === 'partial-failure') return 'Connected with limited data';
-  if (status === 'gateway-unavailable') return 'Offline with cached data';
-  return 'Connected';
-}
-
-function writeSecondTapHintPrefs(prefs: SecondTapHintPrefs): void {
-  try {
-    localStorage.setItem(secondTapHintStorageKey, JSON.stringify(prefs));
-  } catch {
-    // Ignore storage failures; the hint is purely instructional.
-  }
-}
-
-function shouldShowSecondTapHint(kind: SecondTapHintKind): boolean {
-  const prefs = readSecondTapHintPrefs();
-  return kind === 'bean' ? !prefs.beanUsed : !prefs.shotUsed;
-}
-
-function markSecondTapHintUsed(kind: SecondTapHintKind): void {
-  const prefs = readSecondTapHintPrefs();
-  if (kind === 'bean') {
-    if (prefs.beanUsed) return;
-    writeSecondTapHintPrefs({ ...prefs, beanUsed: true });
-    return;
-  }
-  if (prefs.shotUsed) return;
-  writeSecondTapHintPrefs({ ...prefs, shotUsed: true });
-}
-
-function readMachinePresetLabels(): Record<string, string> {
-  try {
-    const raw = localStorage.getItem(machinePresetLabelsStorageKey);
-    const parsed = raw ? JSON.parse(raw) : {};
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    return Object.fromEntries(
-      Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
-    );
-  } catch {
-    return {};
-  }
-}
-
-function writeMachinePresetLabels(labels: Record<string, string>): void {
-  localStorage.setItem(machinePresetLabelsStorageKey, JSON.stringify(labels));
-}
-
-function readMachinePresetValues(): MachinePresetValueOverrides {
-  try {
-    const raw = localStorage.getItem(machinePresetValuesStorageKey);
-    const parsed = raw ? JSON.parse(raw) : {};
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    return Object.fromEntries(
-      Object.entries(parsed).flatMap(([key, value]) => {
-        if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
-        const numericValues = Object.fromEntries(
-          Object.entries(value).filter((entry): entry is [string, number] => (
-            typeof entry[1] === 'number' && Number.isFinite(entry[1])
-          ))
-        );
-        return Object.keys(numericValues).length > 0 ? [[key, numericValues]] : [];
-      })
-    );
-  } catch {
-    return {};
-  }
-}
-
-function writeMachinePresetValues(values: MachinePresetValueOverrides): void {
-  localStorage.setItem(machinePresetValuesStorageKey, JSON.stringify(values));
-}
-
-function readHotWaterStopMode(): HotWaterStopMode {
-  try {
-    const value = localStorage.getItem(hotWaterStopModeStorageKey);
-    return value === 'time' ? 'time' : 'volume';
-  } catch {
-    return 'volume';
-  }
-}
-
-function writeHotWaterStopMode(mode: HotWaterStopMode): void {
-  localStorage.setItem(hotWaterStopModeStorageKey, mode);
-}
-
-function readHotWaterWeightTarget(): number | null {
-  try {
-    const value = Number(localStorage.getItem(hotWaterWeightTargetStorageKey));
-    return Number.isFinite(value) && value > 0 ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeHotWaterWeightTarget(value: number | null | undefined): void {
-  try {
-    if (value == null || !Number.isFinite(value) || value <= 0) return;
-    localStorage.setItem(hotWaterWeightTargetStorageKey, String(value));
-  } catch {
-    // Local target persistence is best-effort; the live in-memory state remains authoritative.
-  }
-}
-
-function machinePresetLabelKey(name: string, presetId: string): string {
-  return `${name}:${presetId}`;
-}
-
-function machinePresetsWithValues<T extends object>(
-  name: string,
-  presets: WaterPreset<T>[],
-  valueOverrides: MachinePresetValueOverrides
-): WaterPreset<T>[] {
-  return presets.map((preset) => {
-    const overrides = valueOverrides[machinePresetLabelKey(name, preset.id)];
-    if (!overrides) return preset;
-    return {
-      ...preset,
-      values: { ...preset.values, ...overrides }
-    };
-  });
-}
-
-function numericPresetValues(values: object): Record<string, number> {
-  return Object.fromEntries(
-    Object.entries(values).filter((entry): entry is [string, number] => (
-      typeof entry[1] === 'number' && Number.isFinite(entry[1])
-    ))
-  );
-}
-
-function presetLabel<T extends object>(
-  name: string,
-  preset: WaterPreset<T>,
-  labelOverrides: Record<string, string>
-): string {
-  return labelOverrides[machinePresetLabelKey(name, preset.id)] ?? preset.label;
-}
-
-interface MachineLaneOptions<T extends object> {
-  tone: 'steam' | 'water' | 'flush';
-  eyebrow: string;
-  title: string;
-  presetName: string;
-  presets: WaterPreset<T>[];
-  selectedPreset: string;
-  labelOverrides: Record<string, string>;
-  values: MachineValueTile[];
-}
-
-interface MachineValueTile {
-  name?: string;
-  label: string;
-  value: string;
-  unit: string;
-  action?: string;
-  actionValue?: string;
-  spec?: NumberSpec;
-  disabled?: boolean;
-}
-
-function renderMachineLane<T extends object>(options: MachineLaneOptions<T>): string {
-  return `
-    <section class="machine-lane ${options.tone}">
-      <div class="machine-lane-title">
-        <div>
-          <span class="eyebrow">${escapeHtml(options.eyebrow)}</span>
-          <h2>${escapeHtml(options.title)}</h2>
-        </div>
-      </div>
-      ${renderMachineGraphic(options.tone)}
-      ${renderMachinePresetTiles(options.presetName, options.presets, options.selectedPreset, options.labelOverrides)}
-      <div class="machine-values">
-        ${options.values.map(renderMachineValueTile).join('')}
-      </div>
-    </section>
-  `;
-}
-
-function renderMachinePresetTiles<T extends object>(
-  name: string,
-  presets: WaterPreset<T>[],
-  selected: string,
-  labelOverrides: Record<string, string>
-): string {
-  return `
-    <div class="machine-presets" role="group">
-      ${presets.map((preset) => renderMachinePresetTile(name, preset, selected === preset.id, labelOverrides)).join('')}
-    </div>
-  `;
-}
-
-function renderMachinePresetTile<T extends object>(
-  name: string,
-  preset: WaterPreset<T>,
-  selected: boolean,
-  labelOverrides: Record<string, string>
-): string {
-  const label = presetLabel(name, preset, labelOverrides);
-  return `
-    <span class="machine-preset ${selected ? 'active' : ''}">
-      <button type="button" class="machine-preset-select" data-action="machine-preset" data-name="${escapeAttr(name)}" data-value="${escapeAttr(preset.id)}" aria-pressed="${selected}">
-        <strong>${escapeHtml(label)}</strong>
-      </button>
-      <button type="button" class="machine-preset-edit" data-action="machine-edit-label" data-name="${escapeAttr(name)}" data-value="${escapeAttr(preset.id)}" data-label="${escapeAttr(label)}" aria-label="Rename ${escapeAttr(label)}" title="Rename">
-        ${icon('pencil')}
-      </button>
-    </span>
-  `;
-}
-
-function renderMachineGraphic(tone: MachineLaneOptions<object>['tone']): string {
-  return `
-    <div class="machine-graphic" aria-hidden="true">
-      ${machineGraphicIcon(tone)}
-    </div>
-  `;
-}
-
-function machineGraphicIcon(tone: MachineLaneOptions<object>['tone']): string {
-  const streamlineGlyphs: Record<MachineLaneOptions<object>['tone'], string> = {
-    steam: 'M 86.125 -11.625 C 83.042969 -9.042969 79.605469 -7.082031 75.8125 -5.75 C 72.019531 -4.417969 68.082031 -3.75 64 -3.75 C 60 -3.75 56.105469 -4.457031 52.3125 -5.875 C 48.519531 -7.292969 45.082031 -9.332031 42 -12 C 39.25 -14.332031 36.9375 -17.042969 35.0625 -20.125 C 33.1875 -23.207031 31.832031 -26.5 31 -30 C 29.667969 -30.25 28.332031 -30.625 27 -31.125 C 25.667969 -31.625 24.375 -32.207031 23.125 -32.875 C 21.457031 -33.792969 19.9375 -34.832031 18.5625 -36 C 17.1875 -37.167969 15.957031 -38.5 14.875 -40 C 13.792969 -41.417969 12.855469 -42.957031 12.0625 -44.625 C 11.269531 -46.292969 10.667969 -48 10.25 -49.75 C 9.832031 -51.5 9.625 -53.292969 9.625 -55.125 C 9.625 -56.957031 9.792969 -58.75 10.125 -60.5 C 10.457031 -62.332031 10.980469 -64.082031 11.6875 -65.75 C 12.394531 -67.417969 13.25 -69 14.25 -70.5 C 15.332031 -72 16.542969 -73.375 17.875 -74.625 C 19.207031 -75.875 20.625 -76.957031 22.125 -77.875 C 23.707031 -78.875 25.375 -79.667969 27.125 -80.25 C 28.875 -80.832031 30.625 -81.25 32.375 -81.5 C 33.292969 -81.667969 34.105469 -81.480469 34.8125 -80.9375 C 35.519531 -80.394531 35.917969 -79.667969 36 -78.75 C 36.082031 -77.917969 35.875 -77.144531 35.375 -76.4375 C 34.875 -75.730469 34.167969 -75.332031 33.25 -75.25 C 31.917969 -75 30.582031 -74.644531 29.25 -74.1875 C 27.917969 -73.730469 26.667969 -73.167969 25.5 -72.5 C 24.332031 -71.75 23.25 -70.894531 22.25 -69.9375 C 21.25 -68.980469 20.332031 -67.957031 19.5 -66.875 C 18.75 -65.707031 18.105469 -64.5 17.5625 -63.25 C 17.019531 -62 16.625 -60.707031 16.375 -59.375 C 16.125 -58.042969 16 -56.6875 16 -55.3125 C 16 -53.9375 16.167969 -52.582031 16.5 -51.25 C 16.832031 -49.917969 17.292969 -48.625 17.875 -47.375 C 18.457031 -46.125 19.167969 -44.957031 20 -43.875 C 20.832031 -42.707031 21.769531 -41.6875 22.8125 -40.8125 C 23.855469 -39.9375 24.957031 -39.167969 26.125 -38.5 C 27.375 -37.832031 28.667969 -37.292969 30 -36.875 C 31.332031 -36.457031 32.667969 -36.167969 34 -36 C 34.75 -35.917969 35.394531 -35.625 35.9375 -35.125 C 36.480469 -34.625 36.792969 -34.042969 36.875 -33.375 C 37.375 -30.125 38.417969 -27.082031 40 -24.25 C 41.582031 -21.417969 43.625 -18.917969 46.125 -16.75 C 48.625 -14.667969 51.417969 -13.042969 54.5 -11.875 C 57.582031 -10.707031 60.75 -10.125 64 -10.125 C 67.332031 -10.125 70.542969 -10.667969 73.625 -11.75 C 76.707031 -12.832031 79.5 -14.417969 82 -16.5 C 84.582031 -18.667969 86.6875 -21.144531 88.3125 -23.9375 C 89.9375 -26.730469 91 -29.75 91.5 -33 C 91.667969 -33.75 92 -34.355469 92.5 -34.8125 C 93 -35.269531 93.625 -35.542969 94.375 -35.625 C 95.792969 -35.707031 97.167969 -35.957031 98.5 -36.375 C 99.832031 -36.792969 101.082031 -37.332031 102.25 -38 C 103.5 -38.667969 104.667969 -39.4375 105.75 -40.3125 C 106.832031 -41.1875 107.792969 -42.167969 108.625 -43.25 C 109.457031 -44.332031 110.167969 -45.5 110.75 -46.75 C 111.332031 -48 111.792969 -49.292969 112.125 -50.625 C 112.457031 -51.957031 112.644531 -53.3125 112.6875 -54.6875 C 112.730469 -56.0625 112.625 -57.417969 112.375 -58.75 C 112.207031 -60.082031 111.855469 -61.394531 111.3125 -62.6875 C 110.769531 -63.980469 110.125 -65.167969 109.375 -66.25 C 108.625 -67.417969 107.75 -68.480469 106.75 -69.4375 C 105.75 -70.394531 104.667969 -71.25 103.5 -72 C 102.25 -72.75 100.980469 -73.355469 99.6875 -73.8125 C 98.394531 -74.269531 97.082031 -74.625 95.75 -74.875 C 94.832031 -74.957031 94.125 -75.355469 93.625 -76.0625 C 93.125 -76.769531 92.917969 -77.542969 93 -78.375 C 93.167969 -79.292969 93.582031 -80.019531 94.25 -80.5625 C 94.917969 -81.105469 95.707031 -81.292969 96.625 -81.125 C 98.457031 -80.875 100.230469 -80.4375 101.9375 -79.8125 C 103.644531 -79.1875 105.25 -78.375 106.75 -77.375 C 108.332031 -76.375 109.792969 -75.25 111.125 -74 C 112.457031 -72.75 113.625 -71.375 114.625 -69.875 C 115.625 -68.375 116.480469 -66.769531 117.1875 -65.0625 C 117.894531 -63.355469 118.417969 -61.625 118.75 -59.875 C 119 -58.042969 119.105469 -56.230469 119.0625 -54.4375 C 119.019531 -52.644531 118.792969 -50.875 118.375 -49.125 C 117.875 -47.292969 117.230469 -45.5625 116.4375 -43.9375 C 115.644531 -42.3125 114.707031 -40.792969 113.625 -39.375 C 112.457031 -37.957031 111.1875 -36.644531 109.8125 -35.4375 C 108.4375 -34.230469 106.957031 -33.207031 105.375 -32.375 C 104.125 -31.707031 102.8125 -31.144531 101.4375 -30.6875 C 100.0625 -30.230469 98.667969 -29.875 97.25 -29.625 C 96.417969 -26.125 95.042969 -22.832031 93.125 -19.75 C 91.207031 -16.667969 88.875 -13.957031 86.125 -11.625 Z M 64.375 -105.75 C 65.207031 -105.75 65.9375 -105.4375 66.5625 -104.8125 C 67.1875 -104.1875 67.5 -103.457031 67.5 -102.625 L 67.5 -34.625 C 67.5 -33.792969 67.1875 -33.0625 66.5625 -32.4375 C 65.9375 -31.8125 65.207031 -31.5 64.375 -31.5 C 63.457031 -31.5 62.6875 -31.8125 62.0625 -32.4375 C 61.4375 -33.0625 61.125 -33.792969 61.125 -34.625 L 61.125 -102.625 C 61.125 -103.457031 61.4375 -104.1875 62.0625 -104.8125 C 62.6875 -105.4375 63.457031 -105.75 64.375 -105.75 Z M 52.625 -105.75 C 53.457031 -105.5 54.105469 -105 54.5625 -104.25 C 55.019531 -103.5 55.125 -102.707031 54.875 -101.875 L 41 -45 C 40.75 -44.167969 40.25 -43.519531 39.5 -43.0625 C 38.75 -42.605469 37.957031 -42.457031 37.125 -42.625 C 36.292969 -42.875 35.644531 -43.375 35.1875 -44.125 C 34.730469 -44.875 34.582031 -45.667969 34.75 -46.5 L 48.75 -103.375 C 48.917969 -104.207031 49.375 -104.855469 50.125 -105.3125 C 50.875 -105.769531 51.707031 -105.917969 52.625 -105.75 Z M 76.125 -105.75 C 75.292969 -105.5 74.644531 -105 74.1875 -104.25 C 73.730469 -103.5 73.582031 -102.707031 73.75 -101.875 L 87.75 -45 C 87.917969 -44.167969 88.394531 -43.519531 89.1875 -43.0625 C 89.980469 -42.605469 90.792969 -42.457031 91.625 -42.625 C 92.457031 -42.875 93.105469 -43.375 93.5625 -44.125 C 94.019531 -44.875 94.125 -45.667969 93.875 -46.5 L 80 -103.375 C 79.75 -104.207031 79.25 -104.855469 78.5 -105.3125 C 77.75 -105.769531 76.957031 -105.917969 76.125 -105.75 Z M 76.125 -105.75',
-    water: 'M 63.875 -109.375 C 64.625 -109.375 65.292969 -109.125 65.875 -108.625 C 66.457031 -108.125 66.832031 -107.5 67 -106.75 C 67.582031 -103.667969 68.5 -100.582031 69.75 -97.5 C 71 -94.5 72.480469 -91.582031 74.1875 -88.75 C 75.894531 -85.917969 77.832031 -83.292969 80 -80.875 C 82.167969 -78.375 84.542969 -76.125 87.125 -74.125 C 92.707031 -69.625 96.957031 -64.6875 99.875 -59.3125 C 102.792969 -53.9375 104.25 -48.292969 104.25 -42.375 C 104.25 -37.042969 103.207031 -31.894531 101.125 -26.9375 C 99.042969 -21.980469 96.125 -17.625 92.375 -13.875 C 88.625 -10.042969 84.269531 -7.105469 79.3125 -5.0625 C 74.355469 -3.019531 69.207031 -2 63.875 -2 C 58.542969 -2 53.394531 -3.019531 48.4375 -5.0625 C 43.480469 -7.105469 39.082031 -10.042969 35.25 -13.875 C 31.5 -17.625 28.605469 -21.980469 26.5625 -26.9375 C 24.519531 -31.894531 23.5 -37.042969 23.5 -42.375 C 23.5 -48.292969 24.957031 -53.9375 27.875 -59.3125 C 30.792969 -64.6875 35.042969 -69.625 40.625 -74.125 C 43.125 -76.125 45.457031 -78.375 47.625 -80.875 C 49.792969 -83.292969 51.75 -85.917969 53.5 -88.75 C 55.25 -91.582031 56.75 -94.5 58 -97.5 C 59.167969 -100.582031 60.082031 -103.667969 60.75 -106.75 C 60.917969 -107.5 61.292969 -108.125 61.875 -108.625 C 62.457031 -109.125 63.125 -109.375 63.875 -109.375 Z M 63.875 -95.125 C 61.792969 -90.042969 59.105469 -85.269531 55.8125 -80.8125 C 52.519531 -76.355469 48.792969 -72.457031 44.625 -69.125 C 39.542969 -65.125 35.8125 -60.855469 33.4375 -56.3125 C 31.0625 -51.769531 29.875 -47.125 29.875 -42.375 C 29.875 -37.875 30.730469 -33.542969 32.4375 -29.375 C 34.144531 -25.207031 36.582031 -21.542969 39.75 -18.375 C 43 -15.207031 46.707031 -12.75 50.875 -11 C 55.042969 -9.25 59.375 -8.375 63.875 -8.375 C 68.375 -8.375 72.707031 -9.25 76.875 -11 C 81.042969 -12.75 84.707031 -15.207031 87.875 -18.375 C 91.042969 -21.542969 93.5 -25.207031 95.25 -29.375 C 97 -33.542969 97.875 -37.875 97.875 -42.375 C 97.875 -47.125 96.667969 -51.769531 94.25 -56.3125 C 91.832031 -60.855469 88.125 -65.125 83.125 -69.125 C 78.957031 -72.457031 75.207031 -76.355469 71.875 -80.8125 C 68.542969 -85.269531 65.875 -90.042969 63.875 -95.125 Z M 41.625 -45.5 C 42.542969 -45.75 43.375 -45.644531 44.125 -45.1875 C 44.875 -44.730469 45.332031 -44.082031 45.5 -43.25 C 46.25 -40.417969 47.0625 -37.8125 47.9375 -35.4375 C 48.8125 -33.0625 50.082031 -30.957031 51.75 -29.125 C 53.25 -27.292969 55.332031 -25.707031 58 -24.375 C 60.667969 -23.042969 64.332031 -22.125 69 -21.625 C 69.832031 -21.542969 70.542969 -21.144531 71.125 -20.4375 C 71.707031 -19.730469 71.917969 -18.957031 71.75 -18.125 C 71.667969 -17.207031 71.292969 -16.480469 70.625 -15.9375 C 69.957031 -15.394531 69.167969 -15.167969 68.25 -15.25 C 63.082031 -15.832031 58.769531 -16.957031 55.3125 -18.625 C 51.855469 -20.292969 49.042969 -22.375 46.875 -24.875 C 44.707031 -27.375 43.105469 -30.082031 42.0625 -33 C 41.019531 -35.917969 40.125 -38.792969 39.375 -41.625 C 39.125 -42.457031 39.230469 -43.25 39.6875 -44 C 40.144531 -44.75 40.792969 -45.25 41.625 -45.5 Z M 41.625 -45.5',
-    flush: 'M 33.25 -71.25 L 33.25 -84.375 C 33.25 -89.457031 35.042969 -93.792969 38.625 -97.375 C 42.207031 -100.957031 46.542969 -102.75 51.625 -102.75 L 76.25 -102.75 C 81.332031 -102.75 85.644531 -100.957031 89.1875 -97.375 C 92.730469 -93.792969 94.5 -89.457031 94.5 -84.375 L 94.5 -71.25 Z M 100.125 -65.75 L 100.125 -84.375 C 100.125 -90.957031 97.792969 -96.582031 93.125 -101.25 C 88.457031 -105.917969 82.832031 -108.25 76.25 -108.25 L 51.625 -108.25 C 45.042969 -108.25 39.417969 -105.917969 34.75 -101.25 C 30.082031 -96.582031 27.75 -90.957031 27.75 -84.375 L 27.75 -65.75 Z M 27.75 -54.375 C 27.75 -55.125 28.019531 -55.769531 28.5625 -56.3125 C 29.105469 -56.855469 29.792969 -57.125 30.625 -57.125 L 98.75 -57.125 C 99.5 -57.125 100.144531 -56.855469 100.6875 -56.3125 C 101.230469 -55.769531 101.5 -55.125 101.5 -54.375 C 101.5 -53.625 101.230469 -52.957031 100.6875 -52.375 C 100.144531 -51.792969 99.5 -51.5 98.75 -51.5 L 30.625 -51.5 C 29.792969 -51.5 29.105469 -51.792969 28.5625 -52.375 C 28.019531 -52.957031 27.75 -53.625 27.75 -54.375 Z M 63.875 -45.75 C 64.542969 -45.75 65.144531 -45.542969 65.6875 -45.125 C 66.230469 -44.707031 66.542969 -44.167969 66.625 -43.5 C 67.125 -41.25 68.042969 -39.0625 69.375 -36.9375 C 70.707031 -34.8125 72.292969 -33.042969 74.125 -31.625 C 76.542969 -29.707031 78.394531 -27.605469 79.6875 -25.3125 C 80.980469 -23.019531 81.625 -20.542969 81.625 -17.875 C 81.625 -15.542969 81.167969 -13.3125 80.25 -11.1875 C 79.332031 -9.0625 78.042969 -7.167969 76.375 -5.5 C 74.707031 -3.917969 72.792969 -2.6875 70.625 -1.8125 C 68.457031 -0.9375 66.207031 -0.5 63.875 -0.5 C 61.542969 -0.5 59.292969 -0.9375 57.125 -1.8125 C 54.957031 -2.6875 53.042969 -3.917969 51.375 -5.5 C 49.792969 -7.167969 48.542969 -9.0625 47.625 -11.1875 C 46.707031 -13.3125 46.25 -15.542969 46.25 -17.875 C 46.25 -20.542969 46.894531 -23.019531 48.1875 -25.3125 C 49.480469 -27.605469 51.292969 -29.707031 53.625 -31.625 C 55.542969 -33.042969 57.167969 -34.8125 58.5 -36.9375 C 59.832031 -39.0625 60.75 -41.25 61.25 -43.5 C 61.332031 -44.167969 61.625 -44.707031 62.125 -45.125 C 62.625 -45.542969 63.207031 -45.75 63.875 -45.75 Z M 63.875 -35.125 C 63.042969 -33.625 62.042969 -32.207031 60.875 -30.875 C 59.707031 -29.542969 58.457031 -28.332031 57.125 -27.25 C 55.207031 -25.75 53.832031 -24.207031 53 -22.625 C 52.167969 -21.042969 51.75 -19.457031 51.75 -17.875 C 51.75 -16.292969 52.0625 -14.792969 52.6875 -13.375 C 53.3125 -11.957031 54.207031 -10.667969 55.375 -9.5 C 56.457031 -8.417969 57.75 -7.5625 59.25 -6.9375 C 60.75 -6.3125 62.292969 -6 63.875 -6 C 65.542969 -6 67.105469 -6.3125 68.5625 -6.9375 C 70.019531 -7.5625 71.332031 -8.417969 72.5 -9.5 C 73.667969 -10.667969 74.542969 -11.957031 75.125 -13.375 C 75.707031 -14.792969 76 -16.292969 76 -17.875 C 76 -19.457031 75.582031 -21.042969 74.75 -22.625 C 73.917969 -24.207031 72.582031 -25.75 70.75 -27.25 C 69.332031 -28.332031 68.0625 -29.542969 66.9375 -30.875 C 65.8125 -32.207031 64.792969 -33.625 63.875 -35.125 Z M 63.875 -35.125'
-  };
-  return `
-    <svg class="machine-graphic-streamline" viewBox="0 0 160 160" role="img" aria-label="${toneLabel(tone)}">
-      <g transform="translate(16 136)">
-        <path d="${streamlineGlyphs[tone]}" />
-      </g>
-    </svg>
-  `;
-}
-
-function toneLabel(tone: MachineLaneOptions<object>['tone']): string {
-  if (tone === 'water') return 'Water';
-  if (tone === 'flush') return 'Flush';
-  return 'Steam';
-}
-
-function machineValueTile(name: string, label: string, value: number | undefined, spec: NumberSpec): MachineValueTile {
-  return {
-    name,
-    label,
-    value: formatMachineValue(value),
-    unit: spec.enabled ? spec.unit : 'Unavailable',
-    spec,
-    disabled: !spec.enabled
-  };
-}
-
-function machineHotWaterStopModeTile(mode: HotWaterStopMode, scaleIsConnected: boolean): MachineValueTile {
-  const nextMode: HotWaterStopMode = mode === 'time' ? 'volume' : 'time';
-  return {
-    label: 'Stop by',
-    value: mode === 'time' ? 'Time' : scaleIsConnected ? 'Weight' : 'Volume',
-    unit: mode === 'time'
-      ? 'Timer'
-      : scaleIsConnected
-        ? 'Scale'
-        : 'Machine',
-    action: 'machine-water-stop-mode',
-    actionValue: nextMode
-  };
-}
-
-function hotWaterTargetSpec(spec: NumberSpec, scaleIsConnected: boolean): NumberSpec {
-  return scaleIsConnected
-    ? { ...spec, unit: 'g', reason: undefined }
-    : spec;
-}
-
-function machineSteamPurgeTile(mode: number | null | undefined): MachineValueTile {
-  const currentMode = normalizeSteamPurgeMode(mode);
-  const nextMode = currentMode === 0 ? 1 : 0;
-  return {
-    name: 'steamPurgeMode',
-    label: 'Purge',
-    value: steamPurgeModeLabel(currentMode),
-    unit: currentMode === 0 ? 'On stop' : 'Second tap',
-    action: 'machine-steam-purge-mode',
-    actionValue: String(nextMode)
-  };
-}
-
-function renderMachineValueTile(tile: MachineValueTile): string {
-  const disabled = tile.disabled === true ? ' disabled' : '';
-  const action = tile.action
-    ? ` data-action="${escapeAttr(tile.action)}" data-value="${escapeAttr(tile.actionValue ?? '')}"`
-    : tile.name && tile.spec?.enabled
-    ? ` data-action="machine-edit-value" data-name="${escapeAttr(tile.name)}" data-title="${escapeAttr(tile.label)}" data-value="${escapeAttr(tile.value)}" data-unit="${escapeAttr(tile.spec.unit)}" data-min="${tile.spec.min}" data-max="${tile.spec.max}" data-step="${tile.spec.step}"`
-    : '';
-  const title = tile.spec?.reason ? ` title="${escapeAttr(tile.spec.reason)}"` : '';
-  return `
-    <button type="button" class="machine-value-tile ${tile.disabled ? 'disabled' : ''}"${action}${title}${disabled}>
-      <span class="machine-value-label">${escapeHtml(tile.label)}</span>
-      <strong>${escapeHtml(tile.value || '--')}</strong>
-      <em>${escapeHtml(tile.unit)}</em>
-    </button>
-  `;
-}
-
-function normalizeSteamPurgeMode(mode: number | null | undefined): number {
-  if (mode === 0 || mode === 1) return mode;
-  return 0;
-}
-
-function steamPurgeModeLabel(mode: number): string {
-  return STEAM_PURGE_MODES.find((option) => option.value === mode)?.label ?? STEAM_PURGE_MODES[0]!.label;
-}
-
-function machineSettingsFromWorkflow(
-  steam: SteamSettings,
-  water: HotWaterData,
-  flush: RinseData,
-  current: De1MachineSettings | null
-): De1MachineSettings {
-  return {
-    ...(current ?? {}),
-    steamFlow: steam.flow,
-    hotWaterFlow: water.flow,
-    flushTemp: flush.targetTemperature,
-    flushFlow: flush.flow,
-    flushTimeout: flush.duration
-  };
-}
-
-function machineSettingsPatchFromWorkflow(
-  steam: SteamSettings,
-  water: HotWaterData,
-  flush: RinseData
-): Partial<De1MachineSettings> {
-  return {
-    steamFlow: steam.flow,
-    hotWaterFlow: water.flow,
-    flushTemp: flush.targetTemperature,
-    flushFlow: flush.flow,
-    flushTimeout: flush.duration
-  };
-}
-
-function hotWaterDataForNativeWorkflow(
-  water: HotWaterData,
-  hotWaterStopMode: HotWaterStopMode,
-  hotWaterScaleConnected: boolean
-): HotWaterData {
-  if (hotWaterStopMode !== 'volume' || !hotWaterScaleConnected) return water;
-  const nativeDuration = hotWaterWeightNativeDuration(water);
-  if (nativeDuration == null) return water;
-  const currentDuration = positiveNumber(water.duration) ?? 0;
-  const duration = Math.max(currentDuration, nativeDuration);
-  if (water.volume === HOT_WATER_WEIGHT_NATIVE_VOLUME_ML && water.duration === duration) return water;
-  return {
-    ...water,
-    volume: HOT_WATER_WEIGHT_NATIVE_VOLUME_ML,
-    duration
-  };
-}
-
-function hotWaterWeightNativeDuration(water: HotWaterData): number | null {
-  const targetWeight = positiveNumber(water.volume);
-  const flow = positiveNumber(water.flow) ?? positiveNumber(DEFAULT_HOT_WATER.flow);
-  if (targetWeight == null || flow == null) return null;
-  return Math.min(180, Math.ceil(targetWeight / flow + HOT_WATER_WEIGHT_NATIVE_HEADROOM_SECONDS));
-}
-
-function formatMachineValue(value: number | undefined): string {
-  if (value == null || !Number.isFinite(value)) return '';
-  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
-}
-
-function topStat(label: string, value: string, id?: string, toneClass?: string): string {
-  const idAttr = id ? ` id="${id}"` : '';
-  const cls = toneClass ? ` ${toneClass}` : '';
-  return `<div class="top-stat${cls}"><label>${escapeHtml(label)}</label><strong${idAttr}>${escapeHtml(value)}</strong></div>`;
-}
-
-function topStatButton(label: string, value: string, title: string, action: string, id?: string): string {
-  const idAttr = id ? ` id="${id}"` : '';
-  return `
-    <button class="top-stat top-stat-button" data-action="${escapeAttr(action)}" aria-label="${escapeAttr(`${label}: ${value}. ${title}`)}" title="${escapeAttr(title)}">
-      <span class="top-stat-label">${escapeHtml(label)}</span>
-      <strong${idAttr}>${escapeHtml(value)}</strong>
-    </button>
-  `;
-}
-
-function liveReadout(label: string, id: string, value: string, unit = ''): string {
-  const suffix = unit ? `<em>${escapeHtml(unit)}</em>` : '';
-  return `<div class="live-readout"><label>${escapeHtml(label)}</label><strong id="${id}">${escapeHtml(value)}</strong>${suffix}</div>`;
-}
-
-
-function shotDurationLabel(shot: ShotRecord): string | null {
-  const all = shot.measurements;
-  if (!Array.isArray(all) || all.length < 2) return null;
-  // Mirror the chart's window: prefer the espresso pour (preinfusion/pouring)
-  // span when substates are present, else the full measurement span.
-  const pour = all.filter((m) => {
-    const sub = (m.machine as { state?: { substate?: string } } | undefined)?.state?.substate;
-    return sub === 'preinfusion' || sub === 'pouring';
-  });
-  const series = pour.length > 1 ? pour : all;
-  const first = Date.parse(series[0]!.machine.timestamp);
-  const last = Date.parse(series[series.length - 1]!.machine.timestamp);
-  if (!Number.isFinite(first) || !Number.isFinite(last) || last <= first) return null;
-  return `${Math.round((last - first) / 1000)}s`;
-}
-
-function completedLiveShot(
-  records: ShotRecord[],
-  context: { previousShotIds: Set<string>; startedAtMs: number | null; endedAtMs: number | null },
-  allowFallback: boolean
-): ShotRecord | null {
-  const newShot = records.find(
-    (shot) => !context.previousShotIds.has(shot.id) && shotMatchesLiveWindow(shot, context)
-  );
-  if (newShot) return newShot;
-
-  const timeMatch = records.find((shot) => shotMatchesLiveWindow(shot, context));
-  if (timeMatch) return timeMatch;
-
-  if (!allowFallback) return null;
-  const newest = records[0] ?? null;
-  if (!newest || context.previousShotIds.has(newest.id)) return null;
-  const timestamp = Date.parse(newest.timestamp);
-  return context.startedAtMs == null || !Number.isFinite(timestamp) ? newest : null;
-}
-
-function shotMatchesLiveWindow(
-  shot: ShotRecord,
-  context: { startedAtMs: number | null; endedAtMs: number | null }
-): boolean {
-  if (context.startedAtMs == null) return false;
-  const timestamp = Date.parse(shot.timestamp);
-  if (!Number.isFinite(timestamp)) return false;
-  const start = context.startedAtMs - 10_000;
-  const end = (context.endedAtMs ?? Date.now()) + 90_000;
-  return timestamp >= start && timestamp <= end;
-}
-
-function includeShotInHistory(records: ShotRecord[], shot: ShotRecord, limit: number): ShotRecord[] {
-  const withoutDuplicate = records.filter((item) => item.id !== shot.id);
-  return [shot, ...withoutDuplicate].slice(0, Math.max(1, limit));
 }
 
 function optimisticShotFromLive(
@@ -7633,77 +5821,6 @@ function promoteBean(beans: Bean[], beanId: string): Bean[] {
   const bean = beans.find((item) => item.id === beanId);
   if (!bean) return beans;
   return [bean, ...beans.filter((item) => item.id !== beanId)];
-}
-
-function enjoymentBadge(shot: ShotRecord, size: 'row' | 'detail' = 'row'): string {
-  // Unrated shots (null, or the 0 that de1app imports use as "not rated")
-  // get no badge — scoreOptionForValue treats both as no score.
-  const score = scoreOptionForValue(shot.annotations?.enjoyment);
-  if (!score) {
-    if (size === 'row') return '<span class="enjoyment-badge empty" aria-hidden="true"></span>';
-    return '';
-  }
-  return `<span class="enjoyment-badge ${score.tone} ${size === 'detail' ? 'large' : ''}" aria-label="Enjoyment ${escapeAttr(score.label)}">${escapeHtml(score.label)}</span>`;
-}
-
-function shotRecipeDisplay(shot: ShotRecord, recipe: RecipeDraft): string {
-  const yieldText = shotYieldDisplay(shot, recipe.yield);
-  return `${formatGrams(recipe.dose)} → ${yieldText}`;
-}
-
-function shotYieldDisplay(shot: ShotRecord, fallbackYield: number | null | undefined): string {
-  const actual = shot.annotations?.actualYield;
-  if (typeof actual === 'number' && Number.isFinite(actual) && actual > 0) {
-    return formatGrams(actual);
-  }
-  const target = shot.workflow?.context?.targetYield;
-  if (typeof target === 'number' && Number.isFinite(target) && target > 0 && fallbackYield === target) {
-    return `target ${formatGrams(target)}`;
-  }
-  return formatGrams(fallbackYield);
-}
-
-function shotDateShortLabel(timestamp: string): string | null {
-  const date = new Date(timestamp);
-  if (Number.isNaN(date.valueOf())) return null;
-  return date.toLocaleString([], { month: 'short', day: 'numeric' });
-}
-
-function shotScoreControl(
-  value: number | null,
-  options: { action: 'shot-edit-score' | 'set-shot-score'; shotId?: string; variant: 'edit' | 'detail' }
-): string {
-  const current = scoreOptionForValue(value);
-  const idAttr = options.shotId ? ` data-id="${escapeAttr(options.shotId)}"` : '';
-  return `
-    <div class="shot-score-control ${options.variant === 'detail' ? 'compact' : ''}" aria-label="Shot score">
-      ${SHOT_SCORE_OPTIONS.map((item) => {
-        const active = current?.value === item.value;
-        return `<button type="button" class="shot-score-word ${item.tone} ${active ? 'active' : ''}" data-action="${options.action}"${idAttr} data-value="${item.value}" aria-label="${escapeAttr(item.label)}" aria-pressed="${active}" title="${escapeAttr(item.label)}">${escapeHtml(item.label)}</button>`;
-      }).join('')}
-    </div>
-  `;
-}
-
-function scoreOptionForValue(value: number | null | undefined): ShotScoreOption | null {
-  if (value == null || value <= 0) return null;
-  let closest: ShotScoreOption = SHOT_SCORE_OPTIONS[0]!;
-  let distance = Math.abs(value - closest.value);
-  for (const option of SHOT_SCORE_OPTIONS) {
-    const nextDistance = Math.abs(value - option.value);
-    if (nextDistance < distance) {
-      closest = option;
-      distance = nextDistance;
-    }
-  }
-  return closest;
-}
-
-function scoreValueFromTap(value: string | undefined, currentValue: number | null | undefined): number | null {
-  if (!value) return null;
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return null;
-  return scoreOptionForValue(currentValue)?.value === parsed ? null : parsed;
 }
 
 function shotEditDraftFromShot(shot: ShotRecord): ShotEditDraft {
@@ -7913,86 +6030,6 @@ function shotFieldLabel(field: ShotEditField): string {
   return labels[field];
 }
 
-function fieldDisplayValue(field: ShotEditField, value: unknown): string {
-  const text = inputValue(value);
-  if (!text) return '--';
-  if (field === 'espressoNotes') return text.length > 52 ? `${text.slice(0, 49)}...` : text;
-  return text;
-}
-
-function grinderDisplayLabel(grinderId: string | null, grinders: Grinder[]): string | null {
-  if (!grinderId) return null;
-  return grinders.find((grinder) => grinder.id === grinderId)?.model ?? grinderId;
-}
-
-function shotBeanLabel(draft: ShotEditDraft): string {
-  const roaster = (draft.coffeeRoaster ?? '').trim();
-  const name = (draft.coffeeName ?? '').trim();
-  if (roaster && name) return `${roaster} · ${name}`;
-  return name || roaster || 'No bean';
-}
-
-function isShotNumberField(field: ShotEditField): field is Extract<
-  ShotEditField,
-  'targetDoseWeight' | 'targetYield' | 'actualDoseWeight' | 'actualYield' | 'drinkTds' | 'drinkEy'
-> {
-  return (
-    field === 'targetDoseWeight' ||
-    field === 'targetYield' ||
-    field === 'actualDoseWeight' ||
-    field === 'actualYield' ||
-    field === 'drinkTds' ||
-    field === 'drinkEy'
-  );
-}
-
-function shotNumberFieldStep(field: ShotEditField): string {
-  return field === 'drinkTds' || field === 'drinkEy' ? '0.01' : '0.1';
-}
-
-function batchOptionLabel(batch: BeanBatch): string {
-  const roast = batch.roastDate ? new Date(batch.roastDate) : null;
-  const roastText =
-    roast && !Number.isNaN(roast.valueOf())
-      ? roast.toLocaleDateString([], { month: 'short', day: 'numeric' })
-      : 'Batch';
-  const remaining = batch.weightRemaining != null ? ` · ${formatGrams(batch.weightRemaining)}` : '';
-  return `${roastText}${remaining}`;
-}
-
-function recentBatches(batches: BeanBatch[], limit: number): BeanBatch[] {
-  return [...batches]
-    .sort((a, b) => {
-      const ad = a.roastDate ? Date.parse(a.roastDate) : 0;
-      const bd = b.roastDate ? Date.parse(b.roastDate) : 0;
-      return bd - ad;
-    })
-    .slice(0, limit);
-}
-
-function profileGroup(title: string, author?: string): string {
-  const slash = title.indexOf('/');
-  if (slash > 0) return title.slice(0, slash).trim();
-  return author?.trim() || 'Profiles';
-}
-
-function profileShortTitle(title: string): string {
-  const slash = title.indexOf('/');
-  return slash > 0 ? title.slice(slash + 1).trim() : title;
-}
-
-function displayProfileType(value: string): string {
-  const legacy =
-    value === 'settings_2a'
-      ? 'pressure'
-      : value === 'settings_2b'
-        ? 'flow'
-        : value === 'settings_2c' || value === 'settings_2c2'
-          ? 'advanced'
-          : value;
-  return legacy.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
 function textOrNull(value: FormDataEntryValue | null): string | null {
   const text = String(value ?? '').trim();
   return text ? text : null;
@@ -8009,14 +6046,6 @@ function decimalPlaces(value: number): number {
   if (!Number.isFinite(value)) return 0;
   const [, fraction = ''] = value.toString().split('.');
   return fraction.length;
-}
-
-function dateInputValue(value: string | null | undefined): string {
-  if (!value) return '';
-  const match = value.match(/^\d{4}-\d{2}-\d{2}/);
-  if (match) return match[0]!;
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf()) ? '' : date.toISOString().slice(0, 10);
 }
 
 function todayDateInputValue(): string {
@@ -8055,112 +6084,6 @@ function inputValue(value: unknown): string {
   return String(value);
 }
 
-function applyShotUpdate(shot: ShotRecord, update: ShotUpdate): ShotRecord {
-  const workflow = update.workflow
-    ? ({
-        ...(shot.workflow ?? {}),
-        ...update.workflow,
-        context: Object.prototype.hasOwnProperty.call(update.workflow, 'context')
-          ? update.workflow.context
-          : shot.workflow?.context
-      } as Workflow)
-    : shot.workflow;
-  return {
-    ...shot,
-    workflow,
-    annotations: Object.prototype.hasOwnProperty.call(update, 'annotations')
-      ? update.annotations
-      : shot.annotations,
-    shotNotes: Object.prototype.hasOwnProperty.call(update, 'shotNotes')
-      ? update.shotNotes
-      : shot.shotNotes,
-    metadata: Object.prototype.hasOwnProperty.call(update, 'metadata')
-      ? update.metadata
-      : shot.metadata
-  };
-}
-
-function temp(value: number | null | undefined): string {
-  return value == null ? '--' : `${Math.round(value)}°C`;
-}
-
-function water(value: number | null | undefined): string {
-  // reaprime reports tank level as a height in mm; convert to ml via de1app's
-  // calibration table and round to tens, the way de1app shows it (~X mL).
-  if (value == null) return '--';
-  const ml = Math.round(waterTankMlFromMm(value) / 10) * 10;
-  return `${ml} ml`;
-}
-
-function scaleConnected(scale: ScaleSnapshot | null): boolean {
-  return scale != null && scale.status !== 'disconnected';
-}
-
-function isNoScaleShotBlockError(error: unknown): boolean {
-  if (!(error instanceof GatewayRequestError)) return false;
-  const message = error.issue.message.toLowerCase();
-  return error.issue.statusCode === 400 && (message.includes('block_no_scale') || message.includes('no scale'));
-}
-
-function isBrewState(state: string | undefined): boolean {
-  return state === 'espresso' || state === 'brewing';
-}
-
-// A friendly readiness label instead of the raw machine state. Heating shows
-// while warming up (including idle-but-below-target); otherwise "Ready".
-function machineStatus(machine: MachineSnapshot | null, loading: boolean): string {
-  if (!machine) return loading ? 'Connecting…' : 'Offline';
-  switch (machine.state?.state) {
-    case 'heating':
-    case 'preheating':
-      return 'Heating';
-    case 'sleeping':
-      return 'Asleep';
-    case 'schedIdle':
-      return 'Scheduled';
-    case 'espresso':
-      return 'Brewing';
-    case 'steam':
-      return 'Steaming';
-    case 'steamRinse':
-      return 'Steam rinse';
-    case 'hotWater':
-      return 'Hot water';
-    case 'flush':
-      return 'Flushing';
-    case 'needsWater':
-      return 'Add water';
-    case 'cleaning':
-      return 'Cleaning';
-    case 'descaling':
-      return 'Descaling';
-    case 'booting':
-      return 'Booting';
-    case 'error':
-      return 'Error';
-    default: {
-      const t = machine.groupTemperature;
-      const target = machine.targetGroupTemperature;
-      if (t != null && target != null && target > 0 && t < target - 2) return 'Heating';
-      return 'Ready';
-    }
-  }
-}
-
-function formatNumber(value: number | null | undefined, digits: number): string {
-  return value == null || Number.isNaN(value) ? '--' : value.toFixed(digits);
-}
-
-function round(value: number, digits: number): number {
-  const factor = 10 ** digits;
-  return Math.round(value * factor) / factor;
-}
-
-function capitalize(value: string): string {
-  if (!value) return value;
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
 function isEditField(value: string | undefined): value is EditField {
   return (
     value === 'dose' ||
@@ -8186,255 +6109,4 @@ function isShotEditField(value: string | undefined): value is ShotEditField {
     value === 'drinkEy' ||
     value === 'espressoNotes'
   );
-}
-
-function isMachineCommand(value: string | undefined): value is MachineState {
-  return value === 'espresso' || value === 'steam' || value === 'flush' || value === 'hotWater';
-}
-
-function machineServiceState(state: MachineState | undefined): MachineServiceState | null {
-  if (state === 'steamRinse') return 'steam';
-  if (state === 'steam' || state === 'flush' || state === 'hotWater') return state;
-  return null;
-}
-
-function machineServiceTone(service: MachineServiceState): MachineLaneOptions<object>['tone'] {
-  if (service === 'hotWater') return 'water';
-  return service;
-}
-
-function machineServiceVerb(service: MachineServiceState): string {
-  if (service === 'hotWater') return 'Pouring hot water';
-  if (service === 'flush') return 'Flushing';
-  return 'Steaming';
-}
-
-function machineServiceTargetSeconds(
-  service: MachineServiceState,
-  steam: SteamSettings,
-  water: HotWaterData,
-  flush: RinseData,
-  hotWaterStopMode: HotWaterStopMode,
-  hotWaterScaleConnected: boolean
-): number | null {
-  if (service === 'steam') return positiveNumber(steam.duration);
-  if (service === 'flush') return positiveNumber(flush.duration);
-  if (hotWaterStopMode === 'time') return positiveNumber(water.duration);
-  if (hotWaterScaleConnected) return null;
-  return positiveNumber(water.duration) ?? hotWaterVolumeSeconds(water);
-}
-
-function hotWaterVolumeSeconds(water: HotWaterData): number | null {
-  const volume = positiveNumber(water.volume);
-  const flow = positiveNumber(water.flow);
-  if (volume == null || flow == null) return null;
-  return volume / flow;
-}
-
-function machineServiceStats(
-  targetSeconds: number | null,
-  targetWeight: number | null = null
-): Array<{ label: string; value: string; unit: string }> {
-  const target = targetWeight == null
-    ? { label: 'Target', value: targetSeconds == null ? '--' : formatSecondsValue(targetSeconds), unit: 's' }
-    : { label: 'Target', value: formatNumber(targetWeight, 0), unit: 'g' };
-  return [target];
-}
-
-function machineServiceMeta(
-  service: MachineServiceState,
-  steam: SteamSettings,
-  water: HotWaterData,
-  flush: RinseData,
-  machine: MachineSnapshot | null,
-  scale: ScaleSnapshot | null,
-  hotWaterStopMode: HotWaterStopMode
-): string[] {
-  if (service === 'steam') {
-    return [
-      `${formatNumber(steam.flow, 1)} ml/s`,
-      `${formatNumber(steam.targetTemperature, 0)} C target`,
-      `${formatNumber(machine?.steamTemperature, 0)} C steam`
-    ];
-  }
-  if (service === 'hotWater') {
-    const scaleIsConnected = scaleConnected(scale);
-    const targetLabel = hotWaterStopMode === 'volume' && scaleIsConnected
-      ? `${formatNumber(water.volume, 0)} g target`
-      : hotWaterStopMode === 'time'
-        ? `${formatNumber(water.duration, 0)} s target`
-        : `${formatNumber(water.volume, 0)} ml target`;
-    return [
-      `${formatNumber(water.flow, 1)} ml/s`,
-      targetLabel,
-      ...(hotWaterStopMode === 'volume' && scaleIsConnected ? [`${formatNumber(scale?.weight, 1)} g scale`] : []),
-      `${formatNumber(water.targetTemperature, 0)} C target`,
-      `${formatNumber(machine?.mixTemperature, 0)} C water`
-    ];
-  }
-  return [
-    `${formatNumber(flush.flow, 1)} ml/s`,
-    `${formatNumber(flush.targetTemperature, 0)} C target`,
-    `${formatNumber(machine?.groupTemperature, 0)} C group`
-  ];
-}
-
-function machineServicePrimaryTime(
-  elapsedSeconds: number,
-  targetSeconds: number | null
-): { value: string; label: string } {
-  if (targetSeconds == null) return { value: `${formatSecondsValue(elapsedSeconds)}s`, label: 'elapsed' };
-  if (elapsedSeconds > targetSeconds) {
-    return { value: `+${formatSecondsValue(elapsedSeconds - targetSeconds)}s`, label: 'over target' };
-  }
-  return { value: `${formatSecondsValue(targetSeconds - elapsedSeconds)}s`, label: 'remaining' };
-}
-
-function positiveNumber(value: number | null | undefined): number | null {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
-}
-
-function nonNegativeNumber(value: number | null | undefined): number | null {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
-}
-
-function finiteNumber(value: number | null | undefined): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function formatSecondsValue(value: number): string {
-  if (!Number.isFinite(value)) return '--';
-  return String(Math.max(0, Math.round(value)));
-}
-
-function machineCommandsAvailable(demo: boolean, info: MachineInfo | null): boolean {
-  if (demo) return true;
-  if (!info) return false;
-  return isSimulatorMachine(info) || hasGroupHeadController(info) === false;
-}
-
-function liveChartModelOptions(mode: LiveChartMode): { minTime?: number } {
-  return mode === 'preset30' ? { minTime: 30 } : {};
-}
-
-function liveChartHideMaxTimeLabel(mode: LiveChartMode, maxTime: number): boolean {
-  return mode === 'auto' || maxTime > 30;
-}
-
-function hasGroupHeadController(info: MachineInfo): boolean | null {
-  if (typeof info.GHC === 'boolean') return info.GHC;
-  if (typeof info.groupHeadControllerPresent === 'boolean') return info.groupHeadControllerPresent;
-  return null;
-}
-
-function isSimulatorMachine(info: MachineInfo): boolean {
-  const text = [info.model, info.serialNumber, info.version]
-    .filter((part): part is string => typeof part === 'string')
-    .join(' ')
-    .toLowerCase();
-  if (text.includes('mock') || text.includes('simulator') || text.includes('simulated')) return true;
-  return info.extra?.simulated === true || info.extra?.simulation === true;
-}
-
-function optimisticMachineSnapshot(
-  machine: MachineSnapshot | null,
-  state: MachineState
-): MachineSnapshot {
-  const now = new Date().toISOString();
-  return {
-    timestamp: now,
-    state: { state },
-    flow: machine?.flow ?? 0,
-    pressure: machine?.pressure ?? 0,
-    targetFlow: machine?.targetFlow ?? 0,
-    targetPressure: machine?.targetPressure ?? 0,
-    mixTemperature: machine?.mixTemperature ?? 0,
-    groupTemperature: machine?.groupTemperature ?? 0,
-    targetMixTemperature: machine?.targetMixTemperature ?? 0,
-    targetGroupTemperature: machine?.targetGroupTemperature ?? 0,
-    profileFrame: machine?.profileFrame ?? 0,
-    steamTemperature: machine?.steamTemperature ?? 0
-  };
-}
-
-function machineActionStatus(
-  state: MachineState,
-  phase: 'sending' | 'sent' | 'demo'
-): string {
-  const label = machineStateLabel(state);
-  if (phase === 'sending') return state === 'idle' ? 'Stopping machine' : `Starting ${label}`;
-  if (phase === 'demo') return state === 'idle' ? 'Demo stopped' : `Demo ${label}`;
-  return state === 'idle' ? 'Machine stopped' : `${label} started`;
-}
-
-function machineStateLabel(state: MachineState): string {
-  switch (state) {
-    case 'espresso':
-      return 'shot';
-    case 'hotWater':
-      return 'water';
-    default:
-      return state;
-  }
-}
-
-function draftSignature(draft: RecipeDraft): string {
-  return signatureOf(
-    draft.profileTitle ?? null,
-    draft.dose ?? null,
-    draft.yield ?? null,
-    draft.grinderModel ?? null,
-    draft.grinderSetting ?? null
-  );
-}
-
-function workflowSignature(workflow: Workflow | null): string {
-  const ctx = workflow?.context;
-  return signatureOf(
-    workflow?.profile?.title ?? null,
-    typeof ctx?.targetDoseWeight === 'number' ? ctx.targetDoseWeight : null,
-    typeof ctx?.targetYield === 'number' ? ctx.targetYield : null,
-    ctx?.grinderModel ?? null,
-    ctx?.grinderSetting != null ? String(ctx.grinderSetting) : null
-  );
-}
-
-function signatureOf(
-  profileTitle: string | null,
-  dose: number | null,
-  yieldValue: number | null,
-  grinderModel: string | null,
-  grind: string | null
-): string {
-  return JSON.stringify([profileTitle, dose, yieldValue, grinderModel, grind]);
-}
-
-function isThemePreference(value: string | undefined): value is ThemePreference {
-  return value != null && (THEME_PREFERENCES as string[]).includes(value);
-}
-
-function isUIScalePreference(value: string | undefined): value is UIScalePreference {
-  return value === 'compact' || value === 'standard' || value === 'large';
-}
-
-function isDecentAppWebView(): boolean {
-  return navigator.userAgent.trim() === 'Decent';
-}
-
-function defaultExitValueForApp(type: 'pressure' | 'flow', condition: 'over' | 'under'): number {
-  if (type === 'pressure') return condition === 'over' ? 11 : 0;
-  return condition === 'over' ? 6 : 0;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
-function escapeAttr(value: string): string {
-  return escapeHtml(value);
 }

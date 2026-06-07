@@ -29,6 +29,7 @@ import {
 } from '../domain/waterAlert';
 import type { PluginInfo } from '../api/settings';
 import type { DecentAccountStatus } from '../api/settings';
+import { escapeAttr, escapeHtml } from './html';
 import { icon } from './icons';
 
 interface SettingsSection {
@@ -682,17 +683,4 @@ function segmentedControl<T extends string>(
       `).join('')}
     </div>
   `;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
-function escapeAttr(value: string): string {
-  return escapeHtml(value);
 }

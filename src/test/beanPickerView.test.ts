@@ -1,0 +1,112 @@
+import type { Bean, BeanBatch } from '../api/types';
+import { renderBeanPickerModal, type BeanPickerViewModel } from '../views/beanPickerView';
+
+const beans: Bean[] = [
+  {
+    id: 'bean-1',
+    roaster: 'Dak',
+    name: 'Milky Cake',
+    country: 'Ethiopia',
+    region: 'Sidama',
+    processing: 'Washed',
+    notes: 'Sweet'
+  },
+  {
+    id: 'bean-2',
+    roaster: 'April',
+    name: 'Pink Bourbon'
+  }
+];
+
+const batches: BeanBatch[] = [
+  {
+    id: 'batch-1',
+    beanId: 'bean-1',
+    roastDate: '2026-06-05T10:00:00.000Z',
+    roastLevel: 'Light',
+    weight: 250,
+    weightRemaining: 125,
+    frozen: true
+  },
+  {
+    id: 'batch-older',
+    beanId: 'bean-1',
+    roastDate: '2026-05-01',
+    roastLevel: 'Medium',
+    weight: 250,
+    weightRemaining: 50
+  }
+];
+
+run('bean picker renders matched beans, current bean, focused inspector, and latest batch', () => {
+  const html = renderBeanPickerModal(model());
+
+  includes(html, 'Pick a bag');
+  includes(html, 'value="dak"');
+  includes(html, 'autofocus');
+  includes(html, 'Milky Cake');
+  includes(html, 'In use');
+  includes(html, 'data-form="bean-picker-bean" data-id="bean-1"');
+  includes(html, 'Latest');
+  includes(html, 'data-batch-id="batch-1"');
+});
+
+run('bean picker create mode renders new bean form and prefill choices', () => {
+  const html = renderBeanPickerModal(
+    model({
+      mode: 'create',
+      focusedBean: null,
+      matches: []
+    })
+  );
+
+  includes(html, 'No beans found.');
+  includes(html, 'Add a bag');
+  includes(html, 'Save the bag first');
+  includes(html, 'Copy from');
+  includes(html, 'Dak Milky Cake');
+});
+
+run('bean picker renders second tap hint for matching bean only', () => {
+  const html = renderBeanPickerModal(
+    model({
+      secondTapHint: { kind: 'bean', id: 'bean-2' }
+    })
+  );
+
+  includes(html, 'Tap again to load');
+  includes(html, 'has-second-tap-hint');
+});
+
+function model(overrides: Partial<BeanPickerViewModel> = {}): BeanPickerViewModel {
+  return {
+    search: 'dak',
+    autofocusSearch: true,
+    matches: beans,
+    focusedBean: beans[0]!,
+    mode: 'inspect',
+    selectedBeanId: 'bean-1',
+    batchesByBean: {
+      'bean-1': batches
+    },
+    prefillBeans: beans,
+    secondTapHint: null,
+    ...overrides
+  };
+}
+
+function run(name: string, fn: () => void): void {
+  try {
+    fn();
+    console.log(`ok - ${name}`);
+  } catch (error) {
+    console.error(`not ok - ${name}`);
+    throw error;
+  }
+}
+
+function includes(text: string, expected: string): void {
+  if (!text.includes(expected)) {
+    throw new Error(`Expected ${JSON.stringify(text.slice(0, 280))} to include ${expected}`);
+  }
+}

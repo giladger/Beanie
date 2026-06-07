@@ -1,13 +1,6 @@
 import type { Profile, ShotMeasurement, ShotRecord } from '../api/types';
-
-export type ShotGraphSeriesKey =
-  | 'pressure'
-  | 'flow'
-  | 'targetPressure'
-  | 'targetFlow'
-  | 'groupTemperature'
-  | 'targetTemperature'
-  | 'weightFlow';
+import type { ShotGraphSeriesKey } from '../domain/liveChartModel';
+export type { ShotGraphSeriesKey } from '../domain/liveChartModel';
 
 export interface ShotGraphSample {
   t: number;

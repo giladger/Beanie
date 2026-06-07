@@ -12,8 +12,7 @@
 // steps. A profile that merely looks simple but carries anything the basic knobs
 // can't express fails the guard and opens in the advanced editor instead.
 
-import { FIELD_SPECS } from '../components/profileEditor';
-import type { EditorStep } from '../components/profileEditor';
+import { FIELD_SPECS, type EditorStep } from './profileModel';
 
 export type SimpleType = 'pressure' | 'flow';
 
