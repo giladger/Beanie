@@ -2,6 +2,7 @@ import type { ProfileRecord } from '../api/types';
 import {
   displayProfileType,
   profileShortTitle,
+  renderPhoneProfilesPage,
   renderProfilesPage
 } from '../views/profilePickerView';
 
@@ -74,6 +75,28 @@ run('profile picker cleaning mode returns to machine and hides create action', (
   includes(html, 'Cleaning profile');
   includes(html, 'data-value="machine"');
   excludes(html, 'data-action="new-profile"');
+});
+
+run('phone profile picker renders title-only tap targets', () => {
+  const html = renderPhoneProfilesPage({
+    profiles,
+    search: '',
+    favoriteProfileIds: ['profile-flow'],
+    selectedId: 'profile-pressure',
+    focusId: null,
+    cleaningMode: false
+  });
+
+  includes(html, 'phone-profile-title');
+  includes(html, 'data-action="pick-profile"');
+  includes(html, 'Sweet');
+  includes(html, 'Classic');
+  excludes(html, 'profile-preview-pane');
+  excludes(html, 'data-action="focus-profile"');
+  excludes(html, 'Flow profile');
+  excludes(html, 'Favorites');
+  excludes(html, 'Selected');
+  excludes(html, 'data-action="profile-search"');
 });
 
 run('profile picker helpers shorten folder titles and normalize profile types', () => {

@@ -50,12 +50,6 @@ const TABS: Array<{ id: PhoneTab; label: string; icon: string }> = [
 export function renderPhoneShell(model: PhoneShellModel): string {
   return `
     <div class="phone-shell">
-      <header class="phone-head">
-        <h1>${escapeHtml(phoneTitle(model))}</h1>
-        <button type="button" class="phone-wake ${model.asleep ? 'sleeping' : ''}" data-action="${model.asleep ? 'wake' : 'sleep'}" aria-label="${model.asleep ? 'Wake machine' : 'Sleep machine'}" title="${model.asleep ? 'Wake machine' : 'Sleep machine'}">
-          ${icon('power')}<span>${model.asleep ? 'Wake' : 'Sleep'}</span>
-        </button>
-      </header>
       <main class="phone-main">
         ${renderPhoneTab(model)}
       </main>
@@ -64,14 +58,6 @@ export function renderPhoneShell(model: PhoneShellModel): string {
       </nav>
     </div>
   `;
-}
-
-function phoneTitle(model: PhoneShellModel): string {
-  if (model.activeTab === 'scan') return 'Scan a bag';
-  if (model.activeTab === 'beans') return 'Beans';
-  if (model.activeTab === 'shots') return 'Shot notes';
-  if (model.activeTab === 'settings') return 'Settings';
-  return 'Home';
 }
 
 function renderPhoneTab(model: PhoneShellModel): string {
@@ -109,6 +95,9 @@ function renderHomeTab(model: PhoneShellModel): string {
   const freshness = bean ? roastFreshnessLabel(batch) : null;
   return `
     <section class="phone-stack phone-home">
+      <button type="button" class="phone-wake ${model.asleep ? 'sleeping' : ''}" data-action="${model.asleep ? 'wake' : 'sleep'}" aria-label="${model.asleep ? 'Wake machine' : 'Sleep machine'}">
+        ${icon('power')}<span>${model.asleep ? 'Wake machine' : 'Sleep machine'}</span>
+      </button>
       <div class="phone-card phone-home-hero">
         <span class="phone-card-label">Current bag</span>
         <h2>${escapeHtml(bean ? beanLabel(bean) : 'No bean selected')}</h2>
@@ -178,17 +167,10 @@ function renderScanTab(): string {
       <div class="phone-card phone-scan-card">
         <span class="phone-card-label">Bag capture</span>
         <h2>Scan label details</h2>
-        <p>Photograph the bag, review the extracted bean and roast fields, then save.</p>
+        <p>Add a photo of your bag, review the extracted bean and roast fields, then save.</p>
         <button type="button" class="phone-scan-button" data-action="open-label-scanner">
           ${icon('camera')}<span>Scan bag label</span>
         </button>
-      </div>
-      <div class="phone-card">
-        <span class="phone-card-label">Manual fallback</span>
-        <div class="phone-actions">
-          <button type="button" class="phone-action" data-action="open-add-bean">${icon('plus')}<span>New bean</span></button>
-          <button type="button" class="phone-action" data-action="open-bean-picker">${icon('search')}<span>Edit beans</span></button>
-        </div>
       </div>
     </section>
   `;
@@ -230,19 +212,23 @@ function renderBeanRow(bean: Bean, model: PhoneShellModel): string {
 
 function renderShotsTab(model: PhoneShellModel): string {
   const shots = visibleShots(model.shots);
-  const selected = model.selectedShot ?? shots[0] ?? null;
+  const selected = model.selectedShot;
   const draft = selected && model.selectedShotDraft?.shotId === selected.id ? model.selectedShotDraft : null;
   return `
     <section class="phone-shots-layout">
-      <div class="phone-shot-detail">
-        ${selected ? renderShotDetail(selected, draft, model.selectedShotDirty) : ''}
-      </div>
       <div class="phone-section-title">
         <span>History</span>
         <small>${shots.length} shown</small>
       </div>
       <div class="phone-list phone-shot-list">
-        ${shots.length ? shots.map((shot) => renderShotRow(shot, shot.id === selected?.id)).join('') : '<p class="phone-empty">No espresso shots found.</p>'}
+        ${
+          shots.length
+            ? shots.map((shot) => {
+                const active = shot.id === selected?.id;
+                return `${renderShotRow(shot, active)}${active ? renderShotDetail(shot, draft, model.selectedShotDirty) : ''}`;
+              }).join('')
+            : '<p class="phone-empty">No espresso shots found.</p>'
+        }
         ${renderLoadMore(model, shots.length)}
       </div>
     </section>

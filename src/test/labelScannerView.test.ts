@@ -5,7 +5,7 @@ import {
 
 run('onboard step explains the free key and links to AI Studio', () => {
   const html = renderLabelScannerModal(model({ step: 'onboard', keyDraft: 'AIzaABC' }));
-  includes(html, 'Connect Gemini');
+  includes(html, '<h2>AI Label Scanner</h2>');
   includes(html, 'https://aistudio.google.com/apikey');
   includes(html, 'data-form="scanner-onboard"');
   includes(html, 'name="apiKey"');
@@ -29,7 +29,7 @@ run('onboard shows a QR hand-off on the tablet, hiding the on-device key form', 
       qrUrl: 'http://192.168.1.42:3000/?beanieScan=1'
     })
   );
-  includes(html, 'Continue on your phone');
+  notIncludes(html, 'class="eyebrow"');
   includes(html, '<svg id="qr">');
   includes(html, 'http://192.168.1.42:3000/?beanieScan=1');
   includes(html, 'data-action="scanner-setup-here"');
@@ -55,7 +55,8 @@ run('capture step offers a camera file input and disables extract until a photo 
   includes(html, 'data-action="scanner-add-photos"');
   includes(html, 'capture="environment"');
   includes(html, 'data-action="scanner-extract" disabled');
-  includes(html, 'Change key');
+  notIncludes(html, 'Change key');
+  notIncludes(html, 'data-action="scanner-change-key"');
 });
 
 run('capture enables extract in demo mode and hides the key control', () => {

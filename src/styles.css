@@ -1972,6 +1972,19 @@ p {
   gap: 8px;
 }
 
+.bean-picker-modal.create-mode {
+  width: min(560px, calc(100vw - 16px));
+}
+
+.bean-picker-modal.create-mode .bean-picker-body {
+  display: block;
+  overflow-y: auto;
+}
+
+.bean-picker-modal.create-mode .bean-picker-inspector {
+  overflow: visible;
+}
+
 .bean-picker-list-panel,
 .bean-picker-inspector,
 .bean-picker-batches {
@@ -7254,32 +7267,10 @@ p {
 
   .phone-shell {
     display: grid;
-    grid-template-rows: auto 1fr auto;
+    grid-template-rows: 1fr auto;
     height: 100dvh;
     min-width: 0;
     color: var(--ink);
-  }
-
-  .phone-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    min-height: calc(42px + env(safe-area-inset-top));
-    padding: calc(6px + env(safe-area-inset-top)) 12px 6px;
-    border-bottom: 1px solid var(--line);
-    background: var(--panel);
-  }
-
-  .phone-head h1 {
-    min-width: 0;
-    margin: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 18px;
-    line-height: 1.05;
-    letter-spacing: 0;
   }
 
   .phone-kicker,
@@ -7310,20 +7301,16 @@ p {
   }
 
   .phone-wake {
-    flex: 0 0 auto;
-    width: 34px;
-    min-width: 34px;
-    min-height: 34px;
-    padding: 0;
-    border-radius: 999px;
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    padding: 0 12px;
   }
 
   .phone-wake span {
-    position: absolute;
-    width: 1px;
-    height: 1px;
+    min-width: 0;
     overflow: hidden;
-    clip: rect(0 0 0 0);
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
 
@@ -7340,7 +7327,7 @@ p {
     overflow-y: auto;
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
-    padding: 10px 12px calc(14px + env(safe-area-inset-bottom));
+    padding: calc(10px + env(safe-area-inset-top)) 12px 12px;
   }
 
   .phone-stack {
@@ -7655,6 +7642,11 @@ p {
     font-size: 24px;
   }
 
+  .phone-shot-list .phone-shot-card {
+    margin-top: -2px;
+    margin-bottom: 6px;
+  }
+
   .phone-shot-card .shot-score-control.compact {
     grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 5px;
@@ -7723,7 +7715,7 @@ p {
   }
 
   .phone-chart {
-    height: 148px;
+    height: 310px;
     min-width: 0;
     overflow: hidden;
     border: 1px solid var(--line);
@@ -7789,9 +7781,66 @@ p {
 
   .phone-settings .settings-input,
   .phone-settings .settings-plugin-text,
-  .phone-settings .settings-number-button {
+  .phone-settings .settings-number-button,
+  .phone-settings .settings-phone-number {
     width: 100%;
     max-width: none;
+  }
+
+  .phone-settings .settings-phone-number {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    min-height: 42px;
+    padding: 0 10px;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    background: var(--panel-2);
+  }
+
+  .phone-settings .settings-phone-number .settings-number-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 40px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .phone-profiles-page {
+    display: block;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 10px 12px calc(16px + env(safe-area-inset-bottom));
+  }
+
+  .phone-profile-list {
+    display: grid;
+    gap: 7px;
+  }
+
+  .phone-profile-title {
+    min-width: 0;
+    min-height: 46px;
+    padding: 0 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--ink);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 950;
+    line-height: 1.15;
+    text-align: left;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+  }
+
+  .phone-profile-title.active {
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+    background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+    color: var(--accent);
   }
 
   .phone-tabs {
@@ -7824,7 +7873,6 @@ p {
     color: var(--accent);
   }
 
-  .phone-tab svg,
   .phone-wake svg,
   .phone-action svg,
   .phone-scan-button svg,
@@ -7837,6 +7885,14 @@ p {
   .phone-tab svg {
     width: 19px;
     height: 19px;
+  }
+
+  /* On phones modals run nearly edge-to-edge (width: 100vw - 16px below).
+     The backdrop is a grid whose auto column grows to that fixed width, so its
+     gutter must match the 8px the width assumes — the base 20px padding pushed
+     the column 24px past the content box and slid modals off the right edge. */
+  .modal-backdrop {
+    padding: 8px;
   }
 
   .label-scanner-modal,

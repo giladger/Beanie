@@ -43,8 +43,7 @@ export function renderLabelScannerModal(model: LabelScannerViewModel): string {
       <section class="modal panel label-scanner-modal" role="dialog" aria-modal="true" aria-label="Scan a bag" data-action="noop">
         <div class="modal-head">
           <div>
-            <span class="eyebrow">AI scan</span>
-            <h2>${escapeHtml(stepTitle(model))}</h2>
+            <h2>AI Label Scanner</h2>
           </div>
           <div class="modal-head-actions">
             <button class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
@@ -56,21 +55,6 @@ export function renderLabelScannerModal(model: LabelScannerViewModel): string {
       </section>
     </div>
   `;
-}
-
-function stepTitle(model: LabelScannerViewModel): string {
-  switch (model.step) {
-    case 'onboard':
-      return model.handoff ? 'Continue on your phone' : 'Connect Gemini';
-    case 'capture':
-      return 'Photograph the bag';
-    case 'extracting':
-      return 'Reading the bag';
-    case 'review':
-      return model.existingBeanLabel ? 'Confirm the new bag' : 'Confirm the new bean';
-    case 'error':
-      return "Couldn't read the bag";
-  }
 }
 
 function renderStep(model: LabelScannerViewModel): string {
@@ -154,7 +138,6 @@ function renderCapture(model: LabelScannerViewModel): string {
               .join('')}</div>`
       }
       <div class="label-scanner-actions">
-        ${model.demo ? '' : '<button type="button" class="secondary-button" data-action="scanner-change-key">Change key</button>'}
         <button type="button" class="primary-button" data-action="scanner-extract" ${canExtract ? '' : 'disabled'}>${icon('sparkles')}<span>Extract</span></button>
       </div>
     </div>

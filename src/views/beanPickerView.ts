@@ -19,42 +19,47 @@ export interface BeanPickerViewModel {
 export function renderBeanPickerModal(model: BeanPickerViewModel): string {
   const focusedId = model.focusedBean?.id ?? null;
   const autofocus = model.autofocusSearch ? ' autofocus' : '';
+  const creating = model.mode === 'create';
   return `
     <div class="modal-backdrop bean-picker-backdrop" data-action="close-modal">
-      <section class="modal panel bean-picker-modal" role="dialog" aria-modal="true" aria-label="Pick a bag" data-action="noop">
+      <section class="modal panel bean-picker-modal ${creating ? 'create-mode' : ''}" role="dialog" aria-modal="true" aria-label="${creating ? 'New bean' : 'Pick a bag'}" data-action="noop">
         <div class="modal-head bean-picker-head">
           <div>
             <span class="eyebrow">Beans</span>
-            <h2>Pick a bag</h2>
+            <h2>${creating ? 'New bean' : 'Pick a bag'}</h2>
           </div>
           <div class="modal-head-actions">
-            <button class="icon-button" data-action="open-add-bean" aria-label="Add bean" title="Add bean">${icon('plus')}</button>
-            <button class="icon-button" data-action="open-label-scanner" aria-label="Scan a bag with AI" title="Scan a bag with AI">${icon('camera')}</button>
+            ${creating ? '' : `<button class="icon-button" data-action="open-add-bean" aria-label="Add bean" title="Add bean">${icon('plus')}</button>`}
+            ${creating ? '' : `<button class="icon-button" data-action="open-label-scanner" aria-label="Scan a bag with AI" title="Scan a bag with AI">${icon('camera')}</button>`}
             <button class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
           </div>
         </div>
         <div class="bean-picker-body">
-          <div class="bean-picker-list-panel">
-            <label class="search bean-picker-search">
-              ${icon('search')}
-              <input type="search" data-action="search" value="${escapeAttr(model.search)}" placeholder="Search beans"${autofocus} />
-            </label>
-            <div class="bean-picker-list">
-              ${
-                model.matches.length === 0
-                  ? '<p class="empty-history">No beans found.</p>'
-                  : model.matches
-                      .map((bean) =>
-                        renderBeanPickerRow(bean, {
-                          focused: bean.id === focusedId,
-                          current: bean.id === model.selectedBeanId,
-                          secondTapHint: model.secondTapHint
-                        })
-                      )
-                      .join('')
-              }
-            </div>
-          </div>
+          ${
+            creating
+              ? ''
+              : `<div class="bean-picker-list-panel">
+                  <label class="search bean-picker-search">
+                    ${icon('search')}
+                    <input type="search" data-action="search" value="${escapeAttr(model.search)}" placeholder="Search beans"${autofocus} />
+                  </label>
+                  <div class="bean-picker-list">
+                    ${
+                      model.matches.length === 0
+                        ? '<p class="empty-history">No beans found.</p>'
+                        : model.matches
+                            .map((bean) =>
+                              renderBeanPickerRow(bean, {
+                                focused: bean.id === focusedId,
+                                current: bean.id === model.selectedBeanId,
+                                secondTapHint: model.secondTapHint
+                              })
+                            )
+                            .join('')
+                    }
+                  </div>
+                </div>`
+          }
           ${renderBeanPickerInspector(model)}
         </div>
       </section>

@@ -54,9 +54,10 @@ export function renderSettingsShell(
   bundle: SettingsBundle | null,
   pluginConfig: PluginConfigState | null,
   decentAccount: DecentAccountPanelState,
-  allowedSectionIds?: string[]
+  allowedSectionIds?: string[],
+  options: { phone?: boolean } = {}
 ): string {
-  const allSections = settingsSections(model, bundle, pluginConfig, decentAccount);
+  const allSections = settingsSections(model, bundle, pluginConfig, decentAccount, options);
   const sections = allowedSectionIds?.length
     ? allSections.filter((section) => allowedSectionIds.includes(section.id))
     : allSections;
@@ -83,7 +84,8 @@ function settingsSections(
   model: SettingsShellModel,
   bundle: SettingsBundle | null,
   pluginConfig: PluginConfigState | null,
-  decentAccount: DecentAccountPanelState
+  decentAccount: DecentAccountPanelState,
+  options: { phone?: boolean }
 ): SettingsSection[] {
   const connectionSection: SettingsSection = {
     id: 'connection',
@@ -93,7 +95,7 @@ function settingsSections(
       renderSection('Status', renderGatewayRows(model)),
       bundle ? renderConnectionRuntimeSection(bundle) : '',
       bundle ? renderDevicesSection(bundle) : '',
-      bundle ? renderSpecSectionById('connection-policy', bundle) : ''
+      bundle ? renderSpecSectionById('connection-policy', bundle, options) : ''
     ].join('')
   };
   const sections: SettingsSection[] = [
@@ -103,9 +105,10 @@ function settingsSections(
       terms: 'appearance theme ui skin update diagnostics about version brightness screen display water level low tank refill warning block alert',
       html: [
         renderSection('Beanie display', renderAppearanceRows(model.preferences)),
-        renderSection('Water level alerts', renderWaterAlertRows(model)),
-        bundle ? renderDisplayRuntimeSection(bundle) : '',
-        bundle ? renderSpecSectionById('app-skin', bundle) : '',
+        renderSection('Bean scanner', renderScannerKeyRows()),
+        renderSection('Water level alerts', renderWaterAlertRows(model, options)),
+        bundle ? renderDisplayRuntimeSection(bundle, options) : '',
+        bundle ? renderSpecSectionById('app-skin', bundle, options) : '',
         renderSection('About', renderAboutRows(model))
       ].join('')
     }
@@ -117,14 +120,14 @@ function settingsSections(
         id: 'brew',
         title: 'Brew',
         terms: 'shot stopping weight yield volume stop scale target',
-        html: renderSpecSectionById('shot-stopping', bundle)
+        html: renderSpecSectionById('shot-stopping', bundle, options)
       },
       {
         id: 'machine',
         title: 'Machine',
         terms: 'tank steam flush hot water purge descale clean sleep routine defaults',
         html: [
-          renderSpecSectionById('machine-outputs', bundle),
+          renderSpecSectionById('machine-outputs', bundle, options),
           renderMaintenanceSection()
         ].join('')
       },
@@ -134,7 +137,7 @@ function settingsSections(
         terms: 'sleep wake charging night battery presence usb scale power',
         html: [
           renderPowerRuntimeSection(bundle),
-          renderSpecSectionById('power', bundle)
+          renderSpecSectionById('power', bundle, options)
         ].join('')
       },
       {
@@ -147,7 +150,7 @@ function settingsSections(
         id: 'plugins',
         title: 'Plugins',
         terms: 'plugins visualizer extensions enable disable configure credentials',
-        html: renderPluginsSection(bundle, pluginConfig)
+        html: renderPluginsSection(bundle, pluginConfig, options)
       },
       connectionSection,
       {
@@ -155,7 +158,7 @@ function settingsSections(
         title: 'Danger',
         terms: 'danger advanced heater voltage refill kit firmware reset cache',
         html: [
-          renderSpecSectionById('danger-zone', bundle),
+          renderSpecSectionById('danger-zone', bundle, options),
           renderSection('Local data', renderCacheResetRows(model), 'danger')
         ].join('')
       }
@@ -166,13 +169,13 @@ function settingsSections(
   return sections;
 }
 
-function renderSpecSectionById(id: string, bundle: SettingsBundle): string {
+function renderSpecSectionById(id: string, bundle: SettingsBundle, options: { phone?: boolean } = {}): string {
   const section = SETTINGS_SPEC.find((spec) => spec.id === id);
-  return section ? renderSpecSection(section, bundle) : '';
+  return section ? renderSpecSection(section, bundle, options) : '';
 }
 
-function renderSpecSection(section: SettingsSpecSection, bundle: SettingsBundle): string {
-  const rows = section.fields.map((field) => renderSettingsField(field, bundle)).join('');
+function renderSpecSection(section: SettingsSpecSection, bundle: SettingsBundle, options: { phone?: boolean } = {}): string {
+  const rows = section.fields.map((field) => renderSettingsField(field, bundle, options)).join('');
   let extra = '';
   if (section.id === 'danger-zone') {
     extra = renderDangerActions();
@@ -216,7 +219,7 @@ function renderPowerRuntimeSection(bundle: SettingsBundle): string {
   return renderSection('Battery state', settingReadout('Battery', battery, `${mode} · ${phase} · ${usb}`, 'muted'));
 }
 
-function renderDisplayRuntimeSection(bundle: SettingsBundle): string {
+function renderDisplayRuntimeSection(bundle: SettingsBundle, options: { phone?: boolean } = {}): string {
   const display = bundle.display;
   const supported = display.platformSupported.brightness;
   const requested = String(display.requestedBrightness);
@@ -225,22 +228,32 @@ function renderDisplayRuntimeSection(bundle: SettingsBundle): string {
       ? `Actual ${display.brightness}% · low battery cap`
       : `Actual ${display.brightness}% · 100 = auto`
     : 'Brightness control is not available on this host';
-  const control = `
-    <button
-      type="button"
-      class="settings-input number-edit-button settings-number-button"
-      data-action="open-number-edit"
-      data-target="display-brightness"
-      data-title="Screen brightness"
-      data-value="${escapeAttr(requested)}"
-      data-min="0"
-      data-max="100"
-      data-step="5"
-      data-unit="%"
-      ${supported ? '' : 'disabled'}
-    >
-      <span>${escapeHtml(requested)}</span><em class="settings-unit">%</em>
-    </button>`;
+  const control = options.phone
+    ? phoneNumberInput({
+        action: 'settings-display-brightness',
+        value: requested,
+        min: 0,
+        max: 100,
+        step: 5,
+        unit: '%',
+        disabled: !supported
+      })
+    : `
+      <button
+        type="button"
+        class="settings-input number-edit-button settings-number-button"
+        data-action="open-number-edit"
+        data-target="display-brightness"
+        data-title="Screen brightness"
+        data-value="${escapeAttr(requested)}"
+        data-min="0"
+        data-max="100"
+        data-step="5"
+        data-unit="%"
+        ${supported ? '' : 'disabled'}
+      >
+        <span>${escapeHtml(requested)}</span><em class="settings-unit">%</em>
+      </button>`;
   return renderSection('Display', settingControlRow('Screen brightness', detail, control));
 }
 
@@ -333,13 +346,13 @@ function renderDangerActions(): string {
     </div>`;
 }
 
-function renderPluginsSection(bundle: SettingsBundle, pluginConfig: PluginConfigState | null): string {
+function renderPluginsSection(bundle: SettingsBundle, pluginConfig: PluginConfigState | null, options: { phone?: boolean } = {}): string {
   if (!bundle.plugins.length) return renderSection('Plugins', `<p class="settings-empty">No plugins installed.</p>`);
-  const rows = bundle.plugins.map((plugin) => renderPluginRow(plugin, pluginConfig)).join('');
+  const rows = bundle.plugins.map((plugin) => renderPluginRow(plugin, pluginConfig, options)).join('');
   return renderSection('Plugins', rows);
 }
 
-function renderPluginRow(plugin: PluginInfo, pluginConfig: PluginConfigState | null): string {
+function renderPluginRow(plugin: PluginInfo, pluginConfig: PluginConfigState | null, options: { phone?: boolean } = {}): string {
   const spec = pluginSettingsSpec(plugin.id);
   const expanded = pluginConfig?.id === plugin.id;
   const configure = spec
@@ -354,13 +367,13 @@ function renderPluginRow(plugin: PluginInfo, pluginConfig: PluginConfigState | n
       </div>
       <span class="settings-plugin-actions">${configure}${toggle}</span>
     </div>`;
-  const panel = expanded && spec && pluginConfig ? renderPluginConfig(spec, pluginConfig) : '';
+  const panel = expanded && spec && pluginConfig ? renderPluginConfig(spec, pluginConfig, options) : '';
   return row + panel;
 }
 
-function renderPluginConfig(spec: PluginSettingsSpec, config: PluginConfigState): string {
+function renderPluginConfig(spec: PluginSettingsSpec, config: PluginConfigState, options: { phone?: boolean } = {}): string {
   const help = spec.help ? `<p class="settings-plugin-help">${escapeHtml(spec.help)}</p>` : '';
-  const fields = spec.fields.map((field) => renderPluginField(field, config)).join('');
+  const fields = spec.fields.map((field) => renderPluginField(field, config, options)).join('');
   const verifyMsg = config.verify
     ? `<span class="settings-plugin-verify ${config.verify.tone}">${escapeHtml(config.verify.message)}</span>`
     : '';
@@ -380,7 +393,7 @@ function renderPluginConfig(spec: PluginSettingsSpec, config: PluginConfigState)
     </div>`;
 }
 
-function renderPluginField(field: PluginSettingField, config: PluginConfigState): string {
+function renderPluginField(field: PluginSettingField, config: PluginConfigState, options: { phone?: boolean } = {}): string {
   const base = `data-action="settings-plugin-field" data-key="${escapeAttr(field.key)}" data-type="${field.type}"`;
   const draftVal = config.draft[field.key];
   let control: string;
@@ -394,7 +407,17 @@ function renderPluginField(field: PluginSettingField, config: PluginConfigState)
   } else if (field.type === 'number') {
     const unit = field.unit ? `<em class="settings-unit">${escapeHtml(field.unit)}</em>` : '';
     const value = String(draftVal ?? '');
-    control = `<button type="button" class="settings-input number-edit-button settings-number-button" data-action="open-number-edit" data-target="settings-plugin-field" data-key="${escapeAttr(field.key)}" data-title="${escapeAttr(field.label)}" data-value="${escapeAttr(value)}" data-min="${field.min ?? 0}" data-max="${field.max ?? 9999}" data-step="${field.step ?? 1}" data-unit="${escapeAttr(field.unit ?? '')}"><span>${escapeHtml(value || '--')}</span>${unit}</button>`;
+    control = options.phone
+      ? phoneNumberInput({
+          action: 'settings-plugin-field',
+          value,
+          min: field.min ?? 0,
+          max: field.max ?? 9999,
+          step: field.step ?? 1,
+          unit: field.unit ?? '',
+          attrs: `data-key="${escapeAttr(field.key)}" data-type="${field.type}"`
+        })
+      : `<button type="button" class="settings-input number-edit-button settings-number-button" data-action="open-number-edit" data-target="settings-plugin-field" data-key="${escapeAttr(field.key)}" data-title="${escapeAttr(field.label)}" data-value="${escapeAttr(value)}" data-min="${field.min ?? 0}" data-max="${field.max ?? 9999}" data-step="${field.step ?? 1}" data-unit="${escapeAttr(field.unit ?? '')}"><span>${escapeHtml(value || '--')}</span>${unit}</button>`;
   } else {
     // text / password
     const inputType = field.type === 'password' ? 'password' : 'text';
@@ -456,7 +479,7 @@ function renderWakeSchedules(bundle: SettingsBundle): string {
   return `<div class="settings-subsection"><h4>Wake schedules</h4>${rows}${add}</div>`;
 }
 
-function renderSettingsField(field: SettingsField, bundle: SettingsBundle): string {
+function renderSettingsField(field: SettingsField, bundle: SettingsBundle, options: { phone?: boolean } = {}): string {
   const value = fieldValue(bundle, field);
   const base = `data-action="settings-field" data-group="${field.group}" data-key="${escapeAttr(field.key)}" data-type="${field.type}"`;
   let control = '';
@@ -484,7 +507,17 @@ function renderSettingsField(field: SettingsField, bundle: SettingsBundle): stri
           : String(value)
         : '';
     const unit = field.unit ? `<em class="settings-unit">${escapeHtml(field.unit)}</em>` : '';
-    control = `<button type="button" class="settings-input number-edit-button settings-number-button" data-action="open-number-edit" data-target="settings-field" data-group="${field.group}" data-key="${escapeAttr(field.key)}" data-title="${escapeAttr(field.label)}" data-value="${escapeAttr(num)}" data-min="${field.min ?? 0}" data-max="${field.max ?? 9999}" data-step="${field.step ?? 1}" data-unit="${escapeAttr(field.unit ?? '')}"><span>${escapeHtml(num || '--')}</span>${unit}</button>`;
+    control = options.phone
+      ? phoneNumberInput({
+          action: 'settings-field',
+          value: num,
+          min: field.min ?? 0,
+          max: field.max ?? 9999,
+          step: field.step ?? 1,
+          unit: field.unit ?? '',
+          attrs: `data-group="${field.group}" data-key="${escapeAttr(field.key)}" data-type="${field.type}"`
+        })
+      : `<button type="button" class="settings-input number-edit-button settings-number-button" data-action="open-number-edit" data-target="settings-field" data-group="${field.group}" data-key="${escapeAttr(field.key)}" data-title="${escapeAttr(field.label)}" data-value="${escapeAttr(num)}" data-min="${field.min ?? 0}" data-max="${field.max ?? 9999}" data-step="${field.step ?? 1}" data-unit="${escapeAttr(field.unit ?? '')}"><span>${escapeHtml(num || '--')}</span>${unit}</button>`;
     if (field.group === 'calibration' && field.key === 'flowMultiplier') {
       control = `
         <span class="settings-inline-actions">
@@ -541,7 +574,33 @@ function numberEditButton(opts: {
   return `<button type="button" class="settings-input number-edit-button settings-number-button" data-action="open-number-edit" data-target="${escapeAttr(opts.target)}" data-title="${escapeAttr(opts.title)}" data-value="${escapeAttr(opts.value)}" data-min="${opts.min}" data-max="${opts.max}" data-step="${opts.step}" data-unit="${escapeAttr(opts.unit)}"><span>${escapeHtml(opts.display)}</span></button>`;
 }
 
-function renderWaterAlertRows(model: SettingsShellModel): string {
+function phoneNumberInput(opts: {
+  action: string;
+  value: string;
+  min: number;
+  max: number;
+  step: number;
+  unit: string;
+  attrs?: string;
+  disabled?: boolean;
+}): string {
+  const unit = opts.unit ? `<em class="settings-unit">${escapeHtml(opts.unit)}</em>` : '';
+  return `
+    <span class="settings-phone-number">
+      <input class="settings-input settings-number-input" type="number" inputmode="decimal" data-action="${escapeAttr(opts.action)}" ${opts.attrs ?? ''} value="${escapeAttr(opts.value)}" min="${opts.min}" max="${opts.max}" step="${opts.step}" ${opts.disabled ? 'disabled' : ''} />
+      ${unit}
+    </span>`;
+}
+
+function renderScannerKeyRows(): string {
+  return settingControlRow(
+    'Gemini key',
+    'Update the API key used by bag label scanning',
+    `<button type="button" class="text-button" data-action="settings-change-scanner-key">${icon('key-round')}<span>Change key</span></button>`
+  );
+}
+
+function renderWaterAlertRows(model: SettingsShellModel, options: { phone?: boolean } = {}): string {
   const soft = model.preferences.waterSoftLimitMl;
   const refill = model.machineRefillLevelMm;
   const refillKnown = refill != null;
@@ -551,33 +610,52 @@ function renderWaterAlertRows(model: SettingsShellModel): string {
     ${settingControlRow(
       'Low-water warning',
       'Show a banner and flag the tank reading when it drops to this level',
-      numberEditButton({
-        target: 'water-soft',
-        title: 'Low-water warning',
-        value: String(soft),
-        display: soft > 0 ? `${soft} ml` : 'Off',
-        min: WATER_SOFT_MIN_ML,
-        max: WATER_SOFT_MAX_ML,
-        step: WATER_SOFT_STEP_ML,
-        unit: 'ml'
-      })
+      options.phone
+        ? phoneNumberInput({
+            action: 'settings-water-soft',
+            value: String(soft),
+            min: WATER_SOFT_MIN_ML,
+            max: WATER_SOFT_MAX_ML,
+            step: WATER_SOFT_STEP_ML,
+            unit: 'ml'
+          })
+        : numberEditButton({
+            target: 'water-soft',
+            title: 'Low-water warning',
+            value: String(soft),
+            display: soft > 0 ? `${soft} ml` : 'Off',
+            min: WATER_SOFT_MIN_ML,
+            max: WATER_SOFT_MAX_ML,
+            step: WATER_SOFT_STEP_ML,
+            unit: 'ml'
+          })
     )}
     ${settingControlRow(
       'Machine refill level',
       refillKnown
         ? `The DE1 pauses shots and shows the refill popup at this tank level${refillMl != null ? ` (≈ ${refillMl} ml)` : ''}`
         : 'Connect the machine to set its refill level',
-      numberEditButton({
-        target: 'machine-refill',
-        title: 'Machine refill level',
-        value: String(refillMm),
-        display: refillKnown ? `${refillMm} mm` : '--',
-        min: MACHINE_REFILL_MIN_MM,
-        max: MACHINE_REFILL_MAX_MM,
-        step: MACHINE_REFILL_STEP_MM,
-        unit: 'mm',
-        disabled: !refillKnown
-      })
+      options.phone
+        ? phoneNumberInput({
+            action: 'settings-machine-refill',
+            value: String(refillMm),
+            min: MACHINE_REFILL_MIN_MM,
+            max: MACHINE_REFILL_MAX_MM,
+            step: MACHINE_REFILL_STEP_MM,
+            unit: 'mm',
+            disabled: !refillKnown
+          })
+        : numberEditButton({
+            target: 'machine-refill',
+            title: 'Machine refill level',
+            value: String(refillMm),
+            display: refillKnown ? `${refillMm} mm` : '--',
+            min: MACHINE_REFILL_MIN_MM,
+            max: MACHINE_REFILL_MAX_MM,
+            step: MACHINE_REFILL_STEP_MM,
+            unit: 'mm',
+            disabled: !refillKnown
+          })
     )}
   `;
 }

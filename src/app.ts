@@ -233,7 +233,10 @@ import {
   loadLatestShotCandidates as loadLatestShotCandidatesFromRepository
 } from './data/shotRepository';
 import { loadBeanBatches } from './data/beanRepository';
-import { renderProfilesPage as renderProfilePickerPage } from './views/profilePickerView';
+import {
+  renderPhoneProfilesPage as renderPhoneProfilePickerPage,
+  renderProfilesPage as renderProfilePickerPage
+} from './views/profilePickerView';
 import { renderBeanPickerModal as renderBeanPickerModalView } from './views/beanPickerView';
 import {
   renderNoScaleShotModal as renderNoScaleShotModalView,
@@ -2827,7 +2830,15 @@ export class BeanieApp {
         }
         return true;
       case 'phone-select-shot':
-        if (id) this.setState({ detailShotId: id, secondTapHint: null, status: 'Shot selected' });
+        if (id) {
+          const closing = this.state.detailShotId === id;
+          this.setState({
+            detailShotId: closing ? null : id,
+            shotEdit: closing || this.state.shotEdit?.shotId !== id ? null : this.state.shotEdit,
+            secondTapHint: null,
+            status: closing ? 'Shot closed' : 'Shot selected'
+          });
+        }
         return true;
       case 'phone-edit-shot':
         if (id) this.setState({ detailShotId: id, secondTapHint: null });
@@ -3432,6 +3443,15 @@ export class BeanieApp {
       case 'settings-plugin-verify':
         if (id) await this.verifyPluginConfig(id);
         return true;
+      case 'settings-change-scanner-key':
+        await this.openLabelScanner();
+        this.setScanner({
+          step: 'onboard',
+          handoff: false,
+          keyDraft: readGeminiApiKey() ?? '',
+          verifyMessage: null
+        });
+        return true;
       case 'settings-account-login':
         await this.loginDecentAccount();
         return true;
@@ -3943,6 +3963,20 @@ export class BeanieApp {
     if (target.dataset.action === 'settings-field') {
       const raw = target instanceof HTMLInputElement && target.type === 'checkbox' ? target.checked : target.value;
       void this.onSettingsField(target.dataset.group ?? '', target.dataset.key ?? '', raw);
+      return;
+    }
+    if (target.dataset.action === 'settings-display-brightness') {
+      await this.setDisplayBrightness(target.value);
+      return;
+    }
+    if (target.dataset.action === 'settings-water-soft') {
+      const ml = Number(target.value);
+      if (Number.isFinite(ml)) this.updateSettingsPreferences({ waterSoftLimitMl: Math.max(0, ml) });
+      return;
+    }
+    if (target.dataset.action === 'settings-machine-refill') {
+      const mm = Number(target.value);
+      if (Number.isFinite(mm)) await this.setMachineRefillLevel(Math.max(0, mm));
       return;
     }
     if (target.dataset.action === 'no-scale-block-toggle') {
@@ -5119,7 +5153,7 @@ export class BeanieApp {
 
   private renderPhoneApp(bean: Bean | null): string {
     const brewTemp = this.brewTempValue();
-    const selectedShot = this.selectedHistoryShot();
+    const selectedShot = this.state.detailShotId ? this.selectedHistoryShot() : null;
     const selectedShotDraft = selectedShot
       ? this.state.shotEdit?.shotId === selectedShot.id
         ? this.state.shotEdit
@@ -5132,7 +5166,8 @@ export class BeanieApp {
           this.state.settingsBundle,
           this.state.pluginConfig,
           this.decentAccountPanelState(),
-          ['app', 'account', 'plugins', 'connection']
+          ['app', 'account', 'plugins', 'connection'],
+          { phone: true }
         )
       : '';
     return renderPhoneShell({
@@ -5399,14 +5434,15 @@ export class BeanieApp {
     const selectedId = cleaningMode
       ? resolveCleaningProfile(this.state.profiles, this.state.cleaningProfileOverride)?.id ?? null
       : this.profileIdForDraft();
-    return renderProfilePickerPage({
+    const model = {
       profiles: this.state.profiles,
       search: this.state.profileSearch,
       favoriteProfileIds: this.state.favoriteProfiles,
       selectedId,
       focusId: this.state.profileFocusId,
       cleaningMode
-    });
+    };
+    return this.isPhoneLayout() ? renderPhoneProfilePickerPage(model) : renderProfilePickerPage(model);
   }
 
   private brewTempValue(): number | null {

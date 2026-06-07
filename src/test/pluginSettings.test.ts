@@ -117,6 +117,47 @@ run('visualizer password draft survives render and saves with real plugin id', (
   equal(html.includes('data-key="Password" data-type="password" value="new-password"'), true);
 });
 
+run('phone settings use native number inputs and expose scanner key setup', () => {
+  const bundle = demoSettingsBundle();
+  const html = renderSettingsShell(settingsModel(), 'app', bundle, null, accountPanel(), ['app'], { phone: true });
+
+  equal(html.includes('data-action="settings-change-scanner-key"'), true);
+  equal(html.includes('data-action="settings-water-soft"'), true);
+  equal(html.includes('data-action="settings-machine-refill"'), true);
+  equal(html.includes('data-action="settings-display-brightness"'), true);
+  equal(html.includes('data-action="open-number-edit"'), false);
+});
+
+run('phone plugin number fields use native inputs instead of the number dialog', () => {
+  const bundle = demoSettingsBundle();
+  bundle.plugins = [
+    { id: 'visualizer.reaplugin', name: 'Visualizer upload', author: 'Decent', version: '1.0.0', loaded: true, autoLoad: true }
+  ];
+  const config: PluginConfigState = {
+    id: 'visualizer.reaplugin',
+    settings: {
+      values: { Username: 'user@example.com', AutoUpload: true, LengthThreshold: 6, BackSyncIntervalSeconds: 300 },
+      secretsSet: {}
+    },
+    draft: {
+      Username: 'user@example.com',
+      Password: '',
+      AutoUpload: true,
+      LengthThreshold: 6,
+      BackSyncIntervalSeconds: 300
+    },
+    secretEdited: {},
+    dirty: false,
+    saving: false,
+    verify: null
+  };
+  const html = renderSettingsShell(settingsModel(), 'plugins', bundle, config, accountPanel(), ['plugins'], { phone: true });
+
+  equal(html.includes('class="settings-input settings-number-input"'), true);
+  equal(html.includes('data-key="LengthThreshold" data-type="number"'), true);
+  equal(html.includes('data-action="open-number-edit"'), false);
+});
+
 function run(name: string, fn: () => void): void {
   try {
     fn();

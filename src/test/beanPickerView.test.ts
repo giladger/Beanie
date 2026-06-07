@@ -60,11 +60,13 @@ run('bean picker create mode renders new bean form and prefill choices', () => {
     })
   );
 
-  includes(html, 'No beans found.');
+  includes(html, 'bean-picker-modal create-mode');
   includes(html, 'Add a bag');
   includes(html, 'Save the bag first');
   includes(html, 'Copy from');
   includes(html, 'Dak Milky Cake');
+  notIncludes(html, 'bean-picker-list-panel');
+  notIncludes(html, 'data-action="open-label-scanner"');
 });
 
 run('bean picker renders second tap hint for matching bean only', () => {
@@ -108,5 +110,11 @@ function run(name: string, fn: () => void): void {
 function includes(text: string, expected: string): void {
   if (!text.includes(expected)) {
     throw new Error(`Expected ${JSON.stringify(text.slice(0, 280))} to include ${expected}`);
+  }
+}
+
+function notIncludes(text: string, unexpected: string): void {
+  if (text.includes(unexpected)) {
+    throw new Error(`Expected rendered output not to include ${unexpected}`);
   }
 }

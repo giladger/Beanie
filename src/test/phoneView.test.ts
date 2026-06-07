@@ -9,7 +9,6 @@ run('phone shell exposes helper workflows without machine service controls', () 
     renderPhoneShell({ ...model(), activeTab: 'shots' })
   ].join('');
 
-  includes(html, '<h1>Home</h1>');
   includes(html, 'data-action="open-label-scanner"');
   includes(html, 'data-action="phone-select-bean"');
   includes(html, 'data-action="phone-select-shot"');
@@ -17,6 +16,10 @@ run('phone shell exposes helper workflows without machine service controls', () 
   includes(html, 'data-action="phone-save-shot"');
   includes(html, 'data-action="phone-recipe-field"');
   includes(html, 'data-action="sleep"');
+  includes(html, 'class="phone-tabs"');
+  excludes(html, '<header class="phone-head">');
+  excludes(html, 'class="phone-nav-button"');
+  excludes(html, 'class="phone-back-home"');
   excludes(html, 'data-action="machine-command"');
   excludes(html, 'data-action="run-cleaning"');
   excludes(html, 'data-action="open-machine-settings"');
@@ -25,6 +28,37 @@ run('phone shell exposes helper workflows without machine service controls', () 
   excludes(html, 'data-action="select-history-shot"');
   excludes(html, 'data-action="edit-field"');
   excludes(html, 'data-action="phone-edit-shot"');
+});
+
+run('phone shots render selected shot as an accordion below the row', () => {
+  const html = renderPhoneShell({ ...model(), activeTab: 'shots' });
+  const rowIndex = html.indexOf('data-action="phone-select-shot" data-id="shot-1"');
+  const detailIndex = html.indexOf('class="phone-card phone-shot-card"');
+
+  includes(html, 'data-action="phone-shot-field"');
+  equal(rowIndex >= 0, true);
+  equal(detailIndex > rowIndex, true);
+});
+
+run('phone home places machine power above the coffee card', () => {
+  const html = renderPhoneShell(model());
+  const powerIndex = html.indexOf('class="phone-wake');
+  const cardIndex = html.indexOf('class="phone-card phone-home-hero"');
+  const titleIndex = html.indexOf('Kawa Pink Bourbon');
+
+  equal(powerIndex >= 0, true);
+  equal(cardIndex > powerIndex, true);
+  equal(titleIndex > powerIndex, true);
+  excludes(html, 'phone-home-controls');
+});
+
+run('phone scan tab keeps only the scanner workflow', () => {
+  const html = renderPhoneShell({ ...model(), activeTab: 'scan' });
+
+  includes(html, 'data-action="open-label-scanner"');
+  excludes(html, 'Manual fallback');
+  excludes(html, 'data-action="open-add-bean"');
+  excludes(html, 'data-action="open-bean-picker"');
 });
 
 run('phone settings renders filtered settings content inside the tab', () => {
@@ -127,5 +161,11 @@ function includes(text: string, expected: string): void {
 function excludes(text: string, expected: string): void {
   if (text.includes(expected)) {
     throw new Error(`Expected rendered output not to include ${expected}`);
+  }
+}
+
+function equal<T>(actual: T, expected: T): void {
+  if (actual !== expected) {
+    throw new Error(`Expected ${String(expected)}, received ${String(actual)}`);
   }
 }

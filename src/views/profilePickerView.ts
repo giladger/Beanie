@@ -65,6 +65,36 @@ export function renderProfilesPage(model: ProfilePickerViewModel): string {
   `;
 }
 
+export function renderPhoneProfilesPage(model: ProfilePickerViewModel): string {
+  const selectedId = model.selectedId;
+  const records = [...model.profiles].sort((a, b) =>
+    profileShortTitle(a.profile.title ?? a.id).localeCompare(
+      profileShortTitle(b.profile.title ?? b.id),
+      undefined,
+      { sensitivity: 'base' }
+    )
+  );
+  return `
+    ${profilePageHeader(model.cleaningMode ? 'Cleaning profile' : 'Profiles', model.cleaningMode ? 'machine' : 'workbench', '')}
+    <main class="page-body phone-profiles-page">
+      <div class="phone-profile-list">
+        ${
+          records.length === 0
+            ? '<p class="empty">No profiles.</p>'
+            : records.map((record) => {
+                const title = profileShortTitle(record.profile.title ?? record.id);
+                return `
+                  <button type="button" class="phone-profile-title ${record.id === selectedId ? 'active' : ''}" data-action="pick-profile" data-id="${escapeAttr(record.id)}">
+                    ${escapeHtml(title)}
+                  </button>
+                `;
+              }).join('')
+        }
+      </div>
+    </main>
+  `;
+}
+
 function profilePageHeader(title: string, back: string, actions: string): string {
   return `
     <header class="page-head">

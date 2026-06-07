@@ -26,7 +26,7 @@ export interface LiveChartOptions {
   pixelScale?: number;
 }
 
-const MARGIN_DETAILED = { top: 18, right: 22, bottom: 64, left: 42 };
+const MARGIN_DETAILED = { top: 18, right: 22, bottom: 86, left: 42 };
 const MARGIN_COMPACT = { top: 7, right: 7, bottom: 7, left: 7 };
 
 // Chart chrome colors. These are resolved from CSS theme tokens at draw time
@@ -369,8 +369,8 @@ export class LiveChart {
     const columns = Math.max(1, Math.min(series.length, Math.floor((width - 24) / itemWidth)));
     const rows = Math.ceil(series.length / columns);
     const start = Math.max(12, width - columns * itemWidth - 12);
-    // Bottom-anchored: last row sits near the canvas bottom, below the x-axis labels.
-    const firstRowY = height - 11 - (rows - 1) * rowHeight;
+    // Bottom-anchored in the reserved margin, below the x-axis labels.
+    const firstRowY = height - 10 - (rows - 1) * rowHeight;
 
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'left';
