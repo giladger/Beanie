@@ -7,6 +7,7 @@ import type {
   ShotRecord,
   Workflow
 } from '../api/types';
+import type { LabelScan, LabelScanEnrichment } from '../domain/labelScan';
 
 const now = Date.now();
 
@@ -242,5 +243,41 @@ function buildMeasurements(seed: number) {
       volume: t * 40
     };
   });
+}
+
+// Canned extraction so the scanner's review -> commit flow is fully usable in
+// demo mode (no key, no network). A roaster not in demoBeans, so it exercises
+// the "new bean" path; richer origin detail is folded into notes as the real
+// scan does.
+export function demoLabelScan(): LabelScan {
+  return {
+    bean: {
+      roaster: 'Onyx Coffee Lab',
+      name: 'Monarch',
+      country: 'Colombia',
+      region: 'Huila',
+      processing: 'Washed',
+      notes: 'Producer: Granja La Esperanza. Variety: Pink Bourbon. Altitude: 1750 masl. Cherry, cola, panela.'
+    },
+    batch: {
+      roastDate: new Date(now - 6 * 86_400_000).toISOString().slice(0, 10),
+      roastLevel: 'Light',
+      weight: 250
+    },
+    meta: {
+      lowConfidenceFields: ['batch.roastDate'],
+      rawText: 'Onyx Coffee Lab · Monarch · Colombia, Huila · Washed · Roasted recently'
+    }
+  };
+}
+
+// Canned roaster-website enrichment for demo mode (the "Enrich from roaster" button).
+export function demoLabelEnrich(): LabelScanEnrichment {
+  return {
+    country: 'Colombia',
+    region: 'Huila',
+    processing: 'Washed',
+    notes: 'Roaster notes: red apple, caramel, dark chocolate. Producer: Granja La Esperanza (Cauca). Variety: Pink Bourbon. Altitude: 1,700–1,850 masl.'
+  };
 }
 

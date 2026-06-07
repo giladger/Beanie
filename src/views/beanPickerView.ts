@@ -29,6 +29,7 @@ export function renderBeanPickerModal(model: BeanPickerViewModel): string {
           </div>
           <div class="modal-head-actions">
             <button class="icon-button" data-action="open-add-bean" aria-label="Add bean" title="Add bean">${icon('plus')}</button>
+            <button class="icon-button" data-action="open-label-scanner" aria-label="Scan a bag with AI" title="Scan a bag with AI">${icon('camera')}</button>
             <button class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
           </div>
         </div>

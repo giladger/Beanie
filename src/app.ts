@@ -71,19 +71,40 @@ import {
 import { batchOptionLabel } from './domain/beanDisplay';
 import {
   readFavoriteProfiles,
+  readGeminiApiKey,
   readLastBeanId,
   writeFavoriteProfiles,
+  writeGeminiApiKey,
   writeLastBeanId
 } from './domain/storage';
 import {
   demoBatches,
   demoBeans,
   demoGrinders,
+  demoLabelScan,
+  demoLabelEnrich,
   demoMachine,
   demoProfiles,
   demoShotsForBean,
   demoWorkflow
 } from './mock/demo';
+import { enrichLabel, GeminiError, scanLabel, verifyGeminiKey } from './api/gemini';
+import { fileToScaledImage, type CapturedImage } from './domain/labelImage';
+import {
+  findExistingBean,
+  labelScanToDraft,
+  lowConfidenceFields,
+  mergeEnrichment,
+  type LabelScan,
+  type LabelScanDraft,
+  type LabelScanDraftField
+} from './domain/labelScan';
+import {
+  renderLabelScannerModal as renderLabelScannerModalView,
+  type LabelScannerStep
+} from './views/labelScannerView';
+import { buildHandoffUrl, isHandoffArrival } from './domain/labelScanHandoff';
+import { renderQrSvg } from './components/qr';
 import { icon, refreshIcons } from './components/icons';
 import {
   backspaceInputDialogValue,
@@ -336,7 +357,14 @@ import {
   type ShotFieldSpec
 } from './domain/shotEditModel';
 
-type Modal = 'bean-picker' | 'edit-number' | 'edit-shot' | 'machine-label' | 'no-scale-shot' | null;
+type Modal =
+  | 'bean-picker'
+  | 'edit-number'
+  | 'edit-shot'
+  | 'machine-label'
+  | 'no-scale-shot'
+  | 'label-scanner'
+  | null;
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
 interface ClickActionContext {
   el: HTMLElement;
@@ -423,6 +451,26 @@ interface SecondTapHintState {
   id: string;
 }
 
+interface LabelScannerState {
+  step: LabelScannerStep;
+  handoff: boolean;
+  qrSvg: string | null;
+  qrUrl: string | null;
+  keyDraft: string;
+  verifying: boolean;
+  verifyMessage: { tone: 'good' | 'warn'; text: string } | null;
+  images: CapturedImage[];
+  scan: LabelScan | null;
+  draft: LabelScanDraft | null;
+  lowConfidence: LabelScanDraftField[];
+  webFields: LabelScanDraftField[];
+  enriching: boolean;
+  existingBeanId: string | null;
+  existingBeanLabel: string | null;
+  saving: boolean;
+  error: string | null;
+}
+
 interface AppState {
   beans: Bean[];
   batchesByBean: Record<string, BeanBatch[]>;
@@ -461,6 +509,7 @@ interface AppState {
   decentAccountSaving: boolean;
   decentAccountMessage: { tone: 'good' | 'warn' | 'muted'; text: string } | null;
   modal: Modal;
+  scanner: LabelScannerState | null;
   beanPickerBeanId: string | null;
   beanPickerMode: BeanPickerMode;
   beanPickerAutofocusSearch: boolean;
@@ -565,6 +614,7 @@ export class BeanieApp {
     decentAccountSaving: false,
     decentAccountMessage: null,
     modal: null,
+    scanner: null,
     beanPickerBeanId: null,
     beanPickerMode: 'inspect',
     beanPickerAutofocusSearch: false,
@@ -702,6 +752,10 @@ export class BeanieApp {
     this.root.addEventListener('touchmove', this.handleTouchMove, { passive: false });
     this.render();
     void this.load();
+    if (isHandoffArrival(location.search)) {
+      history.replaceState(null, '', location.pathname);
+      void this.openLabelScanner({ fromHandoff: true });
+    }
   }
 
   dispose(): void {
@@ -2676,6 +2730,7 @@ export class BeanieApp {
     };
 
     if (await this.handleBeanClickAction(action, context)) return;
+    if (await this.handleScannerClickAction(action, context)) return;
     if (await this.handleRecipeClickAction(action, context)) return;
     if (await this.handleShotClickAction(action, context)) return;
     if (await this.handleMachineClickAction(action, context)) return;
@@ -2738,6 +2793,305 @@ export class BeanieApp {
       default:
         return false;
     }
+  }
+
+  private async handleScannerClickAction(
+    action: string | undefined,
+    context: ClickActionContext
+  ): Promise<boolean> {
+    const { el, index } = context;
+    switch (action) {
+      case 'open-label-scanner':
+        await this.openLabelScanner();
+        return true;
+      case 'scanner-setup-here':
+        this.setScanner({ handoff: false });
+        return true;
+      case 'scanner-use-phone':
+        this.setScanner({ handoff: true });
+        return true;
+      case 'scanner-verify-key': {
+        const input = el.closest('form')?.querySelector<HTMLInputElement>('input[name="apiKey"]');
+        const key = input?.value.trim() ?? '';
+        this.setScanner({ keyDraft: key, verifying: true, verifyMessage: null });
+        const result = await verifyGeminiKey(key);
+        this.setScanner({
+          verifying: false,
+          verifyMessage: { tone: result.ok ? 'good' : 'warn', text: result.message }
+        });
+        return true;
+      }
+      case 'scanner-change-key':
+        this.setScanner({ step: 'onboard', keyDraft: readGeminiApiKey() ?? '', verifyMessage: null });
+        return true;
+      case 'scanner-remove-photo': {
+        const scanner = this.state.scanner;
+        const removeAt = Number(index);
+        if (scanner && Number.isInteger(removeAt)) {
+          this.setScanner({ images: scanner.images.filter((_, position) => position !== removeAt) });
+        }
+        return true;
+      }
+      case 'scanner-extract':
+        await this.runScannerExtraction();
+        return true;
+      case 'scanner-rescan':
+        this.setScanner({ step: 'capture', scan: null, draft: null, error: null, saving: false, webFields: [], enriching: false });
+        return true;
+      case 'scanner-enrich': {
+        const form = el.closest<HTMLFormElement>('form[data-form="scanner-review"]');
+        if (form) await this.runScannerEnrich(form);
+        return true;
+      }
+      default:
+        return false;
+    }
+  }
+
+  private setScanner(patch: Partial<LabelScannerState>): void {
+    if (!this.state.scanner) return;
+    this.setState({ scanner: { ...this.state.scanner, ...patch } });
+  }
+
+  /**
+   * Open the scanner. The Decent tablet (whose webview user agent is exactly
+   * "Decent") can't take photos well, so it hands off to a phone via QR. A phone
+   * or normal browser — including the one that scanned the QR — runs the flow
+   * on-device. Demo and the QR-arrival both go straight to the on-device flow.
+   */
+  private async openLabelScanner(options: { fromHandoff?: boolean } = {}): Promise<void> {
+    const hasKey = readGeminiApiKey() != null;
+    const handoff = isDecentAppWebView() && options.fromHandoff !== true && !this.state.demo;
+    // Build the QR from the gateway's LAN IP (the tablet webview is on localhost).
+    const handoffUrl = handoff ? buildHandoffUrl(location.href, await gateway.lanAddress()) : null;
+    this.setState({
+      modal: 'label-scanner',
+      scanner: {
+        step: handoff ? 'onboard' : this.state.demo || hasKey ? 'capture' : 'onboard',
+        handoff,
+        qrSvg: handoffUrl ? renderQrSvg(handoffUrl) : null,
+        qrUrl: handoffUrl,
+        keyDraft: '',
+        verifying: false,
+        verifyMessage: null,
+        images: [],
+        scan: null,
+        draft: null,
+        lowConfidence: [],
+        webFields: [],
+        enriching: false,
+        existingBeanId: null,
+        existingBeanLabel: null,
+        saving: false,
+        error: null
+      }
+    });
+  }
+
+  private async addScannerPhotos(files: File[]): Promise<void> {
+    if (!this.state.scanner) return;
+    try {
+      const added: CapturedImage[] = await Promise.all(files.map((file) => fileToScaledImage(file)));
+      if (!this.state.scanner) return;
+      this.setScanner({ images: [...this.state.scanner.images, ...added] });
+    } catch (error) {
+      console.error('[Beanie] Could not prepare photo', error);
+      this.setState({ status: 'Could not read that photo' });
+    }
+  }
+
+  private async runScannerExtraction(): Promise<void> {
+    const scanner = this.state.scanner;
+    if (!scanner) return;
+    this.setScanner({ step: 'extracting', error: null });
+    try {
+      const scan: LabelScan = this.state.demo
+        ? demoLabelScan()
+        : await scanLabel(
+            scanner.images.map((image) => ({ mime: image.mime, base64: image.base64 })),
+            readGeminiApiKey() ?? ''
+          );
+      const draft = labelScanToDraft(scan);
+      const existing = findExistingBean(this.state.beans, draft.roaster, draft.name);
+      this.setScanner({
+        step: 'review',
+        scan,
+        draft,
+        lowConfidence: [...lowConfidenceFields(scan)],
+        webFields: [],
+        enriching: false,
+        existingBeanId: existing?.id ?? null,
+        existingBeanLabel: existing ? beanLabel(existing) : null
+      });
+    } catch (error) {
+      const message = error instanceof GeminiError ? error.message : 'Could not read the label — try again.';
+      console.error('[Beanie] Label scan failed', error);
+      this.setScanner({ step: 'error', error: message });
+    }
+  }
+
+  private async runScannerEnrich(form: HTMLFormElement): Promise<void> {
+    const scanner = this.state.scanner;
+    if (!scanner) return;
+    // Capture edits the user already made so enrichment merges on top of them.
+    const data = new FormData(form);
+    const get = (name: string): string => String(data.get(name) ?? '');
+    const draft: LabelScanDraft = {
+      roaster: get('roaster'),
+      name: get('name'),
+      country: get('country'),
+      region: get('region'),
+      processing: get('processing'),
+      notes: get('notes'),
+      roastDate: get('roastDate'),
+      roastLevel: get('roastLevel'),
+      weight: get('weight')
+    };
+    if (!draft.roaster.trim() || !draft.name.trim()) {
+      this.setState({ status: 'Add a roaster and bean name to enrich.' });
+      return;
+    }
+
+    this.setScanner({ enriching: true });
+    try {
+      const enrichment = this.state.demo
+        ? demoLabelEnrich()
+        : await enrichLabel(
+            { roaster: draft.roaster, name: draft.name, country: draft.country },
+            readGeminiApiKey() ?? ''
+          );
+      if (!this.state.scanner) return;
+      const merged = mergeEnrichment(draft, enrichment);
+      this.setScanner({
+        enriching: false,
+        draft: merged.draft,
+        webFields: [...new Set([...this.state.scanner.webFields, ...merged.webFields])]
+      });
+      if (merged.webFields.length === 0) this.setState({ status: 'No extra details found.' });
+    } catch (error) {
+      const message = error instanceof GeminiError ? error.message : 'Could not reach the roaster — try again.';
+      console.error('[Beanie] Enrich failed', error);
+      this.setScanner({ enriching: false });
+      this.setState({ status: message });
+    }
+  }
+
+  private saveScannerKey(form: HTMLFormElement): void {
+    const key = String(new FormData(form).get('apiKey') ?? '').trim();
+    if (!key) {
+      this.setScanner({ verifyMessage: { tone: 'warn', text: 'Enter your API key first.' } });
+      return;
+    }
+    writeGeminiApiKey(key);
+    this.setScanner({ step: 'capture', keyDraft: '', verifyMessage: null });
+  }
+
+  private async submitScannerReview(form: HTMLFormElement): Promise<void> {
+    const scanner = this.state.scanner;
+    if (!scanner) return;
+    const data = new FormData(form);
+    const beanFields = beanFieldsFromForm(data);
+    if (!beanFields.roaster || !beanFields.name) {
+      this.setState({ status: 'Add a roaster and a bean name.' });
+      return;
+    }
+
+    this.setScanner({ saving: true, error: null });
+
+    const existing =
+      (scanner.existingBeanId ? this.state.beans.find((bean) => bean.id === scanner.existingBeanId) : null) ??
+      findExistingBean(this.state.beans, beanFields.roaster, beanFields.name);
+
+    let beanId: string;
+    let beans = this.state.beans;
+    let batchesByBean = this.state.batchesByBean;
+
+    if (existing) {
+      beanId = existing.id;
+    } else {
+      const saved = await this.beanWorkflow.saveBean(
+        { beans, batchesByBean, editingId: null, fields: beanFields, demo: this.state.demo, nowMs: Date.now() },
+        {
+          createBean: (input) => gateway.createBean(input),
+          updateBean: (id, input) => gateway.updateBean(id, input),
+          putBeans: (next) => beanieCache.putBeans(next),
+          putBeanBatches: (id, batches) => beanieCache.putBeanBatches(id, batches)
+        }
+      );
+      if (saved.type === 'failed') {
+        console.error('[Beanie] Scanner save bean failed', saved.error);
+        this.setScanner({ saving: false, step: 'error', error: saved.status });
+        return;
+      }
+      beanId = saved.bean.id;
+      beans = saved.beans;
+      batchesByBean = saved.batchesByBean;
+    }
+
+    const bean = existing ?? beans.find((item) => item.id === beanId);
+    if (!bean) {
+      this.setScanner({ saving: false, step: 'error', error: 'Could not save the bean.' });
+      return;
+    }
+
+    const batchInput = batchFieldsFromForm(data, beanId);
+    batchInput.weightRemaining = batchInput.weight;
+
+    const created = await this.beanWorkflow.createBatch(
+      {
+        bean,
+        batchesByBean,
+        selectedBeanId: this.state.selectedBeanId,
+        selectedBatchId: this.state.selectedBatchId,
+        batchInput,
+        demo: this.state.demo,
+        nowMs: Date.now()
+      },
+      {
+        createBatch: (id, input) => gateway.createBatch(id, input),
+        putBeanBatches: (id, batches) => beanieCache.putBeanBatches(id, batches)
+      }
+    );
+
+    if (created.type === 'failed') {
+      console.error('[Beanie] Scanner add batch failed', created.error);
+      this.setState({ beans, batchesByBean });
+      this.setScanner({ saving: false, step: 'error', error: created.status });
+      return;
+    }
+
+    this.setState({
+      beans,
+      batchesByBean: created.batchesByBean,
+      selectedBatchId: created.batch.id,
+      modal: null,
+      scanner: null,
+      status: existing ? 'Added a bag from the label' : 'Added a bean from the label'
+    });
+    await this.selectBean(beanId, { apply: false, preferWorkflow: false });
+  }
+
+  private renderLabelScannerModal(): string {
+    const scanner = this.state.scanner;
+    if (!scanner) return '';
+    return renderLabelScannerModalView({
+      step: scanner.step,
+      demo: this.state.demo,
+      handoff: scanner.handoff,
+      qrSvg: scanner.qrSvg,
+      qrUrl: scanner.qrUrl,
+      keyDraft: scanner.keyDraft,
+      verifying: scanner.verifying,
+      verifyMessage: scanner.verifyMessage,
+      images: scanner.images.map((image) => ({ dataUrl: image.dataUrl })),
+      draft: scanner.draft,
+      lowConfidence: scanner.lowConfidence,
+      webFields: scanner.webFields,
+      enriching: scanner.enriching,
+      existingBeanLabel: scanner.existingBeanLabel,
+      saving: scanner.saving,
+      error: scanner.error
+    });
   }
 
   private async handleRecipeClickAction(action: string | undefined, context: ClickActionContext): Promise<boolean> {
@@ -3054,6 +3408,7 @@ export class BeanieApp {
         }
         this.setState({
           modal: null,
+          scanner: null,
           editingBeanId: null,
           profileEditor: null,
           editingProfileId: null,
@@ -3442,6 +3797,13 @@ export class BeanieApp {
       if (file) void this.uploadFirmware(file);
       return;
     }
+    if (target.dataset.action === 'scanner-add-photos') {
+      const input = target as HTMLInputElement;
+      const files = Array.from(input.files ?? []);
+      input.value = '';
+      if (files.length > 0) void this.addScannerPhotos(files);
+      return;
+    }
     if (target.dataset.action === 'bean-picker-batch-field') {
       const form = target.closest<HTMLFormElement>('[data-form="bean-picker-batch"]');
       if (form) await this.saveBeanPickerBatch(form);
@@ -3515,6 +3877,16 @@ export class BeanieApp {
     if (form.dataset.form === 'grinder-editor') {
       event.preventDefault();
       await this.submitGrinderEditor(form);
+      return;
+    }
+    if (form.dataset.form === 'scanner-onboard') {
+      event.preventDefault();
+      this.saveScannerKey(form);
+      return;
+    }
+    if (form.dataset.form === 'scanner-review') {
+      event.preventDefault();
+      await this.submitScannerReview(form);
       return;
     }
   }
@@ -4830,6 +5202,7 @@ export class BeanieApp {
     if (this.state.modal === 'edit-shot') return this.renderShotEditModal();
     if (this.state.modal === 'machine-label') return this.renderMachineLabelModal();
     if (this.state.modal === 'no-scale-shot') return this.renderNoScaleShotModal();
+    if (this.state.modal === 'label-scanner') return this.renderLabelScannerModal();
     return '';
   }
 

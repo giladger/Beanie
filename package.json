@@ -20,7 +20,9 @@
     "seed:decent": "node scripts/seed-decent-db.mjs"
   },
   "dependencies": {
-    "lucide": "^0.475.0"
+    "@types/qrcode-generator": "^0.0.16",
+    "lucide": "^0.475.0",
+    "qrcode-generator": "^2.0.4"
   },
   "devDependencies": {
     "tsx": "^4.22.4",

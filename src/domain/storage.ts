@@ -24,3 +24,22 @@ export function readFavoriteProfiles(): string[] {
 export function writeFavoriteProfiles(ids: string[]): void {
   localStorage.setItem(favoriteProfilesKey, JSON.stringify([...new Set(ids)]));
 }
+
+// The user's own (free-tier) Gemini key for the AI label scanner. Phase 1 keeps
+// it in localStorage on this device; a shared/gateway home is a Phase 2 concern.
+const geminiApiKeyKey = 'beanie:gemini-api-key';
+
+export function readGeminiApiKey(): string | null {
+  const value = localStorage.getItem(geminiApiKeyKey);
+  return value && value.trim() ? value : null;
+}
+
+export function writeGeminiApiKey(key: string): void {
+  const trimmed = key.trim();
+  if (trimmed) localStorage.setItem(geminiApiKeyKey, trimmed);
+  else localStorage.removeItem(geminiApiKeyKey);
+}
+
+export function clearGeminiApiKey(): void {
+  localStorage.removeItem(geminiApiKeyKey);
+}

@@ -332,6 +332,24 @@ export const gateway = {
 
   skins: () => fetchJson<SkinInfo[]>('settings', '/api/v1/webui/skins', readSkins),
 
+  // The gateway's LAN/Wi-Fi IP, for the label scanner's phone hand-off QR (the
+  // tablet webview is on localhost, so it can't know its own LAN address). Reads
+  // `localIp` from /api/v1/info; fail-soft (null) on any error or older gateways.
+  lanAddress: async (): Promise<string | null> => {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2500);
+      const res = await fetch(`${gatewayHttpOrigin()}/api/v1/info`, { signal: controller.signal });
+      clearTimeout(timer);
+      if (!res.ok) return null;
+      const data: unknown = await res.json().catch(() => null);
+      const ip = (data as { localIp?: unknown } | null)?.localIp;
+      return typeof ip === 'string' && ip.trim() ? ip.trim() : null;
+    } catch {
+      return null;
+    }
+  },
+
   // --- devices (pairing) ---
   devices: () => fetchJson<DeviceInfo[]>('settings', '/api/v1/devices', readDevices),
   scanDevices: async (): Promise<DeviceInfo[]> => {
