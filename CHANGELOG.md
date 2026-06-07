@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.7 - 2026-06-07
+
+- Added an AI bag-label scanner that can photograph a coffee bag, extract bean and batch details with Gemini, review low-confidence fields, and save the confirmed result into the existing bean workflow.
+- Added phone support and a dedicated phone companion layout so Beanie can be used from smaller screens during scanning and companion workflows.
+- Refactored Beanie's app architecture into clearer shell, controller, domain, data, component, and view boundaries, with broader tests around the extracted workflows.
+
 ## v0.1.6 - 2026-06-06
 
 - Added hot water scale stop mode.
