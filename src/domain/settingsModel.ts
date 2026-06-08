@@ -9,7 +9,6 @@ import {
   GATEWAY_MODES,
   LOG_LEVELS,
   SCALE_POWER_MODES,
-  STEAM_PURGE_MODES,
   THEME_MODES,
   demoCalibration,
   demoDe1AdvancedSettings,
@@ -127,28 +126,6 @@ export const SETTINGS_SPEC: SettingsSpecSection[] = [
       { group: 'rea', key: 'weightFlowMultiplier', label: 'Weight stop lookahead', type: 'number', min: 0, max: 5, step: 0.05, help: 'Higher stops earlier when using stop-at-weight.' },
       { group: 'rea', key: 'volumeFlowMultiplier', label: 'Volume stop lookahead', type: 'number', min: 0, max: 2, step: 0.05, unit: 's', help: 'Seconds of flow to expect after a volume stop command.' },
       { group: 'calibration', key: 'flowMultiplier', label: 'Flow calibration', type: 'number', min: 0.13, max: 2, step: 0.01, help: 'Adjusts Decent.app flow estimation.' }
-    ]
-  },
-  {
-    id: 'machine-outputs',
-    title: 'Machine outputs',
-    terms: 'tank steam flush hot water purge flow temperature',
-    fields: [
-      { group: 'de1', key: 'tankTemp', label: 'Tank preheat target', type: 'number', min: 0, max: 60, step: 1, unit: '°C', help: '0 = off' },
-      { group: 'de1', key: 'steamFlow', label: 'Steam flow', type: 'number', min: 0, max: 5, step: 0.1, unit: 'ml/s', decimals: 1 },
-      {
-        group: 'de1',
-        key: 'steamPurgeMode',
-        label: 'Steam purge mode',
-        type: 'select',
-        options: STEAM_PURGE_MODES.map((mode) => ({ value: String(mode.value), label: mode.label })),
-        valueType: 'number',
-        help: 'Reaprime supports normal auto-purge or two-tap stop.'
-      },
-      { group: 'de1', key: 'hotWaterFlow', label: 'Hot water flow', type: 'number', min: 0, max: 10, step: 0.1, unit: 'ml/s' },
-      { group: 'de1', key: 'flushTemp', label: 'Flush temperature', type: 'number', min: 0, max: 110, step: 1, unit: '°C' },
-      { group: 'de1', key: 'flushFlow', label: 'Flush flow', type: 'number', min: 0, max: 10, step: 0.1, unit: 'ml/s' },
-      { group: 'de1', key: 'flushTimeout', label: 'Flush timeout', type: 'number', min: 0, max: 30, step: 1, unit: 's' }
     ]
   },
   {

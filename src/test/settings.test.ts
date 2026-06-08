@@ -1,12 +1,11 @@
 import {
-  STEAM_PURGE_MODES,
   de1MachineSettingsPatchBody,
   readDecentAccountStatus,
   readDisplayState,
   readReaSettings,
   readSkins
 } from '../api/settings';
-import { SETTINGS_SPEC, coerceFieldValue } from '../domain/settingsModel';
+import { SETTINGS_SPEC } from '../domain/settingsModel';
 
 run('readReaSettings coerces wire values and fills defaults', () => {
   const s = readReaSettings({
@@ -65,18 +64,6 @@ run('de1MachineSettingsPatchBody converts usb boolean to enable/disable', () => 
   equal(de1MachineSettingsPatchBody({ steamPurgeMode: 1 }).steamPurgeMode as number, 1);
 });
 
-run('steam purge mode exposes Reaprime-supported numeric options', () => {
-  const field = SETTINGS_SPEC.flatMap((section) => section.fields)
-    .find((candidate) => candidate.group === 'de1' && candidate.key === 'steamPurgeMode');
-  if (!field) throw new Error('Missing steamPurgeMode field');
-
-  equal(field.type, 'select');
-  equal(field.options?.length, STEAM_PURGE_MODES.length);
-  equal(field.options?.[0]?.value, '0');
-  equal(field.options?.[1]?.value, '1');
-  equal(coerceFieldValue(field, '1'), 1);
-});
-
 run('readSkins normalizes id/name from a few shapes', () => {
   const skins = readSkins([{ id: 'beanie', name: 'Beanie' }, { name: 'streamline.js' }, { id: '' }]);
   equal(skins.length, 2);
@@ -103,13 +90,6 @@ run('settings model exposes every currently editable backend setting', () => {
     'rea.nightModeMorningTime',
     'rea.lowBatteryBrightnessLimit',
     'de1.usb',
-    'de1.tankTemp',
-    'de1.steamFlow',
-    'de1.steamPurgeMode',
-    'de1.hotWaterFlow',
-    'de1.flushTemp',
-    'de1.flushFlow',
-    'de1.flushTimeout',
     'de1.fan',
     'presence.userPresenceEnabled',
     'presence.sleepTimeoutMinutes',

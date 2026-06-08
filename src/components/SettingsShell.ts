@@ -125,11 +125,8 @@ function settingsSections(
       {
         id: 'machine',
         title: 'Machine',
-        terms: 'tank steam flush hot water purge descale clean sleep routine defaults',
-        html: [
-          renderSpecSectionById('machine-outputs', bundle, options),
-          renderMaintenanceSection()
-        ].join('')
+        terms: 'descale clean sleep routine defaults',
+        html: renderMaintenanceSection()
       },
       {
         id: 'power',
