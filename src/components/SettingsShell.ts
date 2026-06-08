@@ -305,11 +305,15 @@ function renderDecentAccountSection(account: DecentAccountPanelState): string {
         'Link your Decent Espresso account for account-backed machine checks.',
         account.source === 'loading' ? 'muted' : 'warn'
       );
+  const refreshButton = `<button type="button" class="text-button" data-action="settings-account-refresh" ${account.saving || account.source === 'loading' ? 'disabled' : ''}>${icon('refresh-cw')}<span>Refresh</span></button>`;
   const form = loggedIn
     ? `
       <div class="settings-line">
         <div><span>Decent Account</span><small>Remove the linked account from this tablet.</small></div>
-        <button type="button" class="text-button danger" data-action="settings-account-logout" ${account.saving ? 'disabled' : ''}>${icon('log-out')}<span>${account.saving ? 'Unlinking...' : 'Unlink'}</span></button>
+        <span class="settings-plugin-buttons">
+          ${refreshButton}
+          <button type="button" class="text-button danger" data-action="settings-account-logout" ${account.saving ? 'disabled' : ''}>${icon('log-out')}<span>${account.saving ? 'Unlinking...' : 'Unlink'}</span></button>
+        </span>
       </div>
       ${message}`
     : `
@@ -324,6 +328,7 @@ function renderDecentAccountSection(account: DecentAccountPanelState): string {
       <div class="settings-plugin-config-actions">
         ${message || unavailable}
         <span class="settings-plugin-buttons">
+          ${refreshButton}
           <button type="button" class="text-button primary" data-action="settings-account-login" ${account.saving || account.source === 'loading' ? 'disabled' : ''}>${icon('log-in')}<span>${account.saving ? 'Linking...' : 'Link'}</span></button>
         </span>
       </div>`;

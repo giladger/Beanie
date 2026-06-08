@@ -579,7 +579,7 @@ interface LiveReadoutEls {
 
 function accountLoginErrorMessage(error: GatewayRequestError): string {
   if (error.issue.statusCode === 401) return 'Invalid Decent account email or password.';
-  if (error.issue.statusCode === 404) return 'Update Reaprime to enable Decent account linking from Beanie.';
+  if (error.issue.statusCode === 404) return 'This Reaprime build does not expose account linking to Beanie.';
   if (error.issue.kind === 'network') return 'Could not reach the gateway.';
   const detail = error.issue.message.match(/returned \d+:\s*(.+)$/)?.[1]?.trim();
   return detail || 'Could not link Decent account.';
@@ -3458,6 +3458,9 @@ export class BeanieApp {
       case 'settings-account-logout':
         await this.logoutDecentAccount();
         return true;
+      case 'settings-account-refresh':
+        await this.refreshDecentAccount();
+        return true;
       case 'settings-scan-devices':
         await this.scanDevices();
         return true;
@@ -6107,8 +6110,20 @@ export class BeanieApp {
       decentAccountSource: result.source,
       decentAccountEmail: result.email,
       decentAccountPassword: '',
+      decentAccountSaving: false,
       decentAccountMessage: result.message
     });
+  }
+
+  private async refreshDecentAccount(): Promise<void> {
+    this.setState({
+      decentAccountSaving: true,
+      decentAccountSource: this.state.decentAccountSource === 'gateway' || this.state.decentAccountSource === 'demo'
+        ? null
+        : this.state.decentAccountSource,
+      decentAccountMessage: { tone: 'muted', text: 'Refreshing Decent account status...' }
+    });
+    await this.loadDecentAccount();
   }
 
   private updateDecentAccountField(key: string, value: string): void {

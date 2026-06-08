@@ -6,4 +6,5 @@ declare const __BUILD_TIME__: string;
 
 interface Window {
   BEANIE_GATEWAY?: string;
+  __REA_PROXY_TOKEN__?: string;
 }

@@ -209,6 +209,14 @@ function jsonPost(body: unknown): RequestInit {
   };
 }
 
+function withSkinProxyToken(init: RequestInit): RequestInit {
+  const token = window.__REA_PROXY_TOKEN__;
+  if (!token) return init;
+  const headers = new Headers(init.headers);
+  headers.set('Authorization', `Bearer ${token}`);
+  return { ...init, headers };
+}
+
 export const gateway = {
   machineInfo: () => fetchJson<MachineInfo>('machine', '/api/v1/machine/info', readMachineInfo),
 
@@ -322,13 +330,14 @@ export const gateway = {
   decentAccount: () =>
     fetchJson<DecentAccountStatus>('settings', '/api/v1/account/decent', readDecentAccountStatus),
   loginDecentAccount: (email: string, password: string) =>
-    fetchJson<DecentAccountStatus>('settings', '/api/v1/account/decent/login', readDecentAccountStatus, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
-    }),
+    fetchJson<DecentAccountStatus>(
+      'settings',
+      '/api/v1/account/decent/login',
+      readDecentAccountStatus,
+      withSkinProxyToken(jsonPost({ email, password }))
+    ),
   logoutDecentAccount: () =>
-    fetchEmpty('settings', '/api/v1/account/decent', { method: 'DELETE' }),
+    fetchEmpty('settings', '/api/v1/account/decent', withSkinProxyToken({ method: 'DELETE' })),
 
   skins: () => fetchJson<SkinInfo[]>('settings', '/api/v1/webui/skins', readSkins),
 

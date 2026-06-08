@@ -51,6 +51,7 @@ run('readDisplayState clamps brightness and fills support defaults', () => {
 
 run('readDecentAccountStatus accepts logged-in and email shapes', () => {
   equal(readDecentAccountStatus({ loggedIn: true, email: 'user@example.com' }).loggedIn, true);
+  equal(readDecentAccountStatus({ loggedIn: true }).email, null);
   equal(readDecentAccountStatus({ email: 'user@example.com' }).loggedIn, true);
   equal(readDecentAccountStatus({ isLoggedIn: true }).loggedIn, true);
   equal(readDecentAccountStatus({}).loggedIn, false);

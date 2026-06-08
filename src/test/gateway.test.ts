@@ -210,6 +210,26 @@ await run('visualizer verify calls plugin verifyCredentials endpoint', async () 
   equal(calls[0]!.init?.body, JSON.stringify({ username: 'user@example.com', password: 'secret' }));
 });
 
+await run('decent account status reads the status-only account endpoint', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const restore = installFetchStub(calls, { loggedIn: true });
+  let loggedIn = false;
+  let email: string | null = 'stale@example.com';
+  try {
+    const status = await gateway.decentAccount();
+    loggedIn = status.loggedIn;
+    email = status.email;
+  } finally {
+    restore();
+  }
+
+  equal(loggedIn, true);
+  equal(email, null);
+  equal(calls.length, 1);
+  equal(calls[0]!.url, '/api/v1/account/decent');
+  equal(calls[0]!.init?.method, undefined);
+});
+
 await run('decent account login posts credentials to account endpoint', async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const restore = installFetchStub(calls, { loggedIn: true, email: 'user@example.com' });
@@ -225,6 +245,18 @@ await run('decent account login posts credentials to account endpoint', async ()
   equal(calls[0]!.url, '/api/v1/account/decent/login');
   equal(calls[0]!.init?.method, 'POST');
   equal(calls[0]!.init?.body, JSON.stringify({ email: 'user@example.com', password: 'secret' }));
+});
+
+await run('decent account login includes injected skin token when present', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const restore = installFetchStub(calls, { loggedIn: true, email: null }, 200, 'skin-token');
+  try {
+    await gateway.loginDecentAccount('user@example.com', 'secret');
+  } finally {
+    restore();
+  }
+
+  equal(headerValue(calls[0]!.init?.headers, 'Authorization'), 'Bearer skin-token');
 });
 
 await run('decent account login includes gateway error body in request errors', async () => {
@@ -315,12 +347,16 @@ async function run(name: string, fn: () => void | Promise<void>): Promise<void> 
 function installFetchStub(
   calls: Array<{ url: string; init?: RequestInit }>,
   responseBody: unknown,
-  status = 200
+  status = 200,
+  skinToken?: string
 ): () => void {
   const previousFetch = globalThis.fetch;
   const previousWindow = (globalThis as unknown as { window?: unknown }).window;
   const previousLocation = (globalThis as unknown as { location?: unknown }).location;
-  (globalThis as unknown as { window: { BEANIE_GATEWAY?: string } }).window = {};
+  (globalThis as unknown as { window: { BEANIE_GATEWAY?: string; __REA_PROXY_TOKEN__?: string } }).window = {};
+  if (skinToken) {
+    (globalThis as unknown as { window: { __REA_PROXY_TOKEN__?: string } }).window.__REA_PROXY_TOKEN__ = skinToken;
+  }
   (globalThis as unknown as { location: { port: string; protocol: string; hostname: string; origin: string } }).location = {
     port: '',
     protocol: 'http:',
@@ -339,6 +375,11 @@ function installFetchStub(
     (globalThis as unknown as { window?: unknown }).window = previousWindow;
     (globalThis as unknown as { location?: unknown }).location = previousLocation;
   };
+}
+
+function headerValue(headers: HeadersInit | undefined, key: string): string | null {
+  if (!headers) return null;
+  return new Headers(headers).get(key);
 }
 
 function equal<T>(actual: T, expected: T): void {
