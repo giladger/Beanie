@@ -229,6 +229,7 @@ function validateWorkflow(value: unknown, path: string, issues: ValidationIssue[
   optionalRecord(obj, 'steamSettings', path, issues);
   optionalRecord(obj, 'hotWaterData', path, issues);
   optionalRecord(obj, 'rinseData', path, issues);
+  validateOptionalObject(obj, 'machine', path, issues, true, validateWorkflowMachine);
 }
 
 function validateMachineCapabilities(
@@ -307,6 +308,17 @@ function validateWorkflowContext(
   optionalString(obj, 'baristaName', path, issues, true);
   optionalString(obj, 'drinkerName', path, issues, true);
   optionalRecord(obj, 'extras', path, issues, true);
+}
+
+function validateWorkflowMachine(
+  value: unknown,
+  path: string,
+  issues: ValidationIssue[]
+): void {
+  const obj = expectRecord(value, path, issues);
+  if (!obj) return;
+
+  optionalNumber(obj, 'flowCalibration', path, issues, true);
 }
 
 function validateProfile(value: unknown, path: string, issues: ValidationIssue[]): void {

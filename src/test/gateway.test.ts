@@ -1,4 +1,11 @@
-import { ApiValidationError, readBeans, readMachineInfo, readMachineSnapshot, readPaginatedShots } from '../api/guards';
+import {
+  ApiValidationError,
+  readBeans,
+  readMachineInfo,
+  readMachineSnapshot,
+  readPaginatedShots,
+  readShotRecord
+} from '../api/guards';
 import {
   GatewayRequestError,
   createDemoStartupSnapshot,
@@ -70,6 +77,17 @@ await run('guards normalize machine state snapshots for startup sleep checks', (
   equal(snapshot.state.state, 'sleeping');
   equal(snapshot.flow, 0);
   equal(snapshot.groupTemperature, 0);
+});
+
+await run('guards preserve workflow machine flow calibration on shots', () => {
+  const shot = readShotRecord({
+    id: 'shot-flow-cal',
+    timestamp: '2026-06-08T09:00:00.000Z',
+    workflow: { machine: { flowCalibration: 1.17 } },
+    measurements: []
+  });
+
+  equal(shot.workflow?.machine?.flowCalibration, 1.17);
 });
 
 await run('guards reject malformed bean responses', () => {

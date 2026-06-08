@@ -49,32 +49,20 @@ run('recordedFlowMultiplier reads workflow.machine.flowCalibration (current reap
   equal(recordedFlowMultiplier(shot), 1.05);
 });
 
-run('recordedFlowMultiplier prefers workflow.machine over legacy annotations.extras', () => {
+run('recordedFlowMultiplier ignores legacy annotations.extras', () => {
   const shot = {
-    ...shotWith({ extras: { flowCalibrationMultiplier: 0.8 } }),
-    workflow: { machine: { flowCalibration: 1.1 } }
+    ...shotWith({ extras: { flowCalibrationMultiplier: 0.8 } })
   } as ShotRecord;
-  equal(recordedFlowMultiplier(shot), 1.1);
+  equal(recordedFlowMultiplier(shot), null);
 });
 
-run('recordedFlowMultiplier falls back to legacy annotations.extras', () => {
-  equal(recordedFlowMultiplier(shotWith({ extras: { flowCalibrationMultiplier: 1.05 } })), 1.05);
+run('recordedFlowMultiplier ignores top-level metadata', () => {
+  equal(recordedFlowMultiplier({ ...shotWith({}), metadata: { flowCalibrationMultiplier: 0.9 } } as ShotRecord), null);
 });
 
-run('recordedFlowMultiplier falls back to top-level metadata', () => {
-  equal(recordedFlowMultiplier({ ...shotWith({}), metadata: { flowCalibrationMultiplier: 0.9 } } as ShotRecord), 0.9);
-});
-
-run('recordedFlowMultiplier prefers annotations.extras over metadata', () => {
-  const shot = {
-    ...shotWith({ extras: { flowCalibrationMultiplier: 1.1 } }),
-    metadata: { flowCalibrationMultiplier: 0.8 }
-  } as ShotRecord;
-  equal(recordedFlowMultiplier(shot), 1.1);
-});
-
-run('recordedFlowMultiplier coerces a numeric string', () => {
-  equal(recordedFlowMultiplier(shotWith({ extras: { flowCalibrationMultiplier: '0.88' } })), 0.88);
+run('recordedFlowMultiplier coerces a workflow numeric string', () => {
+  const shot = { ...shotWith({}), workflow: { machine: { flowCalibration: '0.88' } } } as unknown as ShotRecord;
+  equal(recordedFlowMultiplier(shot), 0.88);
 });
 
 run('recordedFlowMultiplier is null for shots without the stamp (old reaprime)', () => {
@@ -83,8 +71,8 @@ run('recordedFlowMultiplier is null for shots without the stamp (old reaprime)',
 });
 
 run('recordedFlowMultiplier rejects non-positive or non-numeric values', () => {
-  equal(recordedFlowMultiplier(shotWith({ extras: { flowCalibrationMultiplier: 0 } })), null);
-  equal(recordedFlowMultiplier(shotWith({ extras: { flowCalibrationMultiplier: 'n/a' } })), null);
+  equal(recordedFlowMultiplier({ ...shotWith({}), workflow: { machine: { flowCalibration: 0 } } } as ShotRecord), null);
+  equal(recordedFlowMultiplier({ ...shotWith({}), workflow: { machine: { flowCalibration: 'n/a' } } } as unknown as ShotRecord), null);
 });
 
 function shotWith(annotations: Record<string, unknown>): ShotRecord {

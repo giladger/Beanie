@@ -133,16 +133,10 @@ export function roundCalibration(value: number): number {
 }
 
 // The flow calibration the machine was running when this shot was pulled, if it
-// was recorded. Reaprime snapshots it onto `workflow.machine.flowCalibration`
-// (earlier builds stamped `annotations.extras` / top-level `metadata` as
-// `flowCalibrationMultiplier` — kept as fallbacks). Returns null for shots
-// without it — callers fall back to an estimate.
+// was recorded. Reaprime snapshots it onto `workflow.machine.flowCalibration`.
+// Returns null for shots without it — callers fall back to an estimate.
 export function recordedFlowMultiplier(shot: ShotRecord): number | null {
-  return (
-    coerceMultiplier(shot.workflow?.machine?.flowCalibration) ??
-    coerceMultiplier(shot.annotations?.extras?.['flowCalibrationMultiplier']) ??
-    coerceMultiplier(shot.metadata?.['flowCalibrationMultiplier'])
-  );
+  return coerceMultiplier(shot.workflow?.machine?.flowCalibration);
 }
 
 function coerceMultiplier(value: unknown): number | null {
