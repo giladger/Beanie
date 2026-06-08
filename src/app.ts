@@ -16,6 +16,7 @@ import type {
   ShotAnnotations,
   ShotMeasurement,
   ShotRecord,
+  ShotSummary,
   ShotUpdate,
   SteamSettings,
   Workflow,
@@ -63,6 +64,7 @@ import {
   freshnessSnapshotForShot,
   formatRatio,
   latestBatch,
+  legacyShotFilterForBean,
   normalizeDraft,
   parseNumberInput,
   profileBaseTemperature,
@@ -1125,9 +1127,24 @@ export class BeanieApp {
     offset: number
   ): Promise<{ records: ShotRecord[]; total: number }> {
     const cacheGeneration = this.shotCacheGeneration;
-    const query = shotFilterForBean(bean, batch);
+    const batches = this.state.batchesByBean[bean.id] ?? [];
+    const query = batches.length > 0 ? shotFilterForBean(bean, batch) : legacyShotFilterForBean(bean);
+    const input =
+      batches.length > 0
+        ? {
+            query,
+            pageSize: this.shotPageSize,
+            offset,
+            fallbackQuery: legacyShotFilterForBean(bean),
+            acceptPage: (items: ShotSummary[]) => pageLooksScopedToBean(items, bean, batches)
+          }
+        : {
+            query,
+            pageSize: this.shotPageSize,
+            offset
+          };
     return fetchShotPageFromRepository(
-      { query, pageSize: this.shotPageSize, offset },
+      input,
       {
         gateway,
         cache: beanieCache,
@@ -6784,6 +6801,18 @@ function keepKeys<T>(record: Record<string, T>, keys: Set<string>): Record<strin
     if (keys.has(key)) next[key] = value;
   }
   return next;
+}
+
+function pageLooksScopedToBean(items: ShotSummary[], bean: Bean, batches: BeanBatch[]): boolean {
+  if (items.length === 0) return true;
+  const batchIds = new Set(batches.map((batch) => batch.id));
+  return items.every((shot) => shotLooksScopedToBean(shot, bean, batchIds));
+}
+
+function shotLooksScopedToBean(shot: ShotSummary, bean: Bean, batchIds: Set<string>): boolean {
+  const ctx = shot.workflow?.context;
+  if (ctx?.beanBatchId && batchIds.has(ctx.beanBatchId)) return true;
+  return ctx?.coffeeName === bean.name && ctx?.coffeeRoaster === bean.roaster;
 }
 
 function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {

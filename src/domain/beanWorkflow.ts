@@ -52,6 +52,12 @@ export function latestBatch(batches: BeanBatch[]): BeanBatch | null {
 export function shotFilterForBean(bean: Bean, batch?: BeanBatch | null): URLSearchParams {
   const query = new URLSearchParams({ limit: '24', offset: '0', order: 'desc' });
   void batch;
+  query.set('beanId', bean.id);
+  return query;
+}
+
+export function legacyShotFilterForBean(bean: Bean): URLSearchParams {
+  const query = new URLSearchParams({ limit: '24', offset: '0', order: 'desc' });
   query.set('coffeeRoaster', bean.roaster);
   query.set('coffeeName', bean.name);
   return query;

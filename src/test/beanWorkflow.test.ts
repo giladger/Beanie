@@ -5,6 +5,7 @@ import {
   compareBeansForPicker,
   computeBeanFreshness,
   editLastBatchStorageEventDate,
+  legacyShotFilterForBean,
   profileBaseTemperature,
   ratioFor,
   recipeFromShot,
@@ -51,17 +52,19 @@ run('selects the latest shot bean before stale workflow or local storage', () =>
   );
 });
 
-run('builds bean shot filters across all batches', () => {
+run('builds bean shot filters by stable bean id', () => {
   const query = shotFilterForBean(beans[0]!, { id: 'batch-a', beanId: 'a' });
   equal(query.get('beanBatchId'), null);
-  equal(query.get('coffeeRoaster'), 'Kawa');
-  equal(query.get('coffeeName'), 'Pink Bourbon');
+  equal(query.get('coffeeRoaster'), null);
+  equal(query.get('coffeeName'), null);
+  equal(query.get('beanId'), 'a');
 });
 
-run('falls back to coffee roaster and name filters without a batch', () => {
-  const query = shotFilterForBean(beans[0]!, null);
+run('builds legacy bean shot filters by coffee roaster and name', () => {
+  const query = legacyShotFilterForBean(beans[0]!);
   equal(query.get('coffeeRoaster'), 'Kawa');
   equal(query.get('coffeeName'), 'Pink Bourbon');
+  equal(query.get('beanId'), null);
 });
 
 run('sorts bean list by shot or add recency before name', () => {
