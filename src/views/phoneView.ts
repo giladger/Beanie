@@ -181,9 +181,7 @@ function renderScanTab(): string {
 
 function renderBeansTab(model: PhoneShellModel): string {
   const query = model.beanSearch.trim().toLowerCase();
-  const beans = [...model.beans]
-    .filter((bean) => beanLabel(bean).toLowerCase().includes(query))
-    .sort((a, b) => beanLabel(a).localeCompare(beanLabel(b), undefined, { sensitivity: 'base' }));
+  const beans = model.beans.filter((bean) => beanLabel(bean).toLowerCase().includes(query));
   return `
     <section class="phone-stack">
       <div class="phone-search-row">

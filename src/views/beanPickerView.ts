@@ -209,7 +209,11 @@ function renderBeanPickerBatchForm(bean: Bean, batch: BeanBatch, active: boolean
   `;
 }
 
-export function renderBatchStorageModal(bean: Bean, batch: BeanBatch): string {
+export function renderBatchStorageModal(
+  bean: Bean,
+  batch: BeanBatch,
+  formNumbers: Record<string, string> = {}
+): string {
   const state = batchStorageState(batch);
   const status = storageStatusLabel(batch) ?? 'On shelf now';
   const freshness = freshnessBadgeLabel(batch);
@@ -218,8 +222,11 @@ export function renderBatchStorageModal(bean: Bean, batch: BeanBatch): string {
   const remaining = typeof batch.weightRemaining === 'number' && Number.isFinite(batch.weightRemaining)
     ? batch.weightRemaining
     : null;
-  const portionMax = remaining != null ? ` max="${escapeAttr(inputValue(remaining))}"` : '';
+  const portionEditMax = remaining != null ? inputValue(remaining) : '5000';
   const portionPlaceholder = remaining != null ? inputValue(Math.min(remaining, 100)) : '100';
+  const portionFormKey = freezePortionFormKey(batch.id);
+  const portionValue = formNumbers[portionFormKey] ?? '';
+  const portionDisplayValue = portionValue || portionPlaceholder;
   const nextEvent = state === 'frozen'
     ? {
         type: 'thawed' as const,
@@ -263,13 +270,29 @@ export function renderBatchStorageModal(bean: Bean, batch: BeanBatch): string {
           ${
             state === 'frozen'
               ? ''
-              : `<form class="batch-storage-card batch-freeze-portion" data-form="batch-freeze-portion">
+              : `<form class="batch-storage-card batch-freeze-portion" data-form="batch-freeze-portion" data-form-key="${escapeAttr(portionFormKey)}">
                   <div>
                     <span class="batch-storage-label">Partial freezer stash</span>
                     <strong>Freeze part of this bag</strong>
                     <p>Create a separate frozen batch and subtract grams from this shelf batch.</p>
                   </div>
-                  <label>Grams to freeze<input type="number" inputmode="decimal" step="0.1" min="0.1"${portionMax} name="amount" placeholder="${escapeAttr(portionPlaceholder)}" /></label>
+                  <label>Grams to freeze
+                    <input type="hidden" name="amount" value="${escapeAttr(portionValue)}" />
+                    <button
+                      type="button"
+                      class="number-edit-button batch-freeze-number"
+                      data-action="open-number-edit"
+                      data-target="form-field"
+                      data-form-key="${escapeAttr(portionFormKey)}"
+                      data-title="Grams to freeze"
+                      data-value="${escapeAttr(portionDisplayValue)}"
+                      data-min="0.1"
+                      data-max="${escapeAttr(portionEditMax)}"
+                      data-step="0.1"
+                      data-unit="g"
+                      data-return-modal="batch-storage"
+                    >${escapeHtml(portionDisplayValue)}<em>g</em></button>
+                  </label>
                   <button type="submit" class="secondary-button compact">${icon('snowflake')}<span>Create frozen portion</span></button>
                 </form>`
           }
@@ -279,6 +302,10 @@ export function renderBatchStorageModal(bean: Bean, batch: BeanBatch): string {
       </section>
     </div>
   `;
+}
+
+function freezePortionFormKey(batchId: string): string {
+  return `batch-storage:${batchId}:amount`;
 }
 
 function renderBatchStorageDateControl(

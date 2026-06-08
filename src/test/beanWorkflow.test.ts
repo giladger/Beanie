@@ -2,6 +2,7 @@ import type { Bean, Profile, ProfileRecord, ShotRecord, Workflow } from '../api/
 import {
   buildWorkflowUpdate,
   appendBatchStorageEvent,
+  compareBeansForPicker,
   computeBeanFreshness,
   editLastBatchStorageEventDate,
   profileBaseTemperature,
@@ -50,16 +51,31 @@ run('selects the latest shot bean before stale workflow or local storage', () =>
   );
 });
 
-run('builds bean shot filters from batch id when possible', () => {
+run('builds bean shot filters across all batches', () => {
   const query = shotFilterForBean(beans[0]!, { id: 'batch-a', beanId: 'a' });
-  equal(query.get('beanBatchId'), 'batch-a');
-  equal(query.get('coffeeName'), null);
+  equal(query.get('beanBatchId'), null);
+  equal(query.get('coffeeRoaster'), 'Kawa');
+  equal(query.get('coffeeName'), 'Pink Bourbon');
 });
 
 run('falls back to coffee roaster and name filters without a batch', () => {
   const query = shotFilterForBean(beans[0]!, null);
   equal(query.get('coffeeRoaster'), 'Kawa');
   equal(query.get('coffeeName'), 'Pink Bourbon');
+});
+
+run('sorts bean list by shot or add recency before name', () => {
+  const sorted = [
+    { id: 'old-used', roaster: 'A', name: 'Used' },
+    { id: 'new-empty', roaster: 'B', name: 'New', createdAt: '2026-06-08T10:00:00.000Z' },
+    { id: 'old-empty', roaster: 'C', name: 'Old', createdAt: '2026-06-01T10:00:00.000Z' }
+  ].sort((a, b) =>
+    compareBeansForPicker(a, b, { 'old-used': Date.parse('2026-06-07T10:00:00.000Z') }, null)
+  );
+
+  equal(sorted[0]?.id, 'new-empty');
+  equal(sorted[1]?.id, 'old-used');
+  equal(sorted[2]?.id, 'old-empty');
 });
 
 run('hydrates recipe values from a shot', () => {

@@ -51,13 +51,30 @@ export function latestBatch(batches: BeanBatch[]): BeanBatch | null {
 
 export function shotFilterForBean(bean: Bean, batch?: BeanBatch | null): URLSearchParams {
   const query = new URLSearchParams({ limit: '24', offset: '0', order: 'desc' });
-  if (batch?.id) {
-    query.set('beanBatchId', batch.id);
-  } else {
-    query.set('coffeeRoaster', bean.roaster);
-    query.set('coffeeName', bean.name);
-  }
+  void batch;
+  query.set('coffeeRoaster', bean.roaster);
+  query.set('coffeeName', bean.name);
   return query;
+}
+
+export function beanListTimestamp(bean: Bean, usageAt?: number | null): number {
+  const shotTime = typeof usageAt === 'number' && Number.isFinite(usageAt) ? usageAt : 0;
+  const addTime = parseTimestamp(bean.createdAt) ?? parseTimestamp(bean.updatedAt) ?? 0;
+  return Math.max(shotTime, addTime);
+}
+
+export function compareBeansForPicker(
+  a: Bean,
+  b: Bean,
+  usage: Record<string, number>,
+  selectedId: string | null
+): number {
+  const at = beanListTimestamp(a, usage[a.id]);
+  const bt = beanListTimestamp(b, usage[b.id]);
+  if (at !== bt) return bt - at;
+  if (a.id === selectedId && b.id !== selectedId) return -1;
+  if (b.id === selectedId && a.id !== selectedId) return 1;
+  return beanLabel(a).localeCompare(beanLabel(b), undefined, { sensitivity: 'base' });
 }
 
 export function selectInitialBean(
@@ -96,6 +113,12 @@ function beanForContext(beans: Bean[], ctx?: WorkflowContext | null): Bean | nul
     if (byContext) return byContext;
   }
   return null;
+}
+
+function parseTimestamp(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
 }
 
 export function recipeFromWorkflow(workflow: Workflow | null): RecipeDraft {

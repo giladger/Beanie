@@ -40,6 +40,7 @@ export interface CompleteBeanSelectionInput {
   workflow: Workflow | null;
   profiles: ProfileRecord[];
   grinders: Grinder[];
+  fallbackDraft?: RecipeDraft | null;
   loadBatches(bean: Bean): Promise<BeanBatch[]>;
   loadFirstShots(bean: Bean, batch: BeanBatch | null): Promise<{ records: ShotRecord[]; total: number }>;
   isCurrent(selection: BeanSelectionStart): boolean;
@@ -302,7 +303,9 @@ export class BeanWorkflowController {
     const draft =
       options.preferWorkflow && workflowMatches
         ? recipeFromWorkflow(input.workflow)
-        : recipeFromShot(shots[0] ?? null, 'planned');
+        : shots[0]
+          ? recipeFromShot(shots[0], 'planned')
+          : input.fallbackDraft ?? recipeFromShot(null, 'planned');
 
     return {
       type: 'selected',
@@ -320,9 +323,10 @@ export class BeanWorkflowController {
   async saveBean(input: SaveBeanInput, deps: SaveBeanDeps): Promise<SaveBeanResult> {
     const editing = input.editingId != null;
     if (input.demo) {
+      const timestamp = new Date(input.nowMs).toISOString();
       const bean: Bean = editing
         ? { ...(input.beans.find((item) => item.id === input.editingId) as Bean), ...input.fields }
-        : ({ id: `demo-${input.nowMs}`, ...input.fields } as Bean);
+        : ({ id: `demo-${input.nowMs}`, createdAt: timestamp, updatedAt: timestamp, ...input.fields } as Bean);
       const beans = editing
         ? input.beans.map((item) => (item.id === input.editingId ? bean : item))
         : [bean, ...input.beans];
@@ -341,16 +345,20 @@ export class BeanWorkflowController {
       const bean = editing
         ? await deps.updateBean(input.editingId!, input.fields)
         : await deps.createBean(input.fields);
+      const timestamp = new Date(input.nowMs).toISOString();
+      const savedBean = editing
+        ? bean
+        : { ...bean, createdAt: bean.createdAt ?? timestamp, updatedAt: bean.updatedAt ?? timestamp };
       const beans = editing
-        ? input.beans.map((item) => (item.id === input.editingId ? bean : item))
-        : [bean, ...input.beans];
+        ? input.beans.map((item) => (item.id === input.editingId ? savedBean : item))
+        : [savedBean, ...input.beans];
       await deps.putBeans(beans).catch(() => {});
       if (!editing) await deps.putBeanBatches(bean.id, []).catch(() => {});
       return {
         type: 'saved',
-        bean,
+        bean: savedBean,
         beans,
-        batchesByBean: editing ? input.batchesByBean : { ...input.batchesByBean, [bean.id]: [] },
+        batchesByBean: editing ? input.batchesByBean : { ...input.batchesByBean, [savedBean.id]: [] },
         editing,
         selectBeanId: editing ? null : bean.id,
         status: editing ? 'Bean saved' : 'Bean added'

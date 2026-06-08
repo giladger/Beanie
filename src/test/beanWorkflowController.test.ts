@@ -114,6 +114,38 @@ await run('bean workflow controller prefers matching workflow when requested', a
   equal(result.type === 'selected' ? result.draft.profileTitle : null, 'Workflow Profile');
 });
 
+await run('bean workflow controller keeps fallback recipe for beans without shots', async () => {
+  const selectedBean = bean('bean-empty');
+  const controller = new BeanWorkflowController();
+  const selection = required(controller.beginBeanSelection(selectedBean.id, [selectedBean]));
+
+  const result = await controller.completeBeanSelection({
+    selection,
+    options: { preferWorkflow: false },
+    beans: [selectedBean],
+    workflow: null,
+    profiles: [],
+    grinders: [],
+    fallbackDraft: {
+      dose: 19,
+      yield: 41,
+      grinderSetting: '7',
+      brewTemp: 92,
+      profileTitle: 'Previous shot'
+    },
+    loadBatches: async () => [],
+    loadFirstShots: async () => ({ records: [], total: 0 }),
+    isCurrent: (current) => controller.isCurrentBeanSelection(current),
+    workflowMatchesBean: () => false
+  });
+
+  equal(result.type, 'selected');
+  equal(result.type === 'selected' ? result.draft.dose : null, 19);
+  equal(result.type === 'selected' ? result.draft.yield : null, 41);
+  equal(result.type === 'selected' ? result.draft.grinderSetting : null, '7');
+  equal(result.type === 'selected' ? result.status : null, '0 shots loaded');
+});
+
 await run('bean usage helpers match shot context to known beans', () => {
   const beans = [bean('bean-1'), bean('bean-2', 'Other')];
   const usage = beanUsageFromShots(beans, [
@@ -143,6 +175,7 @@ await run('bean workflow controller saves demo beans without gateway calls', asy
 
   equal(result.type, 'saved');
   equal(result.type === 'saved' ? result.bean.id : null, 'demo-123');
+  equal(result.type === 'saved' ? result.bean.createdAt : null, '1970-01-01T00:00:00.123Z');
   equal(result.type === 'saved' ? result.beans.length : null, 2);
   equal(result.type === 'saved' ? result.batchesByBean['demo-123']?.length : null, 0);
   equal(result.type === 'saved' ? result.selectBeanId : null, 'demo-123');
@@ -178,6 +211,7 @@ await run('bean workflow controller saves remote beans and writes cache', async 
 
   equal(result.type, 'saved');
   equal(result.type === 'saved' ? result.bean.id : null, 'remote-new');
+  equal(result.type === 'saved' ? result.bean.createdAt : null, '1970-01-01T00:00:00.123Z');
   equal(cachedBeans, 2);
   equal(cachedBatchesFor, 'remote-new');
   equal(result.type === 'saved' ? result.status : null, 'Bean added');

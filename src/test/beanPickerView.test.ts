@@ -108,6 +108,8 @@ run('batch storage modal exposes freezing a portion for shelf batches', () => {
   includes(html, 'Freeze whole batch');
   includes(html, 'Freeze part of this bag');
   includes(html, 'Grams to freeze');
+  includes(html, 'data-action="open-number-edit"');
+  includes(html, 'data-return-modal="batch-storage"');
   includes(html, 'Create frozen portion');
   includes(html, 'data-form="batch-freeze-portion"');
 });

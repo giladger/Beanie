@@ -57,6 +57,7 @@ import {
   batchStorageEvents,
   beanLabel,
   buildWorkflowUpdate,
+  compareBeansForPicker,
   emptyRecipe,
   editLastBatchStorageEventDate,
   freshnessSnapshotForShot,
@@ -410,6 +411,7 @@ const SCROLL_SELECTORS = ['.bean-picker-list', '.bean-picker-batch-list', '.shot
 const PHONE_MEDIA_QUERY = '(max-width: 640px), (max-height: 500px) and (max-width: 900px)';
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 15_000;
 const SHOT_REFRESH_INTERVAL_MS = 60_000;
+const BEAN_REFRESH_INTERVAL_MS = 30_000;
 const NO_SCALE_SHOT_MESSAGE = 'Shot blocked: connect a scale to start.';
 const NO_SCALE_MACHINE_STATUS = 'Connect scale';
 const NO_SCALE_ABORT_WINDOW_MS = 3_000;
@@ -695,11 +697,13 @@ export class BeanieApp {
   private scaleRetryTimer: number | null = null;
   private waterRetryTimer: number | null = null;
   private shotRefreshTimer: number | null = null;
+  private beanRefreshTimer: number | null = null;
   private machineSocket: WebSocket | null = null;
   private scaleSocket: WebSocket | null = null;
   private waterSocket: WebSocket | null = null;
   private disposed = false;
   private shotRefreshInFlight = false;
+  private beanRefreshInFlight = false;
   private applyRequestId = 0;
   private loadMoreRequestId = 0;
   private shotCacheGeneration = 0;
@@ -812,6 +816,7 @@ export class BeanieApp {
     if (this.scaleRetryTimer != null) window.clearTimeout(this.scaleRetryTimer);
     if (this.waterRetryTimer != null) window.clearTimeout(this.waterRetryTimer);
     if (this.shotRefreshTimer != null) window.clearInterval(this.shotRefreshTimer);
+    if (this.beanRefreshTimer != null) window.clearInterval(this.beanRefreshTimer);
     if (this.simTimer != null) window.clearTimeout(this.simTimer);
     if (this.timedSteamStopTimer != null) window.clearTimeout(this.timedSteamStopTimer);
     if (this.sleepBrightnessTimer != null) window.clearTimeout(this.sleepBrightnessTimer);
@@ -821,6 +826,7 @@ export class BeanieApp {
     this.scaleRetryTimer = null;
     this.waterRetryTimer = null;
     this.shotRefreshTimer = null;
+    this.beanRefreshTimer = null;
     this.simTimer = null;
     this.timedSteamStopTimer = null;
     this.sleepBrightnessTimer = null;
@@ -956,6 +962,7 @@ export class BeanieApp {
       this.connectScaleSocket();
       this.connectWaterLevelSocket();
       this.startShotRefreshTimer();
+      this.startBeanRefreshTimer();
     } catch (error) {
       if (this.disposed) return;
       console.warn('[Beanie] Gateway unavailable; using demo data', error);
@@ -1022,6 +1029,7 @@ export class BeanieApp {
       workflow: this.state.workflow,
       profiles: this.state.profiles,
       grinders: this.state.grinders,
+      fallbackDraft: this.state.draft,
       loadBatches: (selected) => this.loadBatches(selected),
       loadFirstShots: (selected, selectedBatch) => this.loadFirstShots(selected, selectedBatch),
       isCurrent: (current) =>
@@ -1070,6 +1078,7 @@ export class BeanieApp {
       beanPickerMode: options.create ? 'create' : 'inspect',
       beanPickerAutofocusSearch: options.autofocusSearch ?? false
     });
+    if (!options.create) void this.refreshBeans({ force: true, allowModal: true });
     if (id && !options.create) await this.ensureBatchesLoaded(id);
   }
 
@@ -1150,6 +1159,57 @@ export class BeanieApp {
     this.shotRefreshTimer = window.setInterval(() => {
       void this.refreshVisibleShots();
     }, SHOT_REFRESH_INTERVAL_MS);
+  }
+
+  private startBeanRefreshTimer(): void {
+    if (this.beanRefreshTimer != null) return;
+    this.beanRefreshTimer = window.setInterval(() => {
+      void this.refreshBeans();
+    }, BEAN_REFRESH_INTERVAL_MS);
+  }
+
+  private async refreshBeans(options: { force?: boolean; allowModal?: boolean } = {}): Promise<void> {
+    if (this.state.demo || this.disposed || this.beanRefreshInFlight) return;
+    if (this.state.busy) return;
+    if (!options.allowModal && this.state.modal && !this.canRefreshBeansInsideModal()) return;
+    if (
+      !options.force &&
+      typeof document !== 'undefined' &&
+      document.visibilityState &&
+      document.visibilityState !== 'visible'
+    ) return;
+
+    this.beanRefreshInFlight = true;
+    try {
+      const beans = await gateway.beans();
+      if (this.disposed || !beansChanged(this.state.beans, beans)) return;
+
+      const beanIds = new Set(beans.map((bean) => bean.id));
+      const selectedBeanId = this.state.selectedBeanId && beanIds.has(this.state.selectedBeanId)
+        ? this.state.selectedBeanId
+        : null;
+      const beanPickerBeanId = this.state.beanPickerBeanId && beanIds.has(this.state.beanPickerBeanId)
+        ? this.state.beanPickerBeanId
+        : selectedBeanId;
+      this.setState({
+        beans,
+        selectedBeanId,
+        selectedBatchId: selectedBeanId ? this.state.selectedBatchId : null,
+        beanPickerBeanId,
+        batchesByBean: keepKeys(this.state.batchesByBean, beanIds),
+        beanUsageAt: keepKeys(this.state.beanUsageAt, beanIds)
+      });
+      void beanieCache.putBeans(beans).catch(() => {});
+    } catch (error) {
+      console.warn('[Beanie] Could not refresh beans', error);
+    } finally {
+      this.beanRefreshInFlight = false;
+    }
+  }
+
+  private canRefreshBeansInsideModal(): boolean {
+    if (this.state.modal !== 'bean-picker' || this.state.beanPickerMode === 'create') return false;
+    return this.root.querySelector('.bean-picker-fields input:focus, .bean-picker-fields textarea:focus, .bean-picker-batch input:focus') == null;
   }
 
   private async refreshVisibleShots(): Promise<void> {
@@ -2853,6 +2913,7 @@ export class BeanieApp {
         if (value === 'settings') {
           this.openSettingsForPhone();
         }
+        if (value === 'beans') void this.refreshBeans({ force: true });
         return true;
       }
       case 'phone-select-bean':
@@ -4506,6 +4567,7 @@ export class BeanieApp {
   private async freezeBatchPortion(form: HTMLFormElement): Promise<void> {
     const selection = this.batchStorageSelection();
     if (!selection) return;
+    const formKey = form.dataset.formKey;
     const amount = positiveNumber(numberOrNullInput(new FormData(form).get('amount')));
     if (amount == null) {
       this.setState({ status: 'Enter grams to freeze' });
@@ -4545,6 +4607,7 @@ export class BeanieApp {
         )];
         this.setState({
           batchesByBean: { ...this.state.batchesByBean, [selection.bean.id]: batches },
+          formNumbers: formKey ? omitKey(this.state.formNumbers, formKey) : this.state.formNumbers,
           status: 'Frozen portion added (demo)'
         });
         return;
@@ -4559,6 +4622,7 @@ export class BeanieApp {
       await beanieCache.putBeanBatches(selection.bean.id, batches).catch(() => {});
       this.setState({
         batchesByBean: { ...this.state.batchesByBean, [selection.bean.id]: batches },
+        formNumbers: formKey ? omitKey(this.state.formNumbers, formKey) : this.state.formNumbers,
         status: 'Frozen portion added'
       });
     } catch (error) {
@@ -5398,7 +5462,7 @@ export class BeanieApp {
       asleep: this.state.asleep,
       selectedBean: bean,
       batchesByBean: this.state.batchesByBean,
-      beans: this.state.beans,
+      beans: this.sortedBeansForPicker(),
       beanSearch: this.state.search,
       shots: this.state.shots,
       selectedShot,
@@ -5634,14 +5698,7 @@ export class BeanieApp {
   private sortedBeansForPicker(): Bean[] {
     const usage = this.state.beanUsageAt;
     const selectedId = this.state.selectedBeanId;
-    return [...this.state.beans].sort((a, b) => {
-      const au = usage[a.id] ?? (a.id === selectedId ? 1 : 0);
-      const bu = usage[b.id] ?? (b.id === selectedId ? 1 : 0);
-      if (au !== bu) return bu - au;
-      if (a.id === selectedId && b.id !== selectedId) return -1;
-      if (b.id === selectedId && a.id !== selectedId) return 1;
-      return beanLabel(a).localeCompare(beanLabel(b), undefined, { sensitivity: 'base' });
-    });
+    return [...this.state.beans].sort((a, b) => compareBeansForPicker(a, b, usage, selectedId));
   }
 
   private beanPickerFocusedBean(): Bean | null {
@@ -5701,7 +5758,7 @@ export class BeanieApp {
 
   private renderBatchStorageModal(): string {
     const selection = this.batchStorageSelection();
-    return selection ? renderBatchStorageModalView(selection.bean, selection.batch) : '';
+    return selection ? renderBatchStorageModalView(selection.bean, selection.batch, this.state.formNumbers) : '';
   }
 
   private renderNoScaleShotModal(): string {
@@ -6719,6 +6776,36 @@ function promoteBean(beans: Bean[], beanId: string): Bean[] {
   const bean = beans.find((item) => item.id === beanId);
   if (!bean) return beans;
   return [bean, ...beans.filter((item) => item.id !== beanId)];
+}
+
+function keepKeys<T>(record: Record<string, T>, keys: Set<string>): Record<string, T> {
+  const next: Record<string, T> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (keys.has(key)) next[key] = value;
+  }
+  return next;
+}
+
+function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  const { [key]: _removed, ...rest } = record;
+  return rest;
+}
+
+function beansChanged(current: Bean[], next: Bean[]): boolean {
+  if (current.length !== next.length) return true;
+  for (let index = 0; index < current.length; index += 1) {
+    const a = current[index]!;
+    const b = next[index]!;
+    if (
+      a.id !== b.id ||
+      a.roaster !== b.roaster ||
+      a.name !== b.name ||
+      a.createdAt !== b.createdAt ||
+      a.updatedAt !== b.updatedAt ||
+      a.archived !== b.archived
+    ) return true;
+  }
+  return false;
 }
 
 function shotEditDraftFromShot(shot: ShotRecord): ShotEditDraft {
