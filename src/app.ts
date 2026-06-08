@@ -53,9 +53,13 @@ import {
   type LiveChartMode
 } from './appShell';
 import {
+  appendBatchStorageEvent,
+  batchStorageEvents,
   beanLabel,
   buildWorkflowUpdate,
   emptyRecipe,
+  editLastBatchStorageEventDate,
+  freshnessSnapshotForShot,
   formatRatio,
   latestBatch,
   normalizeDraft,
@@ -237,7 +241,10 @@ import {
   renderPhoneProfilesPage as renderPhoneProfilePickerPage,
   renderProfilesPage as renderProfilePickerPage
 } from './views/profilePickerView';
-import { renderBeanPickerModal as renderBeanPickerModalView } from './views/beanPickerView';
+import {
+  renderBatchStorageModal as renderBatchStorageModalView,
+  renderBeanPickerModal as renderBeanPickerModalView
+} from './views/beanPickerView';
 import {
   renderNoScaleShotModal as renderNoScaleShotModalView,
   renderWaterAlert as renderWaterAlertView,
@@ -363,6 +370,7 @@ import {
 
 type Modal =
   | 'bean-picker'
+  | 'batch-storage'
   | 'edit-number'
   | 'edit-shot'
   | 'machine-label'
@@ -456,6 +464,11 @@ interface SecondTapHintState {
   id: string;
 }
 
+interface BatchStorageTarget {
+  beanId: string;
+  batchId: string;
+}
+
 // Where the scanner's Gemini key lives in the gateway KV store, so it's entered
 // once and shared across every device that loads Beanie.
 const GEMINI_KEY_NAMESPACE = 'beanie';
@@ -524,6 +537,7 @@ interface AppState {
   beanPickerBeanId: string | null;
   beanPickerMode: BeanPickerMode;
   beanPickerAutofocusSearch: boolean;
+  batchStorageTarget: BatchStorageTarget | null;
   editingBeanId: string | null;
   editingGrinderId: string | null;
   profileEditor: ProfileEditorState | null;
@@ -634,6 +648,7 @@ export class BeanieApp {
     beanPickerBeanId: null,
     beanPickerMode: 'inspect',
     beanPickerAutofocusSearch: false,
+    batchStorageTarget: null,
     editingBeanId: null,
     editingGrinderId: null,
     profileEditor: null,
@@ -1437,7 +1452,7 @@ export class BeanieApp {
       workflow: { context },
       annotations,
       shotNotes: annotations.espressoNotes ?? null,
-      metadata: annotations.extras ?? null
+      metadata: shotMetadataWithFreshness(shot.metadata, annotations.extras, selectedBatch?.batch ?? null, shot.timestamp)
     };
   }
 
@@ -2711,7 +2726,9 @@ export class BeanieApp {
       if (result.type === 'aborted') return;
 
       if (result.type === 'completed') {
-        const visibleRecords = includeShotInHistory(result.records, result.shot, this.shotPageSize);
+        const savedShot = await this.saveFreshnessForCompletedShot(result.shot, batch);
+        const records = result.records.map((shot) => (shot.id === savedShot.id ? savedShot : shot));
+        const visibleRecords = includeShotInHistory(records, savedShot, this.shotPageSize);
 
         // Real shot is persisted and settled — now close the shot screen onto it.
         this.liveShot.reset();
@@ -2721,7 +2738,7 @@ export class BeanieApp {
           shotsLoadingMore: false,
           liveActive: false,
           liveFinalizing: false,
-          detailShotId: result.shot.id,
+          detailShotId: savedShot.id,
           status: 'Shot saved'
         });
         return;
@@ -2749,6 +2766,21 @@ export class BeanieApp {
         this.liveShot.reset();
         this.setState({ liveActive: false, liveFinalizing: false });
       }
+    }
+  }
+
+  private async saveFreshnessForCompletedShot(shot: ShotRecord, batch: BeanBatch | null): Promise<ShotRecord> {
+    const metadata = shotMetadataWithFreshness(shot.metadata, null, batch, shot.timestamp);
+    if (!metadata?.freshness) return shot;
+    try {
+      const saved = await gateway.updateShot(shot.id, { metadata });
+      this.shotCacheGeneration += 1;
+      await beanieCache.invalidateShotMutation(saved.id).catch(() => {});
+      await beanieCache.putShotRecord(saved).catch(() => {});
+      return saved;
+    } catch (error) {
+      console.error('[Beanie] Save freshness snapshot failed', error);
+      return { ...shot, metadata };
     }
   }
 
@@ -2907,6 +2939,20 @@ export class BeanieApp {
         return true;
       case 'bean-picker-add-batch':
         await this.createBatchInPicker(this.state.beanPickerBeanId ?? this.state.selectedBeanId);
+        return true;
+      case 'open-batch-storage':
+        if (id && el.dataset.beanId) {
+          this.setState({
+            modal: 'batch-storage',
+            batchStorageTarget: { beanId: el.dataset.beanId, batchId: id },
+            status: 'Storage'
+          });
+        }
+        return true;
+      case 'batch-storage-event':
+        if (el.dataset.type === 'frozen' || el.dataset.type === 'thawed') {
+          await this.saveBatchStorageEvent(el.dataset.type);
+        }
         return true;
       case 'delete-batch':
         if (id) await this.deleteBatchFromPicker(el.dataset.beanId ?? null, id);
@@ -3564,6 +3610,10 @@ export class BeanieApp {
         if (id) this.toggleFavoriteProfile(id);
         return true;
       case 'close-modal':
+        if (this.state.modal === 'batch-storage') {
+          this.setState({ modal: 'bean-picker', batchStorageTarget: null });
+          return true;
+        }
         if (this.state.profileEdit || this.state.machineEdit || this.state.numberEdit || this.state.machineLabelEdit) {
           const returnModal = this.state.numberEdit?.returnModal ?? null;
           this.setState({
@@ -3582,6 +3632,7 @@ export class BeanieApp {
         this.setState({
           modal: null,
           scanner: null,
+          batchStorageTarget: null,
           editingBeanId: null,
           profileEditor: null,
           editingProfileId: null,
@@ -4076,6 +4127,16 @@ export class BeanieApp {
       await this.submitBeanPickerBatch(form);
       return;
     }
+    if (form.dataset.form === 'batch-storage-date') {
+      event.preventDefault();
+      await this.saveBatchStorageDate(form);
+      return;
+    }
+    if (form.dataset.form === 'batch-freeze-portion') {
+      event.preventDefault();
+      await this.freezeBatchPortion(form);
+      return;
+    }
     if (form.dataset.form === 'batch-editor') {
       event.preventDefault();
       await this.submitBatchEditor(form);
@@ -4354,6 +4415,7 @@ export class BeanieApp {
       roastLevel: previous.roastLevel,
       weight: previous.weight,
       weightRemaining: previous.weightRemaining,
+      storageEvents: previous.storageEvents ?? null,
       frozen: previous.frozen
     };
     if (name === 'weight') batchInput.weight = nextValue;
@@ -4392,6 +4454,159 @@ export class BeanieApp {
     this.setState({
       batchesByBean: result.batchesByBean,
       status: result.status
+    });
+  }
+
+  private batchStorageSelection(): { bean: Bean; batch: BeanBatch } | null {
+    const target = this.state.batchStorageTarget;
+    if (!target) return null;
+    const bean = this.state.beans.find((item) => item.id === target.beanId);
+    const batch = bean ? (this.state.batchesByBean[bean.id] ?? []).find((item) => item.id === target.batchId) : null;
+    return bean && batch ? { bean, batch } : null;
+  }
+
+  private async saveBatchStorageEvent(type: 'frozen' | 'thawed'): Promise<void> {
+    const selection = this.batchStorageSelection();
+    if (!selection) return;
+    const batchInput = {
+      beanId: selection.bean.id,
+      ...appendBatchStorageEvent(selection.batch, type, new Date())
+    };
+    await this.saveBatchStoragePatch(selection.bean, selection.batch.id, batchInput, type === 'frozen' ? 'Batch frozen' : 'Batch thawed');
+  }
+
+  private async saveBatchStorageDate(form: HTMLFormElement): Promise<void> {
+    const selection = this.batchStorageSelection();
+    if (!selection) return;
+    const data = new FormData(form);
+    const eventType = data.get('type') === 'thawed' ? 'thawed' : 'frozen';
+    const existingEvents = batchStorageEvents(selection.batch);
+    const atValue = String(data.get('at') ?? '');
+    if (existingEvents.length === 0) {
+      const at = new Date(atValue);
+      if (Number.isNaN(at.valueOf())) {
+        this.setState({ status: 'Choose a valid date' });
+        return;
+      }
+      const batchInput = {
+        beanId: selection.bean.id,
+        ...appendBatchStorageEvent(selection.batch, eventType, at)
+      };
+      await this.saveBatchStoragePatch(selection.bean, selection.batch.id, batchInput, eventType === 'frozen' ? 'Freeze date saved' : 'Thaw date saved');
+      return;
+    }
+    const batchInput = {
+      beanId: selection.bean.id,
+      ...editLastBatchStorageEventDate(selection.batch, atValue, new Date())
+    };
+    if (!batchInput.storageEvents) return;
+    await this.saveBatchStoragePatch(selection.bean, selection.batch.id, batchInput, eventType === 'frozen' ? 'Freeze date saved' : 'Thaw date saved');
+  }
+
+  private async freezeBatchPortion(form: HTMLFormElement): Promise<void> {
+    const selection = this.batchStorageSelection();
+    if (!selection) return;
+    const amount = positiveNumber(numberOrNullInput(new FormData(form).get('amount')));
+    if (amount == null) {
+      this.setState({ status: 'Enter grams to freeze' });
+      return;
+    }
+    const remaining = positiveNumber(selection.batch.weightRemaining);
+    const portionWeight = remaining == null ? amount : Math.min(amount, remaining);
+    const frozenEvent = appendBatchStorageEvent(selection.batch, 'frozen', new Date());
+    const frozenBatch: Partial<BeanBatch> = {
+      beanId: selection.bean.id,
+      roastDate: selection.batch.roastDate ?? null,
+      roastLevel: selection.batch.roastLevel ?? null,
+      weight: portionWeight,
+      weightRemaining: portionWeight,
+      storageEvents: frozenEvent.storageEvents ?? null,
+      frozen: true
+    };
+    const parentUpdate: Partial<BeanBatch> | null = remaining == null
+      ? null
+      : {
+          beanId: selection.bean.id,
+          roastDate: selection.batch.roastDate ?? null,
+          roastLevel: selection.batch.roastLevel ?? null,
+          weight: selection.batch.weight ?? null,
+          weightRemaining: Math.max(0, round(remaining - portionWeight, 1)),
+          storageEvents: selection.batch.storageEvents ?? null,
+          frozen: selection.batch.frozen ?? false
+        };
+
+    this.setState({ status: 'Freezing portion' });
+    try {
+      const current = this.state.batchesByBean[selection.bean.id] ?? [];
+      if (this.state.demo) {
+        const created = { id: `demo-batch-${Date.now()}`, ...frozenBatch } as BeanBatch;
+        const batches = [created, ...current.map((batch) =>
+          batch.id === selection.batch.id && parentUpdate ? { ...batch, ...parentUpdate } : batch
+        )];
+        this.setState({
+          batchesByBean: { ...this.state.batchesByBean, [selection.bean.id]: batches },
+          status: 'Frozen portion added (demo)'
+        });
+        return;
+      }
+
+      const created = await gateway.createBatch(selection.bean.id, frozenBatch);
+      const savedParent = parentUpdate
+        ? await gateway.updateBatch(selection.batch.id, parentUpdate)
+        : selection.batch;
+      const latest = this.state.batchesByBean[selection.bean.id] ?? current;
+      const batches = [created, ...latest.map((batch) => (batch.id === selection.batch.id ? savedParent : batch))];
+      await beanieCache.putBeanBatches(selection.bean.id, batches).catch(() => {});
+      this.setState({
+        batchesByBean: { ...this.state.batchesByBean, [selection.bean.id]: batches },
+        status: 'Frozen portion added'
+      });
+    } catch (error) {
+      console.error('[Beanie] Freeze portion failed', error);
+      this.setState({ status: 'Freeze portion failed' });
+    }
+  }
+
+  private async saveBatchStoragePatch(
+    bean: Bean,
+    batchId: string,
+    batchInput: Partial<BeanBatch>,
+    status: string
+  ): Promise<void> {
+    const optimistic = this.beanWorkflow.beginBatchUpdate({
+      bean,
+      batchesByBean: this.state.batchesByBean,
+      selectedBeanId: this.state.selectedBeanId,
+      batchId,
+      batchInput,
+      demo: this.state.demo
+    });
+    if (optimistic.type !== 'optimistic') return;
+
+    this.setState({
+      batchesByBean: optimistic.batchesByBean,
+      status
+    });
+    if (optimistic.shouldScheduleApply) this.scheduleApply();
+    if (optimistic.complete) return;
+
+    const result = await this.beanWorkflow.finishBatchUpdate({
+      bean,
+      batchId,
+      batchInput,
+      latestBatchesByBean: this.state.batchesByBean,
+      previousBatches: optimistic.previousBatches
+    }, {
+      updateBatch: (id, input) => gateway.updateBatch(id, input),
+      putBeanBatches: (ownerId, batches) => beanieCache.putBeanBatches(ownerId, batches)
+    });
+
+    if (result.type === 'failed') {
+      console.error('[Beanie] Save storage failed', result.error);
+    }
+    this.setState({
+      batchesByBean: result.batchesByBean,
+      status: result.type === 'failed' ? result.status : status
     });
   }
 
@@ -4436,7 +4651,10 @@ export class BeanieApp {
     const bean = this.state.beans.find((item) => item.id === beanId);
     if (!bean) return;
     const batchId = form.dataset.batchId || null;
-    const batchInput = batchFieldsFromForm(new FormData(form), bean.id);
+    const previous = batchId
+      ? (this.state.batchesByBean[bean.id] ?? []).find((item) => item.id === batchId)
+      : undefined;
+    const batchInput = batchFieldsFromForm(new FormData(form), bean.id, previous);
 
     this.setState({ busy: true, status: batchId ? 'Saving batch' : 'Adding batch' });
     if (!batchId) {
@@ -5461,7 +5679,8 @@ export class BeanieApp {
       demo: this.state.demo,
       shotsTotal: this.state.shotsTotal,
       shotsLoadingMore: this.state.shotsLoadingMore,
-      secondTapHint: this.state.secondTapHint
+      secondTapHint: this.state.secondTapHint,
+      batchesByBean: this.state.batchesByBean
     });
   }
 
@@ -5471,12 +5690,18 @@ export class BeanieApp {
 
   private renderModal(): string {
     if (this.state.modal === 'bean-picker') return this.renderBeanPickerModal();
+    if (this.state.modal === 'batch-storage') return this.renderBatchStorageModal();
     if (this.state.modal === 'edit-number') return this.renderEditDialog();
     if (this.state.modal === 'edit-shot') return this.renderShotEditModal();
     if (this.state.modal === 'machine-label') return this.renderMachineLabelModal();
     if (this.state.modal === 'no-scale-shot') return this.renderNoScaleShotModal();
     if (this.state.modal === 'label-scanner') return this.renderLabelScannerModal();
     return '';
+  }
+
+  private renderBatchStorageModal(): string {
+    const selection = this.batchStorageSelection();
+    return selection ? renderBatchStorageModalView(selection.bean, selection.batch) : '';
   }
 
   private renderNoScaleShotModal(): string {
@@ -6435,9 +6660,24 @@ function optimisticShotFromLive(
       actualDoseWeight: draft.dose ?? shotWorkflow.context?.targetDoseWeight ?? null,
       actualYield: liveState.latest.weight ?? draft.yield ?? shotWorkflow.context?.targetYield ?? null
     },
-    metadata: { pendingLiveShot: true },
+    metadata: shotMetadataWithFreshness({ pendingLiveShot: true }, null, batch, new Date(liveState.startMs).toISOString()),
     measurements: measurementsFromLiveShot(liveState)
   };
+}
+
+function shotMetadataWithFreshness(
+  existing: Record<string, unknown> | null | undefined,
+  extras: Record<string, unknown> | null | undefined,
+  batch: BeanBatch | null | undefined,
+  timestamp: string
+): Record<string, unknown> | null {
+  const metadata = {
+    ...(existing ?? {}),
+    ...(extras ?? {})
+  };
+  const freshness = freshnessSnapshotForShot(batch, timestamp);
+  if (freshness) metadata.freshness = freshness;
+  return Object.keys(metadata).length > 0 ? metadata : null;
 }
 
 function measurementsFromLiveShot(liveState: LiveShotState): ShotMeasurement[] {
@@ -6732,7 +6972,8 @@ function batchFieldsFromForm(data: FormData, beanId: string, fallback?: BeanBatc
     weightRemaining: data.has('weightRemaining')
       ? numberOrNullInput(data.get('weightRemaining'))
       : fallback?.weightRemaining ?? null,
-    frozen: data.get('frozen') === 'on'
+    storageEvents: fallback?.storageEvents ?? null,
+    frozen: data.has('frozen') ? data.get('frozen') === 'on' : fallback?.frozen ?? false
   };
 }
 

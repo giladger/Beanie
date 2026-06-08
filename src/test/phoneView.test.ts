@@ -11,6 +11,7 @@ run('phone shell exposes helper workflows without machine service controls', () 
 
   includes(html, 'data-action="open-label-scanner"');
   includes(html, 'data-action="phone-select-bean"');
+  includes(html, 'data-action="open-batch-storage"');
   includes(html, 'data-action="phone-select-shot"');
   includes(html, 'data-action="phone-shot-field"');
   includes(html, 'data-action="phone-save-shot"');
@@ -38,6 +39,13 @@ run('phone shots render selected shot as an accordion below the row', () => {
   includes(html, 'data-action="phone-shot-field"');
   equal(rowIndex >= 0, true);
   equal(detailIndex > rowIndex, true);
+});
+
+run('phone shot rows show computed age for unstamped shots', () => {
+  const html = renderPhoneShell({ ...model(), activeTab: 'shots' });
+
+  includes(html, '4d · Profile shot-1 · Jun 5');
+  includes(html, '4d · Profile shot-1 · 1:2.2 · Jun 5');
 });
 
 run('phone home places machine power above the coffee card', () => {
@@ -84,8 +92,8 @@ function model(): PhoneShellModel {
     batchesByBean: { [bean.id]: [batch] },
     beans: [bean],
     beanSearch: '',
-    shots: [shot('shot-1', 'espresso'), shot('flush-1', 'flush')],
-    selectedShot: shot('shot-1', 'espresso'),
+    shots: [shot('shot-1', 'espresso', batch.id), shot('flush-1', 'flush')],
+    selectedShot: shot('shot-1', 'espresso', batch.id),
     selectedShotDraft: {
       shotId: 'shot-1',
       coffeeRoaster: 'Kawa',
@@ -125,7 +133,7 @@ function model(): PhoneShellModel {
   };
 }
 
-function shot(id: string, beverageType: string): ShotRecord {
+function shot(id: string, beverageType: string, beanBatchId: string | null = null): ShotRecord {
   return {
     id,
     timestamp: '2026-06-05T10:00:00.000Z',
@@ -134,7 +142,8 @@ function shot(id: string, beverageType: string): ShotRecord {
       context: {
         targetDoseWeight: 18,
         targetYield: 40,
-        finalBeverageType: beverageType
+        finalBeverageType: beverageType,
+        beanBatchId
       }
     },
     annotations: { enjoyment: 80 },

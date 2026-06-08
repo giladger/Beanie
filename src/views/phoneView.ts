@@ -3,12 +3,15 @@ import type { ShotEditDraft, ShotEditField } from '../domain/shotEditModel';
 import { shotNumberFieldStep } from '../domain/shotEditModel';
 import {
   beanLabel,
+  batchForShotFreshness,
+  batchStorageState,
   formatGrams,
   formatRatio,
   latestBatch,
   ratioFor,
   recipeFromShot,
-  roastFreshnessLabel
+  roastFreshnessLabel,
+  shotFreshnessBadgeForShot
 } from '../domain/beanWorkflow';
 import { isServiceShot } from '../domain/shotRecord';
 import { escapeAttr, escapeHtml } from '../components/html';
@@ -156,7 +159,7 @@ function renderRecentShots(model: PhoneShellModel): string {
       <div class="phone-card-head">
         <span class="phone-card-label">Recent shots</span>
       </div>
-      ${shots.length ? shots.map((shot) => renderShotRow(shot, shot.id === model.selectedShot?.id)).join('') : '<p class="phone-empty">No espresso shots for this bean yet.</p>'}
+      ${shots.length ? shots.map((shot) => renderShotRow(shot, shot.id === model.selectedShot?.id, model.batchesByBean)).join('') : '<p class="phone-empty">No espresso shots for this bean yet.</p>'}
     </div>
   `;
 }
@@ -199,13 +202,21 @@ function renderBeanRow(bean: Bean, model: PhoneShellModel): string {
   const freshness = roastFreshnessLabel(batch);
   const selected = bean.id === model.selectedBean?.id;
   const detail = freshness ?? batchWeight(batch) ?? beanMeta(bean) ?? (selected ? 'Current bean' : 'Tap to select');
+  const storageIcon = batchStorageState(batch) === 'frozen' ? 'snowflake' : 'archive';
   return `
     <article class="phone-list-item ${selected ? 'active' : ''}">
       <button type="button" class="phone-list-main" data-action="phone-select-bean" data-id="${escapeAttr(bean.id)}">
         <strong>${escapeHtml(beanLabel(bean))}</strong>
         <span>${escapeHtml(detail)}</span>
       </button>
-      <button type="button" class="phone-icon-button phone-row-edit" data-action="open-edit-bean" data-id="${escapeAttr(bean.id)}" aria-label="Edit bean">${icon('pencil')}</button>
+      <span class="phone-row-actions">
+        ${
+          batch
+            ? `<button type="button" class="phone-icon-button phone-row-storage" data-action="open-batch-storage" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}" aria-label="Manage storage for ${escapeAttr(beanLabel(bean))}">${icon(storageIcon)}</button>`
+            : ''
+        }
+        <button type="button" class="phone-icon-button phone-row-edit" data-action="open-edit-bean" data-id="${escapeAttr(bean.id)}" aria-label="Edit bean">${icon('pencil')}</button>
+      </span>
     </article>
   `;
 }
@@ -225,7 +236,7 @@ function renderShotsTab(model: PhoneShellModel): string {
           shots.length
             ? shots.map((shot) => {
                 const active = shot.id === selected?.id;
-                return `${renderShotRow(shot, active)}${active ? renderShotDetail(shot, draft, model.selectedShotDirty) : ''}`;
+                return `${renderShotRow(shot, active, model.batchesByBean)}${active ? renderShotDetail(shot, draft, model.selectedShotDirty, model.batchesByBean) : ''}`;
               }).join('')
             : '<p class="phone-empty">No espresso shots found.</p>'
         }
@@ -235,23 +246,30 @@ function renderShotsTab(model: PhoneShellModel): string {
   `;
 }
 
-function renderShotRow(shot: ShotRecord, active: boolean): string {
+function renderShotRow(shot: ShotRecord, active: boolean, batchesByBean: Record<string, BeanBatch[]>): string {
   const recipe = recipeFromShot(shot);
+  const freshness = shotFreshnessBadgeForShot(shot, batchForShotFreshness(shot, batchesByBean));
   return `
     <button type="button" class="phone-list-item phone-shot-row ${active ? 'active' : ''}" data-action="phone-select-shot" data-id="${escapeAttr(shot.id)}">
       <span class="phone-list-main">
         <strong>${escapeHtml(`${formatGrams(recipe.dose)} -> ${formatGrams(recipe.yield)}`)}</strong>
-        <span>${escapeHtml([recipe.profileTitle ?? 'No profile', shotDate(shot.timestamp)].filter(Boolean).join(' · '))}</span>
+        <span>${escapeHtml([freshness, recipe.profileTitle ?? 'No profile', shotDate(shot.timestamp)].filter(Boolean).join(' · '))}</span>
       </span>
       ${enjoymentBadge(shot)}
     </button>
   `;
 }
 
-function renderShotDetail(shot: ShotRecord, draft: ShotEditDraft | null, dirty: boolean): string {
+function renderShotDetail(
+  shot: ShotRecord,
+  draft: ShotEditDraft | null,
+  dirty: boolean,
+  batchesByBean: Record<string, BeanBatch[]>
+): string {
   const recipe = recipeFromShot(shot);
   const ratio = formatRatio(ratioFor(recipe.dose, recipe.yield));
   const edit = draft ?? shotDraftFallback(shot);
+  const freshness = shotFreshnessBadgeForShot(shot, batchForShotFreshness(shot, batchesByBean));
   return `
     <article class="phone-card phone-shot-card">
       <div class="phone-card-head">
@@ -261,7 +279,7 @@ function renderShotDetail(shot: ShotRecord, draft: ShotEditDraft | null, dirty: 
         </button>
       </div>
       <h2>${escapeHtml(`${formatGrams(recipe.dose)} -> ${formatGrams(recipe.yield)}`)}</h2>
-      <p>${escapeHtml([recipe.profileTitle, ratio, shotDate(shot.timestamp)].filter(Boolean).join(' · '))}</p>
+      <p>${escapeHtml([freshness, recipe.profileTitle, ratio, shotDate(shot.timestamp)].filter(Boolean).join(' · '))}</p>
       ${shotScoreControl(edit.enjoyment ?? null, {
         action: 'phone-shot-score',
         shotId: shot.id,

@@ -1,11 +1,15 @@
 import type { Bean, Profile, ProfileRecord, ShotRecord, Workflow } from '../api/types';
 import {
   buildWorkflowUpdate,
+  appendBatchStorageEvent,
+  computeBeanFreshness,
+  editLastBatchStorageEventDate,
   profileBaseTemperature,
   ratioFor,
   recipeFromShot,
   roastFreshnessLabel,
   selectInitialBean,
+  shotFreshnessBadgeLabel,
   shotFilterForBean,
   withProfileTemperature,
   yieldForRatio
@@ -222,6 +226,57 @@ run('formats roast freshness as days off roast (date prefix is locale-formatted)
     ),
     true
   );
+});
+
+run('computes active freshness by pausing frozen intervals', () => {
+  const freshness = computeBeanFreshness({
+    id: 'x',
+    beanId: 'a',
+    roastDate: '2026-05-01T00:00:00Z',
+    storageEvents: [
+      { type: 'frozen', at: '2026-05-10T00:00:00Z' },
+      { type: 'thawed', at: '2026-06-01T00:00:00Z' }
+    ]
+  }, new Date('2026-06-08T00:00:00Z'));
+
+  equal(freshness?.roastAgeDays, 38);
+  equal(freshness?.activeAgeDays, 16);
+  equal(freshness?.storageState, 'thawed');
+});
+
+run('formats frozen freshness with roast and active days', () => {
+  const label = roastFreshnessLabel({
+    id: 'x',
+    beanId: 'a',
+    roastDate: '2026-05-01T00:00:00Z',
+    storageEvents: [
+      { type: 'frozen', at: '2026-05-10T00:00:00Z' },
+      { type: 'thawed', at: '2026-06-01T00:00:00Z' }
+    ]
+  }, new Date('2026-06-08T00:00:00Z'));
+
+  equal(label?.includes('38 days off roast'), true);
+  equal(label?.includes('16 active days'), true);
+  equal(label?.includes('thawed 7d ago'), true);
+});
+
+run('appends storage events and edits the latest event date', () => {
+  const batch = { id: 'x', beanId: 'a', roastDate: '2026-05-01T00:00:00Z' };
+  const frozen = appendBatchStorageEvent(batch, 'frozen', new Date('2026-05-10T12:34:00Z'));
+  equal(frozen.frozen, true);
+  equal(frozen.storageEvents?.[0]?.type, 'frozen');
+
+  const thawed = appendBatchStorageEvent({ ...batch, ...frozen }, 'thawed', new Date('2026-06-01T09:00:00Z'));
+  equal(thawed.frozen, false);
+  equal(thawed.storageEvents?.[1]?.type, 'thawed');
+
+  const edited = editLastBatchStorageEventDate({ ...batch, ...thawed }, '2026-06-02', new Date('2026-06-08T00:00:00Z'));
+  equal(edited.storageEvents?.[1]?.at.startsWith('2026-06-02'), true);
+});
+
+run('formats shot freshness badges from metadata snapshots', () => {
+  equal(shotFreshnessBadgeLabel({ freshness: { roastAgeDays: 38, activeAgeDays: 16, storageState: 'thawed' } }), '38d · 16a');
+  equal(shotFreshnessBadgeLabel({ freshness: { roastAgeDays: 4, activeAgeDays: 4, storageState: 'ambient' } }), '4d');
 });
 
 run('uses singular day and a "today" label for fresh roasts', () => {

@@ -1,5 +1,9 @@
 import type { Bean, BeanBatch } from '../api/types';
-import { renderBeanPickerModal, type BeanPickerViewModel } from '../views/beanPickerView';
+import {
+  renderBatchStorageModal,
+  renderBeanPickerModal,
+  type BeanPickerViewModel
+} from '../views/beanPickerView';
 
 const beans: Bean[] = [
   {
@@ -26,7 +30,8 @@ const batches: BeanBatch[] = [
     roastLevel: 'Light',
     weight: 250,
     weightRemaining: 125,
-    frozen: true
+    frozen: true,
+    storageEvents: [{ type: 'frozen', at: '2026-06-06T08:00:00.000Z' }]
   },
   {
     id: 'batch-older',
@@ -49,6 +54,8 @@ run('bean picker renders matched beans, current bean, focused inspector, and lat
   includes(html, 'data-form="bean-picker-bean" data-id="bean-1"');
   includes(html, 'Latest');
   includes(html, 'data-batch-id="batch-1"');
+  includes(html, 'data-action="open-batch-storage"');
+  includes(html, 'frozen');
 });
 
 run('bean picker create mode renders new bean form and prefill choices', () => {
@@ -78,6 +85,44 @@ run('bean picker renders second tap hint for matching bean only', () => {
 
   includes(html, 'Tap again to load');
   includes(html, 'has-second-tap-hint');
+});
+
+run('batch storage modal renders compact freeze/thaw actions', () => {
+  const html = renderBatchStorageModal(beans[0]!, batches[0]!);
+
+  includes(html, 'Storage');
+  includes(html, 'Current state');
+  includes(html, 'Mark thawed');
+  includes(html, 'Correct freeze date');
+  includes(html, 'Frozen on');
+  includes(html, 'Roast age');
+  includes(html, 'Active age');
+  includes(html, 'data-form="batch-storage-date"');
+  includes(html, 'Shots save the freshness at pull time');
+  notIncludes(html, 'Storage date');
+});
+
+run('batch storage modal exposes freezing a portion for shelf batches', () => {
+  const html = renderBatchStorageModal(beans[0]!, batches[1]!);
+
+  includes(html, 'Freeze whole batch');
+  includes(html, 'Freeze part of this bag');
+  includes(html, 'Grams to freeze');
+  includes(html, 'Create frozen portion');
+  includes(html, 'data-form="batch-freeze-portion"');
+});
+
+run('batch storage modal backfills the freeze date for legacy frozen batches', () => {
+  const html = renderBatchStorageModal(beans[0]!, {
+    id: 'legacy-frozen',
+    beanId: 'bean-1',
+    roastDate: '2026-06-05T10:00:00.000Z',
+    frozen: true
+  });
+
+  includes(html, 'Add freeze date');
+  includes(html, 'Frozen on');
+  includes(html, 'name="type" value="frozen"');
 });
 
 function model(overrides: Partial<BeanPickerViewModel> = {}): BeanPickerViewModel {

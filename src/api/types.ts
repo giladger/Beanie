@@ -95,8 +95,27 @@ export interface BeanBatch {
   roastLevel?: string | null;
   weight?: number | null;
   weightRemaining?: number | null;
+  storageEvents?: BeanBatchStorageEvent[] | null;
   frozen?: boolean;
   archived?: boolean;
+}
+
+export type BeanBatchStorageEventType = 'frozen' | 'thawed';
+
+export interface BeanBatchStorageEvent {
+  type: BeanBatchStorageEventType;
+  at: string;
+}
+
+export type BeanBatchStorageState = 'ambient' | 'frozen' | 'thawed';
+
+export interface BeanFreshnessSnapshot {
+  roastDate: string;
+  roastAgeDays: number;
+  activeAgeDays: number;
+  storageState: BeanBatchStorageState;
+  frozenIntervals: Array<{ frozenAt: string; thawedAt?: string | null }>;
+  thawedAt?: string | null;
 }
 
 export interface Grinder {

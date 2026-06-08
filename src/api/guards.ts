@@ -188,8 +188,24 @@ function validateBeanBatch(value: unknown, path: string, issues: ValidationIssue
   optionalString(obj, 'roastLevel', path, issues, true);
   optionalNumber(obj, 'weight', path, issues, true);
   optionalNumber(obj, 'weightRemaining', path, issues, true);
+  validateOptionalArray(obj, 'storageEvents', path, issues, true, validateBeanBatchStorageEvent);
   optionalBoolean(obj, 'frozen', path, issues);
   optionalBoolean(obj, 'archived', path, issues);
+}
+
+function validateBeanBatchStorageEvent(
+  value: unknown,
+  path: string,
+  issues: ValidationIssue[]
+): void {
+  const obj = expectRecord(value, path, issues);
+  if (!obj) return;
+
+  optionalStringEnum(obj, 'type', path, issues, ['frozen', 'thawed']);
+  if (!('type' in obj)) {
+    issues.push({ path: `${path}.type`, message: 'Expected one of: frozen, thawed' });
+  }
+  requiredString(obj, 'at', path, issues);
 }
 
 function validateGrinder(value: unknown, path: string, issues: ValidationIssue[]): void {
@@ -672,4 +688,17 @@ function validateRequiredArray(
     return;
   }
   validateArray(obj[key], `${path}.${key}`, issues, itemValidator);
+}
+
+function validateOptionalArray(
+  obj: Record<string, unknown>,
+  key: string,
+  path: string,
+  issues: ValidationIssue[],
+  nullable: boolean,
+  itemValidator: (value: unknown, path: string, issues: ValidationIssue[]) => void
+): void {
+  const value = obj[key];
+  if (value === undefined || (nullable && value === null)) return;
+  validateArray(value, `${path}.${key}`, issues, itemValidator);
 }

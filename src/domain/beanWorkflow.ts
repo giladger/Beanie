@@ -11,6 +11,21 @@ import type {
   WorkflowContext
 } from '../api/types';
 
+export {
+  appendBatchStorageEvent,
+  batchForShotFreshness,
+  batchStorageEvents,
+  batchStorageState,
+  computeBeanFreshness,
+  editLastBatchStorageEventDate,
+  freshnessBadgeLabel,
+  freshnessSnapshotForShot,
+  roastFreshnessLabel,
+  shotFreshnessBadgeForShot,
+  shotFreshnessBadgeLabel,
+  storageStatusLabel
+} from './beanFreshness';
+
 export function beanLabel(bean: Bean): string {
   return `${bean.roaster} ${bean.name}`.trim();
 }
@@ -32,26 +47,6 @@ export function latestBatch(batches: BeanBatch[]): BeanBatch | null {
     const bd = b.roastDate ? Date.parse(b.roastDate) : 0;
     return bd - ad;
   })[0] ?? null;
-}
-
-/**
- * Freshness line for a roast batch: roast date plus days off roast, e.g.
- * "Jun 1 · 4 days off roast". Returns null when the batch has no usable roast
- * date, so callers render nothing. `now` is injectable for deterministic tests.
- */
-export function roastFreshnessLabel(
-  batch: BeanBatch | null | undefined,
-  now: Date = new Date()
-): string | null {
-  const iso = batch?.roastDate;
-  if (!iso) return null;
-  const roast = new Date(iso);
-  if (Number.isNaN(roast.valueOf())) return null;
-  const dateText = roast.toLocaleDateString([], { month: 'short', day: 'numeric' });
-  const days = Math.floor((now.getTime() - roast.getTime()) / 86_400_000);
-  if (days < 0) return dateText;
-  const off = days === 0 ? 'today' : days === 1 ? '1 day off roast' : `${days} days off roast`;
-  return `${dateText} · ${off}`;
 }
 
 export function shotFilterForBean(bean: Bean, batch?: BeanBatch | null): URLSearchParams {

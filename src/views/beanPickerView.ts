@@ -1,5 +1,12 @@
-import type { Bean, BeanBatch } from '../api/types';
-import { beanLabel, latestBatch } from '../domain/beanWorkflow';
+import type { Bean, BeanBatch, BeanBatchStorageEvent } from '../api/types';
+import {
+  batchStorageState,
+  beanLabel,
+  computeBeanFreshness,
+  freshnessBadgeLabel,
+  latestBatch,
+  storageStatusLabel
+} from '../domain/beanWorkflow';
 import { batchOptionLabel, dateInputValue, recentBatches } from '../domain/beanDisplay';
 import { icon } from '../components/icons';
 import { escapeAttr, escapeHtml } from '../components/html';
@@ -158,6 +165,8 @@ function renderBeanPickerBeanForm(bean: Bean | null, prefillBeans: Bean[]): stri
 }
 
 function renderBeanPickerBatchForm(bean: Bean, batch: BeanBatch, active: boolean): string {
+  const freshness = freshnessBadgeLabel(batch);
+  const storage = storageStatusLabel(batch) ?? (batchStorageState(batch) === 'ambient' ? 'On shelf' : 'Storage');
   const batchNumber = (name: 'weight' | 'weightRemaining', label: string, value: number | null | undefined) => `
     <label>${escapeHtml(label)}
       <input type="hidden" name="${name}" value="${escapeAttr(inputValue(value))}" />
@@ -188,15 +197,152 @@ function renderBeanPickerBatchForm(bean: Bean, batch: BeanBatch, active: boolean
     >
       <div class="bean-picker-batch-title">
         <strong>${escapeHtml(batchOptionLabel(batch))}</strong>
-        <small>${escapeHtml(active ? 'Latest' : batch.frozen ? 'Frozen' : batch.roastLevel ?? 'Batch')}</small>
+        <small>${escapeHtml([active ? 'Latest' : null, freshness, batch.roastLevel ?? null].filter(Boolean).join(' · ') || 'Batch')}</small>
       </div>
       <label>Date<input data-action="bean-picker-batch-field" type="date" name="roastDate" value="${escapeAttr(dateInputValue(batch.roastDate))}" /></label>
       <label>Roast<input data-action="bean-picker-batch-field" name="roastLevel" autocomplete="off" value="${escapeAttr(inputValue(batch.roastLevel))}" /></label>
       ${batchNumber('weight', 'Bag', batch.weight)}
       ${batchNumber('weightRemaining', 'Left', batch.weightRemaining)}
-      <label class="bean-picker-check" title="Frozen"><input data-action="bean-picker-batch-field" type="checkbox" name="frozen" ${batch.frozen ? 'checked' : ''} /><span>Frozen</span></label>
+      <button type="button" class="bean-picker-storage" data-action="open-batch-storage" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}" title="Storage">${icon(batchStorageState(batch) === 'frozen' ? 'snowflake' : 'archive')}<span>${escapeHtml(storage)}</span></button>
       <button type="button" class="icon-button danger-icon bean-picker-batch-delete" data-action="delete-batch" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}" aria-label="Delete batch" title="Delete batch">${icon('trash-2')}</button>
     </form>
+  `;
+}
+
+export function renderBatchStorageModal(bean: Bean, batch: BeanBatch): string {
+  const state = batchStorageState(batch);
+  const status = storageStatusLabel(batch) ?? 'On shelf now';
+  const freshness = freshnessBadgeLabel(batch);
+  const freshnessDetail = computeBeanFreshness(batch);
+  const latest = [...(batch.storageEvents ?? [])].reverse().find((event) => event?.at);
+  const remaining = typeof batch.weightRemaining === 'number' && Number.isFinite(batch.weightRemaining)
+    ? batch.weightRemaining
+    : null;
+  const portionMax = remaining != null ? ` max="${escapeAttr(inputValue(remaining))}"` : '';
+  const portionPlaceholder = remaining != null ? inputValue(Math.min(remaining, 100)) : '100';
+  const nextEvent = state === 'frozen'
+    ? {
+        type: 'thawed' as const,
+        title: 'Whole batch',
+        button: 'Mark thawed',
+        detail: 'Active age resumes from today.',
+        icon: 'sun'
+      }
+    : {
+        type: 'frozen' as const,
+        title: 'Whole batch',
+        button: 'Freeze whole batch',
+        detail: 'Active age pauses from today.',
+        icon: 'snowflake'
+      };
+  return `
+    <div class="modal-backdrop bean-picker-backdrop" data-action="close-modal">
+      <section class="modal panel batch-storage-modal" role="dialog" aria-modal="true" aria-label="Batch storage" data-action="noop">
+        <div class="modal-head bean-picker-head">
+          <div>
+            <span class="eyebrow">Storage</span>
+            <h2>${escapeHtml(batchOptionLabel(batch))}</h2>
+          </div>
+          <button class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
+        </div>
+        <div class="batch-storage-body">
+          <div class="batch-storage-summary">
+            <span class="batch-storage-label">Current state</span>
+            <strong>${escapeHtml(beanLabel(bean))}</strong>
+            <span>${escapeHtml([status, freshness].filter(Boolean).join(' · '))}</span>
+          </div>
+          ${renderBatchFreshnessPanel(freshnessDetail)}
+          <div class="batch-storage-card batch-storage-next">
+            <div>
+              <span class="batch-storage-label">Next action</span>
+              <strong>${escapeHtml(nextEvent.title)}</strong>
+              <p>${escapeHtml(nextEvent.detail)}</p>
+            </div>
+            <button type="button" class="primary-button" data-action="batch-storage-event" data-type="${nextEvent.type}">${icon(nextEvent.icon)}<span>${escapeHtml(nextEvent.button)}</span></button>
+          </div>
+          ${
+            state === 'frozen'
+              ? ''
+              : `<form class="batch-storage-card batch-freeze-portion" data-form="batch-freeze-portion">
+                  <div>
+                    <span class="batch-storage-label">Partial freezer stash</span>
+                    <strong>Freeze part of this bag</strong>
+                    <p>Create a separate frozen batch and subtract grams from this shelf batch.</p>
+                  </div>
+                  <label>Grams to freeze<input type="number" inputmode="decimal" step="0.1" min="0.1"${portionMax} name="amount" placeholder="${escapeAttr(portionPlaceholder)}" /></label>
+                  <button type="submit" class="secondary-button compact">${icon('snowflake')}<span>Create frozen portion</span></button>
+                </form>`
+          }
+          ${renderBatchStorageDateControl(latest, state)}
+          <p class="bean-picker-hint">Shots save the freshness at pull time, so later storage edits do not rewrite history.</p>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderBatchStorageDateControl(
+  latest: BeanBatchStorageEvent | undefined,
+  state: ReturnType<typeof batchStorageState>
+): string {
+  const fallbackFrozen = !latest && state === 'frozen';
+  if (!latest && !fallbackFrozen) {
+    return `
+      <div class="batch-storage-card batch-storage-date muted">
+        <div>
+          <span class="batch-storage-label">Dates</span>
+          <strong>No freeze dates yet</strong>
+          <p>Use Freeze whole batch or Freeze part of this bag to start tracking freezer time.</p>
+        </div>
+      </div>
+    `;
+  }
+
+  const type = latest?.type ?? 'frozen';
+  const label = type === 'frozen' ? 'Frozen on' : 'Thawed on';
+  const title = latest
+    ? type === 'frozen' ? 'Correct freeze date' : 'Correct thaw date'
+    : 'Add freeze date';
+  const detail = latest
+    ? type === 'frozen'
+      ? 'Use the day this batch actually went into the freezer.'
+      : 'Use the day this batch actually came out of the freezer.'
+    : 'Backfill when this batch first went into the freezer.';
+  const dateValue = dateInputValue(latest?.at ?? new Date().toISOString());
+  return `
+    <form class="batch-storage-card batch-storage-date" data-form="batch-storage-date">
+      <div>
+        <span class="batch-storage-label">Date</span>
+        <strong>${escapeHtml(title)}</strong>
+        <p>${escapeHtml(detail)}</p>
+      </div>
+      <input type="hidden" name="type" value="${escapeAttr(type)}" />
+      <label>${escapeHtml(label)}<input type="date" name="at" value="${escapeAttr(dateValue)}" /></label>
+      <button type="submit" class="secondary-button compact">${icon('check')}<span>Save date</span></button>
+    </form>
+  `;
+}
+
+function renderBatchFreshnessPanel(freshness: ReturnType<typeof computeBeanFreshness>): string {
+  if (!freshness) {
+    return `
+      <div class="batch-freshness-panel muted">
+        <strong>Freshness</strong>
+        <span>Add a roast date to track roast and active days.</span>
+      </div>
+    `;
+  }
+  return `
+    <div class="batch-freshness-panel">
+      <div>
+        <span>Roast age</span>
+        <strong>${escapeHtml(String(freshness.roastAgeDays))}<em>d</em></strong>
+      </div>
+      <div>
+        <span>Active age</span>
+        <strong>${escapeHtml(String(freshness.activeAgeDays))}<em>d</em></strong>
+      </div>
+    </div>
   `;
 }
 

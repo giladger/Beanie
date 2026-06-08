@@ -1,4 +1,4 @@
-import type { ShotRecord } from '../api/types';
+import type { BeanBatch, ShotRecord } from '../api/types';
 import { renderHistoryView, selectedHistoryShot } from '../views/historyView';
 
 run('history view hides service shots while keeping pagination based on raw shots', () => {
@@ -8,7 +8,8 @@ run('history view hides service shots while keeping pagination based on raw shot
     demo: false,
     shotsTotal: 3,
     shotsLoadingMore: false,
-    secondTapHint: null
+    secondTapHint: null,
+    batchesByBean: {}
   });
 
   excludes(html, 'flush-shot');
@@ -23,7 +24,8 @@ run('history view selects the requested shot and renders score controls', () => 
     demo: false,
     shotsTotal: 2,
     shotsLoadingMore: false,
-    secondTapHint: null
+    secondTapHint: null,
+    batchesByBean: {}
   });
 
   includes(html, 'data-id="shot-b"');
@@ -37,7 +39,8 @@ run('history view suppresses load more in demo or when all raw shots are loaded'
     detailShotId: null,
     shotsTotal: 1,
     shotsLoadingMore: false,
-    secondTapHint: null
+    secondTapHint: null,
+    batchesByBean: {}
   };
 
   excludes(renderHistoryView({ ...base, demo: false }), 'load-more-shots');
@@ -52,11 +55,32 @@ run('history view renders second tap hint for the matching shot only', () => {
     demo: false,
     shotsTotal: 2,
     shotsLoadingMore: false,
-    secondTapHint: { kind: 'shot', id: 'shot-b' }
+    secondTapHint: { kind: 'shot', id: 'shot-b' },
+    batchesByBean: {}
   });
 
   includes(html, 'Tap again to load');
   includes(html, 'has-second-tap-hint');
+});
+
+run('history view computes age for shots without stored freshness metadata', () => {
+  const batch: BeanBatch = {
+    id: 'batch-1',
+    beanId: 'bean-1',
+    roastDate: '2026-06-01T00:00:00.000Z'
+  };
+  const html = renderHistoryView({
+    shots: [shot('shot-a', 'espresso', null, batch.id)],
+    detailShotId: 'shot-a',
+    demo: false,
+    shotsTotal: 1,
+    shotsLoadingMore: false,
+    secondTapHint: null,
+    batchesByBean: { [batch.beanId]: [batch] }
+  });
+
+  includes(html, '4d · Profile shot-a · Jun 5');
+  includes(html, '<span class="pane-stat">4d</span>');
 });
 
 run('selectedHistoryShot skips service shots and falls back to the first visible shot', () => {
@@ -64,7 +88,12 @@ run('selectedHistoryShot skips service shots and falls back to the first visible
   equal(selectedHistoryShot([shot('steam-shot', 'steam')], null), null);
 });
 
-function shot(id: string, beverageType: string, enjoyment: number | null = null): ShotRecord {
+function shot(
+  id: string,
+  beverageType: string,
+  enjoyment: number | null = null,
+  beanBatchId: string | null = null
+): ShotRecord {
   return {
     id,
     timestamp: '2026-06-05T10:00:00.000Z',
@@ -74,6 +103,7 @@ function shot(id: string, beverageType: string, enjoyment: number | null = null)
         targetDoseWeight: 18,
         targetYield: 36,
         finalBeverageType: beverageType,
+        beanBatchId,
         grinderModel: 'Niche',
         grinderSetting: '12'
       }

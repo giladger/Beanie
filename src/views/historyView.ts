@@ -1,5 +1,5 @@
-import type { RecipeDraft, ShotRecord } from '../api/types';
-import { formatGrams, recipeFromShot } from '../domain/beanWorkflow';
+import type { BeanBatch, RecipeDraft, ShotRecord } from '../api/types';
+import { batchForShotFreshness, formatGrams, recipeFromShot, shotFreshnessBadgeForShot } from '../domain/beanWorkflow';
 import { isServiceShot } from '../domain/shotRecord';
 import { icon } from '../components/icons';
 import { enjoymentBadge, shotScoreControl } from '../components/shotScore';
@@ -12,6 +12,7 @@ export interface HistoryViewModel {
   shotsTotal: number;
   shotsLoadingMore: boolean;
   secondTapHint: { kind: 'shot' | 'bean'; id: string } | null;
+  batchesByBean: Record<string, BeanBatch[]>;
 }
 
 export function renderHistoryView(model: HistoryViewModel): string {
@@ -24,12 +25,12 @@ export function renderHistoryView(model: HistoryViewModel): string {
           ${
             shots.length === 0
               ? '<p class="empty-history">No shots found for this bean.</p>'
-              : shots.map((shot) => renderShotListItem(shot, shot.id === selected?.id, model.secondTapHint)).join('')
+              : shots.map((shot) => renderShotListItem(shot, shot.id === selected?.id, model.secondTapHint, model.batchesByBean)).join('')
           }
           ${renderLoadMore(model)}
         </div>
         <div class="shot-detail-pane">
-          ${selected ? renderShotDetailPane(selected) : '<p class="empty-history">Select a shot to inspect.</p>'}
+          ${selected ? renderShotDetailPane(selected, model.batchesByBean) : '<p class="empty-history">Select a shot to inspect.</p>'}
         </div>
       </div>
     </section>
@@ -48,12 +49,14 @@ function historyShots(shots: ShotRecord[]): ShotRecord[] {
 function renderShotListItem(
   shot: ShotRecord,
   active: boolean,
-  secondTapHint: HistoryViewModel['secondTapHint']
+  secondTapHint: HistoryViewModel['secondTapHint'],
+  batchesByBean: Record<string, BeanBatch[]>
 ): string {
   const recipe = recipeFromShot(shot);
   const duration = shotDurationLabel(shot);
   const recipeText = shotRecipeDisplay(shot, recipe);
   const date = shotDateShortLabel(shot.timestamp);
+  const freshness = shotFreshnessBadgeForShot(shot, batchForShotFreshness(shot, batchesByBean));
   const hint = renderSecondTapHint('shot', shot.id, secondTapHint);
   return `
     <button class="shot-item ${active ? 'active' : ''} ${hint ? 'has-second-tap-hint' : ''}" data-action="select-history-shot" data-id="${escapeAttr(shot.id)}">
@@ -61,7 +64,7 @@ function renderShotListItem(
         <span class="shot-item-recipe">${escapeHtml(recipeText)}${duration ? ` @ ${escapeHtml(duration)}` : ''}</span>
         ${enjoymentBadge(shot)}
       </span>
-      <span class="shot-item-profile">${escapeHtml([recipe.profileTitle ?? 'No profile', date].filter(Boolean).join(' · '))}</span>
+      <span class="shot-item-profile">${escapeHtml([freshness, recipe.profileTitle ?? 'No profile', date].filter(Boolean).join(' · '))}</span>
       ${hint}
     </button>
   `;
@@ -76,13 +79,14 @@ function renderSecondTapHint(
   return '<span class="second-tap-tooltip">Tap again to load</span>';
 }
 
-function renderShotDetailPane(shot: ShotRecord): string {
+function renderShotDetailPane(shot: ShotRecord, batchesByBean: Record<string, BeanBatch[]>): string {
   const recipe = recipeFromShot(shot);
   const date = new Date(shot.timestamp);
   const dateLabel = Number.isNaN(date.valueOf())
     ? shot.timestamp
     : date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   const duration = shotDurationLabel(shot);
+  const freshness = shotFreshnessBadgeForShot(shot, batchForShotFreshness(shot, batchesByBean));
   const grinder = recipe.grinderModel
     ? `${recipe.grinderModel}${recipe.grinderSetting ? ` ${recipe.grinderSetting}` : ''}`
     : recipe.grinderSetting
@@ -92,6 +96,7 @@ function renderShotDetailPane(shot: ShotRecord): string {
     <div class="pane-head">
       <span class="pane-stat pane-lead">${escapeHtml(shotRecipeDisplay(shot, recipe)).replace(' → ', ' <span class="io-arrow">→</span> ')}</span>
       ${duration ? `<span class="pane-stat">@ ${escapeHtml(duration)}</span>` : ''}
+      ${freshness ? `<span class="pane-stat">${escapeHtml(freshness)}</span>` : ''}
       ${grinder ? `<span class="pane-stat">${escapeHtml(grinder)}</span>` : ''}
       <span class="pane-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
       <span class="pane-time">${escapeHtml(dateLabel)}</span>
