@@ -56,13 +56,6 @@ export function shotFilterForBean(bean: Bean, batch?: BeanBatch | null): URLSear
   return query;
 }
 
-export function legacyShotFilterForBean(bean: Bean): URLSearchParams {
-  const query = new URLSearchParams({ limit: '24', offset: '0', order: 'desc' });
-  query.set('coffeeRoaster', bean.roaster);
-  query.set('coffeeName', bean.name);
-  return query;
-}
-
 export function beanListTimestamp(bean: Bean, usageAt?: number | null): number {
   const shotTime = typeof usageAt === 'number' && Number.isFinite(usageAt) ? usageAt : 0;
   const addTime = parseTimestamp(bean.createdAt) ?? parseTimestamp(bean.updatedAt) ?? 0;
@@ -106,19 +99,7 @@ export function selectInitialBean(
 
 function beanForContext(beans: Bean[], ctx?: WorkflowContext | null): Bean | null {
   if (!ctx) return null;
-  if (ctx.beanBatchId) {
-    const byName = beans.find(
-      (bean) => bean.name === ctx.coffeeName && bean.roaster === ctx.coffeeRoaster
-    );
-    if (byName) return byName;
-  }
-  if (ctx.coffeeName || ctx.coffeeRoaster) {
-    const byContext = beans.find(
-      (bean) => bean.name === ctx.coffeeName && bean.roaster === ctx.coffeeRoaster
-    );
-    if (byContext) return byContext;
-  }
-  return null;
+  return ctx.beanId ? beans.find((bean) => bean.id === ctx.beanId) ?? null : null;
 }
 
 function parseTimestamp(value: string | null | undefined): number | null {
@@ -236,6 +217,7 @@ export function buildWorkflowUpdate(
   // model) survive the round-trip instead of being dropped by the PUT.
   const context: WorkflowContext = {
     ...(base?.context ?? {}),
+    beanId: bean.id,
     coffeeName: bean.name,
     coffeeRoaster: bean.roaster,
     beanBatchId: batch?.id ?? null,

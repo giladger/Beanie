@@ -161,6 +161,7 @@ export interface WorkflowContext {
   grinderId?: string | null;
   grinderModel?: string | null;
   grinderSetting?: string | number | null;
+  beanId?: string | null;
   beanBatchId?: string | null;
   coffeeName?: string | null;
   coffeeRoaster?: string | null;

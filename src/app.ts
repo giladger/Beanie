@@ -16,7 +16,6 @@ import type {
   ShotAnnotations,
   ShotMeasurement,
   ShotRecord,
-  ShotSummary,
   ShotUpdate,
   SteamSettings,
   Workflow,
@@ -64,7 +63,6 @@ import {
   freshnessSnapshotForShot,
   formatRatio,
   latestBatch,
-  legacyShotFilterForBean,
   normalizeDraft,
   parseNumberInput,
   profileBaseTemperature,
@@ -140,7 +138,8 @@ import type { DecentAccountStatus, PluginSettings } from './api/settings';
 import { createSettingsController } from './controllers/settingsController';
 import {
   BeanWorkflowController,
-  beanUsageFromShots
+  beanUsageFromShots,
+  beanUsageForBean
 } from './controllers/beanWorkflowController';
 import {
   editProfileEditorInput,
@@ -932,7 +931,7 @@ export class BeanieApp {
       this.setState({
         workflow,
         beans,
-        beanUsageAt: beanUsageFromShots(beans, latestShots.items),
+        beanUsageAt: beanUsageFromShots(beans, latestShots.items, this.state.batchesByBean),
         grinders,
         profiles,
         machineInfo,
@@ -977,7 +976,7 @@ export class BeanieApp {
     this.setState({
       workflow: demoWorkflow,
       beans: demoBeans,
-      beanUsageAt: beanUsageFromShots(demoBeans, demoShotUsage),
+      beanUsageAt: beanUsageFromShots(demoBeans, demoShotUsage, demoBatches),
       batchesByBean: demoBatches,
       grinders: demoGrinders,
       profiles: demoProfiles,
@@ -1037,7 +1036,7 @@ export class BeanieApp {
       isCurrent: (current) =>
         this.beanWorkflow.isCurrentBeanSelection(current) &&
         this.state.selectedBeanId === current.bean.id,
-      workflowMatchesBean: (selected) => this.workflowMatchesBean(selected)
+      workflowMatchesBean: (selected, batches) => this.workflowMatchesBean(selected, batches)
     });
     if (result.type === 'stale') return;
 
@@ -1127,24 +1126,9 @@ export class BeanieApp {
     offset: number
   ): Promise<{ records: ShotRecord[]; total: number }> {
     const cacheGeneration = this.shotCacheGeneration;
-    const batches = this.state.batchesByBean[bean.id] ?? [];
-    const query = batches.length > 0 ? shotFilterForBean(bean, batch) : legacyShotFilterForBean(bean);
-    const input =
-      batches.length > 0
-        ? {
-            query,
-            pageSize: this.shotPageSize,
-            offset,
-            fallbackQuery: legacyShotFilterForBean(bean),
-            acceptPage: (items: ShotSummary[]) => pageLooksScopedToBean(items, bean, batches)
-          }
-        : {
-            query,
-            pageSize: this.shotPageSize,
-            offset
-          };
+    const query = shotFilterForBean(bean, batch);
     return fetchShotPageFromRepository(
-      input,
+      { query, pageSize: this.shotPageSize, offset },
       {
         gateway,
         cache: beanieCache,
@@ -1261,7 +1245,7 @@ export class BeanieApp {
         detailShotId: selectedShotStillVisible ? this.state.detailShotId : shots.find((shot) => !isServiceShot(shot))?.id ?? null,
         beanUsageAt: {
           ...this.state.beanUsageAt,
-          ...beanUsageFromShots(this.state.beans, records)
+          ...beanUsageForBean(bean.id, records)
         }
       });
     } catch (error) {
@@ -1498,6 +1482,7 @@ export class BeanieApp {
     const selectedGrinder = grinderId ? this.state.grinders.find((grinder) => grinder.id === grinderId) : null;
     const beanBatchId = draft.beanBatchId;
     const selectedBatch = this.batchAndBeanForId(beanBatchId);
+    const beanId = draft.beanId ?? selectedBatch?.bean.id ?? null;
 
     const context: WorkflowContext = {
       ...(shot.workflow?.context ?? {}),
@@ -1506,6 +1491,7 @@ export class BeanieApp {
       grinderId,
       grinderModel: draft.grinderModel ?? selectedGrinder?.model ?? null,
       grinderSetting: draft.grinderSetting,
+      beanId,
       beanBatchId,
       coffeeName: draft.coffeeName ?? selectedBatch?.bean.name ?? null,
       coffeeRoaster: draft.coffeeRoaster ?? selectedBatch?.bean.roaster ?? null,
@@ -1608,17 +1594,15 @@ export class BeanieApp {
     });
   }
 
-  // Find the library bag a shot draft currently points at, by its saved
-  // batch first, then by matching roaster + name. Returns null for shots whose
-  // bean is free text not in the library.
+  // Find the library bag a shot draft currently points at. Roaster + name are
+  // historical display snapshots; identity comes from beanId or beanBatchId.
   private shotDraftBean(draft: ShotEditDraft): Bean | null {
+    if (draft.beanId) {
+      const byBeanId = this.state.beans.find((bean) => bean.id === draft.beanId);
+      if (byBeanId) return byBeanId;
+    }
     const fromBatch = this.batchAndBeanForId(draft.beanBatchId)?.bean;
-    if (fromBatch) return fromBatch;
-    return (
-      this.state.beans.find(
-        (bean) => bean.name === draft.coffeeName && bean.roaster === draft.coffeeRoaster
-      ) ?? null
-    );
+    return fromBatch ?? null;
   }
 
   private openShotBeanDialog(): void {
@@ -1633,7 +1617,7 @@ export class BeanieApp {
     if (!draft) return;
     if (!beanId) {
       this.setState({
-        shotEdit: { ...draft, coffeeRoaster: null, coffeeName: null, beanBatchId: null },
+        shotEdit: { ...draft, coffeeRoaster: null, coffeeName: null, beanId: null, beanBatchId: null },
         shotBeanEdit: null,
         status: 'Shot draft changed'
       });
@@ -1646,7 +1630,7 @@ export class BeanieApp {
     if (!current) return;
     const latest = latestBatch(this.state.batchesByBean[beanId] ?? []);
     this.setState({
-      shotEdit: { ...current, coffeeRoaster: bean.roaster, coffeeName: bean.name, beanBatchId: latest?.id ?? null },
+      shotEdit: { ...current, coffeeRoaster: bean.roaster, coffeeName: bean.name, beanId: bean.id, beanBatchId: latest?.id ?? null },
       shotBeanEdit: null,
       status: 'Shot draft changed'
     });
@@ -1666,7 +1650,7 @@ export class BeanieApp {
         beans: [bean, ...this.state.beans],
         batchesByBean: { ...this.state.batchesByBean, [bean.id]: [] },
         shotEdit: current
-          ? { ...current, coffeeRoaster: bean.roaster, coffeeName: bean.name, beanBatchId: null }
+          ? { ...current, coffeeRoaster: bean.roaster, coffeeName: bean.name, beanId: bean.id, beanBatchId: null }
           : current,
         shotBeanEdit: null,
         busy: false,
@@ -6101,9 +6085,12 @@ export class BeanieApp {
     return latestBatch(batches);
   }
 
-  private workflowMatchesBean(bean: Bean): boolean {
+  private workflowMatchesBean(bean: Bean, batches: BeanBatch[] = this.state.batchesByBean[bean.id] ?? []): boolean {
     const ctx = this.state.workflow?.context;
-    return ctx?.coffeeName === bean.name && ctx?.coffeeRoaster === bean.roaster;
+    const directBeanId = (ctx as (WorkflowContext & { beanId?: string | null }) | null | undefined)?.beanId;
+    if (directBeanId) return directBeanId === bean.id;
+    const batchId = ctx?.beanBatchId;
+    return !!batchId && batches.some((batch) => batch.id === batchId && batch.beanId === bean.id);
   }
 
   private profileIdForDraft(): string {
@@ -6803,18 +6790,6 @@ function keepKeys<T>(record: Record<string, T>, keys: Set<string>): Record<strin
   return next;
 }
 
-function pageLooksScopedToBean(items: ShotSummary[], bean: Bean, batches: BeanBatch[]): boolean {
-  if (items.length === 0) return true;
-  const batchIds = new Set(batches.map((batch) => batch.id));
-  return items.every((shot) => shotLooksScopedToBean(shot, bean, batchIds));
-}
-
-function shotLooksScopedToBean(shot: ShotSummary, bean: Bean, batchIds: Set<string>): boolean {
-  const ctx = shot.workflow?.context;
-  if (ctx?.beanBatchId && batchIds.has(ctx.beanBatchId)) return true;
-  return ctx?.coffeeName === bean.name && ctx?.coffeeRoaster === bean.roaster;
-}
-
 function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   const { [key]: _removed, ...rest } = record;
   return rest;
@@ -6844,6 +6819,7 @@ function shotEditDraftFromShot(shot: ShotRecord): ShotEditDraft {
     shotId: shot.id,
     coffeeRoaster: ctx.coffeeRoaster ?? null,
     coffeeName: ctx.coffeeName ?? null,
+    beanId: ctx.beanId ?? null,
     beanBatchId: ctx.beanBatchId ?? null,
     finalBeverageType: ctx.finalBeverageType ?? null,
     baristaName: ctx.baristaName ?? null,

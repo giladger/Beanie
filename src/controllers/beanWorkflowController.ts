@@ -44,7 +44,7 @@ export interface CompleteBeanSelectionInput {
   loadBatches(bean: Bean): Promise<BeanBatch[]>;
   loadFirstShots(bean: Bean, batch: BeanBatch | null): Promise<{ records: ShotRecord[]; total: number }>;
   isCurrent(selection: BeanSelectionStart): boolean;
-  workflowMatchesBean(bean: Bean): boolean;
+  workflowMatchesBean(bean: Bean, batches: BeanBatch[]): boolean;
 }
 
 export type BeanSelectionCompleteResult =
@@ -299,7 +299,7 @@ export class BeanWorkflowController {
     const { records: shots, total: shotsTotal } = await input.loadFirstShots(bean, selectedBatch);
     if (!input.isCurrent(selection)) return { type: 'stale' };
 
-    const workflowMatches = input.workflowMatchesBean(bean);
+    const workflowMatches = input.workflowMatchesBean(bean, batches);
     const draft =
       options.preferWorkflow && workflowMatches
         ? recipeFromWorkflow(input.workflow)
@@ -314,7 +314,7 @@ export class BeanWorkflowController {
       selectedBatch,
       shots,
       shotsTotal,
-      beanUsageAt: beanUsageFromShots(input.beans, shots),
+      beanUsageAt: beanUsageForBean(bean.id, shots),
       draft: normalizeDraft(draft, input.profiles, input.grinders),
       status: `${shots.length} shots loaded`
     };
@@ -547,11 +547,12 @@ export class BeanWorkflowController {
 
 export function beanUsageFromShots(
   beans: Bean[],
-  shots: Array<ShotSummary | ShotRecord>
+  shots: Array<ShotSummary | ShotRecord>,
+  batchesByBean: BatchesByBean = {}
 ): Record<string, number> {
   const usage: Record<string, number> = {};
   for (const shot of shots) {
-    const beanId = beanIdForContext(shot.workflow?.context, beans);
+    const beanId = beanIdForContext(shot.workflow?.context, beans, batchesByBean);
     if (!beanId) continue;
     const timestamp = Date.parse(shot.timestamp);
     if (!Number.isFinite(timestamp)) continue;
@@ -560,9 +561,32 @@ export function beanUsageFromShots(
   return usage;
 }
 
-export function beanIdForContext(ctx: WorkflowContext | null | undefined, beans: Bean[]): string | null {
-  if (!ctx?.coffeeName && !ctx?.coffeeRoaster) return null;
-  const byName = beans.find((bean) => bean.name === ctx.coffeeName && bean.roaster === ctx.coffeeRoaster);
-  if (byName) return byName.id;
+export function beanUsageForBean(beanId: string, shots: Array<ShotSummary | ShotRecord>): Record<string, number> {
+  let latest = 0;
+  for (const shot of shots) {
+    const timestamp = Date.parse(shot.timestamp);
+    if (Number.isFinite(timestamp)) latest = Math.max(latest, timestamp);
+  }
+  return latest > 0 ? { [beanId]: latest } : {};
+}
+
+export function beanIdForContext(
+  ctx: WorkflowContext | null | undefined,
+  beans: Bean[],
+  batchesByBean: BatchesByBean = {}
+): string | null {
+  const directBeanId = contextBeanId(ctx);
+  if (directBeanId && beans.some((bean) => bean.id === directBeanId)) return directBeanId;
+
+  const batchId = ctx?.beanBatchId;
+  if (!batchId) return null;
+  for (const [beanId, batches] of Object.entries(batchesByBean)) {
+    if (batches.some((batch) => batch.id === batchId)) return beanId;
+  }
   return null;
+}
+
+function contextBeanId(ctx: WorkflowContext | null | undefined): string | null {
+  const value = (ctx as (WorkflowContext & { beanId?: string | null }) | null | undefined)?.beanId;
+  return typeof value === 'string' && value ? value : null;
 }

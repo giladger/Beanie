@@ -317,6 +317,7 @@ function validateWorkflowContext(
   optionalString(obj, 'grinderId', path, issues, true);
   optionalString(obj, 'grinderModel', path, issues, true);
   optionalStringOrNumber(obj, 'grinderSetting', path, issues, true);
+  optionalString(obj, 'beanId', path, issues, true);
   optionalString(obj, 'beanBatchId', path, issues, true);
   optionalString(obj, 'coffeeName', path, issues, true);
   optionalString(obj, 'coffeeRoaster', path, issues, true);

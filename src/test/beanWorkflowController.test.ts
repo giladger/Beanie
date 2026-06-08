@@ -148,13 +148,15 @@ await run('bean workflow controller keeps fallback recipe for beans without shot
 
 await run('bean usage helpers match shot context to known beans', () => {
   const beans = [bean('bean-1'), bean('bean-2', 'Other')];
+  const batchesByBean = { 'bean-1': [batch('batch-1', 'bean-1', '2026-06-01')] };
   const usage = beanUsageFromShots(beans, [
-    shot('shot-1', '2026-06-07T10:00:00.000Z', beans[0]!),
-    shot('shot-2', '2026-06-07T11:00:00.000Z', beans[0]!),
+    shot('shot-1', '2026-06-07T10:00:00.000Z', beans[0]!, 'batch-1'),
+    shot('shot-2', '2026-06-07T11:00:00.000Z', beans[0]!, 'batch-1'),
     shot('shot-3', 'not-a-date', beans[1]!)
-  ]);
+  ], batchesByBean);
 
-  equal(beanIdForContext({ coffeeName: beans[0]!.name, coffeeRoaster: beans[0]!.roaster }, beans), 'bean-1');
+  equal(beanIdForContext({ beanBatchId: 'batch-1' }, beans, batchesByBean), 'bean-1');
+  equal(beanIdForContext({ coffeeName: beans[0]!.name, coffeeRoaster: beans[0]!.roaster }, beans), null);
   equal(usage['bean-1'], Date.parse('2026-06-07T11:00:00.000Z'));
   equal(usage['bean-2'], undefined);
 });
@@ -562,7 +564,7 @@ function batch(id: string, beanId: string, roastDate: string): BeanBatch {
   };
 }
 
-function shot(id: string, timestamp: string, owner: Bean): ShotRecord {
+function shot(id: string, timestamp: string, owner: Bean, beanBatchId: string | null = null): ShotRecord {
   return {
     id,
     timestamp,
@@ -571,6 +573,7 @@ function shot(id: string, timestamp: string, owner: Bean): ShotRecord {
       context: {
         coffeeName: owner.name,
         coffeeRoaster: owner.roaster,
+        beanBatchId,
         targetDoseWeight: 18,
         targetYield: 42
       }

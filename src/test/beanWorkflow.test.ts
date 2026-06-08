@@ -5,7 +5,6 @@ import {
   compareBeansForPicker,
   computeBeanFreshness,
   editLastBatchStorageEventDate,
-  legacyShotFilterForBean,
   profileBaseTemperature,
   ratioFor,
   recipeFromShot,
@@ -25,6 +24,7 @@ const beans: Bean[] = [
 const workflow: Workflow = {
   profile: { title: 'Default' },
   context: {
+    beanId: 'b',
     coffeeRoaster: 'Tsukcafe',
     coffeeName: 'Tore Badiya',
     targetDoseWeight: 18,
@@ -43,6 +43,7 @@ run('selects the latest shot bean before stale workflow or local storage', () =>
       timestamp: new Date().toISOString(),
       workflow: {
         context: {
+          beanId: 'a',
           coffeeName: 'Pink Bourbon',
           coffeeRoaster: 'Kawa'
         }
@@ -58,13 +59,6 @@ run('builds bean shot filters by stable bean id', () => {
   equal(query.get('coffeeRoaster'), null);
   equal(query.get('coffeeName'), null);
   equal(query.get('beanId'), 'a');
-});
-
-run('builds legacy bean shot filters by coffee roaster and name', () => {
-  const query = legacyShotFilterForBean(beans[0]!);
-  equal(query.get('coffeeRoaster'), 'Kawa');
-  equal(query.get('coffeeName'), 'Pink Bourbon');
-  equal(query.get('beanId'), null);
 });
 
 run('sorts bean list by shot or add recency before name', () => {
@@ -195,6 +189,7 @@ run('preserves unknown workflow fields and context keys when applying', () => {
   equal(update.description, 'keep me');
   equal((update.steamSettings as { flow: number }).flow, 1.2);
   equal((update.context as Record<string, unknown>).region, 'Huila');
+  equal(update.context?.beanId, 'a');
   equal(update.context?.coffeeName, 'Pink Bourbon');
 });
 

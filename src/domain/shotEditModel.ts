@@ -16,6 +16,7 @@ export interface ShotEditDraft {
   shotId: string;
   coffeeRoaster: string | null;
   coffeeName: string | null;
+  beanId?: string | null;
   beanBatchId: string | null;
   finalBeverageType: string | null;
   baristaName: string | null;
