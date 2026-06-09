@@ -793,6 +793,13 @@ export class BeanieApp {
     this.onTouchMove(event);
   };
   private touchScrollPoint: { x: number; y: number } | null = null;
+  // Decided once per touch gesture. On both WebKit and Chrome/Android, calling
+  // preventDefault on the first touchmove of a gesture cancels native scrolling
+  // for the *entire* gesture. If we locked at a scroll boundary (e.g. pulling up
+  // while already at the top), the rest of the same swipe — including scrolling
+  // back down — would do nothing. So we lock the page only when the touch began
+  // over a region with no scrollable ancestor, and keep that for the gesture.
+  private touchGestureLocked: boolean | null = null;
 
   constructor(private readonly root: HTMLElement) {}
 
@@ -861,19 +868,44 @@ export class BeanieApp {
   private onTouchStart(event: TouchEvent): void {
     const touch = event.touches[0];
     this.touchScrollPoint = touch ? { x: touch.clientX, y: touch.clientY } : null;
+    this.touchGestureLocked = null;
   }
 
   private onTouchMove(event: TouchEvent): void {
     const touch = event.touches[0];
     if (!touch || !this.touchScrollPoint) return;
 
-    const deltaX = this.touchScrollPoint.x - touch.clientX;
-    const deltaY = this.touchScrollPoint.y - touch.clientY;
     this.touchScrollPoint = { x: touch.clientX, y: touch.clientY };
 
-    if (!this.canScrollInsideApp(event.target, deltaX, deltaY)) {
+    // Lock the page (block the bounce) only for gestures that started over a
+    // non-scrollable region. Inside a scroll area we must never preventDefault,
+    // or the engine cancels the whole swipe after a boundary overscroll (true on
+    // WebKit and Chrome/Android alike). Chaining past the area's edge is already
+    // absorbed by overscroll-behavior on the root, which is overflow:hidden and
+    // cannot move.
+    if (this.touchGestureLocked == null) {
+      this.touchGestureLocked = !this.hasScrollableAncestor(event.target);
+    }
+    if (this.touchGestureLocked) {
       event.preventDefault();
     }
+  }
+
+  private hasScrollableAncestor(target: EventTarget | null): boolean {
+    if (!(target instanceof Element)) return false;
+    let el: Element | null = target;
+    while (el && el !== this.root) {
+      if (this.elementIsScrollable(el)) return true;
+      el = el.parentElement;
+    }
+    return false;
+  }
+
+  private elementIsScrollable(el: Element): boolean {
+    const style = window.getComputedStyle(el);
+    const yScrollable = /(auto|scroll)/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 1;
+    const xScrollable = /(auto|scroll)/.test(style.overflowX) && el.scrollWidth > el.clientWidth + 1;
+    return yScrollable || xScrollable;
   }
 
   private canScrollInsideApp(target: EventTarget | null, deltaX: number, deltaY: number): boolean {
