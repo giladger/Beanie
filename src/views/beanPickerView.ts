@@ -220,7 +220,6 @@ function renderBeanPickerFirstStock(formNumbers: Record<string, string>): string
         <label>Roast<input name="roastLevel" autocomplete="off" /></label>
         ${draftNumber(weightKey, 'weight', 'Starting grams', weightValue)}
         ${draftNumber(remainingKey, 'weightRemaining', 'Available now', remainingValue)}
-        <label class="stock-start-location"><input type="checkbox" name="frozen" /><span>${icon('snowflake')} Starts in freezer</span></label>
       </div>
     </div>
   `;
@@ -292,7 +291,6 @@ function renderBeanPickerBatchDraft(
       <label>Roast<input data-action="bean-picker-batch-field-draft" name="roastLevel" autocomplete="off" value="${escapeAttr(inputValue(latest?.roastLevel))}" /></label>
       ${draftNumber(weightKey, 'weight', 'Starting grams', weightValue)}
       ${draftNumber(remainingKey, 'weightRemaining', 'Available now', remainingValue)}
-      <label class="stock-start-location"><input type="checkbox" name="frozen" /><span>${icon('snowflake')} Starts in freezer</span></label>
       <div class="stock-draft-actions">
         <button type="button" class="secondary-button compact" data-action="cancel-batch-draft"><span>Cancel</span></button>
         <button type="submit" class="primary-button compact">${icon('check')}<span>Add stock</span></button>

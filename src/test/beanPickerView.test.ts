@@ -88,7 +88,7 @@ run('bean picker create mode renders new bean form and prefill choices', () => {
   includes(html, 'First stock');
   includes(html, 'Starting grams');
   includes(html, 'Available now');
-  includes(html, 'Starts in freezer');
+  notIncludes(html, 'Starts in freezer');
   includes(html, 'name="prefillBeanId"');
   includes(html, 'Copy from');
   includes(html, 'Dak Milky Cake');

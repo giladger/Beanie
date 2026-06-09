@@ -2198,7 +2198,7 @@ p {
 .bean-picker-first-stock-fields {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(136px, 1fr) minmax(108px, 0.8fr) minmax(104px, 0.7fr) minmax(104px, 0.7fr) minmax(184px, 0.9fr);
+  grid-template-columns: minmax(136px, 1fr) minmax(108px, 0.8fr) minmax(104px, 0.7fr) minmax(104px, 0.7fr);
   gap: 8px;
   margin-top: 8px;
   align-items: end;
@@ -2215,15 +2215,6 @@ p {
   height: 38px;
   min-width: 0;
   padding: 0 10px;
-}
-
-.bean-picker-first-stock-fields .stock-start-location {
-  grid-area: auto;
-  min-height: 38px;
-}
-
-.bean-picker-first-stock-fields .stock-start-location span {
-  white-space: nowrap;
 }
 
 .bean-picker-hint {
@@ -2269,8 +2260,7 @@ p {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   grid-template-areas:
     "title title title delete"
-    "date roast weight remaining"
-    "frozen frozen frozen frozen";
+    "date roast weight remaining";
   border-style: dashed;
   background: color-mix(in srgb, var(--ink) 5%, var(--panel-2));
 }
@@ -2404,33 +2394,6 @@ p {
   height: 40px;
 }
 
-.stock-start-location {
-  grid-area: frozen;
-  min-width: 0;
-  min-height: 40px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--ink) 3%, transparent);
-  color: var(--soft);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.stock-card-draft .stock-start-location {
-  justify-content: flex-start;
-}
-
-.stock-start-location input {
-  width: auto;
-  height: auto;
-  margin: 0;
-}
-
-.stock-start-location span,
 .stock-draft-actions {
   display: inline-flex;
   align-items: center;
@@ -2723,10 +2686,6 @@ p {
 
   .bean-picker-first-stock-fields {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .bean-picker-first-stock-fields .stock-start-location {
-    grid-column: 1 / -1;
   }
 
   .bean-picker-batch {
