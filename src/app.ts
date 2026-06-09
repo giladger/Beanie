@@ -247,6 +247,7 @@ import {
   renderProfilesPage as renderProfilePickerPage
 } from './views/profilePickerView';
 import {
+  createStockFormKey,
   newStockFormKey,
   renderBatchStorageModal as renderBatchStorageModalView,
   renderBeanPickerModal as renderBeanPickerModalView
@@ -1703,6 +1704,7 @@ export class BeanieApp {
       const el = form.elements.namedItem(name);
       if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.value = value;
     };
+    set('prefillBeanId', bean.id);
     set('roaster', bean.roaster);
     set('name', bean.name);
     set('country', inputValue(bean.country));
@@ -4296,6 +4298,15 @@ export class BeanieApp {
     const editingId = form.dataset.id || null;
     this.setState({ busy: true, status: editingId ? 'Saving bean' : 'Adding bean' });
 
+    if (!editingId) {
+      const prefillBeanId = String(data.get('prefillBeanId') ?? '');
+      const continuingBean = prefillBeanId ? this.state.beans.find((item) => item.id === prefillBeanId) ?? null : null;
+      if (continuingBean && beanFieldsUnchanged(fields, continuingBean)) {
+        await this.addFirstStockToBean(continuingBean, data, 'Stock added');
+        return;
+      }
+    }
+
     const result = await this.beanWorkflow.saveBean({
       beans: this.state.beans,
       batchesByBean: this.state.batchesByBean,
@@ -4316,6 +4327,46 @@ export class BeanieApp {
       return;
     }
 
+    if (!editingId) {
+      const created = await this.beanWorkflow.createBatch({
+        bean: result.bean,
+        batchesByBean: result.batchesByBean,
+        selectedBeanId: this.state.selectedBeanId,
+        selectedBatchId: this.state.selectedBatchId,
+        batchInput: batchFieldsFromForm(data, result.bean.id),
+        demo: this.state.demo,
+        nowMs: Date.now()
+      }, {
+        createBatch: (beanId, input) => gateway.createBatch(beanId, input),
+        putBeanBatches: (beanId, batches) => beanieCache.putBeanBatches(beanId, batches)
+      });
+
+      if (created.type === 'failed') {
+        console.error('[Beanie] Add first stock failed', created.error);
+        this.setState({
+          beans: result.beans,
+          batchesByBean: result.batchesByBean,
+          beanPickerBeanId: result.bean.id,
+          beanPickerMode: 'inspect',
+          busy: false,
+          status: created.status
+        });
+        return;
+      }
+
+      this.setState({
+        beans: result.beans,
+        batchesByBean: created.batchesByBean,
+        selectedBatchId: created.selectedBatchId,
+        beanPickerBeanId: result.bean.id,
+        beanPickerMode: 'inspect',
+        formNumbers: omitKeys(this.state.formNumbers, [createStockFormKey('weight'), createStockFormKey('weightRemaining')]),
+        busy: false,
+        status: this.state.demo ? 'Bean and stock added (demo)' : 'Bean and stock added'
+      });
+      return;
+    }
+
     this.setState({
       beans: result.beans,
       batchesByBean: result.batchesByBean,
@@ -4323,6 +4374,43 @@ export class BeanieApp {
       beanPickerMode: 'inspect',
       busy: false,
       status: result.status
+    });
+  }
+
+  private async addFirstStockToBean(bean: Bean, data: FormData, status: string): Promise<void> {
+    const nowMs = Date.now();
+    const result = await this.beanWorkflow.createBatch({
+      bean,
+      batchesByBean: this.state.batchesByBean,
+      selectedBeanId: this.state.selectedBeanId,
+      selectedBatchId: this.state.selectedBatchId,
+      batchInput: batchFieldsFromForm(data, bean.id),
+      demo: this.state.demo,
+      nowMs
+    }, {
+      createBatch: (beanId, input) => gateway.createBatch(beanId, input),
+      putBeanBatches: (beanId, batches) => beanieCache.putBeanBatches(beanId, batches)
+    });
+
+    if (result.type === 'failed') {
+      console.error('[Beanie] Add stock to existing bean failed', result.error);
+      this.setState({ busy: false, status: result.status });
+      return;
+    }
+
+    const beans = promoteBean(this.state.beans, bean.id);
+    void beanieCache.putBeans(beans).catch(() => {});
+    this.setState({
+      beans,
+      batchesByBean: result.batchesByBean,
+      selectedBatchId: result.selectedBatchId,
+      beanUsageAt: { ...this.state.beanUsageAt, [bean.id]: nowMs },
+      beanPickerBeanId: bean.id,
+      beanPickerMode: 'inspect',
+      beanPickerDraftBatchBeanId: null,
+      formNumbers: omitKeys(this.state.formNumbers, [createStockFormKey('weight'), createStockFormKey('weightRemaining')]),
+      busy: false,
+      status: this.state.demo ? `${status} (demo)` : status
     });
   }
 
@@ -7116,6 +7204,21 @@ function beanFieldsFromForm(data: FormData): Partial<Bean> {
     processing: textOrNull(data.get('processing')),
     notes: textOrNull(data.get('notes'))
   };
+}
+
+function beanFieldsUnchanged(fields: Partial<Bean>, bean: Bean): boolean {
+  return (
+    normalizeBeanField(fields.roaster) === normalizeBeanField(bean.roaster) &&
+    normalizeBeanField(fields.name) === normalizeBeanField(bean.name) &&
+    normalizeBeanField(fields.country) === normalizeBeanField(bean.country) &&
+    normalizeBeanField(fields.region) === normalizeBeanField(bean.region) &&
+    normalizeBeanField(fields.processing) === normalizeBeanField(bean.processing) &&
+    normalizeBeanField(fields.notes) === normalizeBeanField(bean.notes)
+  );
+}
+
+function normalizeBeanField(value: unknown): string {
+  return String(value ?? '').trim();
 }
 
 function batchFieldsFromForm(data: FormData, beanId: string, fallback?: BeanBatch): Partial<BeanBatch> {

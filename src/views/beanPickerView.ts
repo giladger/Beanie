@@ -107,8 +107,7 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
   if (model.mode === 'create' || !bean) {
     return `
       <div class="bean-picker-inspector">
-        ${renderBeanPickerBeanForm(null, model.prefillBeans)}
-        <p class="bean-picker-hint">Save the bag first, then add stock.</p>
+        ${renderBeanPickerBeanForm(null, model.prefillBeans, model.formNumbers ?? {})}
       </div>
     `;
   }
@@ -119,7 +118,11 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
   const latest = latestBatch(batches);
   return `
     <div class="bean-picker-inspector">
-      ${renderBeanPickerBeanForm(bean, model.prefillBeans)}
+      ${renderBeanPickerSummary(bean, latest)}
+      <details class="bean-picker-details">
+        <summary>${icon('pencil')}<span>Edit bean details</span></summary>
+        ${renderBeanPickerBeanForm(bean, model.prefillBeans, model.formNumbers ?? {})}
+      </details>
       <div class="bean-picker-batches">
         <div class="bean-picker-section-head">
           <div>
@@ -141,7 +144,22 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
   `;
 }
 
-function renderBeanPickerBeanForm(bean: Bean | null, prefillBeans: Bean[]): string {
+function renderBeanPickerSummary(bean: Bean, latest: BeanBatch | null): string {
+  const origin = [bean.country, bean.region].filter(Boolean).join(' · ');
+  const meta = [origin || null, bean.processing ?? null, latest ? stockOptionLabel(latest) : null].filter(Boolean).join(' · ');
+  return `
+    <div class="bean-picker-bean-summary">
+      <div>
+        <span class="eyebrow">Bean</span>
+        <strong>${escapeHtml(beanLabel(bean))}</strong>
+        ${meta ? `<small>${escapeHtml(meta)}</small>` : ''}
+      </div>
+      <button type="button" class="primary-button compact" data-action="select-bean" data-id="${escapeAttr(bean.id)}">${icon('check')}<span>Use</span></button>
+    </div>
+  `;
+}
+
+function renderBeanPickerBeanForm(bean: Bean | null, prefillBeans: Bean[], formNumbers: Record<string, string>): string {
   const editing = bean != null;
   const dataId = editing ? ` data-id="${escapeAttr(bean.id)}"` : '';
   return `
@@ -159,10 +177,10 @@ function renderBeanPickerBeanForm(bean: Bean | null, prefillBeans: Bean[]): stri
                  <button type="button" class="icon-button subtle-danger bean-delete-button" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Delete bag" title="Delete bag">${icon('trash-2')}</button>`
               : `<button type="button" class="secondary-button compact" data-action="close-modal"><span>Cancel</span></button>`
           }
-          ${editing ? '' : `<button type="submit" class="primary-button compact">${icon('check')}<span>Save</span></button>`}
+          ${editing ? '' : `<button type="submit" class="primary-button compact">${icon('check')}<span>Save bean + stock</span></button>`}
         </div>
       </div>
-      ${editing ? '' : beanPrefillSelect(prefillBeans)}
+      ${editing ? '' : `<input type="hidden" name="prefillBeanId" value="" />${beanPrefillSelect(prefillBeans)}`}
       <div class="bean-picker-fields">
         <label>Roaster<input name="roaster" required autocomplete="off" value="${escapeAttr(editing ? bean.roaster : '')}" /></label>
         <label>Bean<input name="name" required autocomplete="off" value="${escapeAttr(editing ? bean.name : '')}" /></label>
@@ -171,7 +189,32 @@ function renderBeanPickerBeanForm(bean: Bean | null, prefillBeans: Bean[]): stri
         <label>Process<input name="processing" autocomplete="off" value="${escapeAttr(inputValue(editing ? bean.processing : ''))}" /></label>
         <label class="bean-picker-notes">Notes<textarea name="notes" rows="4" autocomplete="off">${escapeHtml(inputValue(editing ? bean.notes : ''))}</textarea></label>
       </div>
+      ${editing ? '' : renderBeanPickerFirstStock(formNumbers)}
     </form>
+  `;
+}
+
+function renderBeanPickerFirstStock(formNumbers: Record<string, string>): string {
+  const weightKey = createStockFormKey('weight');
+  const remainingKey = createStockFormKey('weightRemaining');
+  const weightValue = formNumbers[weightKey] ?? '250';
+  const remainingValue = formNumbers[remainingKey] ?? weightValue;
+  return `
+    <div class="bean-picker-first-stock">
+      <div class="bean-picker-section-head">
+        <div>
+          <span class="eyebrow">First stock</span>
+          <strong>Add the bag now</strong>
+        </div>
+      </div>
+      <div class="bean-picker-first-stock-fields">
+        <label>Date<input type="date" name="roastDate" value="${escapeAttr(todayDateInputValue())}" /></label>
+        <label>Roast<input name="roastLevel" autocomplete="off" /></label>
+        ${draftNumber(weightKey, 'weight', 'Starting grams', weightValue)}
+        ${draftNumber(remainingKey, 'weightRemaining', 'Available now', remainingValue)}
+        <label class="stock-start-location"><input type="checkbox" name="frozen" /><span>${icon('snowflake')} Starts in freezer</span></label>
+      </div>
+    </div>
   `;
 }
 
@@ -374,6 +417,10 @@ export function renderBatchStorageModal(
 
 export function newStockFormKey(beanId: string, name: 'weight' | 'weightRemaining'): string {
   return `bean-picker-new:${beanId}:${name}`;
+}
+
+export function createStockFormKey(name: 'weight' | 'weightRemaining'): string {
+  return `bean-picker-create:${name}`;
 }
 
 function freezePortionFormKey(batchId: string): string {

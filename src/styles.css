@@ -2012,7 +2012,9 @@ p {
 }
 
 .bean-picker-modal.create-mode {
-  width: min(560px, calc(100vw - 16px));
+  width: min(780px, calc(100vw - 16px));
+  height: auto;
+  max-height: calc(100vh - 16px);
 }
 
 .bean-picker-modal.create-mode .bean-picker-body {
@@ -2037,18 +2039,87 @@ p {
 }
 
 .bean-picker-inspector {
-  grid-template-rows: auto auto;
+  grid-template-rows: auto auto minmax(0, 1fr);
   align-content: start;
   overflow: hidden;
 }
 
 .bean-picker-bean-form,
+.bean-picker-bean-summary,
 .bean-picker-batches {
   min-width: 0;
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: color-mix(in srgb, var(--ink) 2.5%, transparent);
+}
+
+.bean-picker-bean-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.bean-picker-bean-summary > div {
+  min-width: 0;
+}
+
+.bean-picker-bean-summary strong,
+.bean-picker-bean-summary small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bean-picker-bean-summary strong {
+  color: var(--ink);
+  font-size: 17px;
+  line-height: 1.1;
+}
+
+.bean-picker-bean-summary small {
+  margin-top: 3px;
+  color: var(--soft);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.bean-picker-details {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--ink) 2.5%, transparent);
+}
+
+.bean-picker-details summary {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  color: var(--soft);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.bean-picker-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.bean-picker-details summary .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.bean-picker-details .bean-picker-bean-form {
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
 }
 
 .bean-picker-section-head {
@@ -2090,6 +2161,7 @@ p {
 
 .bean-picker-fields input,
 .bean-picker-fields textarea,
+.bean-picker-first-stock-fields input,
 .bean-picker-batch input {
   min-width: 0;
   font-size: 14px;
@@ -2105,10 +2177,47 @@ p {
 }
 
 .bean-picker-notes textarea {
-  height: 82px;
+  height: 56px;
   resize: vertical;
   overflow: auto;
   line-height: 1.25;
+}
+
+.bean-picker-first-stock {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.bean-picker-first-stock-fields {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(136px, 1fr) minmax(108px, 0.8fr) minmax(104px, 0.7fr) minmax(104px, 0.7fr) minmax(184px, 0.9fr);
+  gap: 8px;
+  margin-top: 8px;
+  align-items: end;
+}
+
+.bean-picker-first-stock-fields label {
+  gap: 5px;
+  font-size: 11px;
+}
+
+.bean-picker-first-stock-fields input,
+.bean-picker-first-stock-fields .bean-picker-number {
+  width: 100%;
+  height: 38px;
+  min-width: 0;
+  padding: 0 10px;
+}
+
+.bean-picker-first-stock-fields .stock-start-location {
+  grid-area: auto;
+  min-height: 38px;
+}
+
+.bean-picker-first-stock-fields .stock-start-location span {
+  white-space: nowrap;
 }
 
 .bean-picker-hint {
@@ -2122,13 +2231,13 @@ p {
 }
 
 .bean-picker-batches {
-  grid-template-rows: auto auto;
+  grid-template-rows: auto minmax(0, 1fr);
   align-content: start;
 }
 
 .bean-picker-batch-list {
   min-height: 0;
-  max-height: 220px;
+  max-height: none;
   overflow-y: auto;
   overflow-x: hidden;
   display: grid;
@@ -2607,6 +2716,14 @@ p {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .bean-picker-first-stock-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .bean-picker-first-stock-fields .stock-start-location {
+    grid-column: 1 / -1;
+  }
+
   .bean-picker-batch {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-template-areas:
@@ -2688,6 +2805,10 @@ p {
   }
 
   .bean-picker-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bean-picker-first-stock-fields {
     grid-template-columns: minmax(0, 1fr);
   }
 
