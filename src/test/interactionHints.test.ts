@@ -1,4 +1,8 @@
-import { markSecondTapHintUsed, shouldShowSecondTapHint } from '../domain/interactionHints';
+import {
+  markSecondTapHintUsed,
+  secondTapHintUsesBeforeHiding,
+  shouldShowSecondTapHint
+} from '../domain/interactionHints';
 
 class FakeStorage {
   private readonly values = new Map<string, string>();
@@ -30,22 +34,32 @@ run('second tap hints show by default', () => {
   equal(shouldShowSecondTapHint('shot'), true);
 });
 
-run('marking one hint used hides only that hint', () => {
+run('hint stays visible until used the configured number of times', () => {
   storage.clear();
 
+  for (let i = 0; i < secondTapHintUsesBeforeHiding - 1; i += 1) {
+    markSecondTapHintUsed('bean');
+    equal(shouldShowSecondTapHint('bean'), true);
+  }
+
   markSecondTapHintUsed('bean');
+  equal(shouldShowSecondTapHint('bean'), false);
+});
+
+run('counting one hint up does not affect the other', () => {
+  storage.clear();
+
+  for (let i = 0; i < secondTapHintUsesBeforeHiding; i += 1) {
+    markSecondTapHintUsed('bean');
+  }
 
   equal(shouldShowSecondTapHint('bean'), false);
   equal(shouldShowSecondTapHint('shot'), true);
-
-  markSecondTapHintUsed('shot');
-
-  equal(shouldShowSecondTapHint('shot'), false);
 });
 
 run('malformed hint preferences recover to defaults', () => {
   storage.clear();
-  localStorage.setItem('beanie:second-tap-hint-v2', '{');
+  localStorage.setItem('beanie:second-tap-hint-v3', '{');
 
   equal(shouldShowSecondTapHint('bean'), true);
   equal(shouldShowSecondTapHint('shot'), true);
