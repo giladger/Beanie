@@ -39,14 +39,14 @@ export function renderBeanPickerModal(model: BeanPickerViewModel): string {
   const creating = model.mode === 'create';
   return `
     <div class="modal-backdrop bean-picker-backdrop" data-action="close-modal">
-      <section class="modal panel bean-picker-modal ${creating ? 'create-mode' : ''}" role="dialog" aria-modal="true" aria-label="${creating ? 'New bean' : 'Pick a bag'}" data-action="noop">
+      <section class="modal panel bean-picker-modal ${creating ? 'create-mode' : ''}" role="dialog" aria-modal="true" aria-label="${creating ? 'Add coffee' : 'Choose coffee'}" data-action="noop">
         <div class="modal-head bean-picker-head">
           <div>
             <span class="eyebrow">Beans</span>
-            <h2>${creating ? 'New bean' : 'Pick a bag'}</h2>
+            <h2>${creating ? 'Add coffee' : 'Choose coffee'}</h2>
           </div>
           <div class="modal-head-actions">
-            ${creating ? '' : `<button class="icon-button" data-action="open-add-bean" aria-label="Add bean" title="Add bean">${icon('plus')}</button>`}
+            ${creating ? '' : `<button class="icon-button" data-action="open-add-bean" aria-label="Add coffee" title="Add coffee">${icon('plus')}</button>`}
             ${creating ? '' : `<button class="icon-button" data-action="open-label-scanner" aria-label="Scan a bag with AI" title="Scan a bag with AI">${icon('camera')}</button>`}
             <button class="icon-button" data-action="close-modal" aria-label="Close" title="Close">${icon('x')}</button>
           </div>
@@ -88,16 +88,18 @@ function renderBeanPickerRow(
   bean: Bean,
   options: { focused: boolean; current: boolean; secondTapHint: BeanPickerViewModel['secondTapHint'] }
 ): string {
-  const hint = renderSecondTapHint('bean', bean.id, options.secondTapHint);
+  const armed = options.focused && !options.current;
+  const hint = armed ? '' : renderSecondTapHint('bean', bean.id, options.secondTapHint);
+  const status = options.current ? 'Current' : armed ? 'Tap again' : 'View';
   const origin = bean.country ? `<small>${escapeHtml(bean.country)}</small>` : '';
   return `
-    <button class="bean-row ${options.focused ? 'active' : ''} ${hint ? 'has-second-tap-hint' : ''}" data-action="inspect-bean" data-id="${escapeAttr(bean.id)}">
+    <button class="bean-row ${options.focused ? 'active' : ''} ${armed || hint ? 'has-second-tap-hint' : ''}" data-action="inspect-bean" data-id="${escapeAttr(bean.id)}">
       <span>
         ${origin}
         <b>${escapeHtml(bean.roaster)}</b>
         <strong>${escapeHtml(bean.name)}</strong>
       </span>
-      ${options.current ? '<em>In use</em>' : ''}
+      <em class="bean-row-action ${options.current ? 'current' : armed ? 'armed' : ''}">${escapeHtml(status)}</em>
       ${hint}
     </button>
   `;
@@ -120,26 +122,29 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
   const editingDetails = model.editingBeanDetailsId === bean.id;
   return `
     <div class="bean-picker-inspector">
-      <div class="bean-picker-details ${editingDetails ? 'open' : ''}">
-        <button type="button" class="bean-picker-bean-summary" data-action="toggle-bean-details" data-id="${escapeAttr(bean.id)}" aria-expanded="${editingDetails ? 'true' : 'false'}" title="Edit bean details">
-          ${renderBeanPickerSummary(bean, latest)}
-          <span class="icon-button bean-picker-edit-icon" aria-hidden="true">${icon('pencil')}</span>
-        </button>
-        ${editingDetails ? renderBeanPickerBeanForm(bean, model.prefillBeans, model.formNumbers ?? {}, { showHeader: false }) : ''}
+      <div class="bean-picker-decision">
+        <div class="bean-picker-details ${editingDetails ? 'open' : ''}">
+          <button type="button" class="bean-picker-bean-summary" data-action="toggle-bean-details" data-id="${escapeAttr(bean.id)}" aria-expanded="${editingDetails ? 'true' : 'false'}" title="Edit coffee">
+            ${renderBeanPickerSummary(bean, latest)}
+            <span class="icon-button bean-picker-edit-icon" aria-hidden="true">${icon('pencil')}</span>
+          </button>
+          ${editingDetails ? renderBeanPickerBeanForm(bean, model.prefillBeans, model.formNumbers ?? {}, { showHeader: false }) : ''}
+        </div>
+        ${renderBeanPickerStockNow(bean, latest)}
       </div>
       <div class="bean-picker-batches">
         <div class="bean-picker-section-head">
           <div>
-            <span class="eyebrow">Stock</span>
-            <strong>${escapeHtml(batches.length === 0 ? 'No stock yet' : stockOptionLabel(latest!))}</strong>
+            <span class="eyebrow">Bags on hand</span>
+            <strong>${escapeHtml(batches.length === 0 ? 'No bags yet' : `${batches.length} ${batches.length === 1 ? 'bag' : 'bags'}`)}</strong>
           </div>
-          <button type="button" class="secondary-button compact" data-action="bean-picker-add-batch">${icon('plus')}<span>Stock</span></button>
+          <button type="button" class="secondary-button compact" data-action="bean-picker-add-batch">${icon('plus')}<span>Bag</span></button>
         </div>
         <div class="bean-picker-batch-list">
           ${model.draftBatchBeanId === bean.id ? renderBeanPickerBatchDraft(bean, latest, model.formNumbers ?? {}) : ''}
           ${
             batches.length === 0
-              ? '<p class="empty-history">No stock yet.</p>'
+              ? '<p class="empty-history">No bags on hand.</p>'
               : visibleBatches.map((batch) => renderBeanPickerBatchForm(bean, batch, batch.id === currentBatchId)).join('')
           }
         </div>
@@ -153,9 +158,38 @@ function renderBeanPickerSummary(bean: Bean, latest: BeanBatch | null): string {
   const meta = [origin || null, bean.processing ?? null, latest ? stockOptionLabel(latest) : null].filter(Boolean).join(' · ');
   return `
     <div>
-      <span class="eyebrow">Bean</span>
+      <span class="eyebrow">Selected coffee</span>
       <strong>${escapeHtml(beanLabel(bean))}</strong>
       ${meta ? `<small>${escapeHtml(meta)}</small>` : ''}
+    </div>
+  `;
+}
+
+function renderBeanPickerStockNow(bean: Bean, latest: BeanBatch | null): string {
+  if (!latest) {
+    return `
+      <div class="bean-picker-stock-now empty">
+        <div>
+          <span class="eyebrow">Using now</span>
+          <strong>No bag on hand</strong>
+          <small>Empty shelf</small>
+        </div>
+        <button type="button" class="secondary-button compact" data-action="bean-picker-add-batch">${icon('plus')}<span>Bag</span></button>
+      </div>
+    `;
+  }
+  const freshness = stockFreshnessDetail(latest);
+  const location = stockLocationLabel(latest);
+  const locationDetail = stockLocationDetail(latest);
+  const locationIcon = batchStorageState(latest) === 'frozen' ? 'snowflake' : batchStorageState(latest) === 'thawed' ? 'sun' : 'archive';
+  return `
+    <div class="bean-picker-stock-now">
+      <div>
+        <span class="eyebrow">Using now</span>
+        <strong>${escapeHtml(stockOptionLabel(latest))}</strong>
+        <small>${escapeHtml([freshness, latest.roastLevel ?? null].filter(Boolean).join(' · ') || 'Bag')}</small>
+      </div>
+      <button type="button" class="bean-picker-stock-location stock-location-chip" data-action="open-batch-storage" data-id="${escapeAttr(latest.id)}" data-bean-id="${escapeAttr(bean.id)}" title="Stock location">${icon(locationIcon)}<span>${escapeHtml(location)}</span><small>${escapeHtml(locationDetail)}</small></button>
     </div>
   `;
 }
@@ -175,13 +209,13 @@ function renderBeanPickerBeanForm(
         showHeader
           ? `<div class="bean-picker-section-head">
               <div>
-                <span class="eyebrow">${editing ? 'Bean' : 'New bean'}</span>
-                <strong>${escapeHtml(editing ? beanLabel(bean) : 'Add a bag')}</strong>
+                <span class="eyebrow">${editing ? 'Coffee' : 'New coffee'}</span>
+                <strong>${escapeHtml(editing ? beanLabel(bean) : 'Add coffee')}</strong>
               </div>
               <div class="bean-picker-actions">
                 ${
                   editing
-                    ? `<button type="button" class="icon-button subtle-danger bean-delete-button" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Delete bag" title="Delete bag">${icon('trash-2')}</button>`
+                    ? `<button type="button" class="icon-button subtle-danger bean-delete-button" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Delete coffee" title="Delete coffee">${icon('trash-2')}</button>`
                     : `<button type="button" class="secondary-button compact" data-action="close-modal"><span>Cancel</span></button>`
                 }
               </div>
@@ -191,7 +225,7 @@ function renderBeanPickerBeanForm(
       ${editing ? '' : `<input type="hidden" name="prefillBeanId" value="" />${beanPrefillSelect(prefillBeans)}`}
       <div class="bean-picker-fields">
         <label>Roaster<input name="roaster" required autocomplete="off" value="${escapeAttr(editing ? bean.roaster : '')}" /></label>
-        <label>Bean<input name="name" required autocomplete="off" value="${escapeAttr(editing ? bean.name : '')}" /></label>
+        <label>Coffee<input name="name" required autocomplete="off" value="${escapeAttr(editing ? bean.name : '')}" /></label>
         <label>Country<input name="country" autocomplete="off" value="${escapeAttr(inputValue(editing ? bean.country : ''))}" /></label>
         <label>Region<input name="region" autocomplete="off" value="${escapeAttr(inputValue(editing ? bean.region : ''))}" /></label>
         <label>Process<input name="processing" autocomplete="off" value="${escapeAttr(inputValue(editing ? bean.processing : ''))}" /></label>
@@ -211,15 +245,15 @@ function renderBeanPickerFirstStock(formNumbers: Record<string, string>): string
     <div class="bean-picker-first-stock">
       <div class="bean-picker-section-head">
         <div>
-          <span class="eyebrow">First stock</span>
-          <strong>Add the bag now</strong>
+          <span class="eyebrow">Bag</span>
+          <strong>On hand</strong>
         </div>
       </div>
       <div class="bean-picker-first-stock-fields">
-        <label>Date<input type="date" name="roastDate" value="${escapeAttr(todayDateInputValue())}" /></label>
+        <label>Roast date<input type="date" name="roastDate" value="${escapeAttr(todayDateInputValue())}" /></label>
         <label>Roast<input name="roastLevel" autocomplete="off" /></label>
-        ${draftNumber(weightKey, 'weight', 'Starting grams', weightValue)}
-        ${draftNumber(remainingKey, 'weightRemaining', 'Available now', remainingValue)}
+        ${draftNumber(weightKey, 'weight', 'Bag', weightValue)}
+        ${draftNumber(remainingKey, 'weightRemaining', 'Left', remainingValue)}
       </div>
     </div>
   `;
@@ -260,9 +294,9 @@ function renderBeanPickerBatchForm(bean: Bean, batch: BeanBatch, active: boolean
     >
       <div class="bean-picker-batch-title">
         <strong>${escapeHtml(stockOptionLabel(batch))}</strong>
-        <small>${escapeHtml([active ? 'Latest stock' : null, freshness, batch.roastLevel ?? null].filter(Boolean).join(' · ') || 'Stock')}</small>
+        <small>${escapeHtml([active ? 'Using now' : null, freshness, batch.roastLevel ?? null].filter(Boolean).join(' · ') || 'Bag')}</small>
       </div>
-      <label>Date<input data-action="bean-picker-batch-field" type="date" name="roastDate" value="${escapeAttr(dateInputValue(batch.roastDate))}" /></label>
+      <label>Roast date<input data-action="bean-picker-batch-field" type="date" name="roastDate" value="${escapeAttr(dateInputValue(batch.roastDate))}" /></label>
       <label>Roast<input data-action="bean-picker-batch-field" name="roastLevel" autocomplete="off" value="${escapeAttr(inputValue(batch.roastLevel))}" /></label>
       ${batchNumber('weight', 'Bag', batch.weight)}
       ${batchNumber('weightRemaining', 'Left', batch.weightRemaining)}
@@ -284,16 +318,16 @@ function renderBeanPickerBatchDraft(
   return `
     <form class="bean-picker-batch stock-card stock-card-draft" data-form="bean-picker-batch" data-bean-id="${escapeAttr(bean.id)}">
       <div class="bean-picker-batch-title">
-        <strong>Add stock</strong>
-        <small>Nothing is saved until you tap Add stock.</small>
+        <strong>Add bag</strong>
+        <small>${escapeHtml(beanLabel(bean))}</small>
       </div>
-      <label>Date<input data-action="bean-picker-batch-field-draft" type="date" name="roastDate" value="${escapeAttr(todayDateInputValue())}" /></label>
+      <label>Roast date<input data-action="bean-picker-batch-field-draft" type="date" name="roastDate" value="${escapeAttr(todayDateInputValue())}" /></label>
       <label>Roast<input data-action="bean-picker-batch-field-draft" name="roastLevel" autocomplete="off" value="${escapeAttr(inputValue(latest?.roastLevel))}" /></label>
-      ${draftNumber(weightKey, 'weight', 'Starting grams', weightValue)}
-      ${draftNumber(remainingKey, 'weightRemaining', 'Available now', remainingValue)}
+      ${draftNumber(weightKey, 'weight', 'Bag', weightValue)}
+      ${draftNumber(remainingKey, 'weightRemaining', 'Left', remainingValue)}
       <div class="stock-draft-actions">
         <button type="button" class="secondary-button compact" data-action="cancel-batch-draft"><span>Cancel</span></button>
-        <button type="submit" class="primary-button compact">${icon('check')}<span>Add stock</span></button>
+        <button type="submit" class="primary-button compact">${icon('check')}<span>Add bag</span></button>
       </div>
     </form>
   `;
@@ -527,9 +561,9 @@ function beanPrefillSelect(beans: Bean[]): string {
   if (beans.length === 0) return '';
   return `
     <label class="bean-prefill">
-      <span>Copy from</span>
+      <span>Continue from</span>
       <select data-action="bean-prefill" aria-label="Copy details from an existing bean">
-        <option value="">Start blank</option>
+        <option value="">New coffee</option>
         ${beans.map((bean) => `<option value="${escapeAttr(bean.id)}">${escapeHtml(beanLabel(bean))}</option>`).join('')}
       </select>
     </label>
@@ -542,7 +576,7 @@ function renderSecondTapHint(
   secondTapHint: BeanPickerViewModel['secondTapHint']
 ): string {
   if (!secondTapHint || secondTapHint.kind !== kind || secondTapHint.id !== id) return '';
-  return '<span class="second-tap-tooltip">Tap again to load</span>';
+  return '<span class="second-tap-tooltip">Tap again to brew</span>';
 }
 
 function inputValue(value: unknown): string {

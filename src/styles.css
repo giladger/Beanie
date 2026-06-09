@@ -1947,7 +1947,7 @@ p {
 }
 
 .bean-picker-modal {
-  width: min(1080px, calc(100vw - 16px));
+  width: min(1180px, calc(100vw - 16px));
   height: calc(100vh - 16px);
   grid-template-rows: auto minmax(0, 1fr);
   gap: 8px;
@@ -2004,10 +2004,42 @@ p {
   gap: 8px;
 }
 
+.bean-picker-list .bean-row.has-second-tap-hint {
+  padding-right: 11px;
+}
+
+.bean-picker-list .bean-row .second-tap-tooltip {
+  display: none;
+}
+
+.bean-row-action {
+  min-width: 60px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
+  color: var(--muted);
+}
+
+.bean-row-action.current {
+  border-color: color-mix(in srgb, var(--teal) 48%, var(--line));
+  background: color-mix(in srgb, var(--teal) 12%, transparent);
+  color: var(--teal);
+}
+
+.bean-row-action.armed {
+  border-color: color-mix(in srgb, var(--teal) 64%, var(--line));
+  background: color-mix(in srgb, var(--teal) 18%, var(--panel-2));
+  color: var(--ink);
+}
+
 .bean-picker-body {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(220px, 0.34fr) minmax(0, 0.66fr);
+  grid-template-columns: minmax(260px, 0.32fr) minmax(0, 0.68fr);
   gap: 8px;
 }
 
@@ -2028,6 +2060,7 @@ p {
 
 .bean-picker-list-panel,
 .bean-picker-inspector,
+.bean-picker-decision,
 .bean-picker-batches {
   min-height: 0;
   display: grid;
@@ -2049,6 +2082,7 @@ p {
 
 .bean-picker-bean-form,
 .bean-picker-bean-summary,
+.bean-picker-stock-now,
 .bean-picker-batches {
   min-width: 0;
   padding: 8px;
@@ -2126,6 +2160,79 @@ p {
   border-top: 1px solid var(--line);
   border-radius: 0;
   background: transparent;
+}
+
+.bean-picker-decision {
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.72fr);
+  align-items: stretch;
+}
+
+.bean-picker-stock-now {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(104px, auto);
+  align-items: center;
+  gap: 8px;
+  background: color-mix(in srgb, var(--teal) 7%, transparent);
+}
+
+.bean-picker-stock-now > div {
+  min-width: 0;
+}
+
+.bean-picker-stock-now strong,
+.bean-picker-stock-now small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bean-picker-stock-now strong {
+  color: var(--ink);
+  font-size: 17px;
+  line-height: 1.1;
+}
+
+.bean-picker-stock-now small {
+  margin-top: 3px;
+  color: var(--soft);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.bean-picker-stock-now.empty {
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
+}
+
+.bean-picker-stock-location {
+  min-width: 104px;
+  max-width: 128px;
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
+  color: var(--soft);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.bean-picker-stock-location .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.bean-picker-stock-location span {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .bean-picker-section-head {
@@ -2248,9 +2355,9 @@ p {
   grid-template-areas:
     "title title title title frozen delete"
     "date roast weight remaining frozen delete";
-  gap: 8px;
+  gap: 7px;
   align-items: center;
-  padding: 10px;
+  padding: 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel-2);
@@ -2320,23 +2427,23 @@ p {
 
 .bean-picker-batch input {
   width: 100%;
-  height: 40px;
+  height: 36px;
   padding: 0 10px;
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .bean-picker-batch .bean-picker-number {
   width: 100%;
-  height: 40px;
+  height: 36px;
   padding: 0 10px;
   justify-content: space-between;
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .bean-picker-storage {
   grid-area: frozen;
   align-self: center;
-  min-height: 88px;
+  min-height: 76px;
   min-width: 0;
   display: inline-flex;
   flex-direction: row;
@@ -2678,6 +2785,16 @@ p {
 
   .bean-picker-inspector {
     min-height: 0;
+  }
+
+  .bean-picker-decision,
+  .bean-picker-stock-now {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bean-picker-stock-location {
+    max-width: none;
+    min-height: 40px;
   }
 
   .bean-picker-fields {

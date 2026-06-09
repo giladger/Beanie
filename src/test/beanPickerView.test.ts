@@ -46,18 +46,21 @@ const batches: BeanBatch[] = [
 run('bean picker renders matched beans, current bean, focused inspector, and latest batch', () => {
   const html = renderBeanPickerModal(model());
 
-  includes(html, 'Pick a bag');
+  includes(html, 'Choose coffee');
   includes(html, 'value="dak"');
   includes(html, 'autofocus');
   includes(html, 'Milky Cake');
-  includes(html, 'In use');
+  includes(html, 'Current');
   includes(html, 'bean-picker-edit-icon');
   includes(html, 'data-action="toggle-bean-details"');
   includes(html, 'aria-expanded="false"');
+  includes(html, 'Selected coffee');
+  includes(html, 'Using now');
+  includes(html, 'Bags on hand');
   notIncludes(html, 'data-form="bean-picker-bean" data-id="bean-1"');
   notIncludes(html, 'data-action="select-bean"');
   notIncludes(html, '<span>Save</span>');
-  includes(html, 'Latest stock');
+  notIncludes(html, 'Latest stock');
   includes(html, 'data-batch-id="batch-1"');
   includes(html, 'data-action="open-batch-storage"');
   includes(html, 'In freezer');
@@ -83,14 +86,15 @@ run('bean picker create mode renders new bean form and prefill choices', () => {
   );
 
   includes(html, 'bean-picker-modal create-mode');
-  includes(html, 'Add a bag');
+  includes(html, 'Add coffee');
   notIncludes(html, 'Save bean + stock');
-  includes(html, 'First stock');
-  includes(html, 'Starting grams');
-  includes(html, 'Available now');
+  includes(html, 'On hand');
+  includes(html, 'Roast date');
+  includes(html, 'Left');
   notIncludes(html, 'Starts in freezer');
   includes(html, 'name="prefillBeanId"');
-  includes(html, 'Copy from');
+  includes(html, 'Continue from');
+  includes(html, 'New coffee');
   includes(html, 'Dak Milky Cake');
   notIncludes(html, 'bean-picker-list-panel');
   notIncludes(html, 'data-action="open-label-scanner"');
@@ -103,7 +107,7 @@ run('bean picker renders second tap hint for matching bean only', () => {
     })
   );
 
-  includes(html, 'Tap again to load');
+  includes(html, 'Tap again to brew');
   includes(html, 'has-second-tap-hint');
 });
 
