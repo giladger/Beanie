@@ -122,7 +122,7 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
   const editingDetails = model.editingBeanDetailsId === bean.id;
   return `
     <div class="bean-picker-inspector">
-      <div class="bean-picker-decision">
+      <div class="bean-picker-decision ${editingDetails ? 'editing' : ''}">
         <div class="bean-picker-details ${editingDetails ? 'open' : ''}">
           <button type="button" class="bean-picker-bean-summary" data-action="toggle-bean-details" data-id="${escapeAttr(bean.id)}" aria-expanded="${editingDetails ? 'true' : 'false'}" title="Edit coffee">
             ${renderBeanPickerSummary(bean, latest)}

@@ -70,6 +70,7 @@ run('bean picker opens edit fields from the bean line without duplicating the ti
   const html = renderBeanPickerModal(model({ editingBeanDetailsId: 'bean-1' }));
 
   includes(html, 'aria-expanded="true"');
+  includes(html, 'bean-picker-decision editing');
   includes(html, 'data-form="bean-picker-bean" data-id="bean-1"');
   includes(html, 'name="roaster"');
   includes(html, 'name="notes"');

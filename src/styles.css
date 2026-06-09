@@ -2163,8 +2163,31 @@ p {
 }
 
 .bean-picker-decision {
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.72fr);
+  grid-template-columns: minmax(0, 1fr) 248px;
   align-items: stretch;
+}
+
+.bean-picker-decision.editing {
+  grid-template-rows: auto auto;
+}
+
+.bean-picker-decision.editing .bean-picker-details {
+  display: contents;
+}
+
+.bean-picker-decision.editing .bean-picker-details > .bean-picker-bean-summary {
+  grid-column: 1;
+  grid-row: 1;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--ink) 2.5%, transparent);
+}
+
+.bean-picker-decision.editing .bean-picker-details .bean-picker-bean-form {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--ink) 2.5%, transparent);
 }
 
 .bean-picker-stock-now {
@@ -2173,6 +2196,11 @@ p {
   align-items: center;
   gap: 8px;
   background: color-mix(in srgb, var(--teal) 7%, transparent);
+}
+
+.bean-picker-decision.editing .bean-picker-stock-now {
+  grid-column: 2;
+  grid-row: 1;
 }
 
 .bean-picker-stock-now > div {
@@ -2795,6 +2823,13 @@ p {
   .bean-picker-stock-location {
     max-width: none;
     min-height: 40px;
+  }
+
+  .bean-picker-decision.editing .bean-picker-details > .bean-picker-bean-summary,
+  .bean-picker-decision.editing .bean-picker-details .bean-picker-bean-form,
+  .bean-picker-decision.editing .bean-picker-stock-now {
+    grid-column: 1;
+    grid-row: auto;
   }
 
   .bean-picker-fields {
