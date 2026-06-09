@@ -125,7 +125,7 @@ function settingsSections(
       {
         id: 'machine',
         title: 'Machine',
-        terms: 'descale clean sleep routine defaults',
+        terms: 'descale sleep routine defaults',
         html: renderMaintenanceSection()
       },
       {
@@ -275,7 +275,6 @@ function renderMaintenanceSection(): string {
     `<button type="button" class="text-button" data-action="settings-machine-state" data-value="${state}">${escapeHtml(label)}</button>`;
   return renderSection('Maintenance', [
     settingControlRow('Descale', 'Run the descaling cycle on the machine', stateBtn('descaling', 'Start descale')),
-    settingControlRow('Clean', 'Run the cleaning cycle', stateBtn('cleaning', 'Start clean')),
     settingControlRow('Sleep', 'Put the machine to sleep', stateBtn('sleeping', 'Sleep'))
   ].join(''));
 }
