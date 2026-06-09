@@ -56,6 +56,13 @@ export function shotFilterForBean(bean: Bean, batch?: BeanBatch | null): URLSear
   return query;
 }
 
+export function legacyShotFilterForBean(bean: Bean): URLSearchParams {
+  const query = new URLSearchParams({ limit: '24', offset: '0', order: 'desc' });
+  query.set('coffeeRoaster', bean.roaster);
+  query.set('coffeeName', bean.name);
+  return query;
+}
+
 export function beanListTimestamp(bean: Bean, usageAt?: number | null): number {
   const shotTime = typeof usageAt === 'number' && Number.isFinite(usageAt) ? usageAt : 0;
   const addTime = parseTimestamp(bean.createdAt) ?? parseTimestamp(bean.updatedAt) ?? 0;

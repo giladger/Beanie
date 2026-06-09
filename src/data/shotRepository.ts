@@ -23,6 +23,8 @@ export interface FetchShotPageInput {
   query: URLSearchParams;
   pageSize: number;
   offset: number;
+  fallbackQuery?: URLSearchParams;
+  acceptPage?: (items: ShotSummary[]) => boolean;
 }
 
 export async function fetchShotPage(
@@ -35,6 +37,10 @@ export async function fetchShotPage(
 
   try {
     const page = await deps.gateway.shots(query);
+    if (input.fallbackQuery && input.acceptPage && !input.acceptPage(page.items)) {
+      const { fallbackQuery, ...fallbackInput } = input;
+      return fetchShotPage({ ...fallbackInput, query: fallbackQuery }, deps);
+    }
     if (canWriteCache(deps)) await deps.cache.putShotPage(query, page);
     const records = await Promise.all(page.items.map((shot) => loadFullShot(shot, deps)));
     return { records, total: page.total };

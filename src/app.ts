@@ -16,6 +16,7 @@ import type {
   ShotAnnotations,
   ShotMeasurement,
   ShotRecord,
+  ShotSummary,
   ShotUpdate,
   SteamSettings,
   Workflow,
@@ -63,6 +64,7 @@ import {
   freshnessSnapshotForShot,
   formatRatio,
   latestBatch,
+  legacyShotFilterForBean,
   normalizeDraft,
   parseNumberInput,
   profileBaseTemperature,
@@ -1128,7 +1130,16 @@ export class BeanieApp {
     const cacheGeneration = this.shotCacheGeneration;
     const query = shotFilterForBean(bean, batch);
     return fetchShotPageFromRepository(
-      { query, pageSize: this.shotPageSize, offset },
+      {
+        query,
+        pageSize: this.shotPageSize,
+        offset,
+        // Temporary compatibility for Reaprime builds that ignore beanId and
+        // return an unscoped shots page. Revert after beanId filtering ships.
+        fallbackQuery: legacyShotFilterForBean(bean),
+        acceptPage: (items: ShotSummary[]) =>
+          pageLooksScopedToBean(items, bean, this.state.batchesByBean[bean.id] ?? [])
+      },
       {
         gateway,
         cache: beanieCache,
@@ -6788,6 +6799,19 @@ function keepKeys<T>(record: Record<string, T>, keys: Set<string>): Record<strin
     if (keys.has(key)) next[key] = value;
   }
   return next;
+}
+
+function pageLooksScopedToBean(items: ShotSummary[], bean: Bean, batches: BeanBatch[]): boolean {
+  if (items.length === 0) return true;
+  const batchIds = new Set(batches.map((batch) => batch.id));
+  return items.every((shot) => shotLooksScopedToBean(shot, bean, batchIds));
+}
+
+function shotLooksScopedToBean(shot: ShotSummary, bean: Bean, batchIds: Set<string>): boolean {
+  const ctx = shot.workflow?.context;
+  if (ctx?.beanId === bean.id) return true;
+  if (ctx?.beanBatchId && batchIds.has(ctx.beanBatchId)) return true;
+  return false;
 }
 
 function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
