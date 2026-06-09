@@ -2039,9 +2039,12 @@ p {
 }
 
 .bean-picker-inspector {
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-auto-rows: max-content;
   align-content: start;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+  scroll-padding-bottom: 18px;
 }
 
 .bean-picker-bean-form,
@@ -2234,15 +2237,14 @@ p {
 }
 
 .bean-picker-batches {
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
   align-content: start;
 }
 
 .bean-picker-batch-list {
-  min-height: 0;
+  min-height: max-content;
   max-height: none;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: visible;
   display: grid;
   align-content: start;
   gap: 8px;
@@ -2786,9 +2788,7 @@ p {
   }
 
   .bean-picker-inspector {
-    grid-template-rows: auto auto;
     align-content: start;
-    overflow: auto;
   }
 
   .bean-picker-actions {
@@ -2820,8 +2820,7 @@ p {
   }
 
   .bean-picker-batch-list {
-    overflow-y: auto;
-    overflow-x: hidden;
+    overflow: visible;
     padding-bottom: 72px;
     scroll-padding-bottom: 72px;
   }
