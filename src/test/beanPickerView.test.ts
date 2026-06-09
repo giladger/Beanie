@@ -76,6 +76,30 @@ run('bean picker opens edit fields from the bean line without duplicating the ti
   equals(countOccurrences(html, '<strong>Dak Milky Cake</strong>'), 1);
 });
 
+run('bean picker shows every bag on hand after adding beyond two bags', () => {
+  const third: BeanBatch = {
+    id: 'batch-new',
+    beanId: 'bean-1',
+    roastDate: '2026-06-10',
+    roastLevel: 'Light',
+    weight: 250,
+    weightRemaining: 250
+  };
+  const html = renderBeanPickerModal(
+    model({
+      batchesByBean: {
+        'bean-1': [third, ...batches]
+      }
+    })
+  );
+
+  includes(html, '3 bags');
+  includes(html, 'data-batch-id="batch-new"');
+  includes(html, 'data-batch-id="batch-1"');
+  includes(html, 'data-batch-id="batch-older"');
+  equals(countOccurrences(html, 'data-form="bean-picker-batch"'), 3);
+});
+
 run('bean picker create mode renders new bean form and prefill choices', () => {
   const html = renderBeanPickerModal(
     model({

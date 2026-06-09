@@ -116,7 +116,7 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
   }
 
   const batches = model.batchesByBean[bean.id] ?? [];
-  const visibleBatches = recentBatches(batches, 2);
+  const visibleBatches = recentBatches(batches, Math.max(1, batches.length));
   const currentBatchId = latestBatch(batches)?.id ?? null;
   const latest = latestBatch(batches);
   const editingDetails = model.editingBeanDetailsId === bean.id;
