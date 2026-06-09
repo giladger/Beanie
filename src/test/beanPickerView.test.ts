@@ -51,14 +51,26 @@ run('bean picker renders matched beans, current bean, focused inspector, and lat
   includes(html, 'autofocus');
   includes(html, 'Milky Cake');
   includes(html, 'In use');
-  includes(html, 'data-form="bean-picker-bean" data-id="bean-1"');
   includes(html, 'bean-picker-edit-icon');
+  includes(html, 'data-action="toggle-bean-details"');
+  includes(html, 'aria-expanded="false"');
+  notIncludes(html, 'data-form="bean-picker-bean" data-id="bean-1"');
   notIncludes(html, 'data-action="select-bean"');
   notIncludes(html, '<span>Save</span>');
   includes(html, 'Latest stock');
   includes(html, 'data-batch-id="batch-1"');
   includes(html, 'data-action="open-batch-storage"');
   includes(html, 'In freezer');
+});
+
+run('bean picker opens edit fields from the bean line without duplicating the title', () => {
+  const html = renderBeanPickerModal(model({ editingBeanDetailsId: 'bean-1' }));
+
+  includes(html, 'aria-expanded="true"');
+  includes(html, 'data-form="bean-picker-bean" data-id="bean-1"');
+  includes(html, 'name="roaster"');
+  includes(html, 'name="notes"');
+  equals(countOccurrences(html, '<strong>Dak Milky Cake</strong>'), 1);
 });
 
 run('bean picker create mode renders new bean form and prefill choices', () => {
@@ -181,5 +193,15 @@ function includes(text: string, expected: string): void {
 function notIncludes(text: string, unexpected: string): void {
   if (text.includes(unexpected)) {
     throw new Error(`Expected rendered output not to include ${unexpected}`);
+  }
+}
+
+function countOccurrences(text: string, expected: string): number {
+  return text.split(expected).length - 1;
+}
+
+function equals(actual: unknown, expected: unknown): void {
+  if (actual !== expected) {
+    throw new Error(`Expected ${JSON.stringify(actual)} to equal ${JSON.stringify(expected)}`);
   }
 }

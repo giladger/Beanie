@@ -2061,12 +2061,16 @@ p {
   gap: 10px;
 }
 
-.bean-picker-details > summary.bean-picker-bean-summary {
+.bean-picker-details > .bean-picker-bean-summary {
   min-height: 58px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 36px;
+  width: 100%;
   padding: 8px;
+  border: 0;
+  border-radius: var(--radius);
   color: inherit;
+  text-align: left;
   text-transform: none;
 }
 
@@ -2103,23 +2107,7 @@ p {
   background: color-mix(in srgb, var(--ink) 2.5%, transparent);
 }
 
-.bean-picker-details summary {
-  min-height: 38px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px;
-  color: var(--soft);
-  font-size: 12px;
-  font-weight: 900;
-  text-transform: uppercase;
-}
-
-.bean-picker-details summary::-webkit-details-marker {
-  display: none;
-}
-
-.bean-picker-details summary .icon {
+.bean-picker-details .bean-picker-bean-summary .icon {
   width: 15px;
   height: 15px;
 }

@@ -546,6 +546,7 @@ interface AppState {
   beanPickerMode: BeanPickerMode;
   beanPickerAutofocusSearch: boolean;
   beanPickerDraftBatchBeanId: string | null;
+  beanPickerEditingBeanId: string | null;
   batchStorageTarget: BatchStorageTarget | null;
   batchStorageSplitPreview: boolean;
   editingBeanId: string | null;
@@ -659,6 +660,7 @@ export class BeanieApp {
     beanPickerMode: 'inspect',
     beanPickerAutofocusSearch: false,
     beanPickerDraftBatchBeanId: null,
+    beanPickerEditingBeanId: null,
     batchStorageTarget: null,
     batchStorageSplitPreview: false,
     editingBeanId: null,
@@ -1093,7 +1095,8 @@ export class BeanieApp {
       beanPickerBeanId: options.create ? null : id,
       beanPickerMode: options.create ? 'create' : 'inspect',
       beanPickerAutofocusSearch: options.autofocusSearch ?? false,
-      beanPickerDraftBatchBeanId: null
+      beanPickerDraftBatchBeanId: null,
+      beanPickerEditingBeanId: null
     });
     if (!options.create) void this.refreshBeans({ force: true, allowModal: true });
     if (id && !options.create) await this.ensureBatchesLoaded(id);
@@ -1104,6 +1107,7 @@ export class BeanieApp {
       beanPickerBeanId: beanId,
       beanPickerMode: 'inspect',
       beanPickerDraftBatchBeanId: null,
+      beanPickerEditingBeanId: null,
       secondTapHint: this.nextSecondTapHint('bean', beanId)
     });
     await this.ensureBatchesLoaded(beanId);
@@ -1218,11 +1222,15 @@ export class BeanieApp {
       const beanPickerBeanId = this.state.beanPickerBeanId && beanIds.has(this.state.beanPickerBeanId)
         ? this.state.beanPickerBeanId
         : selectedBeanId;
+      const beanPickerEditingBeanId = this.state.beanPickerEditingBeanId && beanIds.has(this.state.beanPickerEditingBeanId)
+        ? this.state.beanPickerEditingBeanId
+        : null;
       this.setState({
         beans,
         selectedBeanId,
         selectedBatchId: selectedBeanId ? this.state.selectedBatchId : null,
         beanPickerBeanId,
+        beanPickerEditingBeanId,
         batchesByBean: keepKeys(this.state.batchesByBean, beanIds),
         beanUsageAt: keepKeys(this.state.beanUsageAt, beanIds)
       });
@@ -3013,6 +3021,7 @@ export class BeanieApp {
             beanPickerBeanId: null,
             beanPickerMode: 'create',
             beanPickerDraftBatchBeanId: null,
+            beanPickerEditingBeanId: null,
             status: 'Adding bean'
           });
         } else {
@@ -3024,6 +3033,15 @@ export class BeanieApp {
         return true;
       case 'archive-bean':
         if (id) await this.archiveBean(id);
+        return true;
+      case 'toggle-bean-details':
+        if (id) {
+          this.setState({
+            beanPickerEditingBeanId: this.state.beanPickerEditingBeanId === id ? null : id,
+            beanPickerBeanId: id,
+            beanPickerMode: 'inspect'
+          });
+        }
         return true;
       case 'open-add-batch':
         await this.openBeanPicker(this.state.selectedBeanId);
@@ -3731,6 +3749,7 @@ export class BeanieApp {
           batchStorageTarget: null,
           batchStorageSplitPreview: false,
           beanPickerDraftBatchBeanId: null,
+          beanPickerEditingBeanId: null,
           editingBeanId: null,
           profileEditor: null,
           editingProfileId: null,
@@ -4210,7 +4229,7 @@ export class BeanieApp {
     const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const form =
       active?.closest<HTMLFormElement>('form[data-form="bean-picker-bean"]') ??
-      this.root.querySelector<HTMLFormElement>('.bean-picker-details[open] form[data-form="bean-picker-bean"], .bean-picker-modal.create-mode form[data-form="bean-picker-bean"]');
+      this.root.querySelector<HTMLFormElement>('.bean-picker-details.open form[data-form="bean-picker-bean"], .bean-picker-modal.create-mode form[data-form="bean-picker-bean"]');
     if (!form || !form.isConnected || form.contains(nextEl)) return;
     const fields = beanFieldsFromForm(new FormData(form));
     if (!fields.roaster || !fields.name) return;
@@ -4380,6 +4399,7 @@ export class BeanieApp {
           batchesByBean: result.batchesByBean,
           beanPickerBeanId: result.bean.id,
           beanPickerMode: 'inspect',
+          beanPickerEditingBeanId: null,
           busy: false,
           status: created.status
         });
@@ -4392,6 +4412,7 @@ export class BeanieApp {
         selectedBatchId: created.selectedBatchId,
         beanPickerBeanId: result.bean.id,
         beanPickerMode: 'inspect',
+        beanPickerEditingBeanId: null,
         formNumbers: omitKeys(this.state.formNumbers, [createStockFormKey('weight'), createStockFormKey('weightRemaining')]),
         busy: false,
         status: this.state.demo ? 'Bean and stock added (demo)' : 'Bean and stock added'
@@ -4404,6 +4425,7 @@ export class BeanieApp {
       batchesByBean: result.batchesByBean,
       beanPickerBeanId: result.bean.id,
       beanPickerMode: 'inspect',
+      beanPickerEditingBeanId: editingId ? this.state.beanPickerEditingBeanId : null,
       busy: false,
       status: result.status
     });
@@ -4440,6 +4462,7 @@ export class BeanieApp {
       beanPickerBeanId: bean.id,
       beanPickerMode: 'inspect',
       beanPickerDraftBatchBeanId: null,
+      beanPickerEditingBeanId: null,
       formNumbers: omitKeys(this.state.formNumbers, [createStockFormKey('weight'), createStockFormKey('weightRemaining')]),
       busy: false,
       status: this.state.demo ? `${status} (demo)` : status
@@ -5846,6 +5869,7 @@ export class BeanieApp {
       batchesByBean: this.state.batchesByBean,
       prefillBeans: beans,
       draftBatchBeanId: this.state.beanPickerDraftBatchBeanId,
+      editingBeanDetailsId: this.state.beanPickerEditingBeanId,
       formNumbers: this.state.formNumbers,
       secondTapHint: this.state.secondTapHint
     });

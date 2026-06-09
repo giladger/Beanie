@@ -28,6 +28,7 @@ export interface BeanPickerViewModel {
   batchesByBean: Record<string, BeanBatch[]>;
   prefillBeans: Bean[];
   draftBatchBeanId?: string | null;
+  editingBeanDetailsId?: string | null;
   formNumbers?: Record<string, string>;
   secondTapHint: { kind: 'shot' | 'bean'; id: string } | null;
 }
@@ -116,15 +117,16 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
   const visibleBatches = recentBatches(batches, 2);
   const currentBatchId = latestBatch(batches)?.id ?? null;
   const latest = latestBatch(batches);
+  const editingDetails = model.editingBeanDetailsId === bean.id;
   return `
     <div class="bean-picker-inspector">
-      <details class="bean-picker-details">
-        <summary class="bean-picker-bean-summary">
+      <div class="bean-picker-details ${editingDetails ? 'open' : ''}">
+        <button type="button" class="bean-picker-bean-summary" data-action="toggle-bean-details" data-id="${escapeAttr(bean.id)}" aria-expanded="${editingDetails ? 'true' : 'false'}" title="Edit bean details">
           ${renderBeanPickerSummary(bean, latest)}
           <span class="icon-button bean-picker-edit-icon" aria-hidden="true">${icon('pencil')}</span>
-        </summary>
-        ${renderBeanPickerBeanForm(bean, model.prefillBeans, model.formNumbers ?? {})}
-      </details>
+        </button>
+        ${editingDetails ? renderBeanPickerBeanForm(bean, model.prefillBeans, model.formNumbers ?? {}, { showHeader: false }) : ''}
+      </div>
       <div class="bean-picker-batches">
         <div class="bean-picker-section-head">
           <div>
@@ -158,24 +160,34 @@ function renderBeanPickerSummary(bean: Bean, latest: BeanBatch | null): string {
   `;
 }
 
-function renderBeanPickerBeanForm(bean: Bean | null, prefillBeans: Bean[], formNumbers: Record<string, string>): string {
+function renderBeanPickerBeanForm(
+  bean: Bean | null,
+  prefillBeans: Bean[],
+  formNumbers: Record<string, string>,
+  options: { showHeader?: boolean } = {}
+): string {
   const editing = bean != null;
   const dataId = editing ? ` data-id="${escapeAttr(bean.id)}"` : '';
+  const showHeader = options.showHeader ?? true;
   return `
     <form class="bean-picker-bean-form" data-form="bean-picker-bean"${dataId}>
-      <div class="bean-picker-section-head">
-        <div>
-          <span class="eyebrow">${editing ? 'Bean' : 'New bean'}</span>
-          <strong>${escapeHtml(editing ? beanLabel(bean) : 'Add a bag')}</strong>
-        </div>
-        <div class="bean-picker-actions">
-          ${
-            editing
-              ? `<button type="button" class="icon-button subtle-danger bean-delete-button" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Delete bag" title="Delete bag">${icon('trash-2')}</button>`
-              : `<button type="button" class="secondary-button compact" data-action="close-modal"><span>Cancel</span></button>`
-          }
-        </div>
-      </div>
+      ${
+        showHeader
+          ? `<div class="bean-picker-section-head">
+              <div>
+                <span class="eyebrow">${editing ? 'Bean' : 'New bean'}</span>
+                <strong>${escapeHtml(editing ? beanLabel(bean) : 'Add a bag')}</strong>
+              </div>
+              <div class="bean-picker-actions">
+                ${
+                  editing
+                    ? `<button type="button" class="icon-button subtle-danger bean-delete-button" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Delete bag" title="Delete bag">${icon('trash-2')}</button>`
+                    : `<button type="button" class="secondary-button compact" data-action="close-modal"><span>Cancel</span></button>`
+                }
+              </div>
+            </div>`
+          : ''
+      }
       ${editing ? '' : `<input type="hidden" name="prefillBeanId" value="" />${beanPrefillSelect(prefillBeans)}`}
       <div class="bean-picker-fields">
         <label>Roaster<input name="roaster" required autocomplete="off" value="${escapeAttr(editing ? bean.roaster : '')}" /></label>
