@@ -52,10 +52,10 @@ run('bean picker renders matched beans, current bean, focused inspector, and lat
   includes(html, 'Milky Cake');
   includes(html, 'In use');
   includes(html, 'data-form="bean-picker-bean" data-id="bean-1"');
-  includes(html, 'Latest');
+  includes(html, 'Latest stock');
   includes(html, 'data-batch-id="batch-1"');
   includes(html, 'data-action="open-batch-storage"');
-  includes(html, 'frozen');
+  includes(html, 'In freezer');
 });
 
 run('bean picker create mode renders new bean form and prefill choices', () => {
@@ -90,13 +90,14 @@ run('bean picker renders second tap hint for matching bean only', () => {
 run('batch storage modal renders compact freeze/thaw actions', () => {
   const html = renderBatchStorageModal(beans[0]!, batches[0]!);
 
-  includes(html, 'Storage');
-  includes(html, 'Current state');
+  includes(html, 'Stock location');
+  includes(html, 'Current stock');
   includes(html, 'Mark thawed');
   includes(html, 'Correct freeze date');
   includes(html, 'Frozen on');
   includes(html, 'Roast age');
   includes(html, 'Active age');
+  includes(html, 'Storage timeline');
   includes(html, 'data-form="batch-storage-date"');
   includes(html, 'Shots save the freshness at pull time');
   notIncludes(html, 'Storage date');
@@ -105,13 +106,22 @@ run('batch storage modal renders compact freeze/thaw actions', () => {
 run('batch storage modal exposes freezing a portion for shelf batches', () => {
   const html = renderBatchStorageModal(beans[0]!, batches[1]!);
 
-  includes(html, 'Freeze whole batch');
-  includes(html, 'Freeze part of this bag');
-  includes(html, 'Grams to freeze');
+  includes(html, 'Move all to freezer');
+  includes(html, 'Move part to freezer');
+  includes(html, 'Grams to move');
   includes(html, 'data-action="open-number-edit"');
   includes(html, 'data-return-modal="batch-storage"');
-  includes(html, 'Create frozen portion');
+  includes(html, 'Preview split');
   includes(html, 'data-form="batch-freeze-portion"');
+});
+
+run('batch storage modal previews split stock before committing', () => {
+  const html = renderBatchStorageModal(beans[0]!, batches[1]!, { 'batch-storage:batch-older:amount': '25' }, true);
+
+  includes(html, 'Shelf stock: 25g on shelf');
+  includes(html, 'New freezer stock: 25g frozen today');
+  includes(html, 'Move 25g to freezer');
+  includes(html, 'data-confirm="true"');
 });
 
 run('batch storage modal backfills the freeze date for legacy frozen batches', () => {
