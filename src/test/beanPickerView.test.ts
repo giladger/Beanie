@@ -52,7 +52,9 @@ run('bean picker renders matched beans, current bean, focused inspector, and lat
   includes(html, 'Milky Cake');
   includes(html, 'In use');
   includes(html, 'data-form="bean-picker-bean" data-id="bean-1"');
-  includes(html, 'Edit bean details');
+  includes(html, 'bean-picker-edit-icon');
+  notIncludes(html, 'data-action="select-bean"');
+  notIncludes(html, '<span>Save</span>');
   includes(html, 'Latest stock');
   includes(html, 'data-batch-id="batch-1"');
   includes(html, 'data-action="open-batch-storage"');
@@ -70,7 +72,7 @@ run('bean picker create mode renders new bean form and prefill choices', () => {
 
   includes(html, 'bean-picker-modal create-mode');
   includes(html, 'Add a bag');
-  includes(html, 'Save bean + stock');
+  notIncludes(html, 'Save bean + stock');
   includes(html, 'First stock');
   includes(html, 'Starting grams');
   includes(html, 'Available now');

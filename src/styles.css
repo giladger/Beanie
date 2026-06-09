@@ -2039,7 +2039,7 @@ p {
 }
 
 .bean-picker-inspector {
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   align-content: start;
   overflow: hidden;
 }
@@ -2059,6 +2059,15 @@ p {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
+}
+
+.bean-picker-details > summary.bean-picker-bean-summary {
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  padding: 8px;
+  color: inherit;
+  text-transform: none;
 }
 
 .bean-picker-bean-summary > div {
@@ -2113,6 +2122,12 @@ p {
 .bean-picker-details summary .icon {
   width: 15px;
   height: 15px;
+}
+
+.bean-picker-edit-icon {
+  width: 36px;
+  height: 36px;
+  justify-self: end;
 }
 
 .bean-picker-details .bean-picker-bean-form {

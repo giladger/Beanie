@@ -767,6 +767,10 @@ export class BeanieApp {
     this.noteUserActivity();
     void this.onChange(event);
   };
+  private readonly handleFocusOut = (event: FocusEvent) => {
+    this.noteUserActivity();
+    void this.onFocusOut(event);
+  };
   private readonly handleSubmit = (event: Event) => {
     this.noteUserActivity();
     void this.onSubmit(event);
@@ -796,6 +800,7 @@ export class BeanieApp {
     this.root.addEventListener('click', this.handleClick);
     this.root.addEventListener('input', this.handleInput);
     this.root.addEventListener('change', this.handleChange);
+    this.root.addEventListener('focusout', this.handleFocusOut);
     this.root.addEventListener('submit', this.handleSubmit);
     this.root.addEventListener('keydown', this.handleKeydown);
     this.root.addEventListener('wheel', this.handleWheel, { passive: false });
@@ -815,6 +820,7 @@ export class BeanieApp {
     this.root.removeEventListener('click', this.handleClick);
     this.root.removeEventListener('input', this.handleInput);
     this.root.removeEventListener('change', this.handleChange);
+    this.root.removeEventListener('focusout', this.handleFocusOut);
     this.root.removeEventListener('submit', this.handleSubmit);
     this.root.removeEventListener('keydown', this.handleKeydown);
     this.root.removeEventListener('wheel', this.handleWheel);
@@ -2915,6 +2921,8 @@ export class BeanieApp {
       value: el.dataset.value
     };
 
+    await this.commitActiveBeanPickerFormBeforeAction(el);
+
     if (await this.handlePhoneClickAction(action, context)) return;
     if (await this.handleBeanClickAction(action, context)) return;
     if (await this.handleScannerClickAction(action, context)) return;
@@ -4183,6 +4191,30 @@ export class BeanieApp {
     }
     this.setState({ draft, status: 'Draft changed' });
     this.scheduleApply();
+  }
+
+  private async onFocusOut(event: FocusEvent): Promise<void> {
+    if (this.state.modal !== 'bean-picker' || this.state.busy) return;
+    const target = event.target as HTMLElement | null;
+    const form = target?.closest<HTMLFormElement>('form[data-form="bean-picker-bean"]');
+    if (!form || !form.isConnected) return;
+    const next = event.relatedTarget instanceof Node ? event.relatedTarget : null;
+    if (next && form.contains(next)) return;
+    const fields = beanFieldsFromForm(new FormData(form));
+    if (!fields.roaster || !fields.name) return;
+    await this.submitBeanPickerBean(form);
+  }
+
+  private async commitActiveBeanPickerFormBeforeAction(nextEl: HTMLElement): Promise<void> {
+    if (this.state.modal !== 'bean-picker' || this.state.busy) return;
+    const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const form =
+      active?.closest<HTMLFormElement>('form[data-form="bean-picker-bean"]') ??
+      this.root.querySelector<HTMLFormElement>('.bean-picker-details[open] form[data-form="bean-picker-bean"], .bean-picker-modal.create-mode form[data-form="bean-picker-bean"]');
+    if (!form || !form.isConnected || form.contains(nextEl)) return;
+    const fields = beanFieldsFromForm(new FormData(form));
+    if (!fields.roaster || !fields.name) return;
+    await this.submitBeanPickerBean(form);
   }
 
   private async onSubmit(event: Event): Promise<void> {

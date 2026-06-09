@@ -118,9 +118,11 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
   const latest = latestBatch(batches);
   return `
     <div class="bean-picker-inspector">
-      ${renderBeanPickerSummary(bean, latest)}
       <details class="bean-picker-details">
-        <summary>${icon('pencil')}<span>Edit bean details</span></summary>
+        <summary class="bean-picker-bean-summary">
+          ${renderBeanPickerSummary(bean, latest)}
+          <span class="icon-button bean-picker-edit-icon" aria-hidden="true">${icon('pencil')}</span>
+        </summary>
         ${renderBeanPickerBeanForm(bean, model.prefillBeans, model.formNumbers ?? {})}
       </details>
       <div class="bean-picker-batches">
@@ -148,13 +150,10 @@ function renderBeanPickerSummary(bean: Bean, latest: BeanBatch | null): string {
   const origin = [bean.country, bean.region].filter(Boolean).join(' · ');
   const meta = [origin || null, bean.processing ?? null, latest ? stockOptionLabel(latest) : null].filter(Boolean).join(' · ');
   return `
-    <div class="bean-picker-bean-summary">
-      <div>
-        <span class="eyebrow">Bean</span>
-        <strong>${escapeHtml(beanLabel(bean))}</strong>
-        ${meta ? `<small>${escapeHtml(meta)}</small>` : ''}
-      </div>
-      <button type="button" class="primary-button compact" data-action="select-bean" data-id="${escapeAttr(bean.id)}">${icon('check')}<span>Use</span></button>
+    <div>
+      <span class="eyebrow">Bean</span>
+      <strong>${escapeHtml(beanLabel(bean))}</strong>
+      ${meta ? `<small>${escapeHtml(meta)}</small>` : ''}
     </div>
   `;
 }
@@ -172,12 +171,9 @@ function renderBeanPickerBeanForm(bean: Bean | null, prefillBeans: Bean[], formN
         <div class="bean-picker-actions">
           ${
             editing
-              ? `<button type="button" class="secondary-button compact" data-action="select-bean" data-id="${escapeAttr(bean.id)}">${icon('check')}<span>Use</span></button>
-                 <button type="submit" class="primary-button compact">${icon('check')}<span>Save</span></button>
-                 <button type="button" class="icon-button subtle-danger bean-delete-button" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Delete bag" title="Delete bag">${icon('trash-2')}</button>`
+              ? `<button type="button" class="icon-button subtle-danger bean-delete-button" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Delete bag" title="Delete bag">${icon('trash-2')}</button>`
               : `<button type="button" class="secondary-button compact" data-action="close-modal"><span>Cancel</span></button>`
           }
-          ${editing ? '' : `<button type="submit" class="primary-button compact">${icon('check')}<span>Save bean + stock</span></button>`}
         </div>
       </div>
       ${editing ? '' : `<input type="hidden" name="prefillBeanId" value="" />${beanPrefillSelect(prefillBeans)}`}
