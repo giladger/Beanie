@@ -91,7 +91,7 @@ const preservedResetKeys = new Set([
 
 export function readSettingsPreferences(): SettingsPreferences {
   return {
-    theme: readEnum(themeKey, THEME_PREFERENCES, 'dark'),
+    theme: readEnum(themeKey, THEME_PREFERENCES, 'espresso'),
     uiScale: readEnum(uiScaleKey, ['compact', 'standard', 'large'], 'standard'),
     waterSoftLimitMl: readNonNegativeNumber(waterSoftKey, DEFAULT_WATER_SOFT_ML)
   };
