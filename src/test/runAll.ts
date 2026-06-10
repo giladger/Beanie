@@ -1,55 +1,12 @@
-import './shotGraph.test';
-import './liveChart.test';
-import './flowCalibrator.test';
-import './liveShot.test';
-import './liveShotController.test';
-import './liveTelemetry.test';
-import './profilePreview.test';
-import './beanPickerView.test';
-import './labelScannerView.test';
-import './profilePickerView.test';
-import './alertsView.test';
-import './historyView.test';
-import './phoneView.test';
-import './shotEditorView.test';
-import './shotMetadataController.test';
-import './profileEditor.test';
-import './profileEditorController.test';
-import './simpleProfile.test';
-import './profileChartModel.test';
-import './beanWorkflow.test';
-import './beanWorkflowController.test';
-import './beanDisplay.test';
-import './labelScan.test';
-import './labelScanEnrich.test';
-import './labelImage.test';
-import './labelScanHandoff.test';
-import './waterSettings.test';
-import './timedSteamStop.test';
-import './machineService.test';
-import './machineServiceController.test';
-import './machineExecutionController.test';
-import './machineSettingsWorkflowController.test';
-import './machineView.test';
-import './formsView.test';
-import './workbenchView.test';
-import './shotRecord.test';
-import './shotScore.test';
-import './cache.test';
-import './startupRepository.test';
-import './shotRepository.test';
-import './beanRepository.test';
-import './gateway.test';
-import './gemini.test';
-import './settings.test';
-import './settingsController.test';
-import './pluginSettings.test';
-import './waterTank.test';
-import './cleaning.test';
-import './cleaningWorkflowController.test';
-import './waterAlert.test';
-import './machinePreferences.test';
-import './interactionHints.test';
-import './appShell.test';
-import './appHarness.test';
-import './html.test';
+import { readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const testDir = dirname(fileURLToPath(import.meta.url));
+const testFiles = readdirSync(testDir)
+  .filter((file) => file.endsWith('.test.ts'))
+  .sort();
+
+for (const file of testFiles) {
+  await import(join(testDir, file));
+}
