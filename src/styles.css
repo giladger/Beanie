@@ -2169,6 +2169,7 @@ p {
 
 .bean-picker-decision.editing {
   grid-template-rows: auto auto;
+  align-items: start;
 }
 
 .bean-picker-decision.editing .bean-picker-details {
@@ -2178,6 +2179,7 @@ p {
 .bean-picker-decision.editing .bean-picker-details > .bean-picker-bean-summary {
   grid-column: 1;
   grid-row: 1;
+  align-self: start;
   border: 1px solid var(--line);
   background: color-mix(in srgb, var(--ink) 2.5%, transparent);
 }
@@ -2201,6 +2203,7 @@ p {
 .bean-picker-decision.editing .bean-picker-stock-now {
   grid-column: 2;
   grid-row: 1;
+  align-self: start;
 }
 
 .bean-picker-stock-now > div {
