@@ -173,7 +173,7 @@ function fakeGateway(): SettingsControllerGateway & { calls: Record<string, numb
     connectDevice: async () => {},
     disconnectDevice: async () => {},
     devices: async () => devices,
-    setMachineState: async () => {},
+    requestState: async () => {},
     addWakeSchedule: async () => {},
     updateWakeSchedule: async () => {
       calls.scheduleToggle += 1;

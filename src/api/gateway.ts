@@ -1,12 +1,10 @@
 import type {
-  ApiDemoFallback,
   ApiIssue,
   ApiResource,
   ApiResourceName,
   Bean,
   BeanBatch,
   De1MachineSettings,
-  DemoStartupSnapshot,
   GatewayStartupSnapshot,
   Grinder,
   MachineCapabilities,
@@ -404,9 +402,7 @@ export const gateway = {
   disconnectDevice: (deviceId: string) =>
     fetchEmpty('settings', '/api/v1/devices/disconnect', { ...jsonPost({ deviceId }), method: 'PUT' }),
 
-  // --- maintenance (machine state) + firmware ---
-  setMachineState: (state: string) =>
-    fetchEmpty('machine', `/api/v1/machine/state/${encodeURIComponent(state)}`, { method: 'PUT' }),
+  // --- maintenance + firmware ---
   uploadFirmware: (bytes: ArrayBuffer) =>
     fetchEmpty('machine', '/api/v1/machine/firmware', {
       method: 'POST',
@@ -489,17 +485,6 @@ export interface GatewayStartupOptions {
   origin?: string;
 }
 
-export interface DemoStartupInput {
-  workflow: Workflow;
-  beans: Bean[];
-  batchesByBean?: Record<string, BeanBatch[]>;
-  grinders: Grinder[];
-  profiles: ProfileRecord[];
-  latestShots?: PaginatedShots;
-  shots?: ShotRecord[];
-  fallbackToDemo?: ApiDemoFallback | null;
-}
-
 export async function loadGatewayStartup(
   options: GatewayStartupOptions = {}
 ): Promise<GatewayStartupSnapshot> {
@@ -562,50 +547,6 @@ export async function loadGatewayResource<T>(
       receivedAt: new Date().toISOString()
     };
   }
-}
-
-export function createDemoStartupSnapshot(input: DemoStartupInput): DemoStartupSnapshot {
-  const resources: DemoStartupSnapshot['resources'] = {
-    workflow: loadedResource('workflow', 'demo', input.workflow),
-    beans: loadedResource('beans', 'demo', input.beans),
-    grinders: loadedResource('grinders', 'demo', input.grinders),
-    profiles: loadedResource('profiles', 'demo', input.profiles)
-  };
-
-  if (input.latestShots) {
-    resources.shots = loadedResource('shots', 'demo', input.latestShots);
-  }
-
-  return {
-    mode: 'demo',
-    status: 'demo',
-    source: 'demo',
-    origin: null,
-    fallbackToDemo: input.fallbackToDemo ?? null,
-    resources,
-    issues: input.fallbackToDemo?.issues ?? [],
-    data: {
-      workflow: input.workflow,
-      beans: input.beans,
-      batchesByBean: input.batchesByBean,
-      grinders: input.grinders,
-      profiles: input.profiles,
-      latestShots: input.latestShots,
-      shots: input.shots
-    }
-  };
-}
-
-export function fallbackFromGatewaySnapshot(
-  snapshot: GatewayStartupSnapshot,
-  reason = 'Gateway startup did not fully load'
-): ApiDemoFallback | null {
-  if (snapshot.status === 'connected') return null;
-  return {
-    fromStatus: snapshot.status,
-    reason,
-    issues: snapshot.issues
-  };
 }
 
 export function issueFromError(resource: ApiResourceName, error: unknown): ApiIssue {

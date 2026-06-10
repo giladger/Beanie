@@ -1,4 +1,10 @@
-import { ApiValidationError, readMachineSnapshot, readScaleSnapshot } from '../api/guards';
+import {
+  ApiValidationError,
+  readBeans,
+  readMachineSnapshot,
+  readProfiles,
+  readScaleSnapshot
+} from '../api/guards';
 
 await run('readMachineSnapshot accepts a valid frame and keeps finite numerics', () => {
   const snapshot = readMachineSnapshot({
@@ -87,6 +93,48 @@ await run('readScaleSnapshot normalizes non-finite numerics and drops bad option
   equal(typeof snapshot.timestamp, 'string');
 });
 
+await run('collection readers drop invalid items and keep the valid ones', () => {
+  const warnings: unknown[][] = [];
+  const restoreWarn = stubWarn(warnings);
+  try {
+    const beans = readBeans([
+      { id: 'bean-1', roaster: 'Kawa', name: 'Pink Bourbon' },
+      { id: 'bean-bad', roaster: 'Kawa', name: null },
+      { id: 'bean-2', roaster: 'Tsukcafe', name: 'Tore Badiya' }
+    ]);
+
+    equal(beans.length, 2);
+    equal(beans[0]?.id, 'bean-1');
+    equal(beans[1]?.id, 'bean-2');
+    equal(warnings.length, 1);
+    equal(String(warnings[0]?.[0]), '[Beanie] Dropped invalid Bean');
+  } finally {
+    restoreWarn();
+  }
+});
+
+await run('collection readers still reject payloads that are not arrays', () => {
+  throws(() => readBeans({ items: [] }));
+  throws(() => readBeans(null));
+  throws(() => readProfiles('profiles'));
+});
+
+await run('profile records tolerate explicit null visibility', () => {
+  const warnings: unknown[][] = [];
+  const restoreWarn = stubWarn(warnings);
+  try {
+    const profiles = readProfiles([
+      { id: 'profile-1', profile: { title: 'Default' }, visibility: null }
+    ]);
+
+    equal(profiles.length, 1);
+    equal(profiles[0]?.id, 'profile-1');
+    equal(warnings.length, 0);
+  } finally {
+    restoreWarn();
+  }
+});
+
 async function run(name: string, fn: () => void | Promise<void>): Promise<void> {
   try {
     await fn();
@@ -95,6 +143,16 @@ async function run(name: string, fn: () => void | Promise<void>): Promise<void> 
     console.error(`not ok - ${name}`);
     throw error;
   }
+}
+
+function stubWarn(captured: unknown[][]): () => void {
+  const previous = console.warn;
+  console.warn = (...args: unknown[]) => {
+    captured.push(args);
+  };
+  return () => {
+    console.warn = previous;
+  };
 }
 
 function equal<T>(actual: T, expected: T): void {

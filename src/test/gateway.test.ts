@@ -8,8 +8,6 @@ import {
 } from '../api/guards';
 import {
   GatewayRequestError,
-  createDemoStartupSnapshot,
-  fallbackFromGatewaySnapshot,
   gateway,
   loadGatewayStartup,
   type GatewayStartupClient
@@ -90,14 +88,45 @@ await run('guards preserve workflow machine flow calibration on shots', () => {
   equal(shot.workflow?.machine?.flowCalibration, 1.17);
 });
 
-await run('guards reject malformed bean responses', () => {
-  throwsValidation(() => readBeans([{ id: 'bean-missing-name', roaster: 'Kawa' }]), '$[0].name');
+await run('guards reject bean responses that are not arrays', () => {
+  throwsValidation(() => readBeans({ beans: [] }), '$');
 });
 
-await run('guards reject malformed paginated shot summaries', () => {
+await run('guards drop malformed bean records but keep the rest', () => {
+  const restoreWarn = silenceWarn();
+  try {
+    const guarded = readBeans([
+      { id: 'bean-missing-name', roaster: 'Kawa' },
+      { id: 'bean-ok', roaster: 'Kawa', name: 'Pink Bourbon' }
+    ]);
+    equal(guarded.length, 1);
+    equal(guarded[0]?.id, 'bean-ok');
+  } finally {
+    restoreWarn();
+  }
+});
+
+await run('guards drop malformed paginated shot summaries but keep the page', () => {
+  const restoreWarn = silenceWarn();
+  try {
+    const page = readPaginatedShots({
+      items: [{ id: 'shot-missing-time' }, { id: 'shot-ok', timestamp: '2026-06-01T10:00:00Z' }],
+      total: 2,
+      limit: 2,
+      offset: 0
+    });
+    equal(page.items.length, 1);
+    equal(page.items[0]?.id, 'shot-ok');
+    equal(page.total, 2);
+  } finally {
+    restoreWarn();
+  }
+});
+
+await run('guards reject paginated shots without an items array', () => {
   throwsValidation(
-    () => readPaginatedShots({ items: [{ id: 'shot-missing-time' }], total: 1, limit: 1, offset: 0 }),
-    '$.items[0].timestamp'
+    () => readPaginatedShots({ items: 'nope', total: 1, limit: 1, offset: 0 }),
+    '$.items'
   );
 });
 
@@ -128,22 +157,11 @@ await run('startup snapshot preserves partial gateway data and failures', async 
     client: partialClient,
     origin: 'http://gateway.test'
   });
-  const fallback = fallbackFromGatewaySnapshot(snapshot, 'Use demo after partial startup');
-  const demo = createDemoStartupSnapshot({
-    workflow,
-    beans,
-    grinders,
-    profiles,
-    latestShots,
-    fallbackToDemo: fallback
-  });
 
   equal(snapshot.status, 'partial-failure');
   equal(snapshot.data.beans?.length, 1);
   equal(snapshot.resources.profiles.status, 'failed');
-  equal(fallback?.fromStatus, 'partial-failure');
-  equal(demo.mode, 'demo');
-  equal(demo.fallbackToDemo?.issues.length, 1);
+  equal(snapshot.issues.length, 1);
 });
 
 await run('startup snapshot reports unavailable when no gateway resources load', async () => {
@@ -374,6 +392,14 @@ function installFetchStub(
     globalThis.fetch = previousFetch;
     (globalThis as unknown as { window?: unknown }).window = previousWindow;
     (globalThis as unknown as { location?: unknown }).location = previousLocation;
+  };
+}
+
+function silenceWarn(): () => void {
+  const previous = console.warn;
+  console.warn = () => {};
+  return () => {
+    console.warn = previous;
   };
 }
 

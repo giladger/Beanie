@@ -11,6 +11,7 @@ import type {
   ProfileRecord,
   ScaleSnapshot,
   ShotRecord,
+  ShotSummary,
   Workflow
 } from './types';
 
@@ -61,15 +62,11 @@ export function readBean(value: unknown): Bean {
 }
 
 export function readBeans(value: unknown): Bean[] {
-  return checked('Bean[]', value, (candidate, path, issues) =>
-    validateArray(candidate, path, issues, validateBean)
-  );
+  return readLenientCollection<Bean>('Bean[]', 'Bean', value, validateBean);
 }
 
 export function readBatches(value: unknown): BeanBatch[] {
-  return checked('BeanBatch[]', value, (candidate, path, issues) =>
-    validateArray(candidate, path, issues, validateBeanBatch)
-  );
+  return readLenientCollection<BeanBatch>('BeanBatch[]', 'BeanBatch', value, validateBeanBatch);
 }
 
 export function readBatch(value: unknown): BeanBatch {
@@ -81,14 +78,15 @@ export function readGrinder(value: unknown): Grinder {
 }
 
 export function readGrinders(value: unknown): Grinder[] {
-  return checked('Grinder[]', value, (candidate, path, issues) =>
-    validateArray(candidate, path, issues, validateGrinder)
-  );
+  return readLenientCollection<Grinder>('Grinder[]', 'Grinder', value, validateGrinder);
 }
 
 export function readProfiles(value: unknown): ProfileRecord[] {
-  return checked('ProfileRecord[]', value, (candidate, path, issues) =>
-    validateArray(candidate, path, issues, validateProfileRecord)
+  return readLenientCollection<ProfileRecord>(
+    'ProfileRecord[]',
+    'ProfileRecord',
+    value,
+    validateProfileRecord
   );
 }
 
@@ -160,7 +158,25 @@ export function readScaleSnapshot(value: unknown): ScaleSnapshot {
 }
 
 export function readPaginatedShots(value: unknown): PaginatedShots {
-  return checked('PaginatedShots', value, validatePaginatedShots);
+  const issues: ValidationIssue[] = [];
+  const obj = expectRecord(value, '$', issues);
+  if (obj) {
+    if (!Array.isArray(obj.items)) {
+      issues.push({ path: '$.items', message: 'Expected an array' });
+    }
+    requiredNumber(obj, 'total', '$', issues);
+    requiredNumber(obj, 'limit', '$', issues);
+    requiredNumber(obj, 'offset', '$', issues);
+  }
+  if (!obj || issues.length > 0) throw new ApiValidationError('PaginatedShots', issues);
+
+  const items = filterValidItems<ShotSummary>(
+    obj.items as unknown[],
+    '$.items',
+    'ShotSummary',
+    validateShotSummary
+  );
+  return { ...obj, items } as PaginatedShots;
 }
 
 export function readShotRecord(value: unknown): ShotRecord {
@@ -176,6 +192,42 @@ function checked<T>(
   validator(value, '$', issues);
   if (issues.length > 0) throw new ApiValidationError(label, issues);
   return value as T;
+}
+
+// Lenient collection reader: a payload that is not an array at all is still a
+// hard ApiValidationError, but a bad record inside an otherwise valid
+// collection is dropped (with a console warning) instead of failing the whole
+// read. One stale row from an old gateway database must not make startup look
+// like all data is gone.
+function readLenientCollection<T>(
+  label: string,
+  itemLabel: string,
+  value: unknown,
+  itemValidator: (value: unknown, path: string, issues: ValidationIssue[]) => void
+): T[] {
+  if (!Array.isArray(value)) {
+    throw new ApiValidationError(label, [{ path: '$', message: 'Expected an array' }]);
+  }
+  return filterValidItems<T>(value, '$', itemLabel, itemValidator);
+}
+
+function filterValidItems<T>(
+  items: unknown[],
+  path: string,
+  itemLabel: string,
+  itemValidator: (value: unknown, path: string, issues: ValidationIssue[]) => void
+): T[] {
+  const valid: T[] = [];
+  items.forEach((item, index) => {
+    const issues: ValidationIssue[] = [];
+    itemValidator(item, `${path}[${index}]`, issues);
+    if (issues.length === 0) {
+      valid.push(item as T);
+    } else {
+      console.warn(`[Beanie] Dropped invalid ${itemLabel}`, issues);
+    }
+  });
+  return valid;
 }
 
 function validateBean(value: unknown, path: string, issues: ValidationIssue[]): void {
@@ -250,7 +302,7 @@ function validateProfileRecord(value: unknown, path: string, issues: ValidationI
 
   requiredString(obj, 'id', path, issues);
   validateRequiredObject(obj, 'profile', path, issues, validateProfile);
-  optionalStringEnum(obj, 'visibility', path, issues, ['visible', 'hidden', 'deleted']);
+  optionalStringEnum(obj, 'visibility', path, issues, ['visible', 'hidden', 'deleted'], true);
   optionalBoolean(obj, 'isDefault', path, issues);
 }
 
@@ -372,16 +424,6 @@ function validateProfile(value: unknown, path: string, issues: ValidationIssue[]
   optionalNumber(obj, 'tank_temperature', path, issues, true);
   optionalArray(obj, 'steps', path, issues);
   optionalString(obj, 'version', path, issues, true);
-}
-
-function validatePaginatedShots(value: unknown, path: string, issues: ValidationIssue[]): void {
-  const obj = expectRecord(value, path, issues);
-  if (!obj) return;
-
-  validateRequiredArray(obj, 'items', path, issues, validateShotSummary);
-  requiredNumber(obj, 'total', path, issues);
-  requiredNumber(obj, 'limit', path, issues);
-  requiredNumber(obj, 'offset', path, issues);
 }
 
 function validateShotRecord(value: unknown, path: string, issues: ValidationIssue[]): void {
@@ -577,10 +619,11 @@ function optionalStringEnum<T extends string>(
   key: string,
   path: string,
   issues: ValidationIssue[],
-  allowed: readonly T[]
+  allowed: readonly T[],
+  nullable = false
 ): void {
   const value = obj[key];
-  if (value === undefined) return;
+  if (value === undefined || (nullable && value === null)) return;
   if (typeof value !== 'string' || !allowed.includes(value as T)) {
     issues.push({ path: `${path}.${key}`, message: `Expected one of: ${allowed.join(', ')}` });
   }

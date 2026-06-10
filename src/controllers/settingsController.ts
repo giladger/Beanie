@@ -25,7 +25,7 @@ export interface SettingsControllerGateway {
   connectDevice(id: string): Promise<void>;
   disconnectDevice(id: string): Promise<void>;
   devices(): Promise<SettingsBundle['devices']>;
-  setMachineState(state: string): Promise<void>;
+  requestState(state: string): Promise<void>;
   addWakeSchedule(schedule: { time: string; daysOfWeek: number[]; enabled: boolean }): Promise<void>;
   updateWakeSchedule(id: string, body: Partial<WakeSchedule>): Promise<void>;
   deleteWakeSchedule(id: string): Promise<void>;
@@ -177,7 +177,7 @@ export function createSettingsController(gateway: SettingsControllerGateway): Se
     async requestMachineState({ state, local }) {
       if (local) return { status: `${state} unavailable in demo mode`, sleepRequested: false };
       try {
-        await gateway.setMachineState(state);
+        await gateway.requestState(state);
         return { status: `Machine → ${state}`, sleepRequested: state === 'sleeping' };
       } catch {
         return { status: 'Machine command failed', sleepRequested: false };

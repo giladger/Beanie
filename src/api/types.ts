@@ -327,12 +327,6 @@ export interface ApiResourceFailure {
 
 export type ApiResource<T> = ApiResourceSuccess<T> | ApiResourceFailure;
 
-export interface ApiDemoFallback {
-  fromStatus: Exclude<ApiRuntimeStatus, 'connected' | 'demo'>;
-  reason: string;
-  issues: ApiIssue[];
-}
-
 export interface GatewayStartupResources {
   workflow: ApiResource<Workflow>;
   beans: ApiResource<Bean[]>;
@@ -355,24 +349,5 @@ export interface GatewayStartupSnapshot {
     grinders?: Grinder[];
     profiles?: ProfileRecord[];
     latestShots?: PaginatedShots;
-  };
-}
-
-export interface DemoStartupSnapshot {
-  mode: 'demo';
-  status: 'demo';
-  source: 'demo';
-  origin: null;
-  fallbackToDemo: ApiDemoFallback | null;
-  resources: Partial<GatewayStartupResources>;
-  issues: ApiIssue[];
-  data: {
-    workflow: Workflow;
-    beans: Bean[];
-    batchesByBean?: Record<string, BeanBatch[]>;
-    grinders: Grinder[];
-    profiles: ProfileRecord[];
-    latestShots?: PaginatedShots;
-    shots?: ShotRecord[];
   };
 }
