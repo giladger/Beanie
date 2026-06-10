@@ -186,12 +186,19 @@ function renderBeanPickerStockNow(bean: Bean, latest: BeanBatch | null): string 
     <div class="bean-picker-stock-now">
       <div>
         <span class="eyebrow">Using now</span>
-        <strong>${escapeHtml(stockOptionLabel(latest))}</strong>
+        <strong>${escapeHtml(stockDateTitle(latest))}</strong>
         <small>${escapeHtml([freshness, latest.roastLevel ?? null].filter(Boolean).join(' · ') || 'Bag')}</small>
       </div>
       <button type="button" class="bean-picker-stock-location stock-location-chip" data-action="open-batch-storage" data-id="${escapeAttr(latest.id)}" data-bean-id="${escapeAttr(bean.id)}" title="Stock location">${icon(locationIcon)}<span>${escapeHtml(location)}</span><small>${escapeHtml(locationDetail)}</small></button>
     </div>
   `;
+}
+
+function stockDateTitle(batch: BeanBatch): string {
+  const roast = batch.roastDate ? new Date(batch.roastDate) : null;
+  return roast && !Number.isNaN(roast.valueOf())
+    ? roast.toLocaleDateString([], { month: 'short', day: 'numeric' })
+    : 'Undated bag';
 }
 
 function renderBeanPickerBeanForm(

@@ -66,6 +66,15 @@ run('bean picker renders matched beans, current bean, focused inspector, and lat
   includes(html, 'In freezer');
 });
 
+run('bean picker using now title avoids repeating grams', () => {
+  const html = renderBeanPickerModal(model());
+  const title = html.match(/<span class="eyebrow">Using now<\/span>\s*<strong>([^<]*)<\/strong>/)?.[1];
+
+  if (!title) throw new Error('Expected Using now title');
+  notIncludes(title, '125');
+  notIncludes(title, 'g');
+});
+
 run('bean picker opens edit fields from the bean line without duplicating the title', () => {
   const html = renderBeanPickerModal(model({ editingBeanDetailsId: 'bean-1' }));
 
