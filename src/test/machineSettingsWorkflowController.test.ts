@@ -228,7 +228,7 @@ await run('machine workflow persistence saves workflow and direct machine settin
   equal(result.type === 'saved' ? result.status : null, 'Machine setting saved');
   equal(result.type === 'saved' ? result.workflow.context?.coffeeName : null, 'Saved');
   equal(result.type === 'saved' ? result.workflow.hotWaterData?.volume : null, 100);
-  equal(calls.join(','), 'target:100,workflow:100,machine:5');
+  equal(calls.join(','), 'workflow:100,target:100,machine:5');
 });
 
 await run('machine workflow persistence reports direct machine update fallback', async () => {
@@ -250,9 +250,12 @@ await run('machine workflow persistence reports direct machine update fallback',
   equal(logged, true);
 });
 
-await run('machine workflow persistence reports workflow failure', async () => {
+await run('machine workflow persistence reports workflow failure without writing the weight target', async () => {
+  let wroteTarget = false;
   const result = await persistMachineWorkflowPlan(plan(), false, {
-    writeHotWaterWeightTarget: () => {},
+    writeHotWaterWeightTarget: () => {
+      wroteTarget = true;
+    },
     updateWorkflow: async () => {
       throw new Error('workflow failed');
     },
@@ -262,16 +265,37 @@ await run('machine workflow persistence reports workflow failure', async () => {
 
   equal(result.type, 'failed');
   equal(result.type === 'failed' ? result.status : null, 'Machine settings save failed');
+  equal(wroteTarget, false);
 });
 
-function plan() {
+await run('machine workflow persistence skips the weight target preference in time stop mode', async () => {
+  let wroteTarget = false;
+  const deps = {
+    writeHotWaterWeightTarget: () => {
+      wroteTarget = true;
+    },
+    updateWorkflow: async (next: Workflow) => next,
+    updateMachineSettings: async () => ({}),
+    logDirectMachineUpdateFailure: () => {}
+  };
+
+  const demoResult = await persistMachineWorkflowPlan(plan('time'), true, deps);
+  equal(demoResult.type, 'demo');
+  equal(wroteTarget, false);
+
+  const savedResult = await persistMachineWorkflowPlan(plan('time'), false, deps);
+  equal(savedResult.type, 'saved');
+  equal(wroteTarget, false);
+});
+
+function plan(hotWaterStopMode: 'volume' | 'time' = 'volume') {
   return buildMachineWorkflowPlan({
     workflow: workflow(),
     steamSettings: steam(),
     hotWaterData: water(),
     rinseData: rinse(),
     currentMachineSettings: null,
-    hotWaterStopMode: 'time',
+    hotWaterStopMode,
     hotWaterScaleConnected: false,
     status: 'Machine setting saved'
   });

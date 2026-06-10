@@ -120,6 +120,7 @@ function cleaningWorkflow(currentWorkflow: Workflow | null, profile: Workflow['p
       ...(currentWorkflow?.context ?? {}),
       coffeeName: null,
       coffeeRoaster: null,
+      beanId: null,
       beanBatchId: null,
       finalBeverageType: 'cleaning'
     }

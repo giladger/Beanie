@@ -114,6 +114,7 @@ export async function waitForCompletedLiveShot(
       deps.loadFirstShots(),
       deps.loadLatestShotCandidates()
     ]);
+    if (!deps.stillRelevant()) return { type: 'aborted' };
     lastRecords = records;
     lastTotal = total;
 

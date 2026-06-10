@@ -47,6 +47,7 @@ export interface MachineWorkflowPlan {
   workflowForGateway: Workflow;
   machineSettings: De1MachineSettings;
   machinePatch: Partial<De1MachineSettings>;
+  hotWaterStopMode: HotWaterStopMode;
   hotWaterWeightTarget: number | null | undefined;
   savingStatus: string;
   successStatus: string;
@@ -144,6 +145,7 @@ export function buildMachineWorkflowPlan(input: MachineWorkflowPlanInput): Machi
       input.currentMachineSettings
     ),
     machinePatch: machineSettingsPatchFromWorkflow(input.steamSettings, input.hotWaterData, input.rinseData),
+    hotWaterStopMode: input.hotWaterStopMode,
     hotWaterWeightTarget: input.hotWaterData.volume,
     savingStatus: `${input.status}...`,
     successStatus: input.status
@@ -302,11 +304,17 @@ export async function persistMachineWorkflowPlan(
   demo: boolean,
   deps: PersistMachineWorkflowDeps
 ): Promise<PersistMachineWorkflowResult> {
-  deps.writeHotWaterWeightTarget(plan.hotWaterWeightTarget);
-  if (demo) return { type: 'demo', status: `${plan.successStatus} (demo)` };
+  const writeHotWaterWeightTarget = (): void => {
+    if (plan.hotWaterStopMode === 'volume') deps.writeHotWaterWeightTarget(plan.hotWaterWeightTarget);
+  };
+  if (demo) {
+    writeHotWaterWeightTarget();
+    return { type: 'demo', status: `${plan.successStatus} (demo)` };
+  }
 
   try {
     const saved = await deps.updateWorkflow(plan.workflowForGateway);
+    writeHotWaterWeightTarget();
     let directMachineSaved = true;
     try {
       await deps.updateMachineSettings(plan.machinePatch);

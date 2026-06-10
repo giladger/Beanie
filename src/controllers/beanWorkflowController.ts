@@ -16,6 +16,7 @@ import {
   recipeFromShot,
   recipeFromWorkflow
 } from '../domain/beanWorkflow';
+import { isServiceShot } from '../domain/shotRecord';
 
 export type BatchesByBean = Record<string, BeanBatch[]>;
 
@@ -300,11 +301,12 @@ export class BeanWorkflowController {
     if (!input.isCurrent(selection)) return { type: 'stale' };
 
     const workflowMatches = input.workflowMatchesBean(bean, batches);
+    const draftShot = shots.find((shot) => !isServiceShot(shot)) ?? null;
     const draft =
       options.preferWorkflow && workflowMatches
         ? recipeFromWorkflow(input.workflow)
-        : shots[0]
-          ? recipeFromShot(shots[0], 'planned')
+        : draftShot
+          ? recipeFromShot(draftShot, 'planned')
           : input.fallbackDraft ?? recipeFromShot(null, 'planned');
 
     return {

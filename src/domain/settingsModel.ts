@@ -140,6 +140,7 @@ export const SETTINGS_SPEC: SettingsSpecSection[] = [
         key: 'heaterVoltage',
         label: 'Mains voltage hint',
         type: 'select',
+        valueType: 'number',
         help: 'Nominal heater-voltage region; wrong values affect heater behavior.',
         unknownLabel: 'Unknown',
         options: [
@@ -156,6 +157,7 @@ export const SETTINGS_SPEC: SettingsSpecSection[] = [
         key: 'refillKitSetting',
         label: 'Refill kit',
         type: 'select',
+        valueType: 'number',
         options: [
           { value: '2', label: 'Auto' },
           { value: '1', label: 'Force on' },

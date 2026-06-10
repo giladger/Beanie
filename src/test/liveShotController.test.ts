@@ -186,6 +186,29 @@ await run('wait for completed live shot aborts stale polling before loading reco
   equal(loaded, false);
 });
 
+await run('wait for completed live shot aborts when relevance is lost during record loads', async () => {
+  const startedAtMs = Date.parse('2026-06-07T10:00:00.000Z');
+  const completed = shot('completed', '2026-06-07T10:00:12.000Z');
+  let relevant = true;
+  const result = await waitForCompletedLiveShot(
+    completionContext({ startedAtMs, endedAtMs: startedAtMs + 30_000 }),
+    {
+      delay: async () => {},
+      invalidateShotMutation: async () => {},
+      loadFirstShots: async () => {
+        // User switches bean/batch while the slow load is in flight.
+        relevant = false;
+        return { records: [completed], total: 1 };
+      },
+      loadLatestShotCandidates: async () => [],
+      stillRelevant: () => relevant
+    },
+    [0]
+  );
+
+  equal(result.type, 'aborted');
+});
+
 await run('wait for completed live shot returns fallback records after exhausted polling', async () => {
   const existing = shot('existing', '2026-06-07T09:58:00.000Z');
   const result = await waitForCompletedLiveShot(

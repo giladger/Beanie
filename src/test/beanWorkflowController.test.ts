@@ -81,6 +81,44 @@ await run('bean workflow controller completes selection with latest batch, shots
   equal(result.type === 'selected' ? result.status : null, '1 shots loaded');
 });
 
+await run('bean workflow controller skips service shots when deriving the recipe draft', async () => {
+  const selectedBean = bean('bean-1');
+  const controller = new BeanWorkflowController();
+  const selection = required(controller.beginBeanSelection(selectedBean.id, [selectedBean]));
+  const cleaningShot: ShotRecord = {
+    ...shot('cleaning-shot', '2026-06-07T11:00:00.000Z', selectedBean),
+    workflow: {
+      profile: { title: 'Cleaning / forward flush x5' },
+      context: {
+        coffeeName: null,
+        coffeeRoaster: null,
+        finalBeverageType: 'cleaning',
+        targetDoseWeight: 0,
+        targetYield: 0
+      }
+    }
+  };
+  const realShot = shot('real-shot', '2026-06-07T10:00:00.000Z', selectedBean);
+
+  const result = await controller.completeBeanSelection({
+    selection,
+    options: { preferWorkflow: false },
+    beans: [selectedBean],
+    workflow: null,
+    profiles: [],
+    grinders: [],
+    loadBatches: async () => [],
+    loadFirstShots: async () => ({ records: [cleaningShot, realShot], total: 2 }),
+    isCurrent: (current) => controller.isCurrentBeanSelection(current),
+    workflowMatchesBean: () => false
+  });
+
+  equal(result.type, 'selected');
+  equal(result.type === 'selected' ? result.draft.dose : null, 18);
+  equal(result.type === 'selected' ? result.draft.yield : null, 42);
+  equal(result.type === 'selected' ? result.draft.profileTitle : null, 'Shot Profile');
+});
+
 await run('bean workflow controller prefers matching workflow when requested', async () => {
   const selectedBean = bean('bean-1');
   const controller = new BeanWorkflowController();

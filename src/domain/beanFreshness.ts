@@ -198,7 +198,9 @@ function frozenIntervals(
     const eventMs = Date.parse(event.at);
     if (!Number.isFinite(eventMs) || eventMs > nowMs) continue;
     if (event.type === 'frozen') {
-      open = event;
+      // Keep the earlier start when a later `frozen` arrives without a thaw
+      // in between (other clients can write such event sequences).
+      if (!open) open = event;
       continue;
     }
     if (!open) continue;

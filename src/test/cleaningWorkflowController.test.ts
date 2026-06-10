@@ -44,8 +44,16 @@ await run('cleaning start builds bean-independent cleaning workflow', () => {
   equal(plan.workflow.profile?.title, 'Cleaning / forward flush x5');
   equal(plan.workflow.context?.coffeeName, null);
   equal(plan.workflow.context?.coffeeRoaster, null);
+  equal(plan.workflow.context?.beanId, null);
   equal(plan.workflow.context?.beanBatchId, null);
   equal(plan.workflow.context?.finalBeverageType, 'cleaning');
+});
+
+await run('cleaning start clears beanId so cleaning pulls are not recorded against the bean', () => {
+  const plan = cleaningStartPlan(startInput());
+  if (plan.type !== 'ready') throw new Error(`Unexpected plan ${plan.type}`);
+
+  equal(plan.workflow.context?.beanId, null);
 });
 
 await run('cleaning workflow load returns demo workflow without gateway calls', async () => {
@@ -129,6 +137,7 @@ function startWorkflow(): Workflow {
     context: {
       coffeeName: 'Bean',
       coffeeRoaster: 'Roaster',
+      beanId: 'bean-1',
       beanBatchId: 'batch-1',
       finalBeverageType: 'espresso'
     }
