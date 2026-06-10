@@ -9,6 +9,7 @@ import type {
   MachineState,
   PaginatedShots,
   ProfileRecord,
+  ScaleSnapshot,
   ShotRecord,
   Workflow
 } from './types';
@@ -136,6 +137,26 @@ export function readMachineSnapshot(value: unknown): MachineSnapshot {
     profileFrame: finiteOrZero(obj.profileFrame),
     steamTemperature: finiteOrZero(obj.steamTemperature)
   };
+}
+
+// Lenient scale frame reader for the snapshot WebSocket: runs once per frame
+// on the live-shot hot path, so it normalizes in place without building an
+// issue list unless the frame is not an object at all.
+export function readScaleSnapshot(value: unknown): ScaleSnapshot {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ApiValidationError('ScaleSnapshot', [{ path: '$', message: 'Expected an object' }]);
+  }
+  const obj = value as Record<string, unknown>;
+  const snapshot: ScaleSnapshot = {
+    timestamp: typeof obj.timestamp === 'string' ? obj.timestamp : new Date().toISOString(),
+    weight: finiteOrZero(obj.weight),
+    weightFlow: finiteOrZero(obj.weightFlow)
+  };
+  if (typeof obj.batteryLevel === 'number' && Number.isFinite(obj.batteryLevel)) {
+    snapshot.batteryLevel = obj.batteryLevel;
+  }
+  if (obj.status === 'connected' || obj.status === 'disconnected') snapshot.status = obj.status;
+  return snapshot;
 }
 
 export function readPaginatedShots(value: unknown): PaginatedShots {

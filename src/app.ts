@@ -28,6 +28,7 @@ import {
   gatewayHttpOrigin,
   gatewayWsOrigin
 } from './api/gateway';
+import { readMachineSnapshot, readScaleSnapshot } from './api/guards';
 import {
   capitalize,
   defaultExitValueForApp,
@@ -846,6 +847,7 @@ export class BeanieApp {
     if (this.timedSteamStopTimer != null) window.clearTimeout(this.timedSteamStopTimer);
     if (this.sleepBrightnessTimer != null) window.clearTimeout(this.sleepBrightnessTimer);
     if (this.liveRaf != null) window.cancelAnimationFrame(this.liveRaf);
+    this.clearMachineStopRequest();
     this.applyTimer = null;
     this.machineRetryTimer = null;
     this.scaleRetryTimer = null;
@@ -1207,14 +1209,24 @@ export class BeanieApp {
     const offset = this.state.shots.length;
     const batch = this.selectedBatch();
     this.setState({ shotsLoadingMore: true, status: 'Loading more shots' });
-    const { records } = await this.fetchShotPage(bean, batch, offset);
-    if (
-      requestId !== this.loadMoreRequestId ||
-      this.selectedBean()?.id !== bean.id ||
-      this.selectedBatch()?.id !== batch?.id
-    ) return;
-    const shots = [...this.state.shots, ...records];
-    this.setState({ shots, shotsLoadingMore: false, status: `${shots.length} shots` });
+    try {
+      const { records } = await this.fetchShotPage(bean, batch, offset);
+      if (
+        requestId !== this.loadMoreRequestId ||
+        this.selectedBean()?.id !== bean.id ||
+        this.selectedBatch()?.id !== batch?.id
+      ) return;
+      const shots = [...this.state.shots, ...records];
+      this.setState({ shots, shotsLoadingMore: false, status: `${shots.length} shots` });
+    } catch (error) {
+      console.warn('[Beanie] Could not load more shots', error);
+    } finally {
+      // Never leave the flag stuck: it gates both pagination and the periodic
+      // shot refresh. A newer request owns the flag, so only the latest clears.
+      if (requestId === this.loadMoreRequestId && this.state.shotsLoadingMore) {
+        this.setState({ shotsLoadingMore: false });
+      }
+    }
   }
 
   private startShotRefreshTimer(): void {
@@ -1467,6 +1479,9 @@ export class BeanieApp {
     const update = this.shotUpdateFromForm(form, shot);
 
     this.setState({ busy: true, status: 'Saving shot' });
+    // Bump before the write so an in-flight shot page fetch from before the
+    // edit cannot re-cache pre-edit data after the invalidation.
+    if (!this.state.demo) this.shotCacheGeneration += 1;
     const result = await saveShotUpdate({
       shot,
       update,
@@ -1481,7 +1496,6 @@ export class BeanieApp {
     });
 
     if (result.type === 'saved') {
-      if (result.remote) this.shotCacheGeneration += 1;
       this.replaceShotRecord(result.shot, result.status);
     } else {
       console.error('[Beanie] Save shot failed', result.error);
@@ -1629,6 +1643,9 @@ export class BeanieApp {
     const update = this.shotUpdateFromDraft(shot, draft);
 
     this.setState({ busy: true, status: 'Saving shot' });
+    // Bump before the write so an in-flight shot page fetch from before the
+    // edit cannot re-cache pre-edit data after the invalidation.
+    if (!this.state.demo) this.shotCacheGeneration += 1;
     const result = await saveShotUpdate({
       shot,
       update,
@@ -1643,7 +1660,6 @@ export class BeanieApp {
     });
 
     if (result.type === 'saved') {
-      if (result.remote) this.shotCacheGeneration += 1;
       this.replaceShotRecord(result.shot, result.status);
     } else {
       console.error('[Beanie] Save shot failed', result.error);
@@ -1764,6 +1780,9 @@ export class BeanieApp {
     if (!shot) return;
     const update = shotEnjoymentUpdate(shot, value);
     this.setState({ busy: true, status: 'Saving score' });
+    // Bump before the write so an in-flight shot page fetch from before the
+    // edit cannot re-cache pre-edit data after the invalidation.
+    if (!this.state.demo) this.shotCacheGeneration += 1;
     const result = await saveShotUpdate({
       shot,
       update,
@@ -1778,7 +1797,6 @@ export class BeanieApp {
     });
 
     if (result.type === 'saved') {
-      if (result.remote) this.shotCacheGeneration += 1;
       this.replaceShotRecord(result.shot, result.status);
     } else {
       console.error('[Beanie] Save score failed', result.error);
@@ -1795,10 +1813,12 @@ export class BeanieApp {
     return null;
   }
 
+  // Resolves true when the machine command actually went through (or demo
+  // simulated it), false when a preflight block or gateway failure stopped it.
   private async machineAction(
     state: MachineState,
     opts: { skipScaleCheck?: boolean } = {}
-  ): Promise<void> {
+  ): Promise<boolean> {
     const preflight = machineActionPreflight({
       state,
       skipScaleCheck: opts.skipScaleCheck === true,
@@ -1810,12 +1830,12 @@ export class BeanieApp {
     });
     if (preflight.type === 'blocked-no-scale') {
       this.showNoScaleShotWarning({ busy: false });
-      return;
+      return false;
     }
     if (preflight.type === 'blocked-water') {
       // Re-arm the (dismissable) refill popup instead of starting a shot.
       this.setState({ waterAlertDismissed: false, status: 'Refill the water tank' });
-      return;
+      return false;
     }
     const service = preflight.service;
     const hotWaterWeightStop = preflight.hotWaterWeightStop;
@@ -1838,7 +1858,7 @@ export class BeanieApp {
         status: machineActionStatus(state, 'demo')
       });
       if (state === 'espresso') this.startSimulatedShot();
-      return;
+      return true;
     }
     if (state === 'hotWater' && hotWaterWeightStop) this.setState({ status: 'Taring scale' });
     const command = await sendMachineActionCommand({
@@ -1863,10 +1883,10 @@ export class BeanieApp {
       if (command.clearHotWaterWeightStop) this.hotWaterWeightStop = null;
       if (command.noScaleBlocked) {
         this.showNoScaleShotWarning({ busy: false });
-        return;
+        return false;
       }
       this.setState({ busy: false, status: command.status });
-      return;
+      return false;
     }
     if (state === 'hotWater') this.hotWaterWeightStop = command.hotWaterWeightStop;
     this.rememberMachineProgressReturnView(service);
@@ -1880,6 +1900,7 @@ export class BeanieApp {
     });
     if (state === 'sleeping') this.scheduleSleepBrightnessZero(1000);
     else this.observeSleepBrightnessState(false);
+    return true;
   }
 
   // Backflush / cleaning cycle: load the cleaning profile (bean-independent),
@@ -1919,7 +1940,14 @@ export class BeanieApp {
     }
     this.state.workflow = result.workflow;
     // Run as an espresso pull; a backflush has no yield, so skip the scale gate.
-    await this.machineAction('espresso', { skipScaleCheck: true });
+    const started = await this.machineAction('espresso', { skipScaleCheck: true });
+    if (!started) {
+      // The pull never started: leave cleaning mode so the next real shot is
+      // not treated as a cleaning cycle, and re-apply the user's draft to put
+      // the recipe workflow back on the machine (as finishCleaningCycle does).
+      this.cleaningInProgress = false;
+      void this.applyDraft();
+    }
   }
 
   // A cleaning pull just ended: reset the counter, restore the real recipe.
@@ -2270,7 +2298,7 @@ export class BeanieApp {
     this.machineSocket = ws;
     ws.onmessage = (event) => {
       try {
-        const snapshot = JSON.parse(event.data) as MachineSnapshot;
+        const snapshot = readMachineSnapshot(JSON.parse(event.data));
         this.ingestLiveFrame(snapshot, null, Date.now());
       } catch (error) {
         console.warn('[Beanie] Bad machine frame', error);
@@ -2296,7 +2324,7 @@ export class BeanieApp {
     this.scaleSocket = ws;
     ws.onmessage = (event) => {
       try {
-        const snapshot = JSON.parse(event.data) as ScaleSnapshot;
+        const snapshot = readScaleSnapshot(JSON.parse(event.data));
         this.ingestLiveFrame(null, snapshot, Date.now());
       } catch (error) {
         console.warn('[Beanie] Bad scale frame', error);
@@ -5315,7 +5343,7 @@ export class BeanieApp {
       busy: true,
       status: plan.savingStatus
     });
-    if (this.state.demo) {
+    if (this.settingsLocal) {
       this.setState({ busy: false, status: plan.demoStatus });
       return;
     }
@@ -6459,7 +6487,7 @@ export class BeanieApp {
       flowCalDraft: null,
       status: 'Flow calibration updated'
     });
-    if (this.state.demo || this.state.settingsSource === 'demo') return;
+    if (this.settingsLocal) return;
     try {
       await gateway.updateCalibration(flowMultiplier);
       this.setState({ status: 'Flow calibration saved' });
@@ -6838,7 +6866,7 @@ export class BeanieApp {
     if (!field) return;
     const value = coerceFieldValue(field, raw);
     this.setState({ settingsBundle: setBundleField(bundle, field, value), status: 'Setting updated' });
-    if (this.state.demo || this.state.settingsSource === 'demo') return; // local-only without a gateway
+    if (this.settingsLocal) return; // local-only without a gateway
     try {
       await this.persistSetting(field.group, key, value);
     } catch (error) {
@@ -6857,7 +6885,7 @@ export class BeanieApp {
       status: enabled ? 'Scale block enabled' : 'Disabling scale block...'
     });
 
-    if (this.state.demo || this.state.settingsSource === 'demo') {
+    if (this.settingsLocal) {
       if (!enabled) this.noScaleShotWarningUntilMs = 0;
       this.setState({
         modal: enabled ? this.state.modal : null,

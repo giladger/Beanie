@@ -56,6 +56,7 @@ class FakeShotCache implements ShotRepositoryCache {
   pageWrites: string[] = [];
   recordWrites: ShotRecord[] = [];
   getRecordCalls = 0;
+  failPutRecord = false;
 
   async putShotPage(query: URLSearchParams, pageValue: PaginatedShots): Promise<void> {
     this.pageWrites.push(query.toString());
@@ -67,6 +68,7 @@ class FakeShotCache implements ShotRepositoryCache {
   }
 
   async putShotRecord(shot: ShotRecord): Promise<void> {
+    if (this.failPutRecord) throw new Error('record write failed');
     this.recordWrites.push(shot);
     this.record = shot;
   }
@@ -116,6 +118,47 @@ await run('loadFullShot skips cache reads and writes when cache generation is st
   equal(cache.getRecordCalls, 0);
   equal(cache.recordWrites.length, 0);
   equal(loaded.measurements.length, 0);
+});
+
+await run('loadFullShot resolves the merged record when the cache write fails', async () => {
+  const gateway = new FakeShotGateway();
+  const cache = new FakeShotCache();
+  cache.record = fullRecord;
+  cache.failPutRecord = true;
+
+  const loaded = await loadFullShot(summary, { gateway, cache });
+
+  equal(loaded.shotNotes, 'summary notes');
+  equal(loaded.measurements.length, 1);
+  equal(gateway.shotIds.length, 0);
+});
+
+await run('loadFullShot resolves the fetched record when the cache write fails', async () => {
+  const gateway = new FakeShotGateway();
+  const cache = new FakeShotCache();
+  cache.failPutRecord = true;
+
+  const loaded = await loadFullShot(summary, { gateway, cache });
+
+  equal(loaded.measurements.length, 1);
+  equal(gateway.shotIds[0], 'shot-1');
+});
+
+await run('fetchShotPage cache fallback does not reject when a record cache write fails', async () => {
+  const gateway = new FakeShotGateway();
+  gateway.failShots = true;
+  const cache = new FakeShotCache();
+  cache.page = page;
+  cache.record = fullRecord;
+  cache.failPutRecord = true;
+
+  const loaded = await withSuppressedWarnings(() =>
+    fetchShotPage({ query: new URLSearchParams(), pageSize: 12, offset: 0 }, { gateway, cache })
+  );
+
+  equal(loaded.total, 12);
+  equal(loaded.records[0]?.id, 'shot-1');
+  equal(loaded.records[0]?.measurements.length, 1);
 });
 
 await run('fetchShotPage sets pagination, writes the page, and hydrates records', async () => {

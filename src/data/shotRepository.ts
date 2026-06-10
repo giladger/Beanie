@@ -64,12 +64,12 @@ export async function loadFullShot(
     : null;
   if (cached) {
     const merged = mergeShotSummaryIntoRecord(cached, shot);
-    if (canWriteCache(deps)) await deps.cache.putShotRecord(merged);
+    if (canWriteCache(deps)) await deps.cache.putShotRecord(merged).catch(() => {});
     return merged;
   }
   try {
     const record = await deps.gateway.shot(shot.id);
-    if (canWriteCache(deps)) await deps.cache.putShotRecord(record);
+    if (canWriteCache(deps)) await deps.cache.putShotRecord(record).catch(() => {});
     return record;
   } catch {
     return { ...shot, measurements: [] };
