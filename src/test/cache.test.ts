@@ -1,11 +1,13 @@
-import type { Bean, PaginatedShots, ShotRecord } from '../api/types';
+import type { Bean, BeanBatch, PaginatedShots, ShotRecord } from '../api/types';
 import {
+  BEANIE_CACHE_DB_NAME,
   BEANIE_CACHE_DB_VERSION,
   cachePageKey,
   createBeanieCache,
   normalizeCacheQuery,
   shotPageCacheKey
 } from '../domain/cache';
+import { createFakeIndexedDb, type FakeIndexedDb } from './fakeIndexedDb';
 
 interface TestCase {
   name: string;
@@ -13,6 +15,23 @@ interface TestCase {
 }
 
 const tests: TestCase[] = [];
+
+function fakeBackedCache(): { cache: ReturnType<typeof createBeanieCache>; factory: FakeIndexedDb } {
+  const { factory, asIDBFactory } = createFakeIndexedDb();
+  const cache = createBeanieCache({
+    indexedDB: asIDBFactory,
+    now: () => new Date('2026-06-01T00:00:00.000Z')
+  });
+  return { cache, factory };
+}
+
+function bean(id: string, name: string): Bean {
+  return { id, roaster: 'Kawa', name };
+}
+
+function batch(id: string, beanId: string): BeanBatch {
+  return { id, beanId, roastDate: '2026-05-20' };
+}
 
 run('normalizes cache queries independent of parameter order', () => {
   const left = normalizeCacheQuery(new URLSearchParams('offset=0&limit=24&order=desc'));
@@ -63,6 +82,75 @@ run('falls back cleanly when IndexedDB is unavailable', async () => {
 
 run('exports an explicit schema version', () => {
   equal(BEANIE_CACHE_DB_VERSION, 1);
+});
+
+run('round-trips a collection through the fake IndexedDB', async () => {
+  const { cache } = fakeBackedCache();
+  await cache.putBeans([bean('bean-1', 'Pink Bourbon'), bean('bean-2', 'Gesha')]);
+
+  const beans = await cache.getBeans();
+  equal(beans.length, 2);
+  equal(beans[0].id, 'bean-1');
+  equal(beans[0].name, 'Pink Bourbon');
+  equal(beans[1].id, 'bean-2');
+});
+
+run('drops removed collection items on the next put and deletes their keys', async () => {
+  const { cache, factory } = fakeBackedCache();
+  await cache.putBeans([bean('bean-1', 'Pink Bourbon'), bean('bean-2', 'Gesha')]);
+  await cache.putBeans([bean('bean-1', 'Pink Bourbon')]);
+
+  const beans = await cache.getBeans();
+  equal(beans.length, 1);
+  equal(beans[0].id, 'bean-1');
+  equal(factory.rawKeys(BEANIE_CACHE_DB_NAME, 'beans').join(','), 'bean-1');
+});
+
+run('deletes stale bean batches per bean without touching other beans', async () => {
+  const { cache, factory } = fakeBackedCache();
+  await cache.putBeanBatches('bean-1', [batch('batch-1a', 'bean-1'), batch('batch-1b', 'bean-1')]);
+  await cache.putBeanBatches('bean-2', [batch('batch-2a', 'bean-2')]);
+
+  await cache.putBeanBatches('bean-1', [batch('batch-1a', 'bean-1')]);
+
+  const beanOneBatches = await cache.getBeanBatches('bean-1');
+  equal(beanOneBatches.length, 1);
+  equal(beanOneBatches[0].id, 'batch-1a');
+
+  const beanTwoBatches = await cache.getBeanBatches('bean-2');
+  equal(beanTwoBatches.length, 1);
+  equal(beanTwoBatches[0].id, 'batch-2a');
+
+  equal(factory.rawKeys(BEANIE_CACHE_DB_NAME, 'beanBatches').join(','), 'batch-1a,batch-2a');
+});
+
+run('clearing a collection deletes every previously cached key', async () => {
+  const { cache, factory } = fakeBackedCache();
+  await cache.putBeanBatches('bean-1', [batch('batch-1a', 'bean-1'), batch('batch-1b', 'bean-1')]);
+
+  await cache.putBeanBatches('bean-1', []);
+
+  equal((await cache.getBeanBatches('bean-1')).length, 0);
+  equal(factory.rawKeys(BEANIE_CACHE_DB_NAME, 'beanBatches').length, 0);
+});
+
+run('reopens the database after a versionchange closes the connection', async () => {
+  const { cache, factory } = fakeBackedCache();
+  await cache.putBeans([bean('bean-1', 'Pink Bourbon')]);
+  equal(factory.openConnectionCount(BEANIE_CACHE_DB_NAME), 1);
+
+  factory.notifyVersionChange(BEANIE_CACHE_DB_NAME);
+  equal(factory.openConnectionCount(BEANIE_CACHE_DB_NAME), 0);
+
+  const beans = await cache.getBeans();
+  equal(beans.length, 1);
+  equal(beans[0].id, 'bean-1');
+  equal(factory.openConnectionCount(BEANIE_CACHE_DB_NAME), 1);
+
+  await cache.putBeans([bean('bean-2', 'Gesha')]);
+  const next = await cache.getBeans();
+  equal(next.length, 1);
+  equal(next[0].id, 'bean-2');
 });
 
 for (const test of tests) {

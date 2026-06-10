@@ -141,18 +141,6 @@ export class BeanieIndexedDbCache {
     );
   }
 
-  async getShotSummary(id: string): Promise<ShotSummary | null> {
-    const entry = await this.getEntry<CacheEntry<ShotSummary>>(storeNames.shotSummaries, id);
-    return entry?.item ?? null;
-  }
-
-  async getShotSummaries(ids?: readonly string[]): Promise<ShotSummary[]> {
-    const entries = await this.getAllEntries<CacheEntry<ShotSummary>>(storeNames.shotSummaries);
-    const shots = entries.map((entry) => entry.item);
-    if (!ids) return shots.sort(compareShotsNewestFirst);
-    return orderByIds(shots, ids);
-  }
-
   async putShotRecord(shot: ShotRecord): Promise<void> {
     await Promise.all([
       this.putShotSummaries([shot]),
@@ -174,14 +162,15 @@ export class BeanieIndexedDbCache {
   }
 
   async putBeanBatches(beanId: string, batches: readonly BeanBatch[]): Promise<void> {
-    await this.putEntries<BeanBatchCacheEntry>(
+    await this.replaceEntries<BeanBatchCacheEntry>(
       storeNames.beanBatches,
+      `collection:bean-batches:${beanId}:ids`,
       batches.map((batch) => ({
         ...this.entry(batch.id, batch),
         beanId
-      }))
+      })),
+      (existing) => existing.beanId === beanId
     );
-    await this.putObject(`collection:bean-batches:${beanId}:ids`, batches.map((batch) => batch.id));
   }
 
   async getBeanBatches(beanId: string): Promise<BeanBatch[]> {
@@ -344,11 +333,49 @@ export class BeanieIndexedDbCache {
     orderKey: string,
     items: readonly T[]
   ): Promise<void> {
-    await this.putEntries<CacheEntry<T>>(
+    await this.replaceEntries<CacheEntry<T>>(
       storeName,
-      items.map((item) => this.entry(item.id, item))
+      orderKey,
+      items.map((item) => this.entry(item.id, item)),
+      () => true
     );
-    await this.putObject(orderKey, items.map((item) => item.id));
+  }
+
+  /**
+   * Replaces the cached entries behind an ordered collection in one readwrite
+   * transaction: stale entries (matched by `isReplaced` but absent from the new
+   * list) are deleted, new entries are written, and the order-key id list is
+   * rewritten alongside them.
+   */
+  private async replaceEntries<E extends { id: string }>(
+    storeName: StoreName,
+    orderKey: string,
+    entries: readonly E[],
+    isReplaced: (existing: E) => boolean
+  ): Promise<void> {
+    const db = await this.openDb();
+    if (!db) return;
+
+    try {
+      const tx = db.transaction([storeName, storeNames.objects], 'readwrite');
+      const done = transactionDone(tx);
+      const store = tx.objectStore(storeName);
+      const nextIds = new Set(entries.map((entry) => entry.id));
+      const existing = await requestToPromise<E[]>(store.getAll());
+      for (const entry of existing) {
+        if (isReplaced(entry) && !nextIds.has(entry.id)) store.delete(entry.id);
+      }
+      for (const entry of entries) store.put(entry);
+      tx.objectStore(storeNames.objects).put({
+        key: orderKey,
+        value: entries.map((entry) => entry.id),
+        updatedAt: this.timestamp(),
+        schemaVersion: BEANIE_CACHE_DB_VERSION
+      } satisfies ObjectCacheEntry<string[]>);
+      await done;
+    } catch {
+      return;
+    }
   }
 
   private async getCollection<T extends { id: string }>(
@@ -470,8 +497,14 @@ export class BeanieIndexedDbCache {
     if (!this.factory) return null;
     if (this.openPromise) return this.openPromise;
 
-    this.openPromise = new Promise((resolve) => {
+    const promise = new Promise<IDBDatabase | null>((resolve) => {
       const request = this.factory!.open(this.databaseName, BEANIE_CACHE_DB_VERSION);
+      // Drop the memoized promise so the next call reopens, but only if it
+      // still belongs to this open attempt (a newer attempt may have replaced it).
+      const forget = () => {
+        if (this.openPromise === promise) this.openPromise = null;
+      };
+      let abandoned = false;
 
       request.onupgradeneeded = () => {
         const tx = request.transaction;
@@ -479,20 +512,34 @@ export class BeanieIndexedDbCache {
       };
       request.onsuccess = () => {
         const db = request.result;
-        db.onversionchange = () => db.close();
+        if (abandoned) {
+          // The open was abandoned after onblocked but eventually succeeded:
+          // close it so the orphan connection does not hold the version lock.
+          db.close();
+          return;
+        }
+        db.onversionchange = () => {
+          // Another tab is upgrading the database (e.g. after a deploy). Close
+          // this connection and forget it so the next operation reopens.
+          forget();
+          db.close();
+        };
+        db.onclose = () => forget();
         resolve(db);
       };
       request.onerror = () => {
-        this.openPromise = null;
+        forget();
         resolve(null);
       };
       request.onblocked = () => {
-        this.openPromise = null;
+        abandoned = true;
+        forget();
         resolve(null);
       };
     });
 
-    return this.openPromise;
+    this.openPromise = promise;
+    return promise;
   }
 }
 
@@ -583,19 +630,14 @@ function normalizeIds(ids?: string | readonly string[]): string[] {
 }
 
 function orderByIds<T extends { id: string }>(items: readonly T[], ids: readonly string[]): T[] {
+  // No order list (e.g. it was dropped by a targeted invalidate*Mutation while
+  // entries remain): fall back to whatever entries exist.
   if (ids.length === 0) return [...items];
+  // An order list is authoritative: entries absent from it were deleted or
+  // archived upstream and must not resurrect from the cache.
   const byId = new Map(items.map((item) => [item.id, item]));
-  const ordered = ids.flatMap((id) => {
+  return ids.flatMap((id) => {
     const item = byId.get(id);
     return item ? [item] : [];
   });
-  const missing = items.filter((item) => !ids.includes(item.id));
-  return [...ordered, ...missing];
-}
-
-function compareShotsNewestFirst(a: ShotSummary, b: ShotSummary): number {
-  const parsed = Date.parse(b.timestamp) - Date.parse(a.timestamp);
-  return Number.isNaN(parsed) || parsed === 0
-    ? b.timestamp.localeCompare(a.timestamp)
-    : parsed;
 }
