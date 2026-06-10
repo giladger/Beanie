@@ -122,7 +122,7 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
   const editingDetails = model.editingBeanDetailsId === bean.id;
   return `
     <div class="bean-picker-inspector">
-      <div class="bean-picker-decision ${editingDetails ? 'editing' : ''}">
+      <div class="bean-picker-decision">
         <div class="bean-picker-details ${editingDetails ? 'open' : ''}">
           <button type="button" class="bean-picker-bean-summary" data-action="toggle-bean-details" data-id="${escapeAttr(bean.id)}" aria-expanded="${editingDetails ? 'true' : 'false'}" title="Edit coffee">
             ${renderBeanPickerSummary(bean, latest)}
@@ -130,7 +130,6 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
           </button>
           ${editingDetails ? renderBeanPickerBeanForm(bean, model.prefillBeans, model.formNumbers ?? {}, { showHeader: false }) : ''}
         </div>
-        ${renderBeanPickerStockNow(bean, latest)}
       </div>
       <div class="bean-picker-batches">
         <div class="bean-picker-section-head">
@@ -163,42 +162,6 @@ function renderBeanPickerSummary(bean: Bean, latest: BeanBatch | null): string {
       ${meta ? `<small>${escapeHtml(meta)}</small>` : ''}
     </div>
   `;
-}
-
-function renderBeanPickerStockNow(bean: Bean, latest: BeanBatch | null): string {
-  if (!latest) {
-    return `
-      <div class="bean-picker-stock-now empty">
-        <div>
-          <span class="eyebrow">Using now</span>
-          <strong>No bag on hand</strong>
-          <small>Empty shelf</small>
-        </div>
-        <button type="button" class="secondary-button compact" data-action="bean-picker-add-batch">${icon('plus')}<span>Bag</span></button>
-      </div>
-    `;
-  }
-  const freshness = stockFreshnessDetail(latest);
-  const location = stockLocationLabel(latest);
-  const locationDetail = stockLocationDetail(latest);
-  const locationIcon = batchStorageState(latest) === 'frozen' ? 'snowflake' : batchStorageState(latest) === 'thawed' ? 'sun' : 'archive';
-  return `
-    <div class="bean-picker-stock-now">
-      <div>
-        <span class="eyebrow">Using now</span>
-        <strong>${escapeHtml(stockDateTitle(latest))}</strong>
-        <small>${escapeHtml([freshness, latest.roastLevel ?? null].filter(Boolean).join(' · ') || 'Bag')}</small>
-      </div>
-      <button type="button" class="bean-picker-stock-location stock-location-chip" data-action="open-batch-storage" data-id="${escapeAttr(latest.id)}" data-bean-id="${escapeAttr(bean.id)}" title="Stock location">${icon(locationIcon)}<span>${escapeHtml(location)}</span><small>${escapeHtml(locationDetail)}</small></button>
-    </div>
-  `;
-}
-
-function stockDateTitle(batch: BeanBatch): string {
-  const roast = batch.roastDate ? new Date(batch.roastDate) : null;
-  return roast && !Number.isNaN(roast.valueOf())
-    ? roast.toLocaleDateString([], { month: 'short', day: 'numeric' })
-    : 'Undated bag';
 }
 
 function renderBeanPickerBeanForm(

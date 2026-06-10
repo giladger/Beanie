@@ -55,8 +55,9 @@ run('bean picker renders matched beans, current bean, focused inspector, and lat
   includes(html, 'data-action="toggle-bean-details"');
   includes(html, 'aria-expanded="false"');
   includes(html, 'Selected coffee');
-  includes(html, 'Using now');
   includes(html, 'Bags on hand');
+  notIncludes(html, 'bean-picker-stock-now');
+  notIncludes(html, '<span class="eyebrow">Using now</span>');
   notIncludes(html, 'data-form="bean-picker-bean" data-id="bean-1"');
   notIncludes(html, 'data-action="select-bean"');
   notIncludes(html, '<span>Save</span>');
@@ -66,20 +67,10 @@ run('bean picker renders matched beans, current bean, focused inspector, and lat
   includes(html, 'In freezer');
 });
 
-run('bean picker using now title avoids repeating grams', () => {
-  const html = renderBeanPickerModal(model());
-  const title = html.match(/<span class="eyebrow">Using now<\/span>\s*<strong>([^<]*)<\/strong>/)?.[1];
-
-  if (!title) throw new Error('Expected Using now title');
-  notIncludes(title, '125');
-  notIncludes(title, 'g');
-});
-
 run('bean picker opens edit fields from the bean line without duplicating the title', () => {
   const html = renderBeanPickerModal(model({ editingBeanDetailsId: 'bean-1' }));
 
   includes(html, 'aria-expanded="true"');
-  includes(html, 'bean-picker-decision editing');
   includes(html, 'data-form="bean-picker-bean" data-id="bean-1"');
   includes(html, 'name="roaster"');
   includes(html, 'name="notes"');
