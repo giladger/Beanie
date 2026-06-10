@@ -543,6 +543,7 @@ interface AppState {
   beanPickerAutofocusSearch: boolean;
   beanPickerDraftBatchBeanId: string | null;
   beanPickerEditingBeanId: string | null;
+  beanPickerEditingBatchId: string | null;
   batchStorageTarget: BatchStorageTarget | null;
   batchStorageSplitPreview: boolean;
   editingGrinderId: string | null;
@@ -655,6 +656,7 @@ export class BeanieApp {
     beanPickerAutofocusSearch: false,
     beanPickerDraftBatchBeanId: null,
     beanPickerEditingBeanId: null,
+    beanPickerEditingBatchId: null,
     batchStorageTarget: null,
     batchStorageSplitPreview: false,
     editingGrinderId: null,
@@ -1130,7 +1132,8 @@ export class BeanieApp {
       beanPickerMode: options.create ? 'create' : 'inspect',
       beanPickerAutofocusSearch: options.autofocusSearch ?? false,
       beanPickerDraftBatchBeanId: null,
-      beanPickerEditingBeanId: null
+      beanPickerEditingBeanId: null,
+      beanPickerEditingBatchId: null
     });
     if (!options.create) void this.refreshBeans({ force: true, allowModal: true });
     if (id && !options.create) await this.ensureBatchesLoaded(id);
@@ -1142,6 +1145,7 @@ export class BeanieApp {
       beanPickerMode: 'inspect',
       beanPickerDraftBatchBeanId: null,
       beanPickerEditingBeanId: null,
+      beanPickerEditingBatchId: null,
       secondTapHint: this.nextSecondTapHint('bean', beanId)
     });
     await this.ensureBatchesLoaded(beanId);
@@ -3069,6 +3073,7 @@ export class BeanieApp {
             beanPickerMode: 'create',
             beanPickerDraftBatchBeanId: null,
             beanPickerEditingBeanId: null,
+            beanPickerEditingBatchId: null,
             status: 'Adding bean'
           });
         } else {
@@ -3085,8 +3090,17 @@ export class BeanieApp {
         if (id) {
           this.setState({
             beanPickerEditingBeanId: this.state.beanPickerEditingBeanId === id ? null : id,
+            beanPickerEditingBatchId: null,
             beanPickerBeanId: id,
             beanPickerMode: 'inspect'
+          });
+        }
+        return true;
+      case 'toggle-batch-details':
+        if (id) {
+          this.setState({
+            beanPickerEditingBatchId: this.state.beanPickerEditingBatchId === id ? null : id,
+            beanPickerEditingBeanId: null
           });
         }
         return true;
@@ -3797,6 +3811,7 @@ export class BeanieApp {
           batchStorageSplitPreview: false,
           beanPickerDraftBatchBeanId: null,
           beanPickerEditingBeanId: null,
+          beanPickerEditingBatchId: null,
           profileEditor: null,
           editingProfileId: null,
           editDialog: null,
@@ -4394,6 +4409,7 @@ export class BeanieApp {
           beanPickerBeanId: result.bean.id,
           beanPickerMode: 'inspect',
           beanPickerEditingBeanId: null,
+          beanPickerEditingBatchId: null,
           busy: false,
           status: created.status
         });
@@ -4407,6 +4423,7 @@ export class BeanieApp {
         beanPickerBeanId: result.bean.id,
         beanPickerMode: 'inspect',
         beanPickerEditingBeanId: null,
+        beanPickerEditingBatchId: null,
         formNumbers: omitKeys(this.state.formNumbers, [createStockFormKey('weight'), createStockFormKey('weightRemaining')]),
         busy: false,
         status: this.state.demo ? 'Bean and stock added (demo)' : 'Bean and stock added'
@@ -4420,6 +4437,7 @@ export class BeanieApp {
       beanPickerBeanId: result.bean.id,
       beanPickerMode: 'inspect',
       beanPickerEditingBeanId: editingId ? this.state.beanPickerEditingBeanId : null,
+      beanPickerEditingBatchId: null,
       busy: false,
       status: result.status
     });
@@ -4457,6 +4475,7 @@ export class BeanieApp {
       beanPickerMode: 'inspect',
       beanPickerDraftBatchBeanId: null,
       beanPickerEditingBeanId: null,
+      beanPickerEditingBatchId: null,
       formNumbers: omitKeys(this.state.formNumbers, [createStockFormKey('weight'), createStockFormKey('weightRemaining')]),
       busy: false,
       status: this.state.demo ? `${status} (demo)` : status
@@ -4509,6 +4528,7 @@ export class BeanieApp {
       beanPickerBeanId: bean.id,
       beanPickerMode: 'inspect',
       beanPickerDraftBatchBeanId: bean.id,
+      beanPickerEditingBatchId: null,
       formNumbers: {
         ...this.state.formNumbers,
         [weightKey]: this.state.formNumbers[weightKey] ?? weight,
@@ -4830,6 +4850,7 @@ export class BeanieApp {
     this.setState({
       batchesByBean: result.batchesByBean,
       selectedBatchId: result.selectedBatchId,
+      beanPickerEditingBatchId: this.state.beanPickerEditingBatchId === batchId ? null : this.state.beanPickerEditingBatchId,
       status: result.status
     });
     if (result.selectedCurrentBean) this.scheduleApply();
@@ -4871,6 +4892,7 @@ export class BeanieApp {
         batchesByBean: result.batchesByBean,
         selectedBatchId: result.selectedBatchId,
         beanPickerDraftBatchBeanId: null,
+        beanPickerEditingBatchId: null,
         formNumbers: omitKeys(this.state.formNumbers, [
           newStockFormKey(bean.id, 'weight'),
           newStockFormKey(bean.id, 'weightRemaining')
@@ -5853,6 +5875,7 @@ export class BeanieApp {
       prefillBeans: beans,
       draftBatchBeanId: this.state.beanPickerDraftBatchBeanId,
       editingBeanDetailsId: this.state.beanPickerEditingBeanId,
+      editingBatchId: this.state.beanPickerEditingBatchId,
       formNumbers: this.state.formNumbers,
       secondTapHint: this.state.secondTapHint
     });

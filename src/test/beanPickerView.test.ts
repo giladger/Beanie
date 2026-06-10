@@ -64,7 +64,9 @@ run('bean picker renders matched beans, current bean, focused inspector, and lat
   notIncludes(html, 'Latest stock');
   includes(html, 'data-batch-id="batch-1"');
   includes(html, 'data-action="open-batch-storage"');
+  includes(html, 'data-action="toggle-batch-details"');
   includes(html, 'In freezer');
+  notIncludes(html, 'data-action="bean-picker-batch-field"');
 });
 
 run('bean picker opens edit fields from the bean line without duplicating the title', () => {
@@ -99,6 +101,15 @@ run('bean picker shows every bag on hand after adding beyond two bags', () => {
   includes(html, 'data-batch-id="batch-1"');
   includes(html, 'data-batch-id="batch-older"');
   equals(countOccurrences(html, 'data-form="bean-picker-batch"'), 3);
+});
+
+run('bean picker edits one bag only after opening the bag details', () => {
+  const html = renderBeanPickerModal(model({ editingBatchId: 'batch-1' }));
+
+  includes(html, 'bean-picker-batch stock-card current editing');
+  includes(html, 'data-action="bean-picker-batch-field"');
+  includes(html, 'name="roastDate"');
+  includes(html, 'name="weightRemaining"');
 });
 
 run('bean picker create mode renders new bean form and prefill choices', () => {
@@ -141,14 +152,16 @@ run('batch storage modal renders compact freeze/thaw actions', () => {
 
   includes(html, 'Stock location');
   includes(html, 'Current stock');
+  includes(html, 'Move stock');
   includes(html, 'Mark thawed');
+  includes(html, 'Dates and history');
   includes(html, 'Correct freeze date');
   includes(html, 'Frozen on');
   includes(html, 'Roast age');
   includes(html, 'Active age');
   includes(html, 'Storage timeline');
   includes(html, 'data-form="batch-storage-date"');
-  includes(html, 'Shots save the freshness at pull time');
+  notIncludes(html, 'Location action');
   notIncludes(html, 'Storage date');
 });
 
@@ -157,6 +170,7 @@ run('batch storage modal exposes freezing a portion for shelf batches', () => {
 
   includes(html, 'Move all to freezer');
   includes(html, 'Move part to freezer');
+  includes(html, 'Leave some on the shelf and freeze the rest.');
   includes(html, 'Grams to move');
   includes(html, 'data-action="open-number-edit"');
   includes(html, 'data-return-modal="batch-storage"');

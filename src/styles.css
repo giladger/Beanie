@@ -2275,29 +2275,33 @@ p {
   overflow: visible;
   display: grid;
   align-content: start;
-  gap: 8px;
+  gap: 6px;
 }
 
 .bean-picker-batch {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1.3fr) minmax(132px, 0.9fr) minmax(88px, 0.65fr) minmax(88px, 0.65fr) minmax(126px, 0.75fr) 42px;
-  grid-template-areas:
-    "title title title title frozen delete"
-    "date roast weight remaining frozen delete";
-  gap: 7px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas: "title chips actions";
+  gap: 8px;
   align-items: center;
-  padding: 8px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel-2);
 }
 
-.stock-card-draft {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+.bean-picker-batch.editing {
   grid-template-areas:
-    "title title title delete"
-    "date roast weight remaining";
+    "title chips actions"
+    "fields fields fields";
+}
+
+.stock-card-draft {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "title actions"
+    "fields fields";
   border-style: dashed;
   background: color-mix(in srgb, var(--ink) 5%, var(--panel-2));
 }
@@ -2313,22 +2317,6 @@ p {
   align-self: center;
 }
 
-.bean-picker-batch label:nth-of-type(1) {
-  grid-area: date;
-}
-
-.bean-picker-batch label:nth-of-type(2) {
-  grid-area: roast;
-}
-
-.bean-picker-batch label:nth-of-type(3) {
-  grid-area: weight;
-}
-
-.bean-picker-batch label:nth-of-type(4) {
-  grid-area: remaining;
-}
-
 .bean-picker-batch-title strong,
 .bean-picker-batch-title small {
   display: block;
@@ -2339,30 +2327,40 @@ p {
 
 .bean-picker-batch-title strong {
   color: var(--ink);
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.15;
 }
 
 .bean-picker-batch-title small {
-  margin-top: 4px;
+  margin-top: 3px;
   color: var(--soft);
   font-size: 12px;
   font-weight: 800;
 }
 
-.bean-picker-batch label {
+.bean-picker-batch-fields {
+  grid-area: fields;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(126px, 1fr) minmax(116px, 0.9fr) minmax(88px, 0.62fr) minmax(88px, 0.62fr);
+  gap: 7px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.bean-picker-batch-fields label {
   gap: 5px;
   font-size: 11px;
 }
 
-.bean-picker-batch input {
+.bean-picker-batch-fields input {
   width: 100%;
   height: 36px;
   padding: 0 10px;
   font-size: 14px;
 }
 
-.bean-picker-batch .bean-picker-number {
+.bean-picker-batch-fields .bean-picker-number {
   width: 100%;
   height: 36px;
   padding: 0 10px;
@@ -2370,10 +2368,30 @@ p {
   font-size: 14px;
 }
 
+.bean-picker-batch-chips {
+  grid-area: chips;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.bean-picker-batch-actions {
+  grid-area: actions;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.bean-picker-batch-actions .icon-button {
+  width: 36px;
+  height: 36px;
+}
+
 .bean-picker-storage {
-  grid-area: frozen;
   align-self: center;
-  min-height: 76px;
+  min-height: 40px;
   min-width: 0;
   display: inline-flex;
   flex-direction: row;
@@ -2391,21 +2409,14 @@ p {
 }
 
 .stock-location-chip {
-  flex-direction: column;
+  min-width: 116px;
+  flex-direction: row;
   gap: 3px;
   text-align: center;
 }
 
 .stock-location-chip small {
-  max-width: 100%;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 800;
-  text-overflow: ellipsis;
-  text-transform: none;
-  white-space: nowrap;
+  display: none;
 }
 
 .bean-picker-storage span {
@@ -2426,7 +2437,6 @@ p {
 }
 
 .bean-picker-batch-delete {
-  grid-area: delete;
   width: 40px;
   height: 40px;
 }
@@ -2439,7 +2449,7 @@ p {
 }
 
 .stock-draft-actions {
-  grid-area: delete;
+  grid-area: actions;
   flex-direction: row;
   justify-content: flex-end;
 }
@@ -2452,7 +2462,7 @@ p {
 }
 
 .batch-storage-modal {
-  width: min(1040px, calc(100vw - 18px));
+  width: min(980px, calc(100vw - 18px));
   max-height: calc(100dvh - 16px);
   grid-template-rows: auto minmax(0, 1fr);
 }
@@ -2460,33 +2470,21 @@ p {
 .batch-storage-body {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-  gap: 14px;
-  padding: 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 10px;
+  padding: 14px;
   overflow-y: auto;
   overflow-x: hidden;
-}
-
-.batch-storage-summary,
-.batch-freshness-panel {
-  grid-column: 1;
-}
-
-.batch-storage-body > .bean-picker-hint {
-  grid-column: 1 / -1;
-}
-
-.batch-storage-next,
-.batch-freeze-portion,
-.batch-storage-date,
-.storage-timeline-card {
-  grid-column: 2;
 }
 
 .batch-storage-summary {
   min-width: 0;
   display: grid;
-  gap: 5px;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -2494,12 +2492,10 @@ p {
 }
 
 .batch-storage-summary strong {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.batch-storage-summary strong {
   color: var(--ink);
   font-size: 18px;
 }
@@ -2520,15 +2516,16 @@ p {
 }
 
 .batch-freshness-panel {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .batch-freshness-panel > div,
 .batch-freshness-panel.muted {
   min-width: 0;
-  padding: 12px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: color-mix(in srgb, var(--teal) 8%, var(--panel-2));
@@ -2546,9 +2543,9 @@ p {
   display: flex;
   align-items: baseline;
   gap: 3px;
-  margin-top: 4px;
+  margin-top: 3px;
   color: var(--ink);
-  font-size: 30px;
+  font-size: 20px;
   line-height: 1;
 }
 
@@ -2559,10 +2556,7 @@ p {
 }
 
 .batch-freshness-panel.muted {
-  display: grid;
-  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-  gap: 8px;
-  align-items: center;
+  display: inline-flex;
 }
 
 .batch-freshness-panel.muted strong {
@@ -2576,16 +2570,15 @@ p {
 
 .batch-storage-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
-  padding: 14px;
+  padding: 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: color-mix(in srgb, var(--ink) 3%, transparent);
 }
 
-.batch-storage-card > div {
+.batch-storage-copy {
   min-width: 0;
   display: grid;
   gap: 4px;
@@ -2608,7 +2601,7 @@ p {
 .batch-storage-card .primary-button,
 .batch-storage-card .secondary-button {
   min-width: 0;
-  min-height: 50px;
+  min-height: 48px;
   justify-content: center;
   font-size: 14px;
 }
@@ -2627,12 +2620,28 @@ p {
 }
 
 .batch-freeze-portion {
-  grid-template-columns: minmax(0, 1fr) minmax(120px, 0.36fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(144px, 0.42fr);
+  grid-template-areas:
+    "copy amount"
+    "copy button"
+    "preview preview";
+}
+
+.batch-freeze-portion .batch-storage-copy {
+  grid-area: copy;
 }
 
 .batch-freeze-portion label,
 .batch-storage-date label {
   min-width: 0;
+}
+
+.batch-freeze-portion label {
+  grid-area: amount;
+}
+
+.batch-freeze-portion .secondary-button {
+  grid-area: button;
 }
 
 .batch-freeze-portion input,
@@ -2661,7 +2670,38 @@ p {
   grid-template-columns: minmax(0, 1fr) minmax(148px, 0.36fr) auto;
 }
 
+.batch-storage-more {
+  grid-column: 1 / -1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--ink) 2.5%, transparent);
+}
+
+.batch-storage-more > summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.batch-storage-more[open] {
+  display: grid;
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+
+.batch-storage-more[open] > summary {
+  margin: 0 -10px;
+  border-bottom: 1px solid var(--line);
+}
+
 .split-preview {
+  grid-area: preview;
   display: grid;
   gap: 5px;
   margin-top: 8px;
@@ -2730,21 +2770,41 @@ p {
   }
 
   .bean-picker-batch {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
-      "title title"
-      "date roast"
-      "weight remaining"
-      "frozen delete";
+      "title actions"
+      "chips chips";
     align-items: stretch;
+  }
+
+  .bean-picker-batch.editing,
+  .stock-card-draft {
+    grid-template-areas:
+      "title actions"
+      "chips chips"
+      "fields fields";
+  }
+
+  .stock-card-draft {
+    grid-template-areas:
+      "title actions"
+      "fields fields";
+  }
+
+  .bean-picker-batch-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .bean-picker-storage {
     min-height: 40px;
   }
 
-  .bean-picker-batch-title {
-    grid-column: 1 / -1;
+  .bean-picker-batch-chips {
+    justify-content: stretch;
+  }
+
+  .stock-location-chip {
+    width: 100%;
   }
 
   .bean-picker-batch-delete {
@@ -2759,6 +2819,14 @@ p {
   .batch-storage-next,
   .batch-storage-body {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .batch-freeze-portion {
+    grid-template-areas:
+      "copy"
+      "amount"
+      "button"
+      "preview";
   }
 
   .batch-storage-summary,
@@ -2812,6 +2880,10 @@ p {
   }
 
   .bean-picker-first-stock-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bean-picker-batch-fields {
     grid-template-columns: minmax(0, 1fr);
   }
 

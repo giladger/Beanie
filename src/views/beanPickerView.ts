@@ -29,6 +29,7 @@ export interface BeanPickerViewModel {
   prefillBeans: Bean[];
   draftBatchBeanId?: string | null;
   editingBeanDetailsId?: string | null;
+  editingBatchId?: string | null;
   formNumbers?: Record<string, string>;
   secondTapHint: { kind: 'shot' | 'bean'; id: string } | null;
 }
@@ -90,7 +91,7 @@ function renderBeanPickerRow(
 ): string {
   const armed = options.focused && !options.current;
   const hint = armed ? '' : renderSecondTapHint('bean', bean.id, options.secondTapHint);
-  const status = options.current ? 'Current' : armed ? 'Tap again' : 'View';
+  const status = options.current ? 'Current' : armed ? 'Tap again' : '';
   const origin = bean.country ? `<small>${escapeHtml(bean.country)}</small>` : '';
   return `
     <button class="bean-row ${options.focused ? 'active' : ''} ${armed || hint ? 'has-second-tap-hint' : ''}" data-action="inspect-bean" data-id="${escapeAttr(bean.id)}">
@@ -99,7 +100,7 @@ function renderBeanPickerRow(
         <b>${escapeHtml(bean.roaster)}</b>
         <strong>${escapeHtml(bean.name)}</strong>
       </span>
-      <em class="bean-row-action ${options.current ? 'current' : armed ? 'armed' : ''}">${escapeHtml(status)}</em>
+      ${status ? `<em class="bean-row-action ${options.current ? 'current' : armed ? 'armed' : ''}">${escapeHtml(status)}</em>` : ''}
       ${hint}
     </button>
   `;
@@ -144,7 +145,9 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
           ${
             batches.length === 0
               ? '<p class="empty-history">No bags on hand.</p>'
-              : visibleBatches.map((batch) => renderBeanPickerBatchForm(bean, batch, batch.id === currentBatchId)).join('')
+              : visibleBatches.map((batch) =>
+                  renderBeanPickerBatchForm(bean, batch, batch.id === currentBatchId, model.editingBatchId === batch.id)
+                ).join('')
           }
         </div>
       </div>
@@ -229,7 +232,7 @@ function renderBeanPickerFirstStock(formNumbers: Record<string, string>): string
   `;
 }
 
-function renderBeanPickerBatchForm(bean: Bean, batch: BeanBatch, active: boolean): string {
+function renderBeanPickerBatchForm(bean: Bean, batch: BeanBatch, active: boolean, editing: boolean): string {
   const freshness = stockFreshnessDetail(batch);
   const location = stockLocationLabel(batch);
   const locationDetail = stockLocationDetail(batch);
@@ -257,21 +260,32 @@ function renderBeanPickerBatchForm(bean: Bean, batch: BeanBatch, active: boolean
   `;
   return `
     <form
-      class="bean-picker-batch stock-card ${active ? 'current' : ''}"
+      class="bean-picker-batch stock-card ${active ? 'current' : ''} ${editing ? 'editing' : ''}"
       data-form="bean-picker-batch"
       data-bean-id="${escapeAttr(bean.id)}"
       data-batch-id="${escapeAttr(batch.id)}"
     >
       <div class="bean-picker-batch-title">
         <strong>${escapeHtml(stockOptionLabel(batch))}</strong>
-        <small>${escapeHtml([active ? 'Using now' : null, freshness, batch.roastLevel ?? null].filter(Boolean).join(' · ') || 'Bag')}</small>
+        <small>${escapeHtml([freshness, batch.roastLevel ?? null, `${inputValue(batch.weightRemaining ?? batch.weight ?? '') || '--'}g left`].filter(Boolean).join(' · ') || 'Bag')}</small>
       </div>
-      <label>Roast date<input data-action="bean-picker-batch-field" type="date" name="roastDate" value="${escapeAttr(dateInputValue(batch.roastDate))}" /></label>
-      <label>Roast<input data-action="bean-picker-batch-field" name="roastLevel" autocomplete="off" value="${escapeAttr(inputValue(batch.roastLevel))}" /></label>
-      ${batchNumber('weight', 'Bag', batch.weight)}
-      ${batchNumber('weightRemaining', 'Left', batch.weightRemaining)}
-      <button type="button" class="bean-picker-storage stock-location-chip" data-action="open-batch-storage" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}" title="Stock location">${icon(locationIcon)}<span>${escapeHtml(location)}</span><small>${escapeHtml(locationDetail)}</small></button>
-      <button type="button" class="icon-button danger-icon bean-picker-batch-delete" data-action="delete-batch" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}" aria-label="Delete batch" title="Delete batch">${icon('trash-2')}</button>
+      <div class="bean-picker-batch-chips">
+        <button type="button" class="bean-picker-storage stock-location-chip" data-action="open-batch-storage" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}" title="Move stock">${icon(locationIcon)}<span>${escapeHtml(location)}</span><small>${escapeHtml(locationDetail)}</small></button>
+      </div>
+      <div class="bean-picker-batch-actions">
+        <button type="button" class="icon-button" data-action="toggle-batch-details" data-id="${escapeAttr(batch.id)}" aria-label="Edit bag" title="Edit bag">${icon('pencil')}</button>
+        <button type="button" class="icon-button danger-icon bean-picker-batch-delete" data-action="delete-batch" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}" aria-label="Delete bag" title="Delete bag">${icon('trash-2')}</button>
+      </div>
+      ${
+        editing
+          ? `<div class="bean-picker-batch-fields">
+              <label>Roast date<input data-action="bean-picker-batch-field" type="date" name="roastDate" value="${escapeAttr(dateInputValue(batch.roastDate))}" /></label>
+              <label>Roast<input data-action="bean-picker-batch-field" name="roastLevel" autocomplete="off" value="${escapeAttr(inputValue(batch.roastLevel))}" /></label>
+              ${batchNumber('weight', 'Bag', batch.weight)}
+              ${batchNumber('weightRemaining', 'Left', batch.weightRemaining)}
+            </div>`
+          : ''
+      }
     </form>
   `;
 }
@@ -291,10 +305,12 @@ function renderBeanPickerBatchDraft(
         <strong>Add bag</strong>
         <small>${escapeHtml(beanLabel(bean))}</small>
       </div>
-      <label>Roast date<input data-action="bean-picker-batch-field-draft" type="date" name="roastDate" value="${escapeAttr(todayDateInputValue())}" /></label>
-      <label>Roast<input data-action="bean-picker-batch-field-draft" name="roastLevel" autocomplete="off" value="${escapeAttr(inputValue(latest?.roastLevel))}" /></label>
-      ${draftNumber(weightKey, 'weight', 'Bag', weightValue)}
-      ${draftNumber(remainingKey, 'weightRemaining', 'Left', remainingValue)}
+      <div class="bean-picker-batch-fields">
+        <label>Roast date<input data-action="bean-picker-batch-field-draft" type="date" name="roastDate" value="${escapeAttr(todayDateInputValue())}" /></label>
+        <label>Roast<input data-action="bean-picker-batch-field-draft" name="roastLevel" autocomplete="off" value="${escapeAttr(inputValue(latest?.roastLevel))}" /></label>
+        ${draftNumber(weightKey, 'weight', 'Bag', weightValue)}
+        ${draftNumber(remainingKey, 'weightRemaining', 'Left', remainingValue)}
+      </div>
       <div class="stock-draft-actions">
         <button type="button" class="secondary-button compact" data-action="cancel-batch-draft"><span>Cancel</span></button>
         <button type="submit" class="primary-button compact">${icon('check')}<span>Add bag</span></button>
@@ -346,6 +362,7 @@ export function renderBatchStorageModal(
   const portionDisplayValue = portionValue || portionPlaceholder;
   const portionAmount = Number.parseFloat(portionDisplayValue);
   const splitPreview = Number.isFinite(portionAmount) ? splitStockPreview(batch, portionAmount) : null;
+  const freshnessChips = renderBatchFreshnessChips(freshnessDetail);
   const nextEvent = state === 'frozen'
     ? {
         type: 'thawed' as const,
@@ -373,28 +390,27 @@ export function renderBatchStorageModal(
         </div>
         <div class="batch-storage-body">
           <div class="batch-storage-summary">
-            <span class="batch-storage-label">Current stock</span>
-            <strong>${escapeHtml(beanLabel(bean))}</strong>
-            <span>${escapeHtml([location, status].filter(Boolean).join(' · '))}</span>
-          </div>
-          ${renderBatchFreshnessPanel(freshnessDetail)}
-          <div class="batch-storage-card batch-storage-next">
             <div>
-              <span class="batch-storage-label">Location action</span>
-              <strong>${escapeHtml(nextEvent.title)}</strong>
-              <p>${escapeHtml(nextEvent.detail)}</p>
+              <span class="batch-storage-label">Current stock</span>
+              <strong>${escapeHtml(beanLabel(bean))}</strong>
+              <span>${escapeHtml([stockOptionLabel(batch), location, status].filter(Boolean).join(' · '))}</span>
             </div>
+            ${freshnessChips}
+          </div>
+          <div class="batch-storage-card batch-storage-next">
+            <span class="batch-storage-label">Move stock</span>
+            <strong>${escapeHtml(nextEvent.title)}</strong>
+            <p>${escapeHtml(nextEvent.detail)}</p>
             <button type="button" class="primary-button" data-action="batch-storage-event" data-type="${nextEvent.type}">${icon(nextEvent.icon)}<span>${escapeHtml(nextEvent.button)}</span></button>
           </div>
           ${
             state === 'frozen'
               ? ''
               : `<form class="batch-storage-card batch-freeze-portion" data-form="batch-freeze-portion" data-form-key="${escapeAttr(portionFormKey)}" ${splitPreviewArmed ? 'data-confirm="true"' : ''}>
-                  <div>
+                  <div class="batch-storage-copy">
                     <span class="batch-storage-label">Split stock</span>
                     <strong>Move part to freezer</strong>
-                    <p>Choose grams first. Beanie will preview the shelf and freezer stock before saving.</p>
-                    ${splitPreviewArmed && splitPreview ? renderSplitPreview(splitPreview.shelfRemaining, splitPreview.frozenAmount) : ''}
+                    <p>Leave some on the shelf and freeze the rest.</p>
                   </div>
                   <label>Grams to move
                     <input type="hidden" name="amount" value="${escapeAttr(portionValue || portionPlaceholder)}" />
@@ -414,11 +430,14 @@ export function renderBatchStorageModal(
                     >${escapeHtml(portionDisplayValue)}<em>g</em></button>
                   </label>
                   <button type="submit" class="secondary-button compact">${icon('snowflake')}<span>${escapeHtml(splitPreviewArmed && splitPreview ? `Move ${inputValue(splitPreview.frozenAmount)}g to freezer` : 'Preview split')}</span></button>
+                  ${splitPreviewArmed && splitPreview ? renderSplitPreview(splitPreview.shelfRemaining, splitPreview.frozenAmount) : ''}
                 </form>`
           }
-          ${renderStorageTimeline(batch)}
-          ${renderBatchStorageDateControl(latest, state)}
-          <p class="bean-picker-hint">Shots save the freshness at pull time, so later storage edits do not rewrite history.</p>
+          <details class="batch-storage-more">
+            <summary>Dates and history</summary>
+            ${renderStorageTimeline(batch)}
+            ${renderBatchStorageDateControl(latest, state)}
+          </details>
         </div>
       </section>
     </div>
@@ -504,14 +523,9 @@ function renderStorageTimeline(batch: BeanBatch): string {
   `;
 }
 
-function renderBatchFreshnessPanel(freshness: ReturnType<typeof computeBeanFreshness>): string {
+function renderBatchFreshnessChips(freshness: ReturnType<typeof computeBeanFreshness>): string {
   if (!freshness) {
-    return `
-      <div class="batch-freshness-panel muted">
-        <strong>Freshness</strong>
-        <span>Add a roast date to track roast and active days.</span>
-      </div>
-    `;
+    return '<div class="batch-freshness-panel muted"><span>Add roast date for freshness</span></div>';
   }
   return `
     <div class="batch-freshness-panel">
