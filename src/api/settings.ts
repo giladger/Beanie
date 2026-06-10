@@ -246,7 +246,9 @@ export function readDisplayState(value: unknown): DisplayState {
 
 export function readDecentAccountStatus(value: unknown): DecentAccountStatus {
   const r = rec(value);
-  const email = strOrNull(r.email);
+  const raw = strOrNull(r.email);
+  // An empty/whitespace email is "no email" — it must not imply logged in.
+  const email = raw != null && raw.trim() !== '' ? raw : null;
   return {
     loggedIn: r.loggedIn === true || r.isLoggedIn === true || email != null,
     email

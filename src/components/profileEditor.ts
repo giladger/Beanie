@@ -79,6 +79,30 @@ const TOP_LEVEL_PROFILE_KEYS = new Set([
   'steps'
 ]);
 
+type NumericStepField = Extract<
+  StepFieldKey,
+  'temperature' | 'pressure' | 'flow' | 'seconds' | 'volume' | 'weight' | 'limiter_value' | 'limiter_range'
+>;
+
+/**
+ * Min/max bounds shared by the edit dialog (data-min/data-max) and the −/+
+ * nudge buttons, so repeated nudges can't escape the range the dialog
+ * enforces. Sourced from FIELD_SPECS where the dialog already matches it; the
+ * rest mirror the bounds the advanced step detail has always rendered (which
+ * deliberately differ from FIELD_SPECS in places, e.g. goal pressure shows a
+ * 0–12 dial on screen).
+ */
+const STEP_FIELD_LIMITS: Record<NumericStepField, { min: number; max: number }> = {
+  temperature: { min: 1, max: FIELD_SPECS.stepTemperature.max },
+  pressure: { min: 0, max: 12 },
+  flow: { min: 0, max: 12 },
+  seconds: { min: FIELD_SPECS.stepSeconds.min, max: FIELD_SPECS.stepSeconds.max },
+  volume: { min: 0, max: 1023 },
+  weight: { min: 0, max: 1000 },
+  limiter_value: { min: 0, max: 12 },
+  limiter_range: { min: FIELD_SPECS.limiterRange.min, max: FIELD_SPECS.limiterRange.max }
+};
+
 const KNOWN_STEP_KEYS = new Set([
   'name',
   'temperature',
@@ -264,7 +288,8 @@ export function nudgeStepField(
                     ? (step.limiter?.range ?? 0.6)
                     : null;
   if (current == null) return state;
-  return setStepField(state, index, key, String(clampNumber(current + delta)));
+  const { min, max } = STEP_FIELD_LIMITS[key as NumericStepField];
+  return setStepField(state, index, key, String(clampNumber(current + delta, min, max)));
 }
 
 export type SimpleProfileField =
@@ -332,9 +357,37 @@ export function nudgeSimpleProfileField(
   key: SimpleProfileField,
   delta: number
 ): ProfileEditorState {
-  const current =
-    key === 'stop_volume' ? (state.targetVolume ?? 0) : simpleKnobsOf(state).knobs[SIMPLE_FIELD_TO_KNOB[key]];
-  return setSimpleProfileField(state, key, String(clampNumber(current + delta)));
+  const { type, knobs } = simpleKnobsOf(state);
+  const current = key === 'stop_volume' ? (state.targetVolume ?? 0) : knobs[SIMPLE_FIELD_TO_KNOB[key]];
+  const { min, max } = simpleFieldLimits(key, type);
+  return setSimpleProfileField(state, key, String(clampNumber(current + delta, min, max)));
+}
+
+/**
+ * Dialog/nudge bounds for the simple (basic) editor, by profile kind: the
+ * main target and the limit swap their pressure/flow scales when the kind
+ * flips. Shared by renderSimpleControl (data-min/data-max) and the nudges.
+ */
+function simpleFieldLimits(key: SimpleProfileField, type: SimpleType): { min: number; max: number } {
+  switch (key) {
+    case 'temperature':
+      return { min: 1, max: 105 };
+    case 'pre_time':
+    case 'main_time':
+    case 'decline_time':
+      return { min: 0, max: 60 };
+    case 'pre_flow':
+      return { min: 0, max: 8 };
+    case 'pre_pressure':
+      return { min: 0, max: 12 };
+    case 'main_target':
+    case 'decline_target':
+      return { min: 0, max: type === 'flow' ? 8 : 12 };
+    case 'limit':
+      return { min: 0, max: type === 'flow' ? 12 : 8 };
+    case 'stop_volume':
+      return { min: 0, max: 100 };
+  }
 }
 
 /** Switch the editor surface. Basic is refused unless the steps pass the guard. */
@@ -529,12 +582,10 @@ function renderSimpleProfileEditor(state: ProfileEditorState): string {
   const { type, knobs } = simpleKnobsOf(state);
   const isFlow = type === 'flow';
   const mainUnit = isFlow ? 'ml/s' : 'bar';
-  const mainMax = isFlow ? 8 : 12;
   const mainLabel = isFlow ? 'flow' : 'pressure';
   const mainIcon = isFlow ? 'droplets' : 'gauge';
   const mainTone = isFlow ? 'blue' : 'purple';
   const limitUnit = isFlow ? 'bar' : 'ml/s';
-  const limitMax = isFlow ? 12 : 8;
   const limitLabel = isFlow ? 'pressure limit' : 'flow limit';
   const stopVolume = state.targetVolume ?? 0;
   return `
@@ -546,31 +597,31 @@ function renderSimpleProfileEditor(state: ProfileEditorState): string {
       <div class="pe-ctl-group">
         <span class="pe-ctl-group-title">1 · Preinfuse</span>
         <div class="pe-ctl-grid">
-          ${renderSimpleControl('pre_time', 'time', knobs.preTime, 's', 0, 60, 1, 'timer', 'stage')}
-          ${renderSimpleControl('pre_flow', 'flow', knobs.preFlow, 'ml/s', 0, 8, 0.1, 'droplets', 'blue')}
-          ${renderSimpleControl('pre_pressure', isFlow ? 'stop at pressure' : 'until pressure', knobs.prePressure, 'bar', 0, 12, 0.1, 'gauge', 'purple')}
+          ${renderSimpleControl(type, 'pre_time', 'time', knobs.preTime, 's', 1, 'timer', 'stage')}
+          ${renderSimpleControl(type, 'pre_flow', 'flow', knobs.preFlow, 'ml/s', 0.1, 'droplets', 'blue')}
+          ${renderSimpleControl(type, 'pre_pressure', isFlow ? 'stop at pressure' : 'until pressure', knobs.prePressure, 'bar', 0.1, 'gauge', 'purple')}
         </div>
       </div>
       <div class="pe-ctl-group">
         <span class="pe-ctl-group-title">2 · ${isFlow ? 'Hold' : 'Rise &amp; hold'}</span>
         <div class="pe-ctl-grid">
-          ${renderSimpleControl('main_time', 'time', knobs.mainTime, 's', 0, 60, 1, 'timer', 'stage')}
-          ${renderSimpleControl('main_target', mainLabel, knobs.mainTarget, mainUnit, 0, mainMax, 0.1, mainIcon, mainTone)}
-          ${renderSimpleControl('limit', limitLabel, knobs.limit, limitUnit, 0, limitMax, 0.1, 'sliders-horizontal', 'amber', true)}
+          ${renderSimpleControl(type, 'main_time', 'time', knobs.mainTime, 's', 1, 'timer', 'stage')}
+          ${renderSimpleControl(type, 'main_target', mainLabel, knobs.mainTarget, mainUnit, 0.1, mainIcon, mainTone)}
+          ${renderSimpleControl(type, 'limit', limitLabel, knobs.limit, limitUnit, 0.1, 'sliders-horizontal', 'amber', true)}
         </div>
       </div>
       <div class="pe-ctl-group">
         <span class="pe-ctl-group-title">3 · Decline</span>
         <div class="pe-ctl-grid">
-          ${renderSimpleControl('decline_time', 'time', knobs.declineTime, 's', 0, 60, 1, 'timer', 'stage')}
-          ${renderSimpleControl('decline_target', `${mainLabel} end`, knobs.declineTarget, mainUnit, 0, mainMax, 0.1, mainIcon, mainTone)}
+          ${renderSimpleControl(type, 'decline_time', 'time', knobs.declineTime, 's', 1, 'timer', 'stage')}
+          ${renderSimpleControl(type, 'decline_target', `${mainLabel} end`, knobs.declineTarget, mainUnit, 0.1, mainIcon, mainTone)}
         </div>
       </div>
       <div class="pe-ctl-group">
         <span class="pe-ctl-group-title">4 · Finish</span>
         <div class="pe-ctl-grid">
-          ${renderSimpleControl('stop_volume', 'stop at volume', stopVolume, 'ml', 0, 100, 1, 'beaker', 'blue', true)}
-          ${renderSimpleControl('temperature', 'temperature', knobs.temperature, '°C', 1, 105, 0.5, 'thermometer', 'red')}
+          ${renderSimpleControl(type, 'stop_volume', 'stop at volume', stopVolume, 'ml', 1, 'beaker', 'blue', true)}
+          ${renderSimpleControl(type, 'temperature', 'temperature', knobs.temperature, '°C', 0.5, 'thermometer', 'red')}
         </div>
       </div>
       </div>
@@ -581,17 +632,17 @@ function renderSimpleProfileEditor(state: ProfileEditorState): string {
 // A simple-editor control card — the same .pe-ctl card the advanced editor uses,
 // wired to the scalar pe-simple-field / pe-simple-nudge actions (no per-step index).
 function renderSimpleControl(
+  type: SimpleType,
   key: SimpleProfileField,
   label: string,
   value: number,
   unit: string,
-  min: number,
-  max: number,
   step: number,
   iconName: string,
   tone: string,
   offWhenZero = false
 ): string {
+  const { min, max } = simpleFieldLimits(key, type);
   const formatted = formatNumber(value);
   const display = offWhenZero && value <= 0
     ? '<span class="pe-ctl-off">off</span>'
@@ -728,12 +779,12 @@ function renderStepDetail(state: ProfileEditorState): string {
       <div class="pe-ctl-group">
         <span class="pe-ctl-group-title">Targets</span>
         <div class="pe-ctl-grid">
-          ${renderVerticalControl(index, 'temperature', 'temperature', step.temperature, '°C', 1, 105, 0.5, 'thermometer', 'red')}
+          ${renderVerticalControl(index, 'temperature', 'temperature', step.temperature, '°C', 0.5, 'thermometer', 'red')}
           ${renderToggleTile(index, 'sensor', 'sensor', step.sensor, step.sensor === 'water' ? 'droplets' : 'coffee')}
-          ${renderGoalControl(index, 'flow', isFlow ? 'flow' : 'flow limit', isFlow ? step.flow : (step.limiter?.value ?? 0), 'ml/s', 0, 12, isFlow)}
-          ${renderGoalControl(index, 'pressure', isFlow ? 'pressure limit' : 'pressure', isFlow ? (step.limiter?.value ?? 0) : step.pressure, 'bar', 0, 12, !isFlow)}
+          ${renderGoalControl(index, 'flow', isFlow ? 'flow' : 'flow limit', isFlow ? step.flow : (step.limiter?.value ?? 0), 'ml/s', isFlow)}
+          ${renderGoalControl(index, 'pressure', isFlow ? 'pressure limit' : 'pressure', isFlow ? (step.limiter?.value ?? 0) : step.pressure, 'bar', !isFlow)}
           ${step.limiter && step.limiter.value > 0
-            ? renderVerticalControl(index, 'limiter_range', 'limit range', step.limiter.range, '', FIELD_SPECS.limiterRange.min, FIELD_SPECS.limiterRange.max, FIELD_SPECS.limiterRange.step, 'sliders-horizontal', 'stage')
+            ? renderVerticalControl(index, 'limiter_range', 'limit range', step.limiter.range, '', FIELD_SPECS.limiterRange.step, 'sliders-horizontal', 'stage')
             : ''}
           ${renderToggleTile(index, 'transition', 'transition', step.transition, step.transition === 'smooth' ? 'waves' : 'move-right')}
         </div>
@@ -741,9 +792,9 @@ function renderStepDetail(state: ProfileEditorState): string {
       <div class="pe-ctl-group">
         <span class="pe-ctl-group-title">Stop after</span>
         <div class="pe-ctl-grid">
-          ${renderVerticalControl(index, 'seconds', 'time', step.seconds, 's', 0, 127, 1, 'timer', 'stage')}
-          ${renderVerticalControl(index, 'volume', 'volume', step.volume, 'ml', 0, 1023, 1, 'beaker', 'blue')}
-          ${renderVerticalControl(index, 'weight', 'weight', step.weight, 'g', 0, 1000, 0.1, 'scale', 'amber')}
+          ${renderVerticalControl(index, 'seconds', 'time', step.seconds, 's', 1, 'timer', 'stage')}
+          ${renderVerticalControl(index, 'volume', 'volume', step.volume, 'ml', 1, 'beaker', 'blue')}
+          ${renderVerticalControl(index, 'weight', 'weight', step.weight, 'g', 0.1, 'scale', 'amber')}
         </div>
       </div>
       <div class="pe-ctl-group">
@@ -765,12 +816,10 @@ function renderGoalControl(
   label: string,
   value: number,
   unit: string,
-  min: number,
-  max: number,
   active: boolean
 ): string {
-  const field: StepFieldKey = active ? pumpKey : 'limiter_value';
-  return renderVerticalControl(index, field, label, value, unit, min, max, 0.1, pumpKey === 'flow' ? 'droplets' : 'gauge', pumpKey === 'flow' ? 'blue' : 'purple', {
+  const field: NumericStepField = active ? pumpKey : 'limiter_value';
+  return renderVerticalControl(index, field, label, value, unit, 0.1, pumpKey === 'flow' ? 'droplets' : 'gauge', pumpKey === 'flow' ? 'blue' : 'purple', {
     action: 'pe-step-pump',
     value: pumpKey,
     active
@@ -779,17 +828,16 @@ function renderGoalControl(
 
 function renderVerticalControl(
   index: number,
-  key: StepFieldKey,
+  key: NumericStepField,
   label: string,
   value: number,
   unit: string,
-  min: number,
-  max: number,
   step: number,
   iconName: string,
   tone: string,
   centerAction?: { action: string; value: string; active?: boolean }
 ): string {
+  const { min, max } = STEP_FIELD_LIMITS[key];
   const formatted = formatNumber(value);
   const faceAttrs = centerAction
     ? `data-action="${centerAction.action}" data-index="${index}" data-value="${escapeAttr(centerAction.value)}"`
@@ -1168,8 +1216,8 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function clampNumber(value: number): number {
-  return Math.max(0, Number(value.toFixed(2)));
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, Number(value.toFixed(2))));
 }
 
 function clamp01(value: number): number {

@@ -3,9 +3,11 @@ import {
   buildGeminiRequest,
   coerceEnrichment,
   coerceLabelScan,
+  enrichLabel,
   extractJsonObject,
   GeminiError,
-  parseGeminiResponse
+  parseGeminiResponse,
+  scanLabel
 } from '../api/gemini';
 
 run('builds a generateContent body with image parts before the text prompt', () => {
@@ -85,6 +87,56 @@ run('coerces enrichment JSON, defaulting junk to null', () => {
   equal(enrichment.notes, null);
 });
 
+await runAsync('scanLabel re-throws an abort instead of mapping it to a network GeminiError', async () => {
+  const error = await withAbortingFetch((signal) =>
+    scanLabel([{ mime: 'image/jpeg', base64: 'AAA' }], 'key', { signal })
+  );
+  equal(error instanceof GeminiError, false);
+  equal(error instanceof Error && error.name, 'AbortError');
+});
+
+await runAsync('enrichLabel re-throws an abort instead of mapping it to a network GeminiError', async () => {
+  const error = await withAbortingFetch((signal) =>
+    enrichLabel({ roaster: 'Onyx', name: 'Geometry' }, 'key', { signal })
+  );
+  equal(error instanceof GeminiError, false);
+  equal(error instanceof Error && error.name, 'AbortError');
+});
+
+await runAsync('scanLabel still maps plain network failures to a GeminiError', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (() => Promise.reject(new TypeError('Failed to fetch'))) as typeof fetch;
+  try {
+    await scanLabel([{ mime: 'image/jpeg', base64: 'AAA' }], 'key');
+    throw new Error('Expected scanLabel to reject');
+  } catch (error) {
+    if (!(error instanceof GeminiError)) throw new Error(`Expected GeminiError, got ${String(error)}`);
+    equal(error.message.includes('Could not reach Gemini'), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+/** Run `fn` against a fetch fake that aborts the signal and rejects like the browser would. */
+async function withAbortingFetch(fn: (signal: AbortSignal) => Promise<unknown>): Promise<unknown> {
+  const controller = new AbortController();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (() => {
+    controller.abort();
+    const abortError = new Error('The operation was aborted.');
+    abortError.name = 'AbortError';
+    return Promise.reject(abortError);
+  }) as typeof fetch;
+  try {
+    await fn(controller.signal);
+    throw new Error('Expected the request to reject');
+  } catch (error) {
+    return error;
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
 function okResponse(text: string): unknown {
   return { candidates: [{ content: { parts: [{ text }] } }] };
 }
@@ -105,6 +157,16 @@ function throwsMessage(fn: () => unknown, includes: string): void {
 function run(name: string, fn: () => void): void {
   try {
     fn();
+    console.log(`ok - ${name}`);
+  } catch (error) {
+    console.error(`not ok - ${name}`);
+    throw error;
+  }
+}
+
+async function runAsync(name: string, fn: () => Promise<void>): Promise<void> {
+  try {
+    await fn();
     console.log(`ok - ${name}`);
   } catch (error) {
     console.error(`not ok - ${name}`);

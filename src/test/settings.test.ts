@@ -56,6 +56,16 @@ run('readDecentAccountStatus accepts logged-in and email shapes', () => {
   equal(readDecentAccountStatus({}).loggedIn, false);
 });
 
+run('readDecentAccountStatus treats an empty/whitespace email as logged out', () => {
+  equal(readDecentAccountStatus({ loggedIn: false, email: '' }).loggedIn, false);
+  equal(readDecentAccountStatus({ loggedIn: false, email: '' }).email, null);
+  equal(readDecentAccountStatus({ email: '   ' }).loggedIn, false);
+  equal(readDecentAccountStatus({ email: '   ' }).email, null);
+  // an explicit logged-in flag still wins, but the blank email stays null
+  equal(readDecentAccountStatus({ loggedIn: true, email: '' }).loggedIn, true);
+  equal(readDecentAccountStatus({ loggedIn: true, email: '' }).email, null);
+});
+
 run('de1MachineSettingsPatchBody converts usb boolean to enable/disable', () => {
   equal((de1MachineSettingsPatchBody({ usb: true }).usb as string), 'enable');
   equal((de1MachineSettingsPatchBody({ usb: false }).usb as string), 'disable');

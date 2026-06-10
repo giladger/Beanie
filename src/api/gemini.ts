@@ -128,7 +128,8 @@ export async function scanLabel(
       body: JSON.stringify(body),
       signal: options.signal
     });
-  } catch {
+  } catch (error) {
+    if (isAbort(error, options.signal)) throw error;
     throw new GeminiError('Could not reach Gemini — check your connection');
   }
 
@@ -138,6 +139,11 @@ export async function scanLabel(
     throw new GeminiError(message, response.status);
   }
   return parseGeminiResponse(payload);
+}
+
+/** A caller-initiated abort is not a network failure — let it propagate as-is. */
+function isAbort(error: unknown, signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true || (error instanceof Error && error.name === 'AbortError');
 }
 
 /** Validate a key cheaply by listing models. Returns a tone-able result; never throws. */
@@ -217,7 +223,8 @@ export async function enrichLabel(
       body: JSON.stringify(body),
       signal: options.signal
     });
-  } catch {
+  } catch (error) {
+    if (isAbort(error, options.signal)) throw error;
     throw new GeminiError('Could not reach Gemini — check your connection');
   }
 

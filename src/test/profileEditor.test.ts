@@ -4,6 +4,8 @@ import {
   createProfileEditorState,
   duplicateStep,
   moveStep,
+  nudgeSimpleProfileField,
+  nudgeStepField,
   profileFromEditorState,
   removeStep,
   renderEditorModeBar,
@@ -15,7 +17,7 @@ import {
   setStepPump
 } from '../components/profileEditor';
 import { PROFILE_BEVERAGE_TYPES } from '../domain/profileModel';
-import { canEditAsBasic } from '../domain/simpleProfile';
+import { canEditAsBasic, parseStepsToSimple } from '../domain/simpleProfile';
 
 run('reads de1app Tcl-derived metadata, steps, and flat exit conditions', () => {
   const state = createProfileEditorState(tclDerivedProfile());
@@ -103,6 +105,58 @@ run('setStepField coerces numeric fields', () => {
 
   const cleared = setStepField(state, 0, 'pressure', '');
   equal(cleared.steps[0].pressure, 0);
+});
+
+run('nudgeStepField clamps to the same min/max the edit dialog enforces', () => {
+  const state = createProfileEditorState(null);
+
+  // pressure tops out at the dialog max (12 bar) no matter how often + is tapped
+  let pressured = setStepField(state, 0, 'pressure', '11.9');
+  pressured = nudgeStepField(pressured, 0, 'pressure', 0.1);
+  equal(pressured.steps[0].pressure, 12);
+  pressured = nudgeStepField(pressured, 0, 'pressure', 0.1);
+  equal(pressured.steps[0].pressure, 12);
+
+  // seconds cap at 127 — the DE1 step encoding can't represent more
+  let timed = setStepField(state, 0, 'seconds', '126.5');
+  timed = nudgeStepField(timed, 0, 'seconds', 1);
+  equal(timed.steps[0].seconds, 127);
+  timed = nudgeStepField(timed, 0, 'seconds', 1);
+  equal(timed.steps[0].seconds, 127);
+
+  // temperature stops at the dialog min (1 °C), not the old unconditional 0 floor
+  let cooled = setStepField(state, 0, 'temperature', '1.4');
+  cooled = nudgeStepField(cooled, 0, 'temperature', -0.5);
+  equal(cooled.steps[0].temperature, 1);
+  cooled = nudgeStepField(cooled, 0, 'temperature', -0.5);
+  equal(cooled.steps[0].temperature, 1);
+});
+
+run('nudgeStepField keeps the limiter range at its non-zero floor', () => {
+  let state = createProfileEditorState(sampleProfile()); // step 0 has limiter range 0.6
+  for (let i = 0; i < 12; i += 1) state = nudgeStepField(state, 0, 'limiter_range', -0.1);
+  equal(state.steps[0].limiter?.range, 0.1);
+});
+
+run('nudgeSimpleProfileField clamps to the basic dialog ranges', () => {
+  const state = createProfileEditorState(pressureProfile());
+
+  // pressure target tops out at 12 bar
+  let up = setSimpleProfileField(state, 'main_target', '12');
+  up = nudgeSimpleProfileField(up, 'main_target', 0.1);
+  equal(parseStepsToSimple(up.steps)?.knobs.mainTarget, 12);
+
+  // temperature stops at 1 °C, not 0
+  let cooled = setSimpleProfileField(state, 'temperature', '1');
+  cooled = nudgeSimpleProfileField(cooled, 'temperature', -0.5);
+  equal(parseStepsToSimple(cooled.steps)?.knobs.temperature, 1);
+
+  // stop_volume lives on targetVolume and is clamped to 100 ml
+  let vol = setSimpleProfileField(state, 'stop_volume', '99.5');
+  vol = nudgeSimpleProfileField(vol, 'stop_volume', 1);
+  equal(vol.targetVolume, 100);
+  vol = nudgeSimpleProfileField(vol, 'stop_volume', 1);
+  equal(vol.targetVolume, 100);
 });
 
 run('setStepPump switches the controlled target', () => {
