@@ -63,9 +63,12 @@ run('bean picker renders matched beans, current bean, focused inspector, and lat
   notIncludes(html, '<span>Save</span>');
   notIncludes(html, 'Latest stock');
   includes(html, 'data-batch-id="batch-1"');
+  includes(html, 'data-action="select-batch"');
   includes(html, 'data-action="open-batch-storage"');
   includes(html, 'data-action="toggle-batch-details"');
+  includes(html, 'data-action="finish-batch"');
   includes(html, 'In freezer');
+  notIncludes(html, 'data-action="delete-batch"');
   notIncludes(html, 'data-action="bean-picker-batch-field"');
 });
 
@@ -101,6 +104,64 @@ run('bean picker shows every bag on hand after adding beyond two bags', () => {
   includes(html, 'data-batch-id="batch-1"');
   includes(html, 'data-batch-id="batch-older"');
   equals(countOccurrences(html, 'data-form="bean-picker-batch"'), 3);
+});
+
+run('bean picker hides nearly empty bags until show all is toggled', () => {
+  const finished: BeanBatch = {
+    id: 'batch-finished',
+    beanId: 'bean-1',
+    roastDate: '2026-06-10',
+    weight: 250,
+    weightRemaining: 3
+  };
+  const hiddenHtml = renderBeanPickerModal(
+    model({
+      batchesByBean: {
+        'bean-1': [finished, ...batches]
+      }
+    })
+  );
+
+  includes(hiddenHtml, '2 active bags');
+  includes(hiddenHtml, 'Show all');
+  notIncludes(hiddenHtml, 'data-batch-id="batch-finished"');
+
+  const shownHtml = renderBeanPickerModal(
+    model({
+      showAllBags: true,
+      batchesByBean: {
+        'bean-1': [finished, ...batches]
+      }
+    })
+  );
+
+  includes(shownHtml, '3 bags');
+  includes(shownHtml, 'Hide finished');
+  includes(shownHtml, 'data-batch-id="batch-finished"');
+  includes(shownHtml, 'Finished');
+  includes(shownHtml, 'disabled');
+});
+
+run('bean picker keeps all nearly empty bags hidden by default', () => {
+  const finished: BeanBatch = {
+    id: 'batch-finished',
+    beanId: 'bean-1',
+    roastDate: '2026-06-10',
+    weight: 250,
+    weightRemaining: 0
+  };
+  const html = renderBeanPickerModal(
+    model({
+      batchesByBean: {
+        'bean-1': [finished]
+      }
+    })
+  );
+
+  includes(html, '0 active bags');
+  includes(html, 'Show all');
+  includes(html, 'No active bags.');
+  notIncludes(html, 'data-batch-id="batch-finished"');
 });
 
 run('bean picker edits one bag only after opening the bag details', () => {
@@ -208,6 +269,7 @@ function model(overrides: Partial<BeanPickerViewModel> = {}): BeanPickerViewMode
     focusedBean: beans[0]!,
     mode: 'inspect',
     selectedBeanId: 'bean-1',
+    selectedBatchId: 'batch-1',
     batchesByBean: {
       'bean-1': batches
     },

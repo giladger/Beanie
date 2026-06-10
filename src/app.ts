@@ -544,6 +544,7 @@ interface AppState {
   beanPickerDraftBatchBeanId: string | null;
   beanPickerEditingBeanId: string | null;
   beanPickerEditingBatchId: string | null;
+  beanPickerShowAllBags: boolean;
   batchStorageTarget: BatchStorageTarget | null;
   batchStorageSplitPreview: boolean;
   editingGrinderId: string | null;
@@ -657,6 +658,7 @@ export class BeanieApp {
     beanPickerDraftBatchBeanId: null,
     beanPickerEditingBeanId: null,
     beanPickerEditingBatchId: null,
+    beanPickerShowAllBags: false,
     batchStorageTarget: null,
     batchStorageSplitPreview: false,
     editingGrinderId: null,
@@ -1070,7 +1072,7 @@ export class BeanieApp {
 
   private async selectBean(
     beanId: string,
-    options: { apply: boolean; preferWorkflow: boolean }
+    options: { apply: boolean; preferWorkflow: boolean; preferredBatchId?: string | null }
   ): Promise<void> {
     const selection = this.beanWorkflow.beginBeanSelection(beanId, this.state.beans, { writeLastBeanId });
     if (!selection) return;
@@ -1133,7 +1135,8 @@ export class BeanieApp {
       beanPickerAutofocusSearch: options.autofocusSearch ?? false,
       beanPickerDraftBatchBeanId: null,
       beanPickerEditingBeanId: null,
-      beanPickerEditingBatchId: null
+      beanPickerEditingBatchId: null,
+      beanPickerShowAllBags: false
     });
     if (!options.create) void this.refreshBeans({ force: true, allowModal: true });
     if (id && !options.create) await this.ensureBatchesLoaded(id);
@@ -1146,6 +1149,7 @@ export class BeanieApp {
       beanPickerDraftBatchBeanId: null,
       beanPickerEditingBeanId: null,
       beanPickerEditingBatchId: null,
+      beanPickerShowAllBags: false,
       secondTapHint: this.nextSecondTapHint('bean', beanId)
     });
     await this.ensureBatchesLoaded(beanId);
@@ -3074,6 +3078,7 @@ export class BeanieApp {
             beanPickerDraftBatchBeanId: null,
             beanPickerEditingBeanId: null,
             beanPickerEditingBatchId: null,
+            beanPickerShowAllBags: false,
             status: 'Adding bean'
           });
         } else {
@@ -3104,6 +3109,12 @@ export class BeanieApp {
           });
         }
         return true;
+      case 'toggle-bean-picker-show-all':
+        this.setState({ beanPickerShowAllBags: !this.state.beanPickerShowAllBags });
+        return true;
+      case 'select-batch':
+        if (id && el.dataset.beanId) await this.selectBatchFromPicker(el.dataset.beanId, id);
+        return true;
       case 'open-add-batch':
         await this.openBeanPicker(this.state.selectedBeanId);
         this.startBatchDraftInPicker(this.state.selectedBeanId);
@@ -3129,8 +3140,8 @@ export class BeanieApp {
           await this.saveBatchStorageEvent(el.dataset.type);
         }
         return true;
-      case 'delete-batch':
-        if (id) await this.deleteBatchFromPicker(el.dataset.beanId ?? null, id);
+      case 'finish-batch':
+        if (id) await this.finishBatchFromPicker(el.dataset.beanId ?? null, id);
         return true;
       default:
         return false;
@@ -4538,6 +4549,16 @@ export class BeanieApp {
     });
   }
 
+  private async selectBatchFromPicker(beanId: string, batchId: string): Promise<void> {
+    await this.ensureBatchesLoaded(beanId);
+    const bean = this.state.beans.find((item) => item.id === beanId);
+    const batch = bean ? (this.state.batchesByBean[bean.id] ?? []).find((item) => item.id === batchId) : null;
+    if (!bean || !batch || isFinishedBatch(batch)) return;
+    this.completeSecondTapHint('bean');
+    this.setState({ modal: null, secondTapHint: null });
+    await this.selectBean(bean.id, { apply: true, preferWorkflow: false, preferredBatchId: batch.id });
+  }
+
   private cancelBatchDraft(): void {
     const beanId = this.state.beanPickerDraftBatchBeanId;
     if (!beanId) return;
@@ -4820,40 +4841,71 @@ export class BeanieApp {
     });
   }
 
-  private async deleteBatchFromPicker(beanId: string | null, batchId: string): Promise<void> {
+  private async finishBatchFromPicker(beanId: string | null, batchId: string): Promise<void> {
     if (!beanId) return;
     const bean = this.state.beans.find((item) => item.id === beanId);
     if (!bean) return;
     const current = this.state.batchesByBean[bean.id] ?? [];
     const batch = current.find((item) => item.id === batchId);
     if (!batch) return;
-    if (!window.confirm(`Delete ${batchOptionLabel(batch)}?`)) return;
+    if (isFinishedBatch(batch)) return;
 
-    const result = await this.beanWorkflow.deleteBatch({
+    const batchInput: Partial<BeanBatch> = {
+      beanId: bean.id,
+      roastDate: batch.roastDate ?? null,
+      roastLevel: batch.roastLevel ?? null,
+      weight: batch.weight ?? null,
+      weightRemaining: 0,
+      storageEvents: batch.storageEvents ?? null,
+      frozen: batch.frozen
+    };
+    const optimistic = this.beanWorkflow.beginBatchUpdate({
       bean,
       batchesByBean: this.state.batchesByBean,
       selectedBeanId: this.state.selectedBeanId,
-      selectedBatchId: this.state.selectedBatchId,
       batchId,
+      batchInput,
       demo: this.state.demo
+    });
+    if (optimistic.type !== 'optimistic') return;
+
+    const finishingSelected =
+      bean.id === this.state.selectedBeanId &&
+      (this.state.selectedBatchId === batchId || (!this.state.selectedBatchId && latestBatch(current.filter(isUsableBatch))?.id === batchId));
+    const nextSelectedBatchId = finishingSelected
+      ? latestBatch(optimistic.optimisticBatches.filter(isUsableBatch))?.id ?? null
+      : this.state.selectedBatchId;
+
+    this.setState({
+      batchesByBean: optimistic.batchesByBean,
+      selectedBatchId: nextSelectedBatchId,
+      beanPickerEditingBatchId: this.state.beanPickerEditingBatchId === batchId ? null : this.state.beanPickerEditingBatchId,
+      status: 'Bag finished'
+    });
+    if (finishingSelected) this.scheduleApply();
+    if (optimistic.complete) return;
+
+    const result = await this.beanWorkflow.finishBatchUpdate({
+      bean,
+      batchId,
+      batchInput,
+      latestBatchesByBean: this.state.batchesByBean,
+      previousBatches: optimistic.previousBatches
     }, {
-      deleteBatch: (id) => gateway.deleteBatch(id),
-      putBeanBatches: (beanId, batches) => beanieCache.putBeanBatches(beanId, batches)
+      updateBatch: (id, input) => gateway.updateBatch(id, input),
+      putBeanBatches: (ownerId, batches) => beanieCache.putBeanBatches(ownerId, batches)
     });
 
     if (result.type === 'failed') {
-      console.error('[Beanie] Delete batch failed', result.error);
-      this.setState({ status: result.status });
+      console.error('[Beanie] Finish batch failed', result.error);
+      this.setState({ batchesByBean: result.batchesByBean, status: result.status });
       return;
     }
-
     this.setState({
       batchesByBean: result.batchesByBean,
-      selectedBatchId: result.selectedBatchId,
-      beanPickerEditingBatchId: this.state.beanPickerEditingBatchId === batchId ? null : this.state.beanPickerEditingBatchId,
-      status: result.status
+      selectedBatchId: nextSelectedBatchId,
+      status: 'Bag finished'
     });
-    if (result.selectedCurrentBean) this.scheduleApply();
   }
 
   private async submitBeanPickerBatch(form: HTMLFormElement): Promise<void> {
@@ -5871,11 +5923,13 @@ export class BeanieApp {
       focusedBean: this.beanPickerFocusedBean(),
       mode: this.state.beanPickerMode,
       selectedBeanId: this.state.selectedBeanId,
+      selectedBatchId: this.state.selectedBatchId,
       batchesByBean: this.state.batchesByBean,
       prefillBeans: beans,
       draftBatchBeanId: this.state.beanPickerDraftBatchBeanId,
       editingBeanDetailsId: this.state.beanPickerEditingBeanId,
       editingBatchId: this.state.beanPickerEditingBatchId,
+      showAllBags: this.state.beanPickerShowAllBags,
       formNumbers: this.state.formNumbers,
       secondTapHint: this.state.secondTapHint
     });
@@ -6250,11 +6304,17 @@ export class BeanieApp {
     const bean = this.selectedBean();
     if (!bean) return null;
     const batches = this.state.batchesByBean[bean.id] ?? [];
-    return latestBatch(batches);
+    const selected = this.state.selectedBatchId
+      ? batches.find((batch) => batch.id === this.state.selectedBatchId) ?? null
+      : null;
+    if (selected && !isFinishedBatch(selected)) return selected;
+    return latestBatch(batches.filter(isUsableBatch)) ?? latestBatch(batches);
   }
 
   private heroStock(bean: Bean): { beanId: string; batchId: string; label: string; detail: string; icon: string } | null {
-    const batch = latestBatch(this.state.batchesByBean[bean.id] ?? []);
+    const batch = bean.id === this.state.selectedBeanId
+      ? this.selectedBatch()
+      : latestBatch((this.state.batchesByBean[bean.id] ?? []).filter(isUsableBatch)) ?? latestBatch(this.state.batchesByBean[bean.id] ?? []);
     if (!batch) return null;
     return {
       beanId: bean.id,
@@ -7279,6 +7339,14 @@ function batchFieldsFromForm(data: FormData, beanId: string, fallback?: BeanBatc
     storageEvents,
     frozen
   };
+}
+
+function isFinishedBatch(batch: BeanBatch): boolean {
+  return typeof batch.weightRemaining === 'number' && Number.isFinite(batch.weightRemaining) && batch.weightRemaining < 5;
+}
+
+function isUsableBatch(batch: BeanBatch): boolean {
+  return !isFinishedBatch(batch);
 }
 
 function inputValue(value: unknown): string {

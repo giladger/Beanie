@@ -36,7 +36,7 @@ export interface BeginBeanSelectionDeps {
 
 export interface CompleteBeanSelectionInput {
   selection: BeanSelectionStart;
-  options: { preferWorkflow: boolean };
+  options: { preferWorkflow: boolean; preferredBatchId?: string | null };
   beans: Bean[];
   workflow: Workflow | null;
   profiles: ProfileRecord[];
@@ -296,7 +296,10 @@ export class BeanWorkflowController {
     const batches = await input.loadBatches(bean);
     if (!input.isCurrent(selection)) return { type: 'stale' };
 
-    const selectedBatch = latestBatch(batches);
+    const preferredBatch = input.options.preferredBatchId
+      ? batches.find((batch) => batch.id === input.options.preferredBatchId) ?? null
+      : null;
+    const selectedBatch = preferredBatch ?? latestBatch(batches.filter(isUsableBatch)) ?? latestBatch(batches);
     const { records: shots, total: shotsTotal } = await input.loadFirstShots(bean, selectedBatch);
     if (!input.isCurrent(selection)) return { type: 'stale' };
 
@@ -545,6 +548,10 @@ export class BeanWorkflowController {
       return { type: 'failed', status: 'Save grinder failed', error };
     }
   }
+}
+
+function isUsableBatch(batch: BeanBatch): boolean {
+  return !(typeof batch.weightRemaining === 'number' && Number.isFinite(batch.weightRemaining) && batch.weightRemaining < 5);
 }
 
 export function beanUsageFromShots(

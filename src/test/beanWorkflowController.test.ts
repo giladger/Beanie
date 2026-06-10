@@ -81,6 +81,58 @@ await run('bean workflow controller completes selection with latest batch, shots
   equal(result.type === 'selected' ? result.status : null, '1 shots loaded');
 });
 
+await run('bean workflow controller can select a preferred batch', async () => {
+  const selectedBean = bean('bean-1');
+  const controller = new BeanWorkflowController();
+  const selection = required(controller.beginBeanSelection(selectedBean.id, [selectedBean]));
+  const older = batch('older', selectedBean.id, '2026-05-01', { weightRemaining: 100 });
+  const latest = batch('latest', selectedBean.id, '2026-06-01', { weightRemaining: 100 });
+
+  const result = await controller.completeBeanSelection({
+    selection,
+    options: { preferWorkflow: false, preferredBatchId: older.id },
+    beans: [selectedBean],
+    workflow: null,
+    profiles: [],
+    grinders: [],
+    loadBatches: async () => [older, latest],
+    loadFirstShots: async (_bean, selectedBatch) => {
+      equal(selectedBatch?.id, older.id);
+      return { records: [], total: 0 };
+    },
+    isCurrent: (current) => controller.isCurrentBeanSelection(current),
+    workflowMatchesBean: () => false
+  });
+
+  equal(result.type === 'selected' ? result.selectedBatch?.id : null, older.id);
+});
+
+await run('bean workflow controller skips nearly empty latest batches', async () => {
+  const selectedBean = bean('bean-1');
+  const controller = new BeanWorkflowController();
+  const selection = required(controller.beginBeanSelection(selectedBean.id, [selectedBean]));
+  const usable = batch('usable', selectedBean.id, '2026-05-01', { weightRemaining: 100 });
+  const emptyLatest = batch('empty-latest', selectedBean.id, '2026-06-01', { weightRemaining: 3 });
+
+  const result = await controller.completeBeanSelection({
+    selection,
+    options: { preferWorkflow: false },
+    beans: [selectedBean],
+    workflow: null,
+    profiles: [],
+    grinders: [],
+    loadBatches: async () => [usable, emptyLatest],
+    loadFirstShots: async (_bean, selectedBatch) => {
+      equal(selectedBatch?.id, usable.id);
+      return { records: [], total: 0 };
+    },
+    isCurrent: (current) => controller.isCurrentBeanSelection(current),
+    workflowMatchesBean: () => false
+  });
+
+  equal(result.type === 'selected' ? result.selectedBatch?.id : null, usable.id);
+});
+
 await run('bean workflow controller skips service shots when deriving the recipe draft', async () => {
   const selectedBean = bean('bean-1');
   const controller = new BeanWorkflowController();
@@ -594,11 +646,12 @@ function bean(id: string, name = 'Espresso'): Bean {
   };
 }
 
-function batch(id: string, beanId: string, roastDate: string): BeanBatch {
+function batch(id: string, beanId: string, roastDate: string, extra: Partial<BeanBatch> = {}): BeanBatch {
   return {
     id,
     beanId,
-    roastDate
+    roastDate,
+    ...extra
   };
 }
 

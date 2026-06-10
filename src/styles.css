@@ -2194,6 +2194,13 @@ p {
   gap: 6px;
 }
 
+.bean-picker-section-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .bean-picker-fields {
   min-width: 0;
   display: grid;
@@ -2311,10 +2318,24 @@ p {
   background: color-mix(in srgb, var(--teal) 13%, var(--panel-2));
 }
 
+.bean-picker-batch.finished {
+  opacity: 0.66;
+}
+
 .bean-picker-batch-title {
   grid-area: title;
   min-width: 0;
   align-self: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  text-transform: none;
+}
+
+.bean-picker-batch-title:disabled {
+  cursor: default;
 }
 
 .bean-picker-batch-title strong,
@@ -2436,7 +2457,7 @@ p {
   margin-left: 10px;
 }
 
-.bean-picker-batch-delete {
+.bean-picker-batch-finish {
   width: 40px;
   height: 40px;
 }

@@ -25,11 +25,13 @@ export interface BeanPickerViewModel {
   focusedBean: Bean | null;
   mode: 'inspect' | 'create';
   selectedBeanId: string | null;
+  selectedBatchId: string | null;
   batchesByBean: Record<string, BeanBatch[]>;
   prefillBeans: Bean[];
   draftBatchBeanId?: string | null;
   editingBeanDetailsId?: string | null;
   editingBatchId?: string | null;
+  showAllBags?: boolean;
   formNumbers?: Record<string, string>;
   secondTapHint: { kind: 'shot' | 'bean'; id: string } | null;
 }
@@ -117,10 +119,17 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
   }
 
   const batches = model.batchesByBean[bean.id] ?? [];
-  const visibleBatches = recentBatches(batches, Math.max(1, batches.length));
-  const currentBatchId = latestBatch(batches)?.id ?? null;
+  const openBatches = batches.filter((batch) => !isNearlyEmptyBatch(batch));
+  const hiddenCount = batches.length - openBatches.length;
+  const showingAll = model.showAllBags === true;
+  const displayedBatches = showingAll ? batches : openBatches;
+  const visibleBatches = recentBatches(displayedBatches, Math.max(1, displayedBatches.length));
+  const currentBatchId = model.selectedBatchId ?? latestBatch(openBatches)?.id ?? latestBatch(batches)?.id ?? null;
   const latest = latestBatch(batches);
   const editingDetails = model.editingBeanDetailsId === bean.id;
+  const bagCountText = showingAll || hiddenCount === 0
+    ? `${batches.length} ${batches.length === 1 ? 'bag' : 'bags'}`
+    : `${openBatches.length} active ${openBatches.length === 1 ? 'bag' : 'bags'}`;
   return `
     <div class="bean-picker-inspector">
       <div class="bean-picker-decision">
@@ -136,15 +145,20 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
         <div class="bean-picker-section-head">
           <div>
             <span class="eyebrow">Bags on hand</span>
-            <strong>${escapeHtml(batches.length === 0 ? 'No bags yet' : `${batches.length} ${batches.length === 1 ? 'bag' : 'bags'}`)}</strong>
+            <strong>${escapeHtml(batches.length === 0 ? 'No bags yet' : bagCountText)}</strong>
           </div>
-          <button type="button" class="secondary-button compact" data-action="bean-picker-add-batch">${icon('plus')}<span>Bag</span></button>
+          <div class="bean-picker-section-actions">
+            ${hiddenCount > 0 ? `<button type="button" class="secondary-button compact" data-action="toggle-bean-picker-show-all">${escapeHtml(showingAll ? 'Hide finished' : 'Show all')}</button>` : ''}
+            <button type="button" class="secondary-button compact" data-action="bean-picker-add-batch">${icon('plus')}<span>Bag</span></button>
+          </div>
         </div>
         <div class="bean-picker-batch-list">
           ${model.draftBatchBeanId === bean.id ? renderBeanPickerBatchDraft(bean, latest, model.formNumbers ?? {}) : ''}
           ${
             batches.length === 0
               ? '<p class="empty-history">No bags on hand.</p>'
+              : visibleBatches.length === 0
+                ? '<p class="empty-history">No active bags. Tap Show all to see finished bags.</p>'
               : visibleBatches.map((batch) =>
                   renderBeanPickerBatchForm(bean, batch, batch.id === currentBatchId, model.editingBatchId === batch.id)
                 ).join('')
@@ -237,6 +251,14 @@ function renderBeanPickerBatchForm(bean: Bean, batch: BeanBatch, active: boolean
   const location = stockLocationLabel(batch);
   const locationDetail = stockLocationDetail(batch);
   const locationIcon = batchStorageState(batch) === 'frozen' ? 'snowflake' : batchStorageState(batch) === 'thawed' ? 'sun' : 'archive';
+  const finished = isNearlyEmptyBatch(batch);
+  const statusParts = [
+    active ? 'Selected' : null,
+    finished ? 'Finished' : null,
+    freshness,
+    batch.roastLevel ?? null,
+    `${inputValue(batch.weightRemaining ?? batch.weight ?? '') || '--'}g left`
+  ];
   const batchNumber = (name: 'weight' | 'weightRemaining', label: string, value: number | null | undefined) => `
     <label>${escapeHtml(label)}
       <input type="hidden" name="${name}" value="${escapeAttr(inputValue(value))}" />
@@ -260,21 +282,21 @@ function renderBeanPickerBatchForm(bean: Bean, batch: BeanBatch, active: boolean
   `;
   return `
     <form
-      class="bean-picker-batch stock-card ${active ? 'current' : ''} ${editing ? 'editing' : ''}"
+      class="bean-picker-batch stock-card ${active ? 'current' : ''} ${editing ? 'editing' : ''} ${finished ? 'finished' : ''}"
       data-form="bean-picker-batch"
       data-bean-id="${escapeAttr(bean.id)}"
       data-batch-id="${escapeAttr(batch.id)}"
     >
-      <div class="bean-picker-batch-title">
+      <button type="button" class="bean-picker-batch-title" data-action="select-batch" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}" aria-pressed="${active ? 'true' : 'false'}" title="${finished ? 'Finished bag' : active ? 'Selected bag' : 'Choose this bag'}"${finished ? ' disabled' : ''}>
         <strong>${escapeHtml(stockOptionLabel(batch))}</strong>
-        <small>${escapeHtml([freshness, batch.roastLevel ?? null, `${inputValue(batch.weightRemaining ?? batch.weight ?? '') || '--'}g left`].filter(Boolean).join(' · ') || 'Bag')}</small>
-      </div>
+        <small>${escapeHtml(statusParts.filter(Boolean).join(' · ') || 'Bag')}</small>
+      </button>
       <div class="bean-picker-batch-chips">
         <button type="button" class="bean-picker-storage stock-location-chip" data-action="open-batch-storage" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}" title="Move stock">${icon(locationIcon)}<span>${escapeHtml(location)}</span><small>${escapeHtml(locationDetail)}</small></button>
       </div>
       <div class="bean-picker-batch-actions">
         <button type="button" class="icon-button" data-action="toggle-batch-details" data-id="${escapeAttr(batch.id)}" aria-label="Edit bag" title="Edit bag">${icon('pencil')}</button>
-        <button type="button" class="icon-button danger-icon bean-picker-batch-delete" data-action="delete-batch" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}" aria-label="Delete bag" title="Delete bag">${icon('trash-2')}</button>
+        <button type="button" class="icon-button bean-picker-batch-finish" data-action="finish-batch" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}" aria-label="Mark bag finished" title="Mark finished">${icon('circle-check')}</button>
       </div>
       ${
         editing
@@ -288,6 +310,10 @@ function renderBeanPickerBatchForm(bean: Bean, batch: BeanBatch, active: boolean
       }
     </form>
   `;
+}
+
+function isNearlyEmptyBatch(batch: BeanBatch): boolean {
+  return typeof batch.weightRemaining === 'number' && Number.isFinite(batch.weightRemaining) && batch.weightRemaining < 5;
 }
 
 function renderBeanPickerBatchDraft(
