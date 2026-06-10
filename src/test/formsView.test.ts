@@ -1,20 +1,8 @@
-import type { Bean, Grinder } from '../api/types';
+import type { Grinder } from '../api/types';
 import {
-  renderBatchEditorPage,
-  renderBeanEditorPage,
   renderGrinderEditorPage,
   renderMachineLabelModal
 } from '../views/formsView';
-
-const bean: Bean = {
-  id: 'bean-1',
-  roaster: 'Dak <Roasters>',
-  name: 'Milky & Cake',
-  country: 'Ethiopia',
-  region: 'Sidama',
-  processing: 'Anaerobic',
-  notes: 'Sweet <soft>'
-};
 
 const grinder: Grinder = {
   id: 'grinder-1',
@@ -24,36 +12,6 @@ const grinder: Grinder = {
   settingSmallStep: 0.25,
   settingBigStep: 2
 };
-
-run('bean editor renders escaped values and supplied header', () => {
-  const html = renderBeanEditorPage('<header>Bean header</header>', bean);
-
-  includes(html, '<header>Bean header</header>');
-  includes(html, 'value="Dak &lt;Roasters&gt;"');
-  includes(html, 'value="Milky &amp; Cake"');
-  includes(html, 'Sweet &lt;soft&gt;');
-  excludes(html, 'Dak <Roasters>');
-});
-
-run('batch editor renders selected bean label and form number controls', () => {
-  const html = renderBatchEditorPage('<header>Batch header</header>', bean, {
-    'batch-form:weight': '250',
-    'batch-form:weightRemaining': '140'
-  });
-
-  includes(html, '<header>Batch header</header>');
-  includes(html, 'Dak &lt;Roasters&gt; Milky &amp; Cake');
-  includes(html, 'data-form-key="batch-form:weight"');
-  includes(html, 'data-value="250"');
-  includes(html, 'data-unit="g"');
-});
-
-run('batch editor handles missing bean without owner state', () => {
-  const html = renderBatchEditorPage('<header>Batch header</header>', null, {});
-
-  includes(html, 'No bean selected');
-  includes(html, 'data-form="batch-editor"');
-});
 
 run('grinder editor renders escaped grinder data, preset selection, and form overrides', () => {
   const html = renderGrinderEditorPage('<header>Grinder header</header>', grinder, {

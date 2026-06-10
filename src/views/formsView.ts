@@ -1,46 +1,6 @@
-import type { Bean, Grinder } from '../api/types';
-import { beanLabel } from '../domain/beanWorkflow';
+import type { Grinder } from '../api/types';
 import { icon } from '../components/icons';
 import { escapeAttr, escapeHtml } from '../components/html';
-
-export function renderBeanEditorPage(headerHtml: string, bean: Bean | null): string {
-  const v = (value: string | null | undefined) => escapeAttr(value ?? '');
-  return `
-    ${headerHtml}
-    <form id="bean-form" class="page-body form-page" data-form="bean-editor">
-      <label>Roaster<input name="roaster" required autocomplete="off" value="${v(bean?.roaster)}" /></label>
-      <label>Coffee<input name="name" required autocomplete="off" value="${v(bean?.name)}" /></label>
-      <div class="field-row">
-        <label>Country<input name="country" autocomplete="off" value="${v(bean?.country)}" /></label>
-        <label>Region<input name="region" autocomplete="off" value="${v(bean?.region)}" /></label>
-      </div>
-      <label>Process<input name="processing" autocomplete="off" value="${v(bean?.processing)}" /></label>
-      <label>Notes<textarea name="notes" rows="3">${escapeHtml(bean?.notes ?? '')}</textarea></label>
-    </form>
-  `;
-}
-
-export function renderBatchEditorPage(
-  headerHtml: string,
-  bean: Bean | null,
-  formNumbers: Record<string, string>
-): string {
-  return `
-    ${headerHtml}
-    <form id="batch-form" class="page-body form-page" data-form="batch-editor">
-      <p class="modal-hint">${escapeHtml(bean ? beanLabel(bean) : 'No bean selected')}</p>
-      <div class="field-row">
-        <label>Roast date<input type="date" name="roastDate" /></label>
-        <label>Roast level<input name="roastLevel" autocomplete="off" /></label>
-      </div>
-      <div class="field-row">
-        ${formNumber('batch-form:weight', 'weight', 'Bag weight', formNumbers['batch-form:weight'] ?? '', 1, 'g')}
-        ${formNumber('batch-form:weightRemaining', 'weightRemaining', 'Remaining', formNumbers['batch-form:weightRemaining'] ?? '', 1, 'g')}
-      </div>
-      <label class="switch inline-switch"><input type="checkbox" name="frozen" /><span>Frozen</span></label>
-    </form>
-  `;
-}
 
 export function renderGrinderEditorPage(
   headerHtml: string,

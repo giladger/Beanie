@@ -215,6 +215,7 @@ import {
 import type { ProfileMetaKey, StepFieldKey } from './domain/profileModel';
 import { LiveChart } from './components/LiveChart';
 import { chartModelFromShot } from './components/liveChartModel';
+import type { LiveChartModel } from './domain/liveChartModel';
 import {
   calibrationPreviewFactor,
   clampCalibration,
@@ -222,7 +223,6 @@ import {
   renderFlowCalibrator,
   roundCalibration
 } from './components/flowCalibrator';
-import { escapeAttr } from './components/html';
 import {
   LiveShotSession,
   liveShotDurationMs,
@@ -273,8 +273,6 @@ import {
   renderMachineProgressPage as renderMachineProgressPageView
 } from './views/machineView';
 import {
-  renderBatchEditorPage as renderBatchEditorPageView,
-  renderBeanEditorPage as renderBeanEditorPageView,
   renderGrinderEditorPage as renderGrinderEditorPageView,
   renderMachineLabelModal as renderMachineLabelModalView
 } from './views/formsView';
@@ -405,8 +403,6 @@ type View =
   | 'machine'
   | 'profiles'
   | 'profile-editor'
-  | 'bean-editor'
-  | 'batch-editor'
   | 'grinder-editor';
 
 const initialSettingsPreferences = readSettingsPreferences();
@@ -521,7 +517,6 @@ interface AppState {
   profilePage: number;
   profileFocusId: string | null;
   favoriteProfiles: string[];
-  autoLoad: boolean;
   settingsPreferences: SettingsPreferences;
   settingsSearch: string;
   demo: boolean;
@@ -550,7 +545,6 @@ interface AppState {
   beanPickerEditingBeanId: string | null;
   batchStorageTarget: BatchStorageTarget | null;
   batchStorageSplitPreview: boolean;
-  editingBeanId: string | null;
   editingGrinderId: string | null;
   profileEditor: ProfileEditorState | null;
   editingProfileId: string | null;
@@ -635,7 +629,6 @@ export class BeanieApp {
     profilePage: 0,
     profileFocusId: null,
     favoriteProfiles: readFavoriteProfiles(),
-    autoLoad: true,
     settingsPreferences: initialSettingsPreferences,
     settingsSearch: '',
     demo: false,
@@ -664,7 +657,6 @@ export class BeanieApp {
     beanPickerEditingBeanId: null,
     batchStorageTarget: null,
     batchStorageSplitPreview: false,
-    editingBeanId: null,
     editingGrinderId: null,
     profileEditor: null,
     editingProfileId: null,
@@ -728,6 +720,14 @@ export class BeanieApp {
   private liveReadoutEls: LiveReadoutEls | null = null;
   private liveRaf: number | null = null;
   private liveDirty = false;
+  // Cached chart model for the selected history/calibrator shot. Building the
+  // model walks the shot's full measurement array, which is too expensive to
+  // repeat on every setState re-render. Measurements are immutable once saved,
+  // so the cache is keyed by shot id plus the measurements array reference (the
+  // reference changes when a placeholder record is later upgraded with data).
+  private shotChartModelCache: { shotId: string; measurements: readonly ShotMeasurement[]; model: LiveChartModel } | null = null;
+  private detailChartCanvas: HTMLCanvasElement | null = null;
+  private detailChartShotId: string | null = null;
   private simTimer: number | null = null;
   private readonly machineService = new MachineServiceController();
   // True while a cleaning/backflush cycle is running as an espresso pull, so the
@@ -996,7 +996,7 @@ export class BeanieApp {
 
       const selected = selectInitialBean(beans, workflow, readLastBeanId(), latestShots.items[0]);
       if (selected) {
-        const wantsStartupApply = this.state.autoLoad && !this.workflowMatchesBean(selected);
+        const wantsStartupApply = !this.workflowMatchesBean(selected);
         await this.selectBean(selected.id, {
           apply: wantsStartupApply && !machineSleeping,
           preferWorkflow: true
@@ -1108,7 +1108,7 @@ export class BeanieApp {
       status: result.status
     });
 
-    if (options.apply && this.state.autoLoad) {
+    if (options.apply) {
       await this.applyDraft();
     }
   }
@@ -1477,18 +1477,32 @@ export class BeanieApp {
     if (!shot) return;
 
     const update = this.shotUpdateFromForm(form, shot);
+    await this.persistShotUpdate(shot, update, {
+      busyStatus: 'Saving shot',
+      successStatus: 'Shot saved',
+      demoStatus: 'Shot saved (demo)',
+      failureStatus: 'Save shot failed'
+    });
+  }
 
-    this.setState({ busy: true, status: 'Saving shot' });
-    // Bump before the write so an in-flight shot page fetch from before the
-    // edit cannot re-cache pre-edit data after the invalidation.
+  // Shared persistence path for shot metadata edits: set the busy status, bump
+  // the cache generation before the write (so an in-flight shot page fetch from
+  // before the edit cannot re-cache pre-edit data after the invalidation), save
+  // through the controller, then apply the saved record or the failure status.
+  private async persistShotUpdate(
+    shot: ShotRecord,
+    update: ShotUpdate,
+    opts: { busyStatus: string; successStatus: string; demoStatus: string; failureStatus: string }
+  ): Promise<void> {
+    this.setState({ busy: true, status: opts.busyStatus });
     if (!this.state.demo) this.shotCacheGeneration += 1;
     const result = await saveShotUpdate({
       shot,
       update,
       demo: this.state.demo,
-      successStatus: 'Shot saved',
-      demoStatus: 'Shot saved (demo)',
-      failureStatus: 'Save shot failed'
+      successStatus: opts.successStatus,
+      demoStatus: opts.demoStatus,
+      failureStatus: opts.failureStatus
     }, {
       updateShot: (id, nextUpdate) => gateway.updateShot(id, nextUpdate),
       invalidateShotMutation: (id) => beanieCache.invalidateShotMutation(id),
@@ -1498,7 +1512,7 @@ export class BeanieApp {
     if (result.type === 'saved') {
       this.replaceShotRecord(result.shot, result.status);
     } else {
-      console.error('[Beanie] Save shot failed', result.error);
+      console.error(`[Beanie] ${opts.failureStatus}`, result.error);
       this.setState({ busy: false, status: result.status });
     }
   }
@@ -1641,30 +1655,12 @@ export class BeanieApp {
     const draft = this.state.shotEdit?.shotId === shotId ? this.state.shotEdit : null;
     if (!shot || !draft) return;
     const update = this.shotUpdateFromDraft(shot, draft);
-
-    this.setState({ busy: true, status: 'Saving shot' });
-    // Bump before the write so an in-flight shot page fetch from before the
-    // edit cannot re-cache pre-edit data after the invalidation.
-    if (!this.state.demo) this.shotCacheGeneration += 1;
-    const result = await saveShotUpdate({
-      shot,
-      update,
-      demo: this.state.demo,
+    await this.persistShotUpdate(shot, update, {
+      busyStatus: 'Saving shot',
       successStatus: 'Shot saved',
       demoStatus: 'Shot saved (demo)',
       failureStatus: 'Save shot failed'
-    }, {
-      updateShot: (id, nextUpdate) => gateway.updateShot(id, nextUpdate),
-      invalidateShotMutation: (id) => beanieCache.invalidateShotMutation(id),
-      putShotRecord: (saved) => beanieCache.putShotRecord(saved)
     });
-
-    if (result.type === 'saved') {
-      this.replaceShotRecord(result.shot, result.status);
-    } else {
-      console.error('[Beanie] Save shot failed', result.error);
-      this.setState({ busy: false, status: result.status });
-    }
   }
 
   private setShotEditEnjoyment(value: number | null): void {
@@ -1726,34 +1722,39 @@ export class BeanieApp {
     const fields = beanFieldsFromForm(new FormData(form));
     if (!fields.roaster || !fields.name) return;
 
-    const tagShot = (bean: Bean, status: string) => {
-      const current = this.state.shotEdit;
-      this.setState({
-        beans: [bean, ...this.state.beans],
-        batchesByBean: { ...this.state.batchesByBean, [bean.id]: [] },
-        shotEdit: current
-          ? { ...current, coffeeRoaster: bean.roaster, coffeeName: bean.name, beanId: bean.id, beanBatchId: null }
-          : current,
-        shotBeanEdit: null,
-        busy: false,
-        status
-      });
-    };
-
     this.setState({ busy: true, status: 'Adding bean' });
-    if (this.state.demo) {
-      tagShot({ id: `demo-${Date.now()}`, ...fields } as Bean, 'Bean added (demo)');
+    const result = await this.beanWorkflow.saveBean({
+      beans: this.state.beans,
+      batchesByBean: this.state.batchesByBean,
+      editingId: null,
+      fields,
+      demo: this.state.demo,
+      nowMs: Date.now()
+    }, {
+      createBean: (input) => gateway.createBean(input),
+      updateBean: (id, input) => gateway.updateBean(id, input),
+      putBeans: (beans) => beanieCache.putBeans(beans),
+      putBeanBatches: (beanId, batches) => beanieCache.putBeanBatches(beanId, batches)
+    });
+
+    if (result.type === 'failed') {
+      console.error('[Beanie] Add bean failed', result.error);
+      this.setState({ busy: false, status: result.status });
       return;
     }
-    try {
-      const bean = await gateway.createBean(fields);
-      tagShot(bean, 'Bean added');
-      void beanieCache.putBeans(this.state.beans).catch(() => {});
-      void beanieCache.putBeanBatches(bean.id, []).catch(() => {});
-    } catch (error) {
-      console.error('[Beanie] Add bean failed', error);
-      this.setState({ busy: false, status: 'Add bean failed' });
-    }
+
+    // A brand new bag has no batches yet, so the shot's batch is left empty.
+    const current = this.state.shotEdit;
+    this.setState({
+      beans: result.beans,
+      batchesByBean: result.batchesByBean,
+      shotEdit: current
+        ? { ...current, coffeeRoaster: result.bean.roaster, coffeeName: result.bean.name, beanId: result.bean.id, beanBatchId: null }
+        : current,
+      shotBeanEdit: null,
+      busy: false,
+      status: result.status
+    });
   }
 
   // Fill a new-bean form's inputs from an existing bag, directly (no re-render)
@@ -1779,29 +1780,12 @@ export class BeanieApp {
     const shot = this.state.shots.find((item) => item.id === shotId);
     if (!shot) return;
     const update = shotEnjoymentUpdate(shot, value);
-    this.setState({ busy: true, status: 'Saving score' });
-    // Bump before the write so an in-flight shot page fetch from before the
-    // edit cannot re-cache pre-edit data after the invalidation.
-    if (!this.state.demo) this.shotCacheGeneration += 1;
-    const result = await saveShotUpdate({
-      shot,
-      update,
-      demo: this.state.demo,
+    await this.persistShotUpdate(shot, update, {
+      busyStatus: 'Saving score',
       successStatus: 'Score saved',
       demoStatus: 'Score saved (demo)',
       failureStatus: 'Save score failed'
-    }, {
-      updateShot: (id, nextUpdate) => gateway.updateShot(id, nextUpdate),
-      invalidateShotMutation: (id) => beanieCache.invalidateShotMutation(id),
-      putShotRecord: (saved) => beanieCache.putShotRecord(saved)
     });
-
-    if (result.type === 'saved') {
-      this.replaceShotRecord(result.shot, result.status);
-    } else {
-      console.error('[Beanie] Save score failed', result.error);
-      this.setState({ busy: false, status: result.status });
-    }
   }
 
   private batchAndBeanForId(batchId: string | null): { batch: BeanBatch; bean: Bean } | null {
@@ -2869,7 +2853,10 @@ export class BeanieApp {
         delay,
         invalidateShotMutation: async () => {
           this.shotCacheGeneration += 1;
-          await beanieCache.invalidateShotMutation().catch(() => {});
+          // Only the page cache needs busting to discover the new shot; the
+          // per-shot summaries/records are still valid and must survive so
+          // offline history is not destroyed if the gateway dies mid-poll.
+          await beanieCache.invalidateShotPages().catch(() => {});
         },
         loadFirstShots: () => this.loadFirstShots(bean, batch),
         loadLatestShotCandidates: () => this.loadLatestShotCandidates(),
@@ -3810,7 +3797,6 @@ export class BeanieApp {
           batchStorageSplitPreview: false,
           beanPickerDraftBatchBeanId: null,
           beanPickerEditingBeanId: null,
-          editingBeanId: null,
           profileEditor: null,
           editingProfileId: null,
           editDialog: null,
@@ -4004,7 +3990,6 @@ export class BeanieApp {
   private goView(view: View): void {
     this.setState({
       view,
-      editingBeanId: null,
       profileEditor: null,
       editingProfileId: null,
       profileEdit: null
@@ -4313,11 +4298,6 @@ export class BeanieApp {
       await this.createShotBean(form);
       return;
     }
-    if (form.dataset.form === 'bean-editor') {
-      event.preventDefault();
-      await this.submitBeanEditor(form);
-      return;
-    }
     if (form.dataset.form === 'bean-picker-bean') {
       event.preventDefault();
       await this.submitBeanPickerBean(form);
@@ -4338,11 +4318,6 @@ export class BeanieApp {
       await this.freezeBatchPortion(form);
       return;
     }
-    if (form.dataset.form === 'batch-editor') {
-      event.preventDefault();
-      await this.submitBatchEditor(form);
-      return;
-    }
     if (form.dataset.form === 'grinder-editor') {
       event.preventDefault();
       await this.submitGrinderEditor(form);
@@ -4357,47 +4332,6 @@ export class BeanieApp {
       event.preventDefault();
       await this.submitScannerReview(form);
       return;
-    }
-  }
-
-  private async submitBeanEditor(form: HTMLFormElement): Promise<void> {
-    const data = new FormData(form);
-    const fields = beanFieldsFromForm(data);
-    if (!fields.roaster || !fields.name) return;
-
-    const editingId = this.state.editingBeanId;
-    this.setState({ busy: true, status: editingId ? 'Saving bean' : 'Adding bean' });
-
-    const result = await this.beanWorkflow.saveBean({
-      beans: this.state.beans,
-      batchesByBean: this.state.batchesByBean,
-      editingId,
-      fields,
-      demo: this.state.demo,
-      nowMs: Date.now()
-    }, {
-      createBean: (input) => gateway.createBean(input),
-      updateBean: (id, input) => gateway.updateBean(id, input),
-      putBeans: (beans) => beanieCache.putBeans(beans),
-      putBeanBatches: (beanId, batches) => beanieCache.putBeanBatches(beanId, batches)
-    });
-
-    if (result.type === 'failed') {
-      console.error('[Beanie] Save bean failed', result.error);
-      this.setState({ busy: false, status: result.status });
-      return;
-    }
-
-    this.setState({
-      beans: result.beans,
-      batchesByBean: result.batchesByBean,
-      view: 'workbench',
-      editingBeanId: null,
-      busy: false,
-      status: result.status
-    });
-    if (result.selectBeanId) {
-      await this.selectBean(result.selectBeanId, { apply: false, preferWorkflow: false });
     }
   }
 
@@ -4552,7 +4486,6 @@ export class BeanieApp {
     this.setState({
       beans: result.beans,
       view: 'workbench',
-      editingBeanId: null,
       modal: this.state.modal === 'bean-picker' ? null : this.state.modal,
       busy: false,
       status: result.status
@@ -4561,41 +4494,6 @@ export class BeanieApp {
       if (result.nextSelectedBeanId) await this.selectBean(result.nextSelectedBeanId, { apply: false, preferWorkflow: false });
       else this.setState({ selectedBeanId: null });
     }
-  }
-
-  private async submitBatchEditor(form: HTMLFormElement): Promise<void> {
-    const bean = this.selectedBean();
-    if (!bean) return;
-    const data = new FormData(form);
-    const batchInput = batchFieldsFromForm(data, bean.id);
-
-    this.setState({ busy: true, status: 'Adding batch' });
-    const result = await this.beanWorkflow.createBatch({
-      bean,
-      batchesByBean: this.state.batchesByBean,
-      selectedBeanId: bean.id,
-      selectedBatchId: this.state.selectedBatchId,
-      batchInput,
-      demo: this.state.demo,
-      nowMs: Date.now()
-    }, {
-      createBatch: (beanId, input) => gateway.createBatch(beanId, input),
-      putBeanBatches: (beanId, batches) => beanieCache.putBeanBatches(beanId, batches)
-    });
-
-    if (result.type === 'failed') {
-      console.error('[Beanie] Add batch failed', result.error);
-      this.setState({ busy: false, status: result.status });
-      return;
-    }
-
-    this.setState({
-      batchesByBean: result.batchesByBean,
-      selectedBatchId: result.batch.id,
-      view: 'workbench',
-      busy: false,
-      status: result.status
-    });
   }
 
   private startBatchDraftInPicker(beanId: string | null): void {
@@ -5787,10 +5685,6 @@ export class BeanieApp {
         return this.renderProfilesPage();
       case 'profile-editor':
         return this.renderProfileEditorPage();
-      case 'bean-editor':
-        return this.renderBeanEditorPage();
-      case 'batch-editor':
-        return this.renderBatchEditorPage();
       case 'grinder-editor':
         return this.renderGrinderEditorPage();
       default:
@@ -5804,16 +5698,45 @@ export class BeanieApp {
 
   private bindDetailChart(): void {
     const canvas = this.root.querySelector<HTMLCanvasElement>('#detail-canvas');
-    if (!canvas) return;
-    const shot = this.selectedHistoryShot();
-    if (!shot) return;
+    const shot = canvas ? this.selectedHistoryShot() : null;
+    if (!canvas || !shot) {
+      this.detailChartCanvas = null;
+      this.detailChartShotId = null;
+      return;
+    }
+    // innerHTML re-renders replace the canvas, so the chart usually has to
+    // re-attach; only skip when the same element survived with the same shot
+    // and the cached model is still valid for that shot's measurements.
+    const cachedModel = this.shotChartModelCache;
+    if (
+      canvas === this.detailChartCanvas &&
+      shot.id === this.detailChartShotId &&
+      cachedModel?.shotId === shot.id &&
+      cachedModel.measurements === shot.measurements
+    ) {
+      return;
+    }
+    this.detailChartCanvas = canvas;
+    this.detailChartShotId = shot.id;
     const chart = new LiveChart(canvas, { detailed: true, pixelScale: 3 });
-    chart.setModel(chartModelFromShot(shot));
+    chart.setModel(this.shotChartModel(shot));
     // Draw after layout so the canvas has its CSS box for DPR sizing.
     window.requestAnimationFrame(() => {
       chart.resize();
       chart.draw();
     });
+  }
+
+  // Returns the canvas chart model for a saved shot, rebuilding only when the
+  // shot (or its measurement array instance) changes.
+  private shotChartModel(shot: ShotRecord): LiveChartModel {
+    const cached = this.shotChartModelCache;
+    if (cached && cached.shotId === shot.id && cached.measurements === shot.measurements) {
+      return cached.model;
+    }
+    const model = chartModelFromShot(shot);
+    this.shotChartModelCache = { shotId: shot.id, measurements: shot.measurements, model };
+    return model;
   }
 
   private bindCalibratorChart(): void {
@@ -5829,7 +5752,7 @@ export class BeanieApp {
     // recorded it; otherwise fall back to the open-time estimate.
     const shotBase = recordedFlowMultiplier(shot) ?? this.flowCalibrationBase();
     const factor = calibrationPreviewFactor(shotBase, this.flowCalibrationDraft());
-    const model = chartModelFromShot(shot);
+    const model = this.shotChartModel(shot);
     const series = model.series
       .filter((item) => item.key === 'flow' || item.key === 'weightFlow' || item.key === 'pressure')
       .map((item) => {
@@ -6205,23 +6128,6 @@ export class BeanieApp {
       stopRequested,
       stopLabel
     });
-  }
-
-  private renderBeanEditorPage(): string {
-    const editing = this.state.editingBeanId
-      ? this.state.beans.find((bean) => bean.id === this.state.editingBeanId) ?? null
-      : null;
-    const actions = `
-      ${editing ? `<button type="button" class="command danger" data-action="archive-bean" data-id="${escapeAttr(editing.id)}">${icon('trash-2')}<span>Delete</span></button>` : ''}
-      <button class="command primary commit-action" type="submit" form="bean-form">${icon(editing ? 'check' : 'plus')}<span>${editing ? 'Save' : 'Add'}</span></button>
-    `;
-    return renderBeanEditorPageView(this.pageHeader(editing ? 'Edit Bean' : 'Add Bean', 'workbench', actions), editing);
-  }
-
-  private renderBatchEditorPage(): string {
-    const bean = this.selectedBean();
-    const actions = `<button class="command primary commit-action" type="submit" form="batch-form" ${bean ? '' : 'disabled'}>${icon('plus')}<span>Add batch</span></button>`;
-    return renderBatchEditorPageView(this.pageHeader('Add Batch', 'workbench', actions), bean, this.state.formNumbers);
   }
 
   private renderGrinderEditorPage(): string {
@@ -6934,7 +6840,6 @@ export class BeanieApp {
     applySettingsPreferences(settingsPreferences);
     this.setState({
       settingsPreferences,
-      autoLoad: true,
       status: 'Settings changed'
     });
   }

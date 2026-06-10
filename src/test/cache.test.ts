@@ -134,6 +134,33 @@ run('clearing a collection deletes every previously cached key', async () => {
   equal(factory.rawKeys(BEANIE_CACHE_DB_NAME, 'beanBatches').length, 0);
 });
 
+run('invalidateShotPages drops page entries but keeps shot records and summaries', async () => {
+  const { cache } = fakeBackedCache();
+  const shot: ShotRecord = {
+    id: 'shot-1',
+    timestamp: '2026-06-01T10:00:00.000Z',
+    workflow: { context: { beanBatchId: 'batch-1' } },
+    measurements: []
+  };
+  const page: PaginatedShots = { items: [shot], total: 1, limit: 1, offset: 0 };
+  await cache.putShotPage({ beanBatchId: 'batch-1', limit: 1, offset: 0 }, page);
+  await cache.putShotRecord(shot);
+
+  await cache.invalidateShotPages();
+
+  equal(await cache.getShotPage({ beanBatchId: 'batch-1', limit: 1, offset: 0 }), null);
+  const record = await cache.getShotRecord('shot-1');
+  equal(record?.id, 'shot-1');
+
+  // Re-caching the same page afterwards reuses the surviving summaries/records.
+  await cache.putShotPage({ beanBatchId: 'batch-1', limit: 1, offset: 0 }, page);
+  equal((await cache.getShotPage({ beanBatchId: 'batch-1', limit: 1, offset: 0 }))?.items.length, 1);
+
+  // Full mutation invalidation still clears the per-shot stores.
+  await cache.invalidateShotMutation();
+  equal(await cache.getShotRecord('shot-1'), null);
+});
+
 run('reopens the database after a versionchange closes the connection', async () => {
   const { cache, factory } = fakeBackedCache();
   await cache.putBeans([bean('bean-1', 'Pink Bourbon')]);

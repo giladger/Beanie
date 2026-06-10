@@ -230,9 +230,17 @@ export class BeanieIndexedDbCache {
     await this.deleteKeys(storeNames.objects, [key]);
   }
 
+  // Drops only the cached shot pages so the next page fetch can discover newly
+  // appended shots, while keeping per-shot summaries/records intact. Use this
+  // for refresh polling (no shot actually changed); offline history then
+  // survives if the gateway dies between the invalidation and the refetch.
+  async invalidateShotPages(): Promise<void> {
+    await this.clearStore(storeNames.shotPages);
+  }
+
   async invalidateShotMutation(ids?: string | readonly string[]): Promise<void> {
     const shotIds = normalizeIds(ids);
-    await this.clearStore(storeNames.shotPages);
+    await this.invalidateShotPages();
     if (shotIds.length === 0) {
       await Promise.all([
         this.clearStore(storeNames.shotSummaries),
