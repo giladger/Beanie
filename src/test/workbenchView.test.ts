@@ -16,18 +16,22 @@ run('workbench renders topbar metrics, hero bean actions, recipe controls, and h
   includes(html, 'data-value="steam"');
   includes(html, 'aria-pressed="true"');
   includes(html, 'Water - steam, water, flush (cleaning due)');
-  includes(html, 'Dak &lt;Roasters&gt; Milky &amp; Cake');
-  includes(html, 'data-action="open-edit-bean" data-id="bean-1"');
+  includes(html, 'Milky &amp; Cake');
+  includes(html, 'Dak &lt;Roasters&gt;');
+  includes(html, 'data-action="open-bean-picker"');
+  includes(html, '118g');
+  includes(html, '~6 shots');
+  includes(html, '3 days off roast');
   includes(html, 'data-field="dose" data-delta="-0.5"');
   includes(html, 'data-field="grinderSetting" data-delta="-0.25"');
   includes(html, '&lt;history&gt;');
   excludes(html, '<history>');
 });
 
-run('workbench hides bean edit and machine commands when model says unavailable', () => {
+run('workbench hides remaining/age chips and machine commands when model says unavailable', () => {
   const html = renderWorkbench(
     model({
-      hero: { beanTitle: 'Pick a bag', freshness: null, beanId: null },
+      hero: { beanName: 'Pick a bag', roaster: null, age: null, remaining: null, shotsLeft: null, beanId: null },
       topbar: {
         ...model().topbar,
         cleaningDue: false,
@@ -36,7 +40,9 @@ run('workbench hides bean edit and machine commands when model says unavailable'
     })
   );
 
-  excludes(html, 'data-action="open-edit-bean"');
+  includes(html, 'Pick a bag');
+  excludes(html, 'hero-remaining');
+  excludes(html, 'hero-roast');
   excludes(html, 'data-action="machine-command"');
   excludes(html, 'has-badge');
 });
@@ -85,8 +91,11 @@ function model(overrides: Partial<WorkbenchViewModel> = {}): WorkbenchViewModel 
       asleep: false
     },
     hero: {
-      beanTitle: 'Dak <Roasters> Milky & Cake',
-      freshness: '3 days off roast',
+      beanName: 'Milky & Cake',
+      roaster: 'Dak <Roasters>',
+      age: '3 days off roast',
+      remaining: '118g',
+      shotsLeft: '~6 shots',
       beanId: 'bean-1'
     },
     recipe: {

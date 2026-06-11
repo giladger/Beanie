@@ -117,6 +117,20 @@ export function roastFreshnessLabel(
   return [freshness.dateText, roastText, activeText, storage].filter(Boolean).join(' · ');
 }
 
+export function roastAgeLabel(
+  batch: BeanBatch | null | undefined,
+  now: Date = new Date()
+): string | null {
+  const freshness = computeBeanFreshness(batch, now);
+  if (!freshness) return null;
+  const roastText = dayLabel(freshness.roastAgeDays, 'off roast', 'today');
+  const activeText = freshness.activeAgeDays === freshness.roastAgeDays && freshness.storageState === 'ambient'
+    ? null
+    : activeDayLabel(freshness.activeAgeDays);
+  const storage = storageStatusLabel(batch, now);
+  return [roastText, activeText, storage].filter(Boolean).join(' · ');
+}
+
 export function freshnessBadgeLabel(
   batch: BeanBatch | null | undefined,
   now: Date = new Date()

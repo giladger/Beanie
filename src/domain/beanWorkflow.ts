@@ -20,6 +20,7 @@ export {
   editLastBatchStorageEventDate,
   freshnessBadgeLabel,
   freshnessSnapshotForShot,
+  roastAgeLabel,
   roastFreshnessLabel,
   shotFreshnessBadgeForShot,
   shotFreshnessBadgeLabel,

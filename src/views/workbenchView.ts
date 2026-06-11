@@ -24,8 +24,11 @@ export interface WorkbenchTopbarViewModel {
 }
 
 export interface WorkbenchHeroViewModel {
-  beanTitle: string;
-  freshness: string | null;
+  beanName: string;
+  roaster: string | null;
+  age: string | null;
+  remaining: string | null;
+  shotsLeft: string | null;
   beanId: string | null;
 }
 
@@ -144,23 +147,19 @@ export function renderTopbar(model: WorkbenchTopbarViewModel): string {
 
 export function renderHero(model: WorkbenchHeroViewModel): string {
   return `
-    <section class="hero panel">
-      <div class="hero-main">
-        <div class="hero-title-row">
-          <button class="bean-title-button" data-action="open-bean-picker" aria-label="Choose bean" title="Choose bean">
-            <span>${escapeHtml(model.beanTitle)}</span>
-          </button>
-          ${model.freshness ? `<span class="hero-roast">${escapeHtml(model.freshness)}</span>` : ''}
-          ${
-            model.beanId
-              ? `<div class="hero-bean-actions">
-                  <button class="icon-button" data-action="open-edit-bean" data-id="${escapeAttr(model.beanId)}" aria-label="Edit bean" title="Edit bean">${icon('pencil')}</button>
-                </div>`
-              : ''
-          }
-        </div>
-      </div>
-    </section>
+    <button class="hero panel" data-action="open-bean-picker" aria-label="Choose bean" title="Choose bean">
+      <span class="bean-title">
+        <span class="bean-name">${escapeHtml(model.beanName)}</span>
+        ${model.roaster ? `<span class="bean-roaster">${escapeHtml(model.roaster)}</span>` : ''}
+        ${icon('chevron-down')}
+      </span>
+      <span class="hero-facts">
+        ${model.remaining ? `<span class="hero-remaining">${escapeHtml(model.remaining)}</span>` : ''}
+        ${model.shotsLeft ? `<span class="hero-shots">${escapeHtml(model.shotsLeft)}</span>` : ''}
+        ${(model.remaining || model.shotsLeft) && model.age ? '<span class="hero-divider" aria-hidden="true"></span>' : ''}
+        ${model.age ? `<span class="hero-roast">${escapeHtml(model.age)}</span>` : ''}
+      </span>
+    </button>
   `;
 }
 

@@ -730,79 +730,91 @@ p {
 }
 
 .hero {
+  width: 100%;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
+  gap: 12px;
   align-items: center;
-  padding: 0 12px;
+  height: 50px;
+  padding: 0 14px;
+  text-align: left;
+  font: inherit;
+  color: var(--ink);
+  cursor: pointer;
 }
 
-.hero-main {
+.hero:active {
+  background: var(--panel-2);
+}
+
+.bean-title {
   min-width: 0;
-  display: grid;
-  align-content: center;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 9px;
+  line-height: 1;
 }
 
-.bean-title-button span,
-.hero-main p {
+.bean-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 26px;
+  font-weight: 950;
+  color: var(--ink);
+}
+
+.bean-roaster {
+  flex: none;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.hero .icon {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  align-self: center;
+  color: var(--muted);
+}
+
+.hero-facts {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.hero-remaining {
+  font-size: 16px;
+  font-weight: 900;
+  color: var(--ink);
+}
+
+.hero-shots {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.hero-divider {
+  width: 1px;
+  height: 15px;
+  align-self: center;
+  background: var(--line-strong);
 }
 
 .hero-roast {
   flex: none;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--muted);
   white-space: nowrap;
-}
-
-.bean-title-button {
-  max-width: 100%;
-  min-width: 0;
-  height: 38px;
-  display: inline-flex;
-  align-items: center;
-  justify-self: start;
-  gap: 8px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  text-align: left;
-  font: inherit;
-  font-size: 26px;
-  font-weight: 950;
-  line-height: 1;
-}
-
-.bean-title-button span {
-  min-width: 0;
-}
-
-.bean-title-button .icon {
-  width: 18px;
-  height: 18px;
-  flex: none;
-  color: var(--muted);
-}
-
-.hero-side {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.hero-context {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  flex-wrap: wrap;
 }
 
 .switch {
@@ -3218,25 +3230,6 @@ p {
 .page-head-actions .commit-action {
   min-height: 38px;
   padding: 0 18px;
-}
-
-.hero-title-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.hero-title-row .bean-title-button {
-  flex: 0 1 auto;
-  min-width: 0;
-}
-
-.hero-bean-actions {
-  display: inline-flex;
-  gap: 4px;
-  flex: none;
-  margin-left: auto;
 }
 
 .batch-control {
@@ -6053,19 +6046,6 @@ p {
 
   .hero {
     grid-template-columns: 1fr;
-  }
-
-  .hero-side {
-    grid-template-columns: 1fr;
-  }
-
-  .hero-context {
-    justify-content: flex-start;
-  }
-
-  .hero-main h1,
-  .hero-main p {
-    white-space: normal;
   }
 
   .recipe-grid {

@@ -72,7 +72,7 @@ import {
   profileBaseTemperature,
   ratioFor,
   recipeFromShot,
-  roastFreshnessLabel,
+  roastAgeLabel,
   selectInitialBean,
   shotFilterForBean,
   yieldForRatio
@@ -282,7 +282,8 @@ import {
 import {
   renderLivePanel as renderLivePanelView,
   renderPageHeader,
-  renderWorkbench as renderWorkbenchView
+  renderWorkbench as renderWorkbenchView,
+  type WorkbenchHeroViewModel
 } from './views/workbenchView';
 import { renderPhoneShell, type PhoneTab } from './views/phoneView';
 import { scoreValueFromTap } from './components/shotScore';
@@ -5843,11 +5844,7 @@ export class BeanieApp {
         cleaningDue: cleaningDueNow,
         asleep: this.state.asleep
       },
-      hero: {
-        beanTitle: bean ? beanLabel(bean) : 'Pick a bag',
-        freshness: bean ? roastFreshnessLabel(latestBatch(this.state.batchesByBean[bean.id] ?? [])) : null,
-        beanId: bean?.id ?? null
-      },
+      hero: this.heroViewModel(bean),
       recipe: {
         draft,
         grinderStep: this.grinderStep(),
@@ -5856,6 +5853,39 @@ export class BeanieApp {
       },
       historyHtml: this.renderHistory()
     });
+  }
+
+  private heroViewModel(bean: Bean | null): WorkbenchHeroViewModel {
+    if (!bean) {
+      return { beanName: 'Pick a bag', roaster: null, age: null, remaining: null, shotsLeft: null, beanId: null };
+    }
+    const batch = this.selectedBatch();
+    const remaining = positiveNumber(batch?.weightRemaining);
+    const avgDose = this.averageDoseIn();
+    const shotsLeft = remaining != null && avgDose != null ? Math.floor(remaining / avgDose) : null;
+    return {
+      beanName: bean.name?.trim() || beanLabel(bean),
+      roaster: bean.roaster?.trim() || null,
+      age: roastAgeLabel(batch),
+      remaining: remaining == null ? null : formatGrams(remaining),
+      shotsLeft: shotsLeft == null ? null : `~${shotsLeft} shot${shotsLeft === 1 ? '' : 's'}`,
+      beanId: bean.id
+    };
+  }
+
+  // Average dose-in across the bean's loaded shots (state.shots is already
+  // bean-scoped), so "shots left" reflects how this bag is actually pulled;
+  // fall back to the current recipe dose before any shots exist.
+  private averageDoseIn(): number | null {
+    const doses = this.state.shots
+      .filter((shot) => !isServiceShot(shot))
+      .map((shot) =>
+        positiveNumber(shot.annotations?.actualDoseWeight) ??
+        positiveNumber(shot.workflow?.context?.targetDoseWeight)
+      )
+      .filter((dose): dose is number => dose != null);
+    if (doses.length === 0) return positiveNumber(this.state.draft?.dose);
+    return doses.reduce((sum, dose) => sum + dose, 0) / doses.length;
   }
 
   private renderPage(): string {
