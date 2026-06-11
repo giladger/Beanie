@@ -81,10 +81,6 @@ function renderSecondTapHint(
 
 function renderShotDetailPane(shot: ShotRecord, batchesByBean: Record<string, BeanBatch[]>): string {
   const recipe = recipeFromShot(shot);
-  const date = new Date(shot.timestamp);
-  const dateLabel = Number.isNaN(date.valueOf())
-    ? shot.timestamp
-    : date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   const duration = shotDurationLabel(shot);
   const freshness = shotFreshnessBadgeForShot(shot, batchForShotFreshness(shot, batchesByBean));
   const grinder = recipe.grinderModel
@@ -99,7 +95,6 @@ function renderShotDetailPane(shot: ShotRecord, batchesByBean: Record<string, Be
       ${freshness ? `<span class="pane-stat">${escapeHtml(freshness)}</span>` : ''}
       ${grinder ? `<span class="pane-stat">${escapeHtml(grinder)}</span>` : ''}
       <span class="pane-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
-      <span class="pane-time">${escapeHtml(dateLabel)}</span>
       ${shotScoreControl(shot.annotations?.enjoyment ?? null, {
         action: 'set-shot-score',
         shotId: shot.id,

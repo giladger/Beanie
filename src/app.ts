@@ -57,7 +57,6 @@ import {
 import {
   appendBatchStorageEvent,
   batchStorageEvents,
-  batchStorageState,
   beanLabel,
   buildWorkflowUpdate,
   compareBeansForPicker,
@@ -77,7 +76,7 @@ import {
   shotFilterForBean,
   yieldForRatio
 } from './domain/beanWorkflow';
-import { batchOptionLabel, stockLocationDetail, stockLocationLabel } from './domain/beanDisplay';
+import { batchOptionLabel } from './domain/beanDisplay';
 import {
   readFavoriteProfiles,
   readGeminiApiKey,
@@ -5789,8 +5788,7 @@ export class BeanieApp {
       hero: {
         beanTitle: bean ? beanLabel(bean) : 'Pick a bag',
         freshness: bean ? roastFreshnessLabel(latestBatch(this.state.batchesByBean[bean.id] ?? [])) : null,
-        beanId: bean?.id ?? null,
-        stock: bean ? this.heroStock(bean) : null
+        beanId: bean?.id ?? null
       },
       recipe: {
         draft,
@@ -6374,20 +6372,6 @@ export class BeanieApp {
       : null;
     if (selected && !isFinishedBatch(selected)) return selected;
     return latestBatch(batches.filter(isUsableBatch)) ?? latestBatch(batches);
-  }
-
-  private heroStock(bean: Bean): { beanId: string; batchId: string; label: string; detail: string; icon: string } | null {
-    const batch = bean.id === this.state.selectedBeanId
-      ? this.selectedBatch()
-      : latestBatch((this.state.batchesByBean[bean.id] ?? []).filter(isUsableBatch)) ?? latestBatch(this.state.batchesByBean[bean.id] ?? []);
-    if (!batch) return null;
-    return {
-      beanId: bean.id,
-      batchId: batch.id,
-      label: stockLocationLabel(batch),
-      detail: stockLocationDetail(batch),
-      icon: batchStorageState(batch) === 'frozen' ? 'snowflake' : batchStorageState(batch) === 'thawed' ? 'sun' : 'archive'
-    };
   }
 
   private workflowMatchesBean(bean: Bean, batches: BeanBatch[] = this.state.batchesByBean[bean.id] ?? []): boolean {

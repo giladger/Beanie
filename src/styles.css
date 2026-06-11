@@ -758,45 +758,6 @@ p {
   white-space: nowrap;
 }
 
-.hero-stock-chip {
-  min-width: 0;
-  max-width: 260px;
-  height: 38px;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--teal) 10%, var(--panel-2));
-  color: var(--ink);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 900;
-  cursor: pointer;
-}
-
-.hero-stock-chip span,
-.hero-stock-chip small {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.hero-stock-chip small {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.hero-stock-chip .icon {
-  flex: none;
-  width: 16px;
-  height: 16px;
-  color: var(--teal);
-}
-
 .bean-title-button {
   max-width: 100%;
   min-width: 0;
@@ -1209,13 +1170,9 @@ p {
 }
 
 /* Date — and with it the score + edit controls — align to the right edge. */
-.pane-time {
-  flex: none;
+/* The score + edit controls sit at the right edge of the readout. */
+.pane-head .shot-score-control {
   margin-left: auto;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--muted);
-  white-space: nowrap;
 }
 
 .pane-head .enjoyment-badge {
@@ -3253,6 +3210,7 @@ p {
   display: inline-flex;
   gap: 4px;
   flex: none;
+  margin-left: auto;
 }
 
 .batch-control {
