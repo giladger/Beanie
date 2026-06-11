@@ -207,6 +207,20 @@ function jsonPost(body: unknown): RequestInit {
   };
 }
 
+// The gateway persists a batch's `frozen` flag but never stores its
+// `storageEvents` array — a PUT/POST always echoes back `storageEvents: null`
+// (verified against the live gateway). Since the server can't round-trip the
+// freeze/thaw dates, we keep the client authoritative: merge what we just sent
+// back into the parsed response so the stripped reply doesn't clobber the dates
+// in state and the local cache. Without this, editing a freeze/thaw date silently
+// reverts the moment the save completes.
+function withSentStorage(saved: BeanBatch, sent: Partial<BeanBatch>): BeanBatch {
+  const next = { ...saved };
+  if ('storageEvents' in sent) next.storageEvents = sent.storageEvents ?? null;
+  if (typeof sent.frozen === 'boolean') next.frozen = sent.frozen;
+  return next;
+}
+
 function withSkinProxyToken(init: RequestInit): RequestInit {
   const token = window.__REA_PROXY_TOKEN__;
   if (!token) return init;
@@ -255,13 +269,13 @@ export const gateway = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(batch)
       }
-    ),
+    ).then((saved) => withSentStorage(saved, batch)),
   updateBatch: (id: string, batch: Partial<BeanBatch>) =>
     fetchJson<BeanBatch>('batches', `/api/v1/bean-batches/${encodeURIComponent(id)}`, readBatch, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(batch)
-    }),
+    }).then((saved) => withSentStorage(saved, batch)),
   deleteBatch: (id: string) =>
     fetchEmpty('batches', `/api/v1/bean-batches/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   grinders: () =>

@@ -12,7 +12,7 @@ import {
   loadGatewayStartup,
   type GatewayStartupClient
 } from '../api/gateway';
-import type { Bean, Grinder, PaginatedShots, ProfileRecord, Workflow } from '../api/types';
+import type { Bean, BeanBatchStorageEvent, Grinder, PaginatedShots, ProfileRecord, Workflow } from '../api/types';
 
 const workflow: Workflow = {
   name: 'Current workflow',
@@ -350,6 +350,35 @@ await run('scale tare calls Reaprime tare endpoint', async () => {
   equal(calls.length, 1);
   equal(calls[0]!.url, '/api/v1/scale/tare');
   equal(calls[0]!.init?.method, 'PUT');
+});
+
+await run('updateBatch keeps the storageEvents we sent when the gateway strips them', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  // The live gateway persists `frozen` but always echoes `storageEvents: null`.
+  const restore = installFetchStub(calls, { id: 'batch-1', beanId: 'bean-1', frozen: true, storageEvents: null });
+  const events: BeanBatchStorageEvent[] = [{ type: 'frozen', at: '2026-05-22T08:00:00.000Z' }];
+  try {
+    const saved = await gateway.updateBatch('batch-1', { beanId: 'bean-1', frozen: true, storageEvents: events });
+    equal(calls[0]!.init?.method, 'PUT');
+    equal(saved.storageEvents?.length, 1);
+    equal(saved.storageEvents?.[0]?.at, '2026-05-22T08:00:00.000Z');
+    equal(saved.frozen, true);
+  } finally {
+    restore();
+  }
+});
+
+await run('createBatch keeps the storageEvents we sent when the gateway strips them', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const restore = installFetchStub(calls, { id: 'batch-2', beanId: 'bean-1', weightRemaining: 120, frozen: false, storageEvents: null });
+  const events: BeanBatchStorageEvent[] = [{ type: 'frozen', at: '2026-05-30T08:00:00.000Z' }];
+  try {
+    const saved = await gateway.createBatch('bean-1', { beanId: 'bean-1', weightRemaining: 120, frozen: true, storageEvents: events });
+    equal(saved.storageEvents?.[0]?.at, '2026-05-30T08:00:00.000Z');
+    equal(saved.frozen, true);
+  } finally {
+    restore();
+  }
 });
 
 async function run(name: string, fn: () => void | Promise<void>): Promise<void> {
