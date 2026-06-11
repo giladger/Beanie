@@ -138,7 +138,7 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
       <div class="bean-picker-decision">
         <div class="bean-picker-details ${editingDetails ? 'open' : ''}">
           <button type="button" class="bean-picker-bean-summary" data-action="toggle-bean-details" data-id="${escapeAttr(bean.id)}" aria-expanded="${editingDetails ? 'true' : 'false'}" title="Edit coffee">
-            ${renderBeanPickerSummary(bean, latest)}
+            ${renderBeanPickerSummary(bean, focusedBatch ?? latest)}
             <span class="icon-button bean-picker-edit-icon" aria-hidden="true">${icon('pencil')}</span>
           </button>
           ${editingDetails ? renderBeanPickerBeanForm(bean, model.prefillBeans, model.formNumbers ?? {}, { showHeader: false }) : ''}
@@ -161,7 +161,7 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
             ? '<p class="empty-history">No bags on hand.</p>'
             : visibleBatches.length === 0
               ? '<p class="empty-history">No active bags. Tap Show all to see finished bags.</p>'
-              : renderStockColumns(bean, visibleBatches, {
+              : renderStockList(bean, visibleBatches, {
                   focusedBatchId: focusedBatch?.id ?? null,
                   inUseBatchId,
                   freezeStepperBatchId: model.freezeStepperBatchId ?? null,
@@ -201,28 +201,14 @@ interface StockRowContext {
   formNumbers: Record<string, string>;
 }
 
-function renderStockColumns(
+function renderStockList(
   bean: Bean,
   visibleBatches: BeanBatch[],
   ctx: StockRowContext
 ): string {
-  const shelf = visibleBatches.filter((batch) => batchStorageState(batch) !== 'frozen');
-  const freezer = visibleBatches.filter((batch) => batchStorageState(batch) === 'frozen');
-  const single = shelf.length === 0 || freezer.length === 0;
-  const column = (title: string, iconName: string, hint: string, rows: BeanBatch[]) => `
-    <div class="stock-column">
-      <div class="stock-column-head">
-        ${icon(iconName)}
-        <span>${escapeHtml(title)} · ${rows.length}</span>
-        ${hint ? `<em>${escapeHtml(hint)}</em>` : ''}
-      </div>
-      ${rows.map((batch) => renderStockRow(bean, batch, ctx)).join('')}
-    </div>
-  `;
   return `
-    <div class="stock-columns ${single ? 'single' : ''}">
-      ${shelf.length > 0 ? column('On shelf', 'archive', '', shelf) : ''}
-      ${freezer.length > 0 ? column('In freezer', 'snowflake', 'aging paused', freezer) : ''}
+    <div class="stock-list">
+      ${visibleBatches.map((batch) => renderStockRow(bean, batch, ctx)).join('')}
     </div>
   `;
 }
@@ -230,10 +216,12 @@ function renderStockColumns(
 function renderStockRow(bean: Bean, batch: BeanBatch, ctx: StockRowContext): string {
   const focused = batch.id === ctx.focusedBatchId;
   const finished = isNearlyEmptyBatch(batch);
-  const frozen = batchStorageState(batch) === 'frozen';
+  const state = batchStorageState(batch);
+  const frozen = state === 'frozen';
   const freshness = computeBeanFreshness(batch);
   const meta = [
     formatGrams(batch.weightRemaining),
+    frozen ? 'frozen' : state === 'thawed' ? 'thawed' : null,
     freshness ? `${freshness.activeAgeDays}d` : null,
     batch.roastLevel ?? null,
     batch.id === ctx.inUseBatchId ? 'in use' : null,
@@ -257,6 +245,7 @@ function renderStockRow(bean: Bean, batch: BeanBatch, ctx: StockRowContext): str
         aria-pressed="${focused ? 'true' : 'false'}"
         title="${finished ? 'Finished bag' : 'Select this bag'}"
       >
+        ${frozen ? `<span class="stock-row-loc" title="In freezer — aging paused">${icon('snowflake')}</span>` : ''}
         <strong>${escapeHtml(stockRowDate(batch))}</strong>
         <small>${escapeHtml(meta || 'Bag')}</small>
         ${focused ? renderStockRowActions(bean, batch, { finished, frozen }) : ''}

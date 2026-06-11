@@ -67,24 +67,26 @@ run('bean picker renders matched beans, current bean, focused inspector, and lat
   includes(html, 'data-action="select-batch"');
   includes(html, 'data-action="toggle-batch-details"');
   includes(html, 'data-action="finish-batch"');
-  includes(html, 'On shelf · 1');
-  includes(html, 'In freezer · 1');
-  includes(html, 'aging paused');
+  includes(html, 'stock-list');
+  notIncludes(html, 'stock-columns');
   notIncludes(html, 'data-action="open-batch-storage"');
   notIncludes(html, 'data-action="delete-batch"');
   notIncludes(html, 'data-action="bean-picker-batch-field"');
 });
 
-run('bean picker groups bags into shelf and freezer columns with inline thaw', () => {
+run('bean picker lists bags in one list and marks the frozen bag', () => {
   const html = renderBeanPickerModal(model());
 
-  includes(html, 'stock-columns');
-  notIncludes(html, 'stock-columns single');
+  includes(html, 'stock-list');
+  notIncludes(html, 'stock-columns');
+  includes(html, 'stock-row-loc');
+  includes(html, ' · frozen · ');
+  // batch-1 is frozen and focused by default, so it offers thaw.
   includes(html, 'data-action="batch-storage-event" data-type="thawed" data-id="batch-1"');
   includes(html, 'Thaw');
 });
 
-run('bean picker uses a single column when every bag shares one location', () => {
+run('bean picker omits the frozen marker for a shelf-only bag', () => {
   const html = renderBeanPickerModal(
     model({
       batchesByBean: { 'bean-1': [batches[1]!] },
@@ -92,9 +94,9 @@ run('bean picker uses a single column when every bag shares one location', () =>
     })
   );
 
-  includes(html, 'stock-columns single');
-  includes(html, 'On shelf · 1');
-  notIncludes(html, 'In freezer');
+  includes(html, 'stock-list');
+  notIncludes(html, 'stock-row-loc');
+  notIncludes(html, ' · frozen');
 });
 
 run('bean picker focused row carries the brew and move actions inline', () => {

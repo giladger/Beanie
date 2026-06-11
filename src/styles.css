@@ -2358,50 +2358,23 @@ p {
   font-size: 14px;
 }
 
-.stock-columns {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  align-items: start;
-}
-
-.stock-columns.single {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.stock-column {
+.stock-list {
   min-width: 0;
   display: grid;
   gap: 6px;
   align-content: start;
 }
 
-.stock-column-head {
-  min-height: 22px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--soft);
-  font-size: 12px;
-  font-weight: 900;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.stock-column-head .icon {
+.stock-row-loc {
   flex: none;
-  width: 14px;
-  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  color: color-mix(in srgb, var(--teal) 70%, var(--soft));
 }
 
-.stock-column-head em {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 11px;
-  font-style: normal;
-  font-weight: 800;
-  letter-spacing: normal;
-  text-transform: none;
+.stock-row-loc .icon {
+  width: 15px;
+  height: 15px;
 }
 
 .stock-row-group {
@@ -2523,8 +2496,8 @@ p {
   grid-area: auto;
   border-top: 0;
   padding-top: 0;
-  /* The panel renders inside a stock column, which is half width when the bags
-     span shelf + freezer. Flow the fields to fit rather than overflow. */
+  /* Flow the fields to fit the available width rather than overflow on narrow
+     viewports. */
   grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
 }
 
@@ -2788,10 +2761,6 @@ p {
 
   .bean-picker-batch-fields {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .stock-columns {
-    grid-template-columns: minmax(0, 1fr);
   }
 
   .freeze-stepper {
