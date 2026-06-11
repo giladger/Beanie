@@ -4581,8 +4581,9 @@ export class BeanieApp {
     const batch = bean ? (this.state.batchesByBean[bean.id] ?? []).find((item) => item.id === batchId) : null;
     if (!bean || !batch || isFinishedBatch(batch)) return;
     this.completeSecondTapHint('bean');
-    // Brewing a bag drops you back to the dashboard, wherever the picker was opened from.
-    this.setState({ modal: null, secondTapHint: null, view: 'workbench' });
+    // Selecting a bag to brew keeps the picker open so you can keep managing bags;
+    // it just marks this bag as the one in use.
+    this.setState({ secondTapHint: null });
     await this.selectBean(bean.id, { apply: true, preferWorkflow: false, preferredBatchId: batch.id });
   }
 
