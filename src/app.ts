@@ -249,6 +249,7 @@ import {
 } from './views/profilePickerView';
 import {
   createStockFormKey,
+  freezeKeepFormKey,
   newStockFormKey,
   renderBatchStorageModal as renderBatchStorageModalView,
   renderBeanPickerModal as renderBeanPickerModalView
@@ -545,8 +546,9 @@ interface AppState {
   beanPickerEditingBeanId: string | null;
   beanPickerEditingBatchId: string | null;
   beanPickerShowAllBags: boolean;
+  beanPickerFocusedBatchId: string | null;
+  beanPickerFreezeBatchId: string | null;
   batchStorageTarget: BatchStorageTarget | null;
-  batchStorageSplitPreview: boolean;
   editingGrinderId: string | null;
   profileEditor: ProfileEditorState | null;
   editingProfileId: string | null;
@@ -659,8 +661,9 @@ export class BeanieApp {
     beanPickerEditingBeanId: null,
     beanPickerEditingBatchId: null,
     beanPickerShowAllBags: false,
+    beanPickerFocusedBatchId: null,
+    beanPickerFreezeBatchId: null,
     batchStorageTarget: null,
-    batchStorageSplitPreview: false,
     editingGrinderId: null,
     profileEditor: null,
     editingProfileId: null,
@@ -1136,7 +1139,9 @@ export class BeanieApp {
       beanPickerDraftBatchBeanId: null,
       beanPickerEditingBeanId: null,
       beanPickerEditingBatchId: null,
-      beanPickerShowAllBags: false
+      beanPickerShowAllBags: false,
+      beanPickerFocusedBatchId: null,
+      beanPickerFreezeBatchId: null
     });
     if (!options.create) void this.refreshBeans({ force: true, allowModal: true });
     if (id && !options.create) await this.ensureBatchesLoaded(id);
@@ -1150,6 +1155,8 @@ export class BeanieApp {
       beanPickerEditingBeanId: null,
       beanPickerEditingBatchId: null,
       beanPickerShowAllBags: false,
+      beanPickerFocusedBatchId: null,
+      beanPickerFreezeBatchId: null,
       secondTapHint: this.nextSecondTapHint('bean', beanId)
     });
     await this.ensureBatchesLoaded(beanId);
@@ -3105,9 +3112,31 @@ export class BeanieApp {
         if (id) {
           this.setState({
             beanPickerEditingBatchId: this.state.beanPickerEditingBatchId === id ? null : id,
-            beanPickerEditingBeanId: null
+            beanPickerEditingBeanId: null,
+            beanPickerFreezeBatchId: null
           });
         }
+        return true;
+      case 'focus-batch':
+        if (id) {
+          const changed = this.state.beanPickerFocusedBatchId !== id;
+          this.setState({
+            beanPickerFocusedBatchId: id,
+            beanPickerFreezeBatchId: changed ? null : this.state.beanPickerFreezeBatchId,
+            beanPickerEditingBatchId: changed ? null : this.state.beanPickerEditingBatchId
+          });
+        }
+        return true;
+      case 'toggle-freeze-stepper':
+        if (id) {
+          this.setState({
+            beanPickerFreezeBatchId: this.state.beanPickerFreezeBatchId === id ? null : id,
+            beanPickerEditingBatchId: null
+          });
+        }
+        return true;
+      case 'confirm-freeze-stock':
+        if (id && el.dataset.beanId) await this.freezeStock(el.dataset.beanId, id);
         return true;
       case 'toggle-bean-picker-show-all':
         this.setState({ beanPickerShowAllBags: !this.state.beanPickerShowAllBags });
@@ -3130,14 +3159,14 @@ export class BeanieApp {
           this.setState({
             modal: 'batch-storage',
             batchStorageTarget: { beanId: el.dataset.beanId, batchId: id },
-            batchStorageSplitPreview: false,
-            status: 'Stock location'
+            status: 'Dates and history'
           });
         }
         return true;
       case 'batch-storage-event':
         if (el.dataset.type === 'frozen' || el.dataset.type === 'thawed') {
-          await this.saveBatchStorageEvent(el.dataset.type);
+          const target = id && el.dataset.beanId ? { beanId: el.dataset.beanId, batchId: id } : null;
+          await this.saveBatchStorageEvent(el.dataset.type, target);
         }
         return true;
       case 'finish-batch':
@@ -3797,7 +3826,7 @@ export class BeanieApp {
         return true;
       case 'close-modal':
         if (this.state.modal === 'batch-storage') {
-          this.setState({ modal: 'bean-picker', batchStorageTarget: null, batchStorageSplitPreview: false });
+          this.setState({ modal: 'bean-picker', batchStorageTarget: null });
           return true;
         }
         if (this.state.profileEdit || this.state.machineEdit || this.state.numberEdit || this.state.machineLabelEdit) {
@@ -3819,10 +3848,10 @@ export class BeanieApp {
           modal: null,
           scanner: null,
           batchStorageTarget: null,
-          batchStorageSplitPreview: false,
           beanPickerDraftBatchBeanId: null,
           beanPickerEditingBeanId: null,
           beanPickerEditingBatchId: null,
+          beanPickerFreezeBatchId: null,
           profileEditor: null,
           editingProfileId: null,
           editDialog: null,
@@ -4339,11 +4368,6 @@ export class BeanieApp {
       await this.saveBatchStorageDate(form);
       return;
     }
-    if (form.dataset.form === 'batch-freeze-portion') {
-      event.preventDefault();
-      await this.freezeBatchPortion(form);
-      return;
-    }
     if (form.dataset.form === 'grinder-editor') {
       event.preventDefault();
       await this.submitGrinderEditor(form);
@@ -4687,14 +4711,23 @@ export class BeanieApp {
     return bean && batch ? { bean, batch } : null;
   }
 
-  private async saveBatchStorageEvent(type: 'frozen' | 'thawed'): Promise<void> {
-    const selection = this.batchStorageSelection();
+  private async saveBatchStorageEvent(
+    type: 'frozen' | 'thawed',
+    target: { beanId: string; batchId: string } | null = null
+  ): Promise<void> {
+    const selection = target ? this.batchAndBeanByIds(target.beanId, target.batchId) : this.batchStorageSelection();
     if (!selection) return;
     const batchInput = {
       beanId: selection.bean.id,
       ...appendBatchStorageEvent(selection.batch, type, new Date())
     };
-    await this.saveBatchStoragePatch(selection.bean, selection.batch.id, batchInput, type === 'frozen' ? 'Batch frozen' : 'Batch thawed');
+    await this.saveBatchStoragePatch(selection.bean, selection.batch.id, batchInput, type === 'frozen' ? 'Bag frozen' : 'Bag moved to shelf');
+  }
+
+  private batchAndBeanByIds(beanId: string, batchId: string): { bean: Bean; batch: BeanBatch } | null {
+    const bean = this.state.beans.find((item) => item.id === beanId);
+    const batch = bean ? (this.state.batchesByBean[bean.id] ?? []).find((item) => item.id === batchId) : null;
+    return bean && batch ? { bean, batch } : null;
   }
 
   private async saveBatchStorageDate(form: HTMLFormElement): Promise<void> {
@@ -4725,21 +4758,32 @@ export class BeanieApp {
     await this.saveBatchStoragePatch(selection.bean, selection.batch.id, batchInput, eventType === 'frozen' ? 'Freeze date saved' : 'Thaw date saved');
   }
 
-  private async freezeBatchPortion(form: HTMLFormElement): Promise<void> {
-    const selection = this.batchStorageSelection();
+  private async freezeStock(beanId: string, batchId: string): Promise<void> {
+    const selection = this.batchAndBeanByIds(beanId, batchId);
     if (!selection) return;
-    const formKey = form.dataset.formKey;
-    const amount = positiveNumber(numberOrNullInput(new FormData(form).get('amount')));
-    if (amount == null) {
-      this.setState({ status: 'Enter grams to freeze' });
-      return;
-    }
-    if (form.dataset.confirm !== 'true') {
-      this.setState({ batchStorageSplitPreview: true, status: 'Review stock split' });
-      return;
-    }
+    const formKey = freezeKeepFormKey(batchId);
     const remaining = positiveNumber(selection.batch.weightRemaining);
-    const portionWeight = remaining == null ? amount : Math.min(amount, remaining);
+    const keepRaw = numberOrNullInput(this.state.formNumbers[formKey] ?? null);
+    const keep = remaining == null || keepRaw == null ? 0 : Math.min(Math.max(keepRaw, 0), remaining);
+
+    if (remaining == null || keep <= 0) {
+      const batchInput = {
+        beanId: selection.bean.id,
+        ...appendBatchStorageEvent(selection.batch, 'frozen', new Date())
+      };
+      this.setState({
+        beanPickerFreezeBatchId: null,
+        formNumbers: omitKey(this.state.formNumbers, formKey)
+      });
+      await this.saveBatchStoragePatch(selection.bean, selection.batch.id, batchInput, 'Bag frozen');
+      return;
+    }
+
+    const portionWeight = round(remaining - keep, 1);
+    if (portionWeight <= 0) {
+      this.setState({ status: 'Nothing left to freeze' });
+      return;
+    }
     const frozenEvent = appendBatchStorageEvent(selection.batch, 'frozen', new Date());
     const frozenBatch: Partial<BeanBatch> = {
       beanId: selection.bean.id,
@@ -4750,51 +4794,47 @@ export class BeanieApp {
       storageEvents: frozenEvent.storageEvents ?? null,
       frozen: true
     };
-    const parentUpdate: Partial<BeanBatch> | null = remaining == null
-      ? null
-      : {
-          beanId: selection.bean.id,
-          roastDate: selection.batch.roastDate ?? null,
-          roastLevel: selection.batch.roastLevel ?? null,
-          weight: selection.batch.weight ?? null,
-          weightRemaining: Math.max(0, round(remaining - portionWeight, 1)),
-          storageEvents: selection.batch.storageEvents ?? null,
-          frozen: selection.batch.frozen ?? false
-        };
+    const parentUpdate: Partial<BeanBatch> = {
+      beanId: selection.bean.id,
+      roastDate: selection.batch.roastDate ?? null,
+      roastLevel: selection.batch.roastLevel ?? null,
+      weight: selection.batch.weight ?? null,
+      weightRemaining: keep,
+      storageEvents: selection.batch.storageEvents ?? null,
+      frozen: selection.batch.frozen ?? false
+    };
 
-    this.setState({ status: 'Freezing portion' });
+    this.setState({ status: 'Freezing stock' });
     try {
       const current = this.state.batchesByBean[selection.bean.id] ?? [];
       if (this.state.demo) {
         const created = { id: `demo-batch-${Date.now()}`, ...frozenBatch } as BeanBatch;
         const batches = [created, ...current.map((batch) =>
-          batch.id === selection.batch.id && parentUpdate ? { ...batch, ...parentUpdate } : batch
+          batch.id === selection.batch.id ? { ...batch, ...parentUpdate } : batch
         )];
         this.setState({
           batchesByBean: { ...this.state.batchesByBean, [selection.bean.id]: batches },
-          formNumbers: formKey ? omitKey(this.state.formNumbers, formKey) : this.state.formNumbers,
-          batchStorageSplitPreview: false,
-          status: 'Frozen portion added (demo)'
+          formNumbers: omitKey(this.state.formNumbers, formKey),
+          beanPickerFreezeBatchId: null,
+          status: `Froze ${portionWeight}g (demo)`
         });
         return;
       }
 
       const created = await gateway.createBatch(selection.bean.id, frozenBatch);
-      const savedParent = parentUpdate
-        ? await gateway.updateBatch(selection.batch.id, parentUpdate)
-        : selection.batch;
+      const savedParent = await gateway.updateBatch(selection.batch.id, parentUpdate);
       const latest = this.state.batchesByBean[selection.bean.id] ?? current;
       const batches = [created, ...latest.map((batch) => (batch.id === selection.batch.id ? savedParent : batch))];
       await beanieCache.putBeanBatches(selection.bean.id, batches).catch(() => {});
       this.setState({
         batchesByBean: { ...this.state.batchesByBean, [selection.bean.id]: batches },
-        formNumbers: formKey ? omitKey(this.state.formNumbers, formKey) : this.state.formNumbers,
-        batchStorageSplitPreview: false,
-        status: 'Frozen portion added'
+        formNumbers: omitKey(this.state.formNumbers, formKey),
+        beanPickerFreezeBatchId: null,
+        status: `Froze ${portionWeight}g`
       });
     } catch (error) {
-      console.error('[Beanie] Freeze portion failed', error);
-      this.setState({ status: 'Freeze portion failed' });
+      console.error('[Beanie] Freeze stock failed', error);
+      this.setState({ status: 'Freeze stock failed' });
     }
   }
 
@@ -5537,8 +5577,7 @@ export class BeanieApp {
     }
     if (edit.target === 'form-field' && edit.formKey) {
       this.setState({
-        formNumbers: { ...this.state.formNumbers, [edit.formKey]: value },
-        batchStorageSplitPreview: false
+        formNumbers: { ...this.state.formNumbers, [edit.formKey]: value }
       });
     }
   }
@@ -5924,6 +5963,8 @@ export class BeanieApp {
       mode: this.state.beanPickerMode,
       selectedBeanId: this.state.selectedBeanId,
       selectedBatchId: this.state.selectedBatchId,
+      focusedBatchId: this.state.beanPickerFocusedBatchId,
+      freezeStepperBatchId: this.state.beanPickerFreezeBatchId,
       batchesByBean: this.state.batchesByBean,
       prefillBeans: beans,
       draftBatchBeanId: this.state.beanPickerDraftBatchBeanId,
@@ -5998,7 +6039,7 @@ export class BeanieApp {
 
   private renderBatchStorageModal(): string {
     const selection = this.batchStorageSelection();
-    return selection ? renderBatchStorageModalView(selection.bean, selection.batch, this.state.formNumbers, this.state.batchStorageSplitPreview) : '';
+    return selection ? renderBatchStorageModalView(selection.bean, selection.batch) : '';
   }
 
   private renderNoScaleShotModal(): string {

@@ -160,7 +160,7 @@ export function renderHero(model: WorkbenchHeroViewModel): string {
           ${model.freshness ? `<span class="hero-roast">${escapeHtml(model.freshness)}</span>` : ''}
           ${
             model.stock
-              ? `<button class="hero-stock-chip" data-action="open-batch-storage" data-id="${escapeAttr(model.stock.batchId)}" data-bean-id="${escapeAttr(model.stock.beanId)}" aria-label="Manage stock location">
+              ? `<button class="hero-stock-chip" data-action="open-bean-picker" aria-label="Manage coffee stock">
                   ${icon(model.stock.icon)}<span>${escapeHtml(model.stock.label)}</span><small>${escapeHtml(model.stock.detail)}</small>
                 </button>`
               : ''

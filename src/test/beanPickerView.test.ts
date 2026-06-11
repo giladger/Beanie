@@ -62,14 +62,80 @@ run('bean picker renders matched beans, current bean, focused inspector, and lat
   notIncludes(html, 'data-action="select-bean"');
   notIncludes(html, '<span>Save</span>');
   notIncludes(html, 'Latest stock');
-  includes(html, 'data-batch-id="batch-1"');
+  includes(html, 'data-action="focus-batch"');
+  includes(html, 'data-id="batch-1"');
   includes(html, 'data-action="select-batch"');
-  includes(html, 'data-action="open-batch-storage"');
   includes(html, 'data-action="toggle-batch-details"');
   includes(html, 'data-action="finish-batch"');
-  includes(html, 'In freezer');
+  includes(html, 'On shelf · 1');
+  includes(html, 'In freezer · 1');
+  includes(html, 'aging paused');
+  notIncludes(html, 'data-action="open-batch-storage"');
   notIncludes(html, 'data-action="delete-batch"');
   notIncludes(html, 'data-action="bean-picker-batch-field"');
+});
+
+run('bean picker groups bags into shelf and freezer columns with inline thaw', () => {
+  const html = renderBeanPickerModal(model());
+
+  includes(html, 'stock-columns');
+  notIncludes(html, 'stock-columns single');
+  includes(html, 'data-action="batch-storage-event" data-type="thawed" data-id="batch-1"');
+  includes(html, 'Thaw');
+});
+
+run('bean picker uses a single column when every bag shares one location', () => {
+  const html = renderBeanPickerModal(
+    model({
+      batchesByBean: { 'bean-1': [batches[1]!] },
+      selectedBatchId: 'batch-older'
+    })
+  );
+
+  includes(html, 'stock-columns single');
+  includes(html, 'On shelf · 1');
+  notIncludes(html, 'In freezer');
+});
+
+run('bean picker action bar targets the selected bag with brew and move actions', () => {
+  const html = renderBeanPickerModal(model());
+
+  includes(html, 'stock-action-bar');
+  includes(html, 'Brew this');
+  includes(html, 'To shelf');
+  includes(html, 'data-action="select-batch" data-id="batch-1"');
+  notIncludes(html, 'data-action="toggle-freeze-stepper"');
+});
+
+run('bean picker action bar offers freeze for shelf bags and opens the stepper', () => {
+  const focusedShelf = model({ focusedBatchId: 'batch-older' });
+  const html = renderBeanPickerModal(focusedShelf);
+
+  includes(html, 'data-action="toggle-freeze-stepper" data-id="batch-older"');
+  notIncludes(html, 'class="freeze-stepper"');
+
+  const withStepper = renderBeanPickerModal(
+    model({ focusedBatchId: 'batch-older', freezeStepperBatchId: 'batch-older' })
+  );
+
+  includes(withStepper, 'class="freeze-stepper"');
+  includes(withStepper, 'Keep');
+  includes(withStepper, 'data-action="confirm-freeze-stock" data-id="batch-older"');
+  includes(withStepper, 'Freeze 50g');
+});
+
+run('bean picker freeze stepper splits around the kept grams', () => {
+  const html = renderBeanPickerModal(
+    model({
+      focusedBatchId: 'batch-older',
+      freezeStepperBatchId: 'batch-older',
+      formNumbers: { 'freeze-keep:batch-older': '20' }
+    })
+  );
+
+  includes(html, 'freeze <b>30g</b>');
+  includes(html, 'Freeze 30g');
+  includes(html, 'data-form-key="freeze-keep:batch-older"');
 });
 
 run('bean picker opens edit fields from the bean line without duplicating the title', () => {
@@ -100,10 +166,10 @@ run('bean picker shows every bag on hand after adding beyond two bags', () => {
   );
 
   includes(html, '3 bags');
-  includes(html, 'data-batch-id="batch-new"');
-  includes(html, 'data-batch-id="batch-1"');
-  includes(html, 'data-batch-id="batch-older"');
-  equals(countOccurrences(html, 'data-form="bean-picker-batch"'), 3);
+  includes(html, 'data-id="batch-new"');
+  includes(html, 'data-id="batch-1"');
+  includes(html, 'data-id="batch-older"');
+  equals(countOccurrences(html, 'data-action="focus-batch"'), 3);
 });
 
 run('bean picker hides nearly empty bags until show all is toggled', () => {
@@ -124,7 +190,7 @@ run('bean picker hides nearly empty bags until show all is toggled', () => {
 
   includes(hiddenHtml, '2 active bags');
   includes(hiddenHtml, 'Show all');
-  notIncludes(hiddenHtml, 'data-batch-id="batch-finished"');
+  notIncludes(hiddenHtml, 'data-id="batch-finished"');
 
   const shownHtml = renderBeanPickerModal(
     model({
@@ -137,9 +203,32 @@ run('bean picker hides nearly empty bags until show all is toggled', () => {
 
   includes(shownHtml, '3 bags');
   includes(shownHtml, 'Hide finished');
-  includes(shownHtml, 'data-batch-id="batch-finished"');
-  includes(shownHtml, 'Finished');
-  includes(shownHtml, 'disabled');
+  includes(shownHtml, 'data-id="batch-finished"');
+  includes(shownHtml, 'stock-row  finished');
+});
+
+run('bean picker action bar hides brew and freeze for finished bags', () => {
+  const finished: BeanBatch = {
+    id: 'batch-finished',
+    beanId: 'bean-1',
+    roastDate: '2026-06-10',
+    weight: 250,
+    weightRemaining: 3
+  };
+  const html = renderBeanPickerModal(
+    model({
+      showAllBags: true,
+      focusedBatchId: 'batch-finished',
+      batchesByBean: {
+        'bean-1': [finished, ...batches]
+      }
+    })
+  );
+
+  includes(html, 'stock-action-bar');
+  notIncludes(html, 'Brew this');
+  notIncludes(html, 'data-action="toggle-freeze-stepper"');
+  includes(html, 'data-action="toggle-batch-details"');
 });
 
 run('bean picker keeps all nearly empty bags hidden by default', () => {
@@ -161,16 +250,25 @@ run('bean picker keeps all nearly empty bags hidden by default', () => {
   includes(html, '0 active bags');
   includes(html, 'Show all');
   includes(html, 'No active bags.');
-  notIncludes(html, 'data-batch-id="batch-finished"');
+  notIncludes(html, 'data-id="batch-finished"');
 });
 
 run('bean picker edits one bag only after opening the bag details', () => {
   const html = renderBeanPickerModal(model({ editingBatchId: 'batch-1' }));
 
-  includes(html, 'bean-picker-batch stock-card current editing');
+  includes(html, 'stock-edit-panel');
+  includes(html, 'data-batch-id="batch-1"');
   includes(html, 'data-action="bean-picker-batch-field"');
   includes(html, 'name="roastDate"');
   includes(html, 'name="weightRemaining"');
+  includes(html, 'data-action="open-batch-storage"');
+  includes(html, 'Dates and history');
+});
+
+run('bean picker keeps the edit panel closed for unfocused bags', () => {
+  const html = renderBeanPickerModal(model({ editingBatchId: 'batch-older' }));
+
+  notIncludes(html, 'stock-edit-panel');
 });
 
 run('bean picker create mode renders new bean form and prefill choices', () => {
@@ -208,44 +306,33 @@ run('bean picker renders second tap hint for matching bean only', () => {
   includes(html, 'has-second-tap-hint');
 });
 
-run('batch storage modal renders compact freeze/thaw actions', () => {
+run('batch storage modal shows bag details with history and a single move action', () => {
   const html = renderBatchStorageModal(beans[0]!, batches[0]!);
 
-  includes(html, 'Stock location');
+  includes(html, 'Bag details');
   includes(html, 'Current stock');
   includes(html, 'Move stock');
-  includes(html, 'Mark thawed');
-  includes(html, 'Dates and history');
+  includes(html, 'Move to shelf');
+  includes(html, 'data-type="thawed"');
   includes(html, 'Correct freeze date');
   includes(html, 'Frozen on');
   includes(html, 'Roast age');
   includes(html, 'Active age');
   includes(html, 'Storage timeline');
   includes(html, 'data-form="batch-storage-date"');
-  notIncludes(html, 'Location action');
-  notIncludes(html, 'Storage date');
+  notIncludes(html, 'Mark thawed');
+  notIncludes(html, 'data-form="batch-freeze-portion"');
+  notIncludes(html, 'Preview split');
 });
 
-run('batch storage modal exposes freezing a portion for shelf batches', () => {
+run('batch storage modal offers freezing for shelf batches without a split form', () => {
   const html = renderBatchStorageModal(beans[0]!, batches[1]!);
 
-  includes(html, 'Move all to freezer');
-  includes(html, 'Move part to freezer');
-  includes(html, 'Leave some on the shelf and freeze the rest.');
-  includes(html, 'Grams to move');
-  includes(html, 'data-action="open-number-edit"');
-  includes(html, 'data-return-modal="batch-storage"');
-  includes(html, 'Preview split');
-  includes(html, 'data-form="batch-freeze-portion"');
-});
-
-run('batch storage modal previews split stock before committing', () => {
-  const html = renderBatchStorageModal(beans[0]!, batches[1]!, { 'batch-storage:batch-older:amount': '25' }, true);
-
-  includes(html, 'Shelf stock: 25g on shelf');
-  includes(html, 'New freezer stock: 25g frozen today');
-  includes(html, 'Move 25g to freezer');
-  includes(html, 'data-confirm="true"');
+  includes(html, 'Move to freezer');
+  includes(html, 'data-type="frozen"');
+  notIncludes(html, 'Move part to freezer');
+  notIncludes(html, 'Grams to move');
+  notIncludes(html, 'data-form="batch-freeze-portion"');
 });
 
 run('batch storage modal backfills the freeze date for legacy frozen batches', () => {
