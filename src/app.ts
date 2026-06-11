@@ -63,6 +63,7 @@ import {
   emptyRecipe,
   editLastBatchStorageEventDate,
   freshnessSnapshotForShot,
+  formatGrams,
   formatRatio,
   latestBatch,
   legacyShotFilterForBean,
@@ -2859,6 +2860,13 @@ export class BeanieApp {
           status: decision.status
         });
         this.liveShot.reset();
+        if (bean && batch) {
+          void this.consumeBatchDoseForShot(
+            bean,
+            batch.id,
+            decision.optimisticShot?.annotations?.actualDoseWeight ?? null
+          );
+        }
         return;
     }
   }
@@ -2868,6 +2876,15 @@ export class BeanieApp {
     batch: BeanBatch | null,
     context: LiveShotCompletionContext
   ): Promise<void> {
+    // Deduct the dose now: the beans are spent the moment the shot ends, even if
+    // the gateway poll below times out or the user navigates away mid-wait.
+    if (batch) {
+      void this.consumeBatchDoseForShot(
+        bean,
+        batch.id,
+        context.optimisticShot?.annotations?.actualDoseWeight ?? null
+      );
+    }
     try {
       const result = await waitForCompletedLiveShot(context, {
         delay,
@@ -2930,6 +2947,31 @@ export class BeanieApp {
         this.setState({ liveActive: false, liveFinalizing: false });
       }
     }
+  }
+
+  // A pulled shot consumes its dose from the bag it was brewed from, so the
+  // remaining weight tracks itself; bags without a tracked weight are left alone.
+  private async consumeBatchDoseForShot(
+    bean: Bean,
+    batchId: string,
+    doseWeight: number | null | undefined
+  ): Promise<void> {
+    const dose = positiveNumber(doseWeight);
+    if (dose == null) return;
+    const batch = (this.state.batchesByBean[bean.id] ?? []).find((item) => item.id === batchId);
+    const remaining = positiveNumber(batch?.weightRemaining);
+    if (!batch || remaining == null) return;
+    const next = Math.max(0, round(remaining - dose, 1));
+    const batchInput: Partial<BeanBatch> = {
+      beanId: bean.id,
+      roastDate: batch.roastDate ?? null,
+      roastLevel: batch.roastLevel ?? null,
+      weight: batch.weight ?? null,
+      weightRemaining: next,
+      storageEvents: batch.storageEvents ?? null,
+      frozen: batch.frozen
+    };
+    await this.saveBatchStoragePatch(bean, batch.id, batchInput, `Bag: ${formatGrams(next)} left`);
   }
 
   private async saveFreshnessForCompletedShot(shot: ShotRecord, batch: BeanBatch | null): Promise<ShotRecord> {
