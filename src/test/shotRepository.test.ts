@@ -174,30 +174,6 @@ await run('fetchShotPage sets pagination, writes the page, and hydrates records'
   equal(loaded.records[0]?.measurements.length, 1);
 });
 
-await run('fetchShotPage falls back before caching when a page is rejected', async () => {
-  const gateway = new FakeShotGateway();
-  const cache = new FakeShotCache();
-  const query = new URLSearchParams({ beanId: 'bean-1' });
-  const fallbackQuery = new URLSearchParams({ coffeeRoaster: 'Kawa', coffeeName: 'Pink Bourbon' });
-
-  const loaded = await fetchShotPage(
-    {
-      query,
-      pageSize: 24,
-      offset: 0,
-      fallbackQuery,
-      acceptPage: () => false
-    },
-    { gateway, cache }
-  );
-
-  equal(gateway.shotQueries[0], 'beanId=bean-1&limit=24&offset=0');
-  equal(gateway.shotQueries[1], 'coffeeRoaster=Kawa&coffeeName=Pink+Bourbon&limit=24&offset=0');
-  equal(cache.pageWrites.length, 1);
-  equal(cache.pageWrites[0], 'coffeeRoaster=Kawa&coffeeName=Pink+Bourbon&limit=24&offset=0');
-  equal(loaded.total, 12);
-});
-
 await run('fetchShotPage falls back to a cached page when shots fail', async () => {
   const gateway = new FakeShotGateway();
   gateway.failShots = true;

@@ -5,7 +5,6 @@ import {
   compareBeansForPicker,
   computeBeanFreshness,
   editLastBatchStorageEventDate,
-  legacyShotFilterForBean,
   profileBaseTemperature,
   ratioFor,
   recipeFromShot,
@@ -60,13 +59,6 @@ run('builds bean shot filters by stable bean id', () => {
   equal(query.get('coffeeRoaster'), null);
   equal(query.get('coffeeName'), null);
   equal(query.get('beanId'), 'a');
-});
-
-run('builds legacy shot filters by coffee snapshot', () => {
-  const query = legacyShotFilterForBean(beans[0]!);
-  equal(query.get('beanId'), null);
-  equal(query.get('coffeeRoaster'), 'Kawa');
-  equal(query.get('coffeeName'), 'Pink Bourbon');
 });
 
 run('sorts bean list by shot or add recency before name', () => {
