@@ -14,7 +14,7 @@ run('computePlotArea respects detailed margins', () => {
   equal(plot.x, 42);
   equal(plot.y, 18);
   equal(plot.width, 920 - 42 - 22);
-  equal(plot.height, 340 - 18 - 86);
+  equal(plot.height, 340 - 18 - 58);
 });
 
 run('computePlotArea uses compact margins when not detailed', () => {

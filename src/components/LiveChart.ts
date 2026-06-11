@@ -26,7 +26,7 @@ export interface LiveChartOptions {
   pixelScale?: number;
 }
 
-const MARGIN_DETAILED = { top: 18, right: 22, bottom: 86, left: 42 };
+const MARGIN_DETAILED = { top: 18, right: 22, bottom: 58, left: 42 };
 const MARGIN_COMPACT = { top: 7, right: 7, bottom: 7, left: 7 };
 
 // Chart chrome colors. These are resolved from CSS theme tokens at draw time
@@ -210,7 +210,7 @@ export class LiveChart {
     for (let i = 0; i < model.series.length; i += 1) {
       this.drawSeries(model.series[i]!, model.maxTime, model.maxY, plot);
     }
-    if (detailed) this.drawLegend(model.series, width, height);
+    if (detailed) this.drawLegend(model.series, plot, width);
   }
 
   private drawNoData(plot: PlotArea, width: number, height: number): void {
@@ -361,16 +361,15 @@ export class LiveChart {
     ctx.setLineDash([]);
   }
 
-  private drawLegend(series: LiveChartSeries[], width: number, height: number): void {
+  private drawLegend(series: LiveChartSeries[], plot: PlotArea, width: number): void {
     if (series.length === 0) return;
     const ctx = this.ctx;
     const itemWidth = 124;
     const rowHeight = 15;
     const columns = Math.max(1, Math.min(series.length, Math.floor((width - 24) / itemWidth)));
-    const rows = Math.ceil(series.length / columns);
     const start = Math.max(12, width - columns * itemWidth - 12);
-    // Bottom-anchored in the reserved margin, below the x-axis labels.
-    const firstRowY = height - 10 - (rows - 1) * rowHeight;
+    // Anchored just below the x-axis labels, which sit at plot bottom + 16.
+    const firstRowY = plot.y + plot.height + 34;
 
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'left';
