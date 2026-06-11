@@ -35,6 +35,7 @@ export interface BeanPickerViewModel {
   showAllBags?: boolean;
   formNumbers?: Record<string, string>;
   secondTapHint: { kind: 'shot' | 'bean'; id: string } | null;
+  averageDoseIn?: number | null;
 }
 
 export function renderBeanPickerModal(model: BeanPickerViewModel): string {
@@ -75,7 +76,9 @@ export function renderBeanPickerModal(model: BeanPickerViewModel): string {
                                 focused: bean.id === focusedId,
                                 current: bean.id === model.selectedBeanId,
                                 favorite: favorites.has(bean.id),
-                                secondTapHint: model.secondTapHint
+                                secondTapHint: model.secondTapHint,
+                                batches: model.batchesByBean[bean.id] ?? [],
+                                averageDoseIn: model.averageDoseIn ?? null
                               })
                             )
                             .join('')
@@ -92,23 +95,52 @@ export function renderBeanPickerModal(model: BeanPickerViewModel): string {
 
 function renderBeanPickerRow(
   bean: Bean,
-  options: { focused: boolean; current: boolean; favorite: boolean; secondTapHint: BeanPickerViewModel['secondTapHint'] }
+  options: {
+    focused: boolean;
+    current: boolean;
+    favorite: boolean;
+    secondTapHint: BeanPickerViewModel['secondTapHint'];
+    batches: BeanBatch[];
+    averageDoseIn: number | null;
+  }
 ): string {
   const armed = options.focused && !options.current;
   const hint = armed ? '' : renderSecondTapHint('bean', bean.id, options.secondTapHint);
   const status = options.current ? 'Current' : armed ? 'Tap again' : '';
   const origin = bean.country ? `<small>${escapeHtml(bean.country)}</small>` : '';
+  const meta = beanRowMeta(options.batches, options.averageDoseIn);
   return `
     <button class="bean-row ${options.focused ? 'active' : ''} ${armed || hint ? 'has-second-tap-hint' : ''}" data-action="inspect-bean" data-id="${escapeAttr(bean.id)}">
       <span>
         ${origin}
         <b>${escapeHtml(bean.roaster)}</b>
         <strong>${options.favorite ? '<span class="bean-row-fav">★</span> ' : ''}${escapeHtml(bean.name)}</strong>
+        ${meta ? `<small class="bean-row-meta">${escapeHtml(meta)}</small>` : ''}
       </span>
       ${status ? `<em class="bean-row-action ${options.current ? 'current' : armed ? 'armed' : ''}">${escapeHtml(status)}</em>` : ''}
       ${hint}
     </button>
   `;
+}
+
+// Active age comes from the freshest bag on hand (the one you'd brew next);
+// shots-left sums the remaining grams across every active bag of this coffee,
+// divided by the average dose-in. Returns '' when no active bags carry the data.
+function beanRowMeta(batches: BeanBatch[], averageDoseIn: number | null): string {
+  const active = batches.filter((batch) => !isNearlyEmptyBatch(batch));
+  if (active.length === 0) return '';
+  const freshness = computeBeanFreshness(latestBatch(active));
+  const totalRemaining = active.reduce(
+    (sum, batch) => sum + (typeof batch.weightRemaining === 'number' && batch.weightRemaining > 0 ? batch.weightRemaining : 0),
+    0
+  );
+  const shotsLeft = averageDoseIn && averageDoseIn > 0 && totalRemaining > 0
+    ? Math.floor(totalRemaining / averageDoseIn)
+    : null;
+  return [
+    freshness ? `${freshness.activeAgeDays}d active` : null,
+    shotsLeft != null ? `~${shotsLeft} shot${shotsLeft === 1 ? '' : 's'}` : null
+  ].filter(Boolean).join(' · ');
 }
 
 function renderBeanPickerInspector(model: BeanPickerViewModel): string {

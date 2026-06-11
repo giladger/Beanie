@@ -6083,7 +6083,8 @@ export class BeanieApp {
       editingBatchId: this.state.beanPickerEditingBatchId,
       showAllBags: this.state.beanPickerShowAllBags,
       formNumbers: this.state.formNumbers,
-      secondTapHint: this.state.secondTapHint
+      secondTapHint: this.state.secondTapHint,
+      averageDoseIn: this.averageDoseIn()
     });
   }
 

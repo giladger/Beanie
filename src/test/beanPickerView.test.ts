@@ -87,6 +87,21 @@ run('bean picker lists bags in one list and marks the frozen bag', () => {
   includes(html, 'Thaw');
 });
 
+run('bean list rows show active age and estimated shots left', () => {
+  const html = renderBeanPickerModal(model({ averageDoseIn: 18 }));
+
+  includes(html, 'bean-row-meta');
+  // bean-1 has 125g + 50g across two active bags; floor(175 / 18) = 9.
+  includes(html, '~9 shots');
+  includes(html, 'active');
+});
+
+run('bean list hides the shots estimate when no dose average is known', () => {
+  const html = renderBeanPickerModal(model({ averageDoseIn: null }));
+
+  notIncludes(html, 'shots');
+});
+
 run('bean picker omits the frozen marker for a shelf-only bag', () => {
   const html = renderBeanPickerModal(
     model({

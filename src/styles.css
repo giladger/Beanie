@@ -718,6 +718,19 @@ p {
   font-size: 13px;
 }
 
+.bean-row small.bean-row-meta {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .bean-row.has-second-tap-hint {
   padding-right: 118px;
 }
