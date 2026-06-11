@@ -64,7 +64,8 @@ run('bean picker renders matched beans, current bean, focused inspector, and lat
   notIncludes(html, 'Latest stock');
   includes(html, 'data-action="focus-batch"');
   includes(html, 'data-id="batch-1"');
-  includes(html, 'data-action="select-batch"');
+  notIncludes(html, 'data-action="select-batch"');
+  notIncludes(html, 'Brew this');
   includes(html, 'data-action="toggle-batch-details"');
   includes(html, 'data-action="finish-batch"');
   includes(html, 'stock-list');
@@ -99,14 +100,16 @@ run('bean picker omits the frozen marker for a shelf-only bag', () => {
   notIncludes(html, ' · frozen');
 });
 
-run('bean picker focused row carries the brew and move actions inline', () => {
+run('bean picker focused row carries the move and manage actions inline', () => {
   const html = renderBeanPickerModal(model());
 
   includes(html, 'stock-row-actions');
   notIncludes(html, 'stock-action-bar');
-  includes(html, 'Brew this');
+  notIncludes(html, 'Brew this');
+  notIncludes(html, 'data-action="select-batch"');
   includes(html, 'Thaw');
-  includes(html, 'data-action="select-batch" data-id="batch-1"');
+  includes(html, 'data-action="toggle-batch-details" data-id="batch-1"');
+  includes(html, 'data-action="finish-batch" data-id="batch-1"');
   notIncludes(html, 'data-action="toggle-freeze-stepper"');
 });
 

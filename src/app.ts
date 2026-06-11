@@ -3127,6 +3127,8 @@ export class BeanieApp {
             beanPickerFreezeBatchId: changed ? null : this.state.beanPickerFreezeBatchId,
             beanPickerEditingBatchId: changed ? null : this.state.beanPickerEditingBatchId
           });
+          // Selecting a bag also sets it as the bean's in-use bag (no separate Brew button).
+          if (changed && el.dataset.beanId) await this.selectBatchFromPicker(el.dataset.beanId, id);
         }
         return true;
       case 'toggle-freeze-stepper':
@@ -3142,9 +3144,6 @@ export class BeanieApp {
         return true;
       case 'toggle-bean-picker-show-all':
         this.setState({ beanPickerShowAllBags: !this.state.beanPickerShowAllBags });
-        return true;
-      case 'select-batch':
-        if (id && el.dataset.beanId) await this.selectBatchFromPicker(el.dataset.beanId, id);
         return true;
       case 'open-add-batch':
         await this.openBeanPicker(this.state.selectedBeanId);

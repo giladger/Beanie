@@ -266,7 +266,6 @@ function renderStockRowActions(
     : `<button type="button" class="secondary-button compact" data-action="toggle-freeze-stepper" data-id="${escapeAttr(batch.id)}" title="Move this bag to the freezer">${icon('snowflake')}<span>Freeze</span></button>`;
   return `
     <div class="stock-row-actions">
-      ${options.finished ? '' : `<button type="button" class="primary-button compact stock-brew-button" data-action="select-batch" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}">${icon('coffee')}<span>Brew this</span></button>`}
       ${options.finished ? '' : moveButton}
       <button type="button" class="secondary-button compact" data-action="toggle-batch-details" data-id="${escapeAttr(batch.id)}" title="Edit this bag's dates and weights">${icon('pencil')}<span>Edit</span></button>
       ${options.finished ? '' : `<button type="button" class="secondary-button compact" data-action="finish-batch" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}" title="Mark this bag empty and used up">${icon('circle-check')}<span>Finish</span></button>`}

@@ -2432,14 +2432,6 @@ p {
   padding: 0 11px;
 }
 
-/* Brew this shares the teal "tap again" chip treatment rather than a solid
-   fill, so the confirm affordances read as one family across the app. */
-.stock-row-actions .stock-brew-button {
-  border-color: color-mix(in srgb, var(--teal) 55%, var(--line));
-  background: color-mix(in srgb, var(--teal) 18%, var(--panel-2));
-  color: var(--ink);
-}
-
 .freeze-stepper {
   display: flex;
   align-items: center;
