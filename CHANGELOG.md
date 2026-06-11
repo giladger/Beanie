@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.0 - 2026-06-11
+
+- Added bean freshness and storage tracking: each bag records its roast date and freeze/thaw history, and Beanie reports roast age, active age (paused while a bag is frozen), and remaining weight.
+- Redesigned the bean stock picker into a single bag list where you select, freeze, finish, and edit a bag inline from its row, with a freeze stepper for weighing how much goes into the freezer (partial freezes split the bag).
+- Added bean favorites that pin coffees to the top of the picker.
+- Redesigned the dashboard title bar around the active coffee — name, roaster, remaining grams, an estimated shots-left count, and roast age — with the whole bar opening the bean picker.
+- Added automatic bag depletion: a bag's remaining weight now decreases by the shot dose each time you pull a shot.
+- Added active age and an estimated shots-left count to each coffee in the bean list.
+
 ## v0.1.7 - 2026-06-07
 
 - Added an AI bag-label scanner that can photograph a coffee bag, extract bean and batch details with Gemini, review low-confidence fields, and save the confirmed result into the existing bean workflow.
