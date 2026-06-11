@@ -163,7 +163,6 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
               ? '<p class="empty-history">No active bags. Tap Show all to see finished bags.</p>'
               : renderStockColumns(bean, visibleBatches, focusedBatch?.id ?? null, inUseBatchId)
         }
-        ${focusedBatch ? renderStockActionBar(bean, focusedBatch) : ''}
         ${focusedBatch && model.freezeStepperBatchId === focusedBatch.id && batchStorageState(focusedBatch) !== 'frozen' ? renderFreezeStepper(bean, focusedBatch, model.formNumbers ?? {}) : ''}
         ${focusedBatch && model.editingBatchId === focusedBatch.id ? renderStockEditPanel(bean, focusedBatch) : ''}
       </div>
@@ -246,9 +245,29 @@ function renderStockRow(
       aria-pressed="${options.focused ? 'true' : 'false'}"
       title="${finished ? 'Finished bag' : 'Select this bag'}"
     >
-      <strong>${escapeHtml(stockRowDate(batch))}</strong>
-      <small>${escapeHtml(meta || 'Bag')}</small>
-      ${frozen && !finished ? `<button type="button" class="secondary-button compact stock-thaw" data-action="batch-storage-event" data-type="thawed" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}" title="Move to shelf">${icon('sun')}<span>Thaw</span></button>` : ''}
+      <div class="stock-row-main">
+        <strong>${escapeHtml(stockRowDate(batch))}</strong>
+        <small>${escapeHtml(meta || 'Bag')}</small>
+      </div>
+      ${options.focused ? renderStockRowActions(bean, batch, { finished, frozen }) : ''}
+    </div>
+  `;
+}
+
+function renderStockRowActions(
+  bean: Bean,
+  batch: BeanBatch,
+  options: { finished: boolean; frozen: boolean }
+): string {
+  const moveButton = options.frozen
+    ? `<button type="button" class="secondary-button compact" data-action="batch-storage-event" data-type="thawed" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}" title="Move to shelf">${icon('sun')}<span>Thaw</span></button>`
+    : `<button type="button" class="secondary-button compact" data-action="toggle-freeze-stepper" data-id="${escapeAttr(batch.id)}" title="Freeze this bag">${icon('snowflake')}<span>Freeze</span></button>`;
+  return `
+    <div class="stock-row-actions">
+      ${options.finished ? '' : `<button type="button" class="primary-button compact stock-brew-button" data-action="select-batch" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}">${icon('coffee')}<span>Brew this</span></button>`}
+      ${options.finished ? '' : moveButton}
+      <button type="button" class="icon-button" data-action="toggle-batch-details" data-id="${escapeAttr(batch.id)}" aria-label="Edit bag" title="Edit bag">${icon('pencil')}</button>
+      ${options.finished ? '' : `<button type="button" class="icon-button" data-action="finish-batch" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}" aria-label="Mark bag finished" title="Mark finished">${icon('circle-check')}</button>`}
     </div>
   `;
 }
@@ -258,32 +277,6 @@ function stockRowDate(batch: BeanBatch): string {
   return roast && !Number.isNaN(roast.valueOf())
     ? roast.toLocaleDateString([], { month: 'short', day: 'numeric' })
     : 'Undated';
-}
-
-function renderStockActionBar(bean: Bean, batch: BeanBatch): string {
-  const state = batchStorageState(batch);
-  const finished = isNearlyEmptyBatch(batch);
-  const freshness = computeBeanFreshness(batch);
-  const detail = [
-    stockLocationLabel(batch),
-    freshness ? `${freshness.roastAgeDays} roast d` : null,
-    freshness ? `${freshness.activeAgeDays} active d` : null
-  ].filter(Boolean).join(' · ');
-  const moveButton = state === 'frozen'
-    ? `<button type="button" class="secondary-button" data-action="batch-storage-event" data-type="thawed" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}">${icon('sun')}<span>To shelf</span></button>`
-    : `<button type="button" class="secondary-button" data-action="toggle-freeze-stepper" data-id="${escapeAttr(batch.id)}">${icon('snowflake')}<span>Freeze</span></button>`;
-  return `
-    <div class="stock-action-bar">
-      <div class="stock-action-target">
-        <strong>${escapeHtml(stockOptionLabel(batch))}</strong>
-        <small>${escapeHtml(detail)}</small>
-      </div>
-      ${finished ? '' : `<button type="button" class="primary-button stock-brew-button" data-action="select-batch" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}">${icon('coffee')}<span>Brew this</span></button>`}
-      ${finished ? '' : moveButton}
-      <button type="button" class="icon-button" data-action="toggle-batch-details" data-id="${escapeAttr(batch.id)}" aria-label="Edit bag" title="Edit bag">${icon('pencil')}</button>
-      ${finished ? '' : `<button type="button" class="icon-button" data-action="finish-batch" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}" aria-label="Mark bag finished" title="Mark finished">${icon('circle-check')}</button>`}
-    </div>
-  `;
 }
 
 function renderFreezeStepper(bean: Bean, batch: BeanBatch, formNumbers: Record<string, string>): string {

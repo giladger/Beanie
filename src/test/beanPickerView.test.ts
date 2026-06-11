@@ -97,17 +97,18 @@ run('bean picker uses a single column when every bag shares one location', () =>
   notIncludes(html, 'In freezer');
 });
 
-run('bean picker action bar targets the selected bag with brew and move actions', () => {
+run('bean picker focused row carries the brew and move actions inline', () => {
   const html = renderBeanPickerModal(model());
 
-  includes(html, 'stock-action-bar');
+  includes(html, 'stock-row-actions');
+  notIncludes(html, 'stock-action-bar');
   includes(html, 'Brew this');
-  includes(html, 'To shelf');
+  includes(html, 'Thaw');
   includes(html, 'data-action="select-batch" data-id="batch-1"');
   notIncludes(html, 'data-action="toggle-freeze-stepper"');
 });
 
-run('bean picker action bar offers freeze for shelf bags and opens the stepper', () => {
+run('bean picker focused shelf row offers freeze and opens the stepper', () => {
   const focusedShelf = model({ focusedBatchId: 'batch-older' });
   const html = renderBeanPickerModal(focusedShelf);
 
@@ -207,7 +208,7 @@ run('bean picker hides nearly empty bags until show all is toggled', () => {
   includes(shownHtml, 'stock-row  finished');
 });
 
-run('bean picker action bar hides brew and freeze for finished bags', () => {
+run('bean picker focused row hides brew and freeze for finished bags', () => {
   const finished: BeanBatch = {
     id: 'batch-finished',
     beanId: 'bean-1',
@@ -225,7 +226,7 @@ run('bean picker action bar hides brew and freeze for finished bags', () => {
     })
   );
 
-  includes(html, 'stock-action-bar');
+  includes(html, 'stock-row-actions');
   notIncludes(html, 'Brew this');
   notIncludes(html, 'data-action="toggle-freeze-stepper"');
   includes(html, 'data-action="toggle-batch-details"');
