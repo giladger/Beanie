@@ -181,9 +181,13 @@ function pickerFocusedBatch(
     : null;
   if (explicit) return explicit;
   if (bean.id === model.selectedBeanId && model.selectedBatchId) {
-    return visibleBatches.find((batch) => batch.id === model.selectedBatchId) ?? null;
+    const selected = visibleBatches.find((batch) => batch.id === model.selectedBatchId);
+    if (selected) return selected;
   }
-  return null;
+  // Default to the newest bag so the action bar (Brew / Freeze / edit) is always
+  // visible for whatever bean you land on. visibleBatches is sorted newest-first,
+  // so the freshest active bag is the sensible target until you tap another.
+  return visibleBatches[0] ?? null;
 }
 
 function renderStockColumns(
@@ -422,12 +426,12 @@ function renderBeanPickerBeanForm(
       }
       ${editing ? '' : `<input type="hidden" name="prefillBeanId" value="" />${beanPrefillSelect(prefillBeans)}`}
       <div class="bean-picker-fields">
-        <label>Roaster<input name="roaster" required autocomplete="off" value="${escapeAttr(editing ? bean.roaster : '')}" /></label>
-        <label>Coffee<input name="name" required autocomplete="off" value="${escapeAttr(editing ? bean.name : '')}" /></label>
-        <label>Country<input name="country" autocomplete="off" value="${escapeAttr(inputValue(editing ? bean.country : ''))}" /></label>
-        <label>Region<input name="region" autocomplete="off" value="${escapeAttr(inputValue(editing ? bean.region : ''))}" /></label>
-        <label>Process<input name="processing" autocomplete="off" value="${escapeAttr(inputValue(editing ? bean.processing : ''))}" /></label>
-        <label class="bean-picker-notes">Notes<textarea name="notes" rows="4" autocomplete="off">${escapeHtml(inputValue(editing ? bean.notes : ''))}</textarea></label>
+        <label>Roaster<input data-action="bean-picker-bean-field" name="roaster" required autocomplete="off" value="${escapeAttr(editing ? bean.roaster : '')}" /></label>
+        <label>Coffee<input data-action="bean-picker-bean-field" name="name" required autocomplete="off" value="${escapeAttr(editing ? bean.name : '')}" /></label>
+        <label>Country<input data-action="bean-picker-bean-field" name="country" autocomplete="off" value="${escapeAttr(inputValue(editing ? bean.country : ''))}" /></label>
+        <label>Region<input data-action="bean-picker-bean-field" name="region" autocomplete="off" value="${escapeAttr(inputValue(editing ? bean.region : ''))}" /></label>
+        <label>Process<input data-action="bean-picker-bean-field" name="processing" autocomplete="off" value="${escapeAttr(inputValue(editing ? bean.processing : ''))}" /></label>
+        <label class="bean-picker-notes">Notes<textarea data-action="bean-picker-bean-field" name="notes" rows="4" autocomplete="off">${escapeHtml(inputValue(editing ? bean.notes : ''))}</textarea></label>
       </div>
       ${editing ? '' : renderBeanPickerFirstStock(formNumbers)}
     </form>

@@ -1311,7 +1311,9 @@ export class BeanieApp {
     if (!bean || this.state.demo || this.shotRefreshInFlight) return;
     if (document.visibilityState !== 'visible' || this.state.view !== 'workbench') return;
     if (this.state.liveActive || this.state.liveFinalizing || this.state.shotsLoadingMore) return;
-    if (this.state.modal === 'edit-shot') return;
+    // Skip while a modal covers the workbench: the shot list isn't visible, and a
+    // re-render would disrupt in-progress editing (e.g. the bean picker forms).
+    if (this.state.modal === 'edit-shot' || this.state.modal === 'bean-picker' || this.state.modal === 'batch-storage') return;
 
     this.shotRefreshInFlight = true;
     const batch = this.selectedBatch();
@@ -5890,7 +5892,7 @@ export class BeanieApp {
     });
   }
 
-  private captureFocus(): { selector: string; start: number | null } | null {
+  private captureFocus(): { selector: string; start: number | null; value: string | null } | null {
     const active = document.activeElement as HTMLInputElement | null;
     const action = active?.dataset?.action;
     if (!action) return null;
@@ -5900,7 +5902,8 @@ export class BeanieApp {
       action !== 'phone-recipe-field' &&
       action !== 'phone-shot-field' &&
       action !== 'shot-edit-number' &&
-      action !== 'bean-picker-batch-field'
+      action !== 'bean-picker-batch-field' &&
+      action !== 'bean-picker-bean-field'
     ) {
       return null;
     }
@@ -5916,13 +5919,20 @@ export class BeanieApp {
     if (active?.dataset.type != null) parts.push(`[data-type="${active.dataset.type}"]`);
     if (active?.dataset.condition != null) parts.push(`[data-condition="${active.dataset.condition}"]`);
     const start = typeof active?.selectionStart === 'number' ? active.selectionStart : null;
-    return { selector: parts.join(''), start };
+    // Capture the in-progress value too. These fields are uncontrolled, so a
+    // background re-render (water band crossing, sleep/wake, refresh timers)
+    // would otherwise reset typed-but-uncommitted text back to the saved value.
+    const value = typeof (active as HTMLInputElement | HTMLTextAreaElement | null)?.value === 'string'
+      ? (active as HTMLInputElement | HTMLTextAreaElement).value
+      : null;
+    return { selector: parts.join(''), start, value };
   }
 
-  private restoreFocus(focus: { selector: string; start: number | null } | null): void {
+  private restoreFocus(focus: { selector: string; start: number | null; value: string | null } | null): void {
     if (!focus) return;
     const el = this.root.querySelector<HTMLInputElement>(focus.selector);
     if (!el) return;
+    if (focus.value != null && el.value !== focus.value) el.value = focus.value;
     el.focus();
     if (focus.start != null) {
       try {
