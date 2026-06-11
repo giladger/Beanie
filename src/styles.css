@@ -2404,13 +2404,18 @@ p {
   text-transform: none;
 }
 
+.stock-row-group {
+  display: grid;
+  gap: 6px;
+}
+
 .stock-row {
   min-width: 0;
   min-height: 46px;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 7px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   padding: 5px 11px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -2418,22 +2423,15 @@ p {
   cursor: pointer;
 }
 
-.stock-row-main {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.stock-row-main strong {
+.stock-row > strong {
   flex: none;
   color: var(--ink);
   font-size: 15px;
   white-space: nowrap;
 }
 
-.stock-row-main small {
-  flex: 1;
+.stock-row > small {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2453,28 +2451,24 @@ p {
 }
 
 .stock-row-actions {
+  flex: none;
+  margin-left: auto;
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
   gap: 8px;
 }
 
 .stock-row-actions .primary-button,
 .stock-row-actions .secondary-button {
   flex: none;
-  min-height: 38px;
-  padding: 0 12px;
+  min-height: 34px;
+  padding: 0 11px;
 }
 
 .stock-row-actions .icon-button {
   flex: none;
-  width: 38px;
-  height: 38px;
-  margin-left: auto;
-}
-
-.stock-row-actions .icon-button + .icon-button {
-  margin-left: 0;
+  width: 34px;
+  height: 34px;
 }
 
 .freeze-stepper {
@@ -2529,6 +2523,9 @@ p {
   grid-area: auto;
   border-top: 0;
   padding-top: 0;
+  /* The panel renders inside a stock column, which is half width when the bags
+     span shelf + freezer. Flow the fields to fit rather than overflow. */
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
 }
 
 .stock-history-button {

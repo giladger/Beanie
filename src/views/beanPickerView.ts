@@ -161,10 +161,14 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
             ? '<p class="empty-history">No bags on hand.</p>'
             : visibleBatches.length === 0
               ? '<p class="empty-history">No active bags. Tap Show all to see finished bags.</p>'
-              : renderStockColumns(bean, visibleBatches, focusedBatch?.id ?? null, inUseBatchId)
+              : renderStockColumns(bean, visibleBatches, {
+                  focusedBatchId: focusedBatch?.id ?? null,
+                  inUseBatchId,
+                  freezeStepperBatchId: model.freezeStepperBatchId ?? null,
+                  editingBatchId: model.editingBatchId ?? null,
+                  formNumbers: model.formNumbers ?? {}
+                })
         }
-        ${focusedBatch && model.freezeStepperBatchId === focusedBatch.id && batchStorageState(focusedBatch) !== 'frozen' ? renderFreezeStepper(bean, focusedBatch, model.formNumbers ?? {}) : ''}
-        ${focusedBatch && model.editingBatchId === focusedBatch.id ? renderStockEditPanel(bean, focusedBatch) : ''}
       </div>
     </div>
   `;
@@ -189,11 +193,18 @@ function pickerFocusedBatch(
   return visibleBatches[0] ?? null;
 }
 
+interface StockRowContext {
+  focusedBatchId: string | null;
+  inUseBatchId: string | null;
+  freezeStepperBatchId: string | null;
+  editingBatchId: string | null;
+  formNumbers: Record<string, string>;
+}
+
 function renderStockColumns(
   bean: Bean,
   visibleBatches: BeanBatch[],
-  focusedBatchId: string | null,
-  inUseBatchId: string | null
+  ctx: StockRowContext
 ): string {
   const shelf = visibleBatches.filter((batch) => batchStorageState(batch) !== 'frozen');
   const freezer = visibleBatches.filter((batch) => batchStorageState(batch) === 'frozen');
@@ -205,10 +216,7 @@ function renderStockColumns(
         <span>${escapeHtml(title)} · ${rows.length}</span>
         ${hint ? `<em>${escapeHtml(hint)}</em>` : ''}
       </div>
-      ${rows.map((batch) => renderStockRow(bean, batch, {
-        focused: batch.id === focusedBatchId,
-        inUse: batch.id === inUseBatchId
-      })).join('')}
+      ${rows.map((batch) => renderStockRow(bean, batch, ctx)).join('')}
     </div>
   `;
   return `
@@ -219,11 +227,8 @@ function renderStockColumns(
   `;
 }
 
-function renderStockRow(
-  bean: Bean,
-  batch: BeanBatch,
-  options: { focused: boolean; inUse: boolean }
-): string {
+function renderStockRow(bean: Bean, batch: BeanBatch, ctx: StockRowContext): string {
+  const focused = batch.id === ctx.focusedBatchId;
   const finished = isNearlyEmptyBatch(batch);
   const frozen = batchStorageState(batch) === 'frozen';
   const freshness = computeBeanFreshness(batch);
@@ -231,25 +236,33 @@ function renderStockRow(
     formatGrams(batch.weightRemaining),
     freshness ? `${freshness.activeAgeDays}d` : null,
     batch.roastLevel ?? null,
-    options.inUse ? 'in use' : null,
+    batch.id === ctx.inUseBatchId ? 'in use' : null,
     finished ? 'finished' : null
   ].filter(Boolean).join(' · ');
+  const stepper = focused && ctx.freezeStepperBatchId === batch.id && !frozen
+    ? renderFreezeStepper(bean, batch, ctx.formNumbers)
+    : '';
+  const editPanel = focused && ctx.editingBatchId === batch.id
+    ? renderStockEditPanel(bean, batch)
+    : '';
   return `
-    <div
-      class="stock-row ${options.focused ? 'focused' : ''} ${finished ? 'finished' : ''}"
-      role="button"
-      tabindex="0"
-      data-action="focus-batch"
-      data-id="${escapeAttr(batch.id)}"
-      data-bean-id="${escapeAttr(bean.id)}"
-      aria-pressed="${options.focused ? 'true' : 'false'}"
-      title="${finished ? 'Finished bag' : 'Select this bag'}"
-    >
-      <div class="stock-row-main">
+    <div class="stock-row-group">
+      <div
+        class="stock-row ${focused ? 'focused' : ''} ${finished ? 'finished' : ''}"
+        role="button"
+        tabindex="0"
+        data-action="focus-batch"
+        data-id="${escapeAttr(batch.id)}"
+        data-bean-id="${escapeAttr(bean.id)}"
+        aria-pressed="${focused ? 'true' : 'false'}"
+        title="${finished ? 'Finished bag' : 'Select this bag'}"
+      >
         <strong>${escapeHtml(stockRowDate(batch))}</strong>
         <small>${escapeHtml(meta || 'Bag')}</small>
+        ${focused ? renderStockRowActions(bean, batch, { finished, frozen }) : ''}
       </div>
-      ${options.focused ? renderStockRowActions(bean, batch, { finished, frozen }) : ''}
+      ${stepper}
+      ${editPanel}
     </div>
   `;
 }
