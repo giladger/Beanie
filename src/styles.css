@@ -2440,12 +2440,6 @@ p {
   color: var(--ink);
 }
 
-.stock-row-actions .icon-button {
-  flex: none;
-  width: 34px;
-  height: 34px;
-}
-
 .freeze-stepper {
   display: flex;
   align-items: center;
