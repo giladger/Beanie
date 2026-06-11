@@ -301,29 +301,30 @@ function renderFreezeStepper(bean: Bean, batch: BeanBatch, formNumbers: Record<s
       </div>
     `;
   }
-  const keepKey = freezeKeepFormKey(batch.id);
-  const keepRaw = Number.parseFloat(formNumbers[keepKey] ?? '0');
-  const keep = Number.isFinite(keepRaw) ? Math.min(Math.max(keepRaw, 0), remaining) : 0;
-  const freezeAmount = Math.max(0, round(remaining - keep, 1));
+  const amountKey = freezeAmountFormKey(batch.id);
+  const amountRaw = formNumbers[amountKey];
+  const parsedAmount = amountRaw != null ? Number.parseFloat(amountRaw) : remaining;
+  const freezeAmount = Number.isFinite(parsedAmount) ? Math.min(Math.max(parsedAmount, 0), remaining) : remaining;
+  const keep = Math.max(0, round(remaining - freezeAmount, 1));
   return `
     <div class="freeze-stepper">
       ${icon('snowflake')}
-      <span>Keep</span>
+      <span>Freeze</span>
       <button
         type="button"
-        class="number-edit-button freeze-keep-number"
+        class="number-edit-button freeze-amount-number"
         data-action="open-number-edit"
         data-target="form-field"
-        data-form-key="${escapeAttr(keepKey)}"
-        data-title="Keep on shelf"
-        data-value="${escapeAttr(inputValue(keep))}"
+        data-form-key="${escapeAttr(amountKey)}"
+        data-title="Freeze into the freezer"
+        data-value="${escapeAttr(inputValue(freezeAmount))}"
         data-min="0"
         data-max="${escapeAttr(inputValue(remaining))}"
         data-step="0.1"
         data-unit="g"
         data-return-modal="bean-picker"
-      >${escapeHtml(inputValue(keep))}<em>g</em></button>
-      <span>on shelf · freeze <b>${escapeHtml(inputValue(freezeAmount))}g</b></span>
+      >${escapeHtml(inputValue(freezeAmount))}<em>g</em></button>
+      <span>· keep <b>${escapeHtml(inputValue(keep))}g</b> on shelf</span>
       ${confirmButton(`Freeze ${inputValue(freezeAmount)}g`, freezeAmount <= 0)}
       ${cancelButton}
     </div>
@@ -562,8 +563,8 @@ export function createStockFormKey(name: 'weight' | 'weightRemaining'): string {
   return `bean-picker-create:${name}`;
 }
 
-export function freezeKeepFormKey(batchId: string): string {
-  return `freeze-keep:${batchId}`;
+export function freezeAmountFormKey(batchId: string): string {
+  return `freeze-amount:${batchId}`;
 }
 
 function renderBatchStorageDateControl(

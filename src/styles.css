@@ -2463,7 +2463,7 @@ p {
   color: var(--ink);
 }
 
-.freeze-stepper .freeze-keep-number {
+.freeze-stepper .freeze-amount-number {
   min-height: 36px;
   padding: 0 10px;
 }

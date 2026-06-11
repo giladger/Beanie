@@ -249,7 +249,7 @@ import {
 } from './views/profilePickerView';
 import {
   createStockFormKey,
-  freezeKeepFormKey,
+  freezeAmountFormKey,
   newStockFormKey,
   renderBatchStorageModal as renderBatchStorageModalView,
   renderBeanPickerModal as renderBeanPickerModalView
@@ -4765,10 +4765,16 @@ export class BeanieApp {
   private async freezeStock(beanId: string, batchId: string): Promise<void> {
     const selection = this.batchAndBeanByIds(beanId, batchId);
     if (!selection) return;
-    const formKey = freezeKeepFormKey(batchId);
+    const formKey = freezeAmountFormKey(batchId);
     const remaining = positiveNumber(selection.batch.weightRemaining);
-    const keepRaw = numberOrNullInput(this.state.formNumbers[formKey] ?? null);
-    const keep = remaining == null || keepRaw == null ? 0 : Math.min(Math.max(keepRaw, 0), remaining);
+    const amountRaw = numberOrNullInput(this.state.formNumbers[formKey] ?? null);
+    // The form holds how much goes into the freezer; unset means the whole bag.
+    const freezeAmount = remaining == null
+      ? 0
+      : amountRaw == null
+        ? remaining
+        : Math.min(Math.max(amountRaw, 0), remaining);
+    const keep = remaining == null ? 0 : Math.max(0, round(remaining - freezeAmount, 1));
 
     if (remaining == null || keep <= 0) {
       const batchInput = {
@@ -4825,7 +4831,14 @@ export class BeanieApp {
         return;
       }
 
-      const created = await gateway.createBatch(selection.bean.id, frozenBatch);
+      // The batches POST endpoint persists weights but drops storage state, so the
+      // new portion comes back unfrozen. Set its frozen state with a follow-up update.
+      const createdRaw = await gateway.createBatch(selection.bean.id, frozenBatch);
+      const created = await gateway.updateBatch(createdRaw.id, {
+        beanId: selection.bean.id,
+        storageEvents: frozenBatch.storageEvents ?? null,
+        frozen: true
+      });
       const savedParent = await gateway.updateBatch(selection.batch.id, parentUpdate);
       const latest = this.state.batchesByBean[selection.bean.id] ?? current;
       const batches = [created, ...latest.map((batch) => (batch.id === selection.batch.id ? savedParent : batch))];

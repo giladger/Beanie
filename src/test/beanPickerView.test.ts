@@ -122,23 +122,25 @@ run('bean picker focused shelf row offers freeze and opens the stepper', () => {
   );
 
   includes(withStepper, 'class="freeze-stepper"');
-  includes(withStepper, 'Keep');
+  // Defaults to freezing the whole bag, nothing kept on the shelf.
+  includes(withStepper, 'keep <b>0g</b> on shelf');
   includes(withStepper, 'data-action="confirm-freeze-stock" data-id="batch-older"');
   includes(withStepper, 'Freeze 50g');
 });
 
-run('bean picker freeze stepper splits around the kept grams', () => {
+run('bean picker freeze stepper weighs what goes into the freezer', () => {
   const html = renderBeanPickerModal(
     model({
       focusedBatchId: 'batch-older',
       freezeStepperBatchId: 'batch-older',
-      formNumbers: { 'freeze-keep:batch-older': '20' }
+      formNumbers: { 'freeze-amount:batch-older': '30' }
     })
   );
 
-  includes(html, 'freeze <b>30g</b>');
+  // 30g into the freezer leaves 20g on the shelf as a calculated label.
+  includes(html, 'keep <b>20g</b> on shelf');
   includes(html, 'Freeze 30g');
-  includes(html, 'data-form-key="freeze-keep:batch-older"');
+  includes(html, 'data-form-key="freeze-amount:batch-older"');
 });
 
 run('bean picker opens edit fields from the bean line without duplicating the title', () => {
