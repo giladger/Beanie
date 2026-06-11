@@ -78,9 +78,11 @@ import {
 } from './domain/beanWorkflow';
 import { batchOptionLabel } from './domain/beanDisplay';
 import {
+  readFavoriteBeans,
   readFavoriteProfiles,
   readGeminiApiKey,
   readLastBeanId,
+  writeFavoriteBeans,
   writeFavoriteProfiles,
   writeGeminiApiKey,
   writeLastBeanId
@@ -517,6 +519,7 @@ interface AppState {
   profilePage: number;
   profileFocusId: string | null;
   favoriteProfiles: string[];
+  favoriteBeans: string[];
   settingsPreferences: SettingsPreferences;
   settingsSearch: string;
   demo: boolean;
@@ -632,6 +635,7 @@ export class BeanieApp {
     profilePage: 0,
     profileFocusId: null,
     favoriteProfiles: readFavoriteProfiles(),
+    favoriteBeans: readFavoriteBeans(),
     settingsPreferences: initialSettingsPreferences,
     settingsSearch: '',
     demo: false,
@@ -3144,6 +3148,9 @@ export class BeanieApp {
       case 'toggle-bean-picker-show-all':
         this.setState({ beanPickerShowAllBags: !this.state.beanPickerShowAllBags });
         return true;
+      case 'toggle-favorite-bean':
+        if (id) this.toggleFavoriteBean(id);
+        return true;
       case 'open-add-batch':
         await this.openBeanPicker(this.state.selectedBeanId);
         this.startBatchDraftInPicker(this.state.selectedBeanId);
@@ -4208,6 +4215,15 @@ export class BeanieApp {
       writeFavoriteProfiles: (ids) => writeFavoriteProfiles(ids)
     });
     this.setState({ favoriteProfiles });
+  }
+
+  private toggleFavoriteBean(id: string): void {
+    const favorites = new Set(this.state.favoriteBeans);
+    if (favorites.has(id)) favorites.delete(id);
+    else favorites.add(id);
+    const favoriteBeans = [...favorites];
+    writeFavoriteBeans(favoriteBeans);
+    this.setState({ favoriteBeans });
   }
 
   private async onChange(event: Event): Promise<void> {
@@ -5985,6 +6001,7 @@ export class BeanieApp {
       mode: this.state.beanPickerMode,
       selectedBeanId: this.state.selectedBeanId,
       selectedBatchId: this.state.selectedBatchId,
+      favoriteBeanIds: this.state.favoriteBeans,
       focusedBatchId: this.state.beanPickerFocusedBatchId,
       freezeStepperBatchId: this.state.beanPickerFreezeBatchId,
       batchesByBean: this.state.batchesByBean,
@@ -6001,7 +6018,14 @@ export class BeanieApp {
   private sortedBeansForPicker(): Bean[] {
     const usage = this.state.beanUsageAt;
     const selectedId = this.state.selectedBeanId;
-    return [...this.state.beans].sort((a, b) => compareBeansForPicker(a, b, usage, selectedId));
+    const favorites = new Set(this.state.favoriteBeans);
+    return [...this.state.beans].sort((a, b) => {
+      // Favorites stay pinned to the top, then fall back to the usual order.
+      const fa = favorites.has(a.id) ? 0 : 1;
+      const fb = favorites.has(b.id) ? 0 : 1;
+      if (fa !== fb) return fa - fb;
+      return compareBeansForPicker(a, b, usage, selectedId);
+    });
   }
 
   private beanPickerFocusedBean(): Bean | null {

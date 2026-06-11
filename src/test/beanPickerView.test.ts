@@ -303,6 +303,18 @@ run('bean picker create mode renders new bean form and prefill choices', () => {
   notIncludes(html, 'data-action="open-label-scanner"');
 });
 
+run('bean picker marks favorites with a star and offers a toggle', () => {
+  const plain = renderBeanPickerModal(model());
+  includes(plain, 'data-action="toggle-favorite-bean" data-id="bean-1"');
+  includes(plain, 'aria-pressed="false"');
+  notIncludes(plain, 'bean-row-fav');
+
+  const favorited = renderBeanPickerModal(model({ favoriteBeanIds: ['bean-1'] }));
+  includes(favorited, 'bean-row-fav');
+  includes(favorited, 'class="bean-fav on"');
+  includes(favorited, 'aria-pressed="true"');
+});
+
 run('bean picker renders second tap hint for matching bean only', () => {
   const html = renderBeanPickerModal(
     model({

@@ -24,6 +24,7 @@ export interface BeanPickerViewModel {
   mode: 'inspect' | 'create';
   selectedBeanId: string | null;
   selectedBatchId: string | null;
+  favoriteBeanIds?: readonly string[];
   focusedBatchId?: string | null;
   freezeStepperBatchId?: string | null;
   batchesByBean: Record<string, BeanBatch[]>;
@@ -40,6 +41,7 @@ export function renderBeanPickerModal(model: BeanPickerViewModel): string {
   const focusedId = model.focusedBean?.id ?? null;
   const autofocus = model.autofocusSearch ? ' autofocus' : '';
   const creating = model.mode === 'create';
+  const favorites = new Set(model.favoriteBeanIds ?? []);
   return `
     <div class="modal-backdrop bean-picker-backdrop" data-action="close-modal">
       <section class="modal panel bean-picker-modal ${creating ? 'create-mode' : ''}" role="dialog" aria-modal="true" aria-label="${creating ? 'Add coffee' : 'Choose coffee'}" data-action="noop">
@@ -72,6 +74,7 @@ export function renderBeanPickerModal(model: BeanPickerViewModel): string {
                               renderBeanPickerRow(bean, {
                                 focused: bean.id === focusedId,
                                 current: bean.id === model.selectedBeanId,
+                                favorite: favorites.has(bean.id),
                                 secondTapHint: model.secondTapHint
                               })
                             )
@@ -89,7 +92,7 @@ export function renderBeanPickerModal(model: BeanPickerViewModel): string {
 
 function renderBeanPickerRow(
   bean: Bean,
-  options: { focused: boolean; current: boolean; secondTapHint: BeanPickerViewModel['secondTapHint'] }
+  options: { focused: boolean; current: boolean; favorite: boolean; secondTapHint: BeanPickerViewModel['secondTapHint'] }
 ): string {
   const armed = options.focused && !options.current;
   const hint = armed ? '' : renderSecondTapHint('bean', bean.id, options.secondTapHint);
@@ -100,7 +103,7 @@ function renderBeanPickerRow(
       <span>
         ${origin}
         <b>${escapeHtml(bean.roaster)}</b>
-        <strong>${escapeHtml(bean.name)}</strong>
+        <strong>${options.favorite ? '<span class="bean-row-fav">★</span> ' : ''}${escapeHtml(bean.name)}</strong>
       </span>
       ${status ? `<em class="bean-row-action ${options.current ? 'current' : armed ? 'armed' : ''}">${escapeHtml(status)}</em>` : ''}
       ${hint}
@@ -130,6 +133,7 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
     : null;
   const latest = latestBatch(batches);
   const editingDetails = model.editingBeanDetailsId === bean.id;
+  const favorite = new Set(model.favoriteBeanIds ?? []).has(bean.id);
   const bagCountText = showingAll || hiddenCount === 0
     ? `${batches.length} ${batches.length === 1 ? 'bag' : 'bags'}`
     : `${openBatches.length} active ${openBatches.length === 1 ? 'bag' : 'bags'}`;
@@ -137,10 +141,13 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
     <div class="bean-picker-inspector">
       <div class="bean-picker-decision">
         <div class="bean-picker-details ${editingDetails ? 'open' : ''}">
-          <button type="button" class="bean-picker-bean-summary" data-action="toggle-bean-details" data-id="${escapeAttr(bean.id)}" aria-expanded="${editingDetails ? 'true' : 'false'}" title="Edit coffee">
-            ${renderBeanPickerSummary(bean, focusedBatch ?? latest)}
-            <span class="icon-button bean-picker-edit-icon" aria-hidden="true">${icon('pencil')}</span>
-          </button>
+          <div class="bean-picker-detail-head">
+            <button type="button" class="bean-picker-bean-summary" data-action="toggle-bean-details" data-id="${escapeAttr(bean.id)}" aria-expanded="${editingDetails ? 'true' : 'false'}" title="Edit coffee">
+              ${renderBeanPickerSummary(bean, focusedBatch ?? latest)}
+              <span class="icon-button bean-picker-edit-icon" aria-hidden="true">${icon('pencil')}</span>
+            </button>
+            <button type="button" class="bean-fav ${favorite ? 'on' : ''}" data-action="toggle-favorite-bean" data-id="${escapeAttr(bean.id)}" aria-pressed="${favorite}" aria-label="${favorite ? 'Unfavorite' : 'Favorite'} ${escapeAttr(beanLabel(bean))}" title="${favorite ? 'Remove from favorites' : 'Add to favorites'}">${favorite ? '★' : '☆'}</button>
+          </div>
           ${editingDetails ? renderBeanPickerBeanForm(bean, model.prefillBeans, model.formNumbers ?? {}, { showHeader: false }) : ''}
         </div>
       </div>

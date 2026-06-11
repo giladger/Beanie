@@ -2048,17 +2048,43 @@ p {
   gap: 10px;
 }
 
-.bean-picker-details > .bean-picker-bean-summary {
+.bean-picker-detail-head {
+  display: flex;
+  align-items: stretch;
+}
+
+.bean-picker-detail-head > .bean-picker-bean-summary {
+  flex: 1 1 auto;
   min-height: 58px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 36px;
-  width: 100%;
+  min-width: 0;
   padding: 8px;
   border: 0;
   border-radius: var(--radius);
   color: inherit;
   text-align: left;
   text-transform: none;
+}
+
+.bean-fav {
+  flex: none;
+  align-self: center;
+  width: 40px;
+  border: 0;
+  background: transparent;
+  color: var(--amber);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.bean-fav:not(.on) {
+  color: var(--muted);
+}
+
+.bean-row-fav {
+  color: var(--amber);
 }
 
 .bean-picker-bean-summary > div {
