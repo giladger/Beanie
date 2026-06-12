@@ -214,7 +214,7 @@ import {
 } from './components/profileEditor';
 import type { ProfileMetaKey, StepFieldKey } from './domain/profileModel';
 import { LiveChart } from './components/LiveChart';
-import { chartModelFromShot } from './components/liveChartModel';
+import { chartModelFromShot, overlayComparisonModel } from './components/liveChartModel';
 import type { LiveChartModel } from './domain/liveChartModel';
 import {
   calibrationPreviewFactor,
@@ -260,6 +260,7 @@ import {
   renderWaterWarningBanner as renderWaterWarningBannerView
 } from './views/alertsView';
 import {
+  compareHistoryShot,
   renderHistoryView,
   selectedHistoryShot as selectHistoryShot
 } from './views/historyView';
@@ -567,6 +568,12 @@ interface AppState {
   hotWaterStopMode: HotWaterStopMode;
   formNumbers: Record<string, string>;
   detailShotId: string | null;
+  /** Shot overlaid on the history detail chart for comparison. */
+  compareShotId: string | null;
+  /** Armed by the compare button: the next history tap picks the overlay shot. */
+  comparePicking: boolean;
+  /** Show the per-bean raw trend strip above the shot history. */
+  showTrends: boolean;
   machineInfo: MachineInfo | null;
   machineCapabilities: MachineCapabilities | null;
   machineSettings: De1MachineSettings | null;
@@ -683,6 +690,9 @@ export class BeanieApp {
     hotWaterStopMode: readHotWaterStopMode(),
     formNumbers: {},
     detailShotId: null,
+    compareShotId: null,
+    comparePicking: false,
+    showTrends: false,
     machineInfo: null,
     machineCapabilities: null,
     machineSettings: null,
@@ -736,8 +746,11 @@ export class BeanieApp {
   // so the cache is keyed by shot id plus the measurements array reference (the
   // reference changes when a placeholder record is later upgraded with data).
   private shotChartModelCache: { shotId: string; measurements: readonly ShotMeasurement[]; model: LiveChartModel } | null = null;
+  // Same shape, for the shot overlaid on the detail chart by compare mode.
+  private compareChartModelCache: { shotId: string; measurements: readonly ShotMeasurement[]; model: LiveChartModel } | null = null;
   private detailChartCanvas: HTMLCanvasElement | null = null;
   private detailChartShotId: string | null = null;
+  private detailChartCompareShotId: string | null = null;
   private simTimer: number | null = null;
   private readonly machineService = new MachineServiceController();
   // True while a cleaning/backflush cycle is running as an espresso pull, so the
@@ -1107,6 +1120,8 @@ export class BeanieApp {
       shots: result.shots,
       shotsTotal: result.shotsTotal,
       shotsLoadingMore: false,
+      compareShotId: null,
+      comparePicking: false,
       beanUsageAt: {
         ...this.state.beanUsageAt,
         ...result.beanUsageAt
@@ -1450,6 +1465,15 @@ export class BeanieApp {
   }
 
   private selectHistoryShot(shotId: string): void {
+    if (this.state.comparePicking) {
+      const sameAsSelected = this.selectedHistoryShot()?.id === shotId;
+      this.setState({
+        compareShotId: sameAsSelected ? this.state.compareShotId : shotId,
+        comparePicking: false,
+        status: sameAsSelected ? this.state.status : 'Comparing shots'
+      });
+      return;
+    }
     if (this.selectedHistoryShot()?.id === shotId) {
       this.loadShotRecipe(shotId);
       return;
@@ -1555,6 +1579,7 @@ export class BeanieApp {
         shots,
         shotsTotal: Math.max(0, this.state.shotsTotal - 1),
         detailShotId: visibleShots[0]?.id ?? null,
+        compareShotId: this.state.compareShotId === shotId ? null : this.state.compareShotId,
         modal: null,
         editDialog: null,
         shotEdit: null,
@@ -3732,6 +3757,18 @@ export class BeanieApp {
         return true;
       case 'load-more-shots':
         await this.loadMoreShots();
+        return true;
+      case 'toggle-trends':
+        this.setState({ showTrends: !this.state.showTrends });
+        return true;
+      case 'toggle-compare-pick':
+        this.setState({
+          comparePicking: !this.state.comparePicking,
+          status: this.state.comparePicking ? this.state.status : 'Pick a shot to compare'
+        });
+        return true;
+      case 'clear-compare-shot':
+        this.setState({ compareShotId: null, comparePicking: false });
         return true;
       default:
         return false;
@@ -6020,29 +6057,44 @@ export class BeanieApp {
     if (!canvas || !shot) {
       this.detailChartCanvas = null;
       this.detailChartShotId = null;
+      this.detailChartCompareShotId = null;
       return;
     }
+    const compare = this.compareShotForDetailChart();
     // innerHTML re-renders replace the canvas, so the chart usually has to
-    // re-attach; only skip when the same element survived with the same shot
-    // and the cached model is still valid for that shot's measurements.
+    // re-attach; only skip when the same element survived with the same shots
+    // and the cached models are still valid for those shots' measurements.
     const cachedModel = this.shotChartModelCache;
+    const compareCacheValid =
+      compare == null
+        ? this.detailChartCompareShotId == null
+        : this.detailChartCompareShotId === compare.id &&
+          this.compareChartModelCache?.shotId === compare.id &&
+          this.compareChartModelCache.measurements === compare.measurements;
     if (
       canvas === this.detailChartCanvas &&
       shot.id === this.detailChartShotId &&
       cachedModel?.shotId === shot.id &&
-      cachedModel.measurements === shot.measurements
+      cachedModel.measurements === shot.measurements &&
+      compareCacheValid
     ) {
       return;
     }
     this.detailChartCanvas = canvas;
     this.detailChartShotId = shot.id;
+    this.detailChartCompareShotId = compare?.id ?? null;
     const chart = new LiveChart(canvas, { detailed: true, pixelScale: 3 });
-    chart.setModel(this.shotChartModel(shot));
+    const model = this.shotChartModel(shot);
+    chart.setModel(compare ? overlayComparisonModel(model, this.compareChartModel(compare)) : model);
     // Draw after layout so the canvas has its CSS box for DPR sizing.
     window.requestAnimationFrame(() => {
       chart.resize();
       chart.draw();
     });
+  }
+
+  private compareShotForDetailChart(): ShotRecord | null {
+    return compareHistoryShot(this.state.shots, this.state.detailShotId, this.state.compareShotId);
   }
 
   // Returns the canvas chart model for a saved shot, rebuilding only when the
@@ -6054,6 +6106,16 @@ export class BeanieApp {
     }
     const model = chartModelFromShot(shot);
     this.shotChartModelCache = { shotId: shot.id, measurements: shot.measurements, model };
+    return model;
+  }
+
+  private compareChartModel(shot: ShotRecord): LiveChartModel {
+    const cached = this.compareChartModelCache;
+    if (cached && cached.shotId === shot.id && cached.measurements === shot.measurements) {
+      return cached.model;
+    }
+    const model = chartModelFromShot(shot);
+    this.compareChartModelCache = { shotId: shot.id, measurements: shot.measurements, model };
     return model;
   }
 
@@ -6236,6 +6298,9 @@ export class BeanieApp {
     return renderHistoryView({
       shots: this.state.shots,
       detailShotId: this.state.detailShotId,
+      compareShotId: this.state.compareShotId,
+      comparePicking: this.state.comparePicking,
+      showTrends: this.state.showTrends,
       demo: this.state.demo,
       shotsTotal: this.state.shotsTotal,
       shotsLoadingMore: this.state.shotsLoadingMore,

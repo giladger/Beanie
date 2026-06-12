@@ -5,6 +5,9 @@ run('history view hides service shots while keeping pagination based on raw shot
   const html = renderHistoryView({
     shots: [shot('flush-shot', 'flush'), shot('espresso-shot', 'espresso')],
     detailShotId: null,
+    compareShotId: null,
+    comparePicking: false,
+    showTrends: false,
     demo: false,
     shotsTotal: 3,
     shotsLoadingMore: false,
@@ -21,6 +24,9 @@ run('history view selects the requested shot and renders score controls', () => 
   const html = renderHistoryView({
     shots: [shot('shot-a', 'espresso', 80), shot('shot-b', 'espresso', 20)],
     detailShotId: 'shot-b',
+    compareShotId: null,
+    comparePicking: false,
+    showTrends: false,
     demo: false,
     shotsTotal: 2,
     shotsLoadingMore: false,
@@ -37,6 +43,9 @@ run('history view suppresses load more in demo or when all raw shots are loaded'
   const base = {
     shots: [shot('shot-a', 'espresso')],
     detailShotId: null,
+    compareShotId: null,
+    comparePicking: false,
+    showTrends: false,
     shotsTotal: 1,
     shotsLoadingMore: false,
     secondTapHint: null,
@@ -52,6 +61,9 @@ run('history view renders second tap hint for the matching shot only', () => {
   const html = renderHistoryView({
     shots: [shot('shot-a', 'espresso'), shot('shot-b', 'espresso')],
     detailShotId: null,
+    compareShotId: null,
+    comparePicking: false,
+    showTrends: false,
     demo: false,
     shotsTotal: 2,
     shotsLoadingMore: false,
@@ -72,6 +84,9 @@ run('history view computes age for shots without stored freshness metadata', () 
   const html = renderHistoryView({
     shots: [shot('shot-a', 'espresso', null, batch.id)],
     detailShotId: 'shot-a',
+    compareShotId: null,
+    comparePicking: false,
+    showTrends: false,
     demo: false,
     shotsTotal: 1,
     shotsLoadingMore: false,
@@ -81,6 +96,86 @@ run('history view computes age for shots without stored freshness metadata', () 
 
   includes(html, '4d · Profile shot-a · Jun 5');
   includes(html, '<span class="pane-stat">4d</span>');
+});
+
+run('history view marks the comparison shot and renders the compare chip', () => {
+  const html = renderHistoryView({
+    shots: [shot('shot-a', 'espresso'), shot('shot-b', 'espresso')],
+    detailShotId: 'shot-a',
+    compareShotId: 'shot-b',
+    comparePicking: false,
+    showTrends: false,
+    demo: false,
+    shotsTotal: 2,
+    shotsLoadingMore: false,
+    secondTapHint: null,
+    batchesByBean: {}
+  });
+
+  includes(html, 'comparing');
+  includes(html, 'compare-badge');
+  includes(html, 'compare-chip');
+  includes(html, 'data-action="clear-compare-shot"');
+});
+
+run('history view shows the compare picking hint and no chip while picking', () => {
+  const html = renderHistoryView({
+    shots: [shot('shot-a', 'espresso'), shot('shot-b', 'espresso')],
+    detailShotId: 'shot-a',
+    compareShotId: null,
+    comparePicking: true,
+    showTrends: false,
+    demo: false,
+    shotsTotal: 2,
+    shotsLoadingMore: false,
+    secondTapHint: null,
+    batchesByBean: {}
+  });
+
+  includes(html, 'Tap a shot to overlay it on the chart.');
+  excludes(html, 'compare-chip');
+});
+
+run('history view ignores a comparison id that matches the selected shot', () => {
+  const html = renderHistoryView({
+    shots: [shot('shot-a', 'espresso')],
+    detailShotId: 'shot-a',
+    compareShotId: 'shot-a',
+    comparePicking: false,
+    showTrends: false,
+    demo: false,
+    shotsTotal: 1,
+    shotsLoadingMore: false,
+    secondTapHint: null,
+    batchesByBean: {}
+  });
+
+  excludes(html, 'compare-chip');
+  excludes(html, 'compare-badge');
+});
+
+run('history view renders the trend strip only when enabled', () => {
+  const model = {
+    shots: [shot('shot-a', 'espresso', 80), shot('shot-b', 'espresso', 20)],
+    detailShotId: null,
+    compareShotId: null,
+    comparePicking: false,
+    showTrends: true,
+    demo: false,
+    shotsTotal: 2,
+    shotsLoadingMore: false,
+    secondTapHint: null,
+    batchesByBean: {}
+  };
+
+  const withTrends = renderHistoryView(model);
+  includes(withTrends, 'shot-trends');
+  includes(withTrends, 'trend-spark');
+  includes(withTrends, 'Oldest → newest · 2 loaded shots');
+  includes(withTrends, 'with-trends');
+
+  const withoutTrends = renderHistoryView({ ...model, showTrends: false });
+  excludes(withoutTrends, 'shot-trends');
 });
 
 run('selectedHistoryShot skips service shots and falls back to the first visible shot', () => {

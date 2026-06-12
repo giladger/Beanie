@@ -311,7 +311,7 @@ export class LiveChart {
     // Decent app look: thick green/blue/red curves; thinner dashed target lines.
     const dashed = series.dashArray != null;
     ctx.strokeStyle = series.color;
-    ctx.lineWidth = dashed ? 1.5 : 2.6;
+    ctx.lineWidth = series.width ?? (dashed ? 1.5 : 2.6);
     ctx.lineJoin = 'round';
     ctx.lineCap = dashed ? 'butt' : 'round';
     ctx.setLineDash([]);
@@ -361,7 +361,8 @@ export class LiveChart {
     ctx.setLineDash([]);
   }
 
-  private drawLegend(series: LiveChartSeries[], plot: PlotArea, width: number): void {
+  private drawLegend(allSeries: LiveChartSeries[], plot: PlotArea, width: number): void {
+    const series = allSeries.filter((item) => item.legend !== false);
     if (series.length === 0) return;
     const ctx = this.ctx;
     const itemWidth = 124;

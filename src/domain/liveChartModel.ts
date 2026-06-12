@@ -25,6 +25,10 @@ export interface LiveChartSeries {
   shortLabel: string;
   color: string;
   dashArray?: string;
+  /** Stroke width override; defaults to the renderer's solid/dashed widths. */
+  width?: number;
+  /** Set false to draw the series without a legend entry (e.g. overlays). */
+  legend?: boolean;
   points: LiveChartPoint[];
 }
 
