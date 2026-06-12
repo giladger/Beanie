@@ -62,6 +62,22 @@ export function compareHistoryShot(
   return historyShots(shots).find((shot) => shot.id === compareShotId) ?? null;
 }
 
+/**
+ * The shot a live pull is read against: the explicit comparison shot when one
+ * is set, else the shot open in the detail pane — and only if it actually has
+ * measurements to draw.
+ */
+export function liveGhostReference(
+  shots: ShotRecord[],
+  detailShotId: string | null,
+  compareShotId: string | null
+): ShotRecord | null {
+  const reference =
+    compareHistoryShot(shots, detailShotId, compareShotId) ?? selectedHistoryShot(shots, detailShotId);
+  if (!reference || !Array.isArray(reference.measurements) || reference.measurements.length === 0) return null;
+  return reference;
+}
+
 export function selectedHistoryShot(shots: ShotRecord[], detailShotId: string | null): ShotRecord | null {
   const history = historyShots(shots);
   return history.find((shot) => shot.id === detailShotId) ?? history[0] ?? null;

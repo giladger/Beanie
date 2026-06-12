@@ -263,6 +263,7 @@ import {
 } from './views/alertsView';
 import {
   compareHistoryShot,
+  liveGhostReference,
   renderHistoryView,
   selectedHistoryShot as selectHistoryShot
 } from './views/historyView';
@@ -608,6 +609,8 @@ interface AppState {
   cleaningProfilePicking: boolean;
   /** The gateway snapshot socket is down; machine readouts are stale. */
   gatewayLinkDown: boolean;
+  /** Draw the reference shot's curves under the live trace while pulling. */
+  liveGhost: boolean;
 }
 
 interface LiveReadoutEls {
@@ -723,7 +726,8 @@ export class BeanieApp {
     waterAlertDismissed: false,
     machineRefillLevel: null,
     cleaningProfilePicking: false,
-    gatewayLinkDown: false
+    gatewayLinkDown: false,
+    liveGhost: true
   };
 
   private applyTimer: number | null = null;
@@ -761,6 +765,10 @@ export class BeanieApp {
   private shotChartModelCache: { shotId: string; measurements: readonly ShotMeasurement[]; model: LiveChartModel } | null = null;
   // Same shape, for the shot overlaid on the detail chart by compare mode.
   private compareChartModelCache: { shotId: string; measurements: readonly ShotMeasurement[]; model: LiveChartModel } | null = null;
+  // Reference shot captured when a live pull starts, drawn under the live
+  // trace (its chart model is built once here, off the telemetry hot path).
+  private liveGhostModel: LiveChartModel | null = null;
+  private liveGhostShotId: string | null = null;
   private detailChartCanvas: HTMLCanvasElement | null = null;
   private detailChartShotId: string | null = null;
   private detailChartCompareShotId: string | null = null;
@@ -2498,6 +2506,7 @@ export class BeanieApp {
 
     const panelDecision = liveShotPanelDecision(wasActive, active);
     if (panelDecision === 'started') {
+      this.captureLiveGhost();
       // First active frame: render once to mount the live panel + canvas, then draw.
       // Clear any leftover finalizing from a just-prior shot so this one takes over.
       this.setState({ liveActive: true, liveFinalizing: false, status: 'Live shot' });
@@ -2799,9 +2808,34 @@ export class BeanieApp {
     this.liveChart.setOptions({
       hideMaxTimeLabel: liveChartHideMaxTimeLabel(this.state.liveChartMode, model.maxTime)
     });
-    this.liveChart.setModel(model);
+    const ghost = this.state.liveGhost ? this.liveGhostModel : null;
+    this.liveChart.setModel(ghost ? overlayComparisonModel(model, ghost) : model);
     this.liveChart.draw();
     this.updateLiveReadouts();
+  }
+
+  // Resolve the reference shot once at pull start; building a chart model
+  // walks the whole measurement array, far too slow for the per-frame path.
+  private captureLiveGhost(): void {
+    if (this.cleaningInProgress) {
+      this.liveGhostModel = null;
+      this.liveGhostShotId = null;
+      return;
+    }
+    const reference = liveGhostReference(this.state.shots, this.state.detailShotId, this.state.compareShotId);
+    this.liveGhostModel = reference ? chartModelFromShot(reference) : null;
+    this.liveGhostShotId = reference?.id ?? null;
+  }
+
+  private liveGhostPanelModel(): { enabled: boolean; title: string } | null {
+    if (!this.liveGhostModel || !this.liveGhostShotId) return null;
+    const reference = this.state.shots.find((shot) => shot.id === this.liveGhostShotId);
+    const recipe = reference ? recipeFromShot(reference) : null;
+    const what = recipe ? `${formatGrams(recipe.dose)} → ${formatGrams(recipe.yield)}` : 'reference shot';
+    return {
+      enabled: this.state.liveGhost,
+      title: this.state.liveGhost ? `Hide reference overlay (${what})` : `Show reference overlay (${what})`
+    };
   }
 
   // Re-acquire the canvas + readout nodes after each full render. The DOM is only
@@ -3851,6 +3885,10 @@ export class BeanieApp {
       },
       'scale-stat': async () => {
         await this.handleScaleStatTap();
+      },
+      'live-ghost-toggle': () => {
+        this.setState({ liveGhost: !this.state.liveGhost });
+        this.scheduleLiveDraw();
       },
       'stop': async () => {
         await this.stopMachineService();
@@ -6245,7 +6283,8 @@ export class BeanieApp {
     return renderLivePanelView({
       active: this.state.liveActive,
       finalizing: this.state.liveFinalizing,
-      busy: this.state.busy
+      busy: this.state.busy,
+      ghost: this.liveGhostPanelModel()
     });
   }
 

@@ -54,6 +54,8 @@ export interface LivePanelViewModel {
   active: boolean;
   finalizing: boolean;
   busy: boolean;
+  /** Reference-shot overlay: null when no usable reference shot exists. */
+  ghost: { enabled: boolean; title: string } | null;
 }
 
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
@@ -91,6 +93,17 @@ export function renderLivePanel(model: LivePanelViewModel): string {
         <div class="live-head">
           <div class="live-title-row">
             <span class="eyebrow">${model.finalizing ? 'Saving shot' : 'Live shot'}</span>
+            ${
+              model.ghost
+                ? `<button
+              class="live-ghost-button ${model.ghost.enabled ? 'active' : ''}"
+              data-action="live-ghost-toggle"
+              aria-pressed="${model.ghost.enabled}"
+              aria-label="${escapeAttr(model.ghost.title)}"
+              title="${escapeAttr(model.ghost.title)}"
+            >${icon('ghost')}<span>Ghost</span></button>`
+                : ''
+            }
             ${
               model.finalizing
                 ? `<span class="live-saving" role="status"><span class="live-spinner" aria-hidden="true"></span><span>Saving…</span></span>`

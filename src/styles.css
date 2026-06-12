@@ -1553,6 +1553,35 @@ p {
   line-height: 1;
 }
 
+/* Reference-overlay toggle, sitting between the title and the Stop button. */
+.live-ghost-button {
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.live-ghost-button.active {
+  border-color: color-mix(in srgb, var(--amber) 55%, var(--line));
+  background: color-mix(in srgb, var(--amber) 14%, var(--panel-2));
+  color: var(--soft);
+}
+
+.live-ghost-button .icon {
+  width: 14px;
+  height: 14px;
+}
+
 .live-stop-button:not(:disabled) {
   border-color: color-mix(in srgb, var(--red) 46%, transparent);
   color: var(--red);

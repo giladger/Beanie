@@ -65,15 +65,19 @@ run('page header escapes the title and back value while preserving action html',
 });
 
 run('live panel renders inactive, active, and finalizing states', () => {
-  equal(renderLivePanel({ active: false, finalizing: false, busy: false }), '');
+  equal(renderLivePanel({ active: false, finalizing: false, busy: false, ghost: null }), '');
 
-  const active = renderLivePanel({ active: true, finalizing: false, busy: true });
+  const active = renderLivePanel({ active: true, finalizing: false, busy: true, ghost: { enabled: true, title: 'Hide reference overlay (18g → 36g)' } });
   includes(active, 'Live shot');
   includes(active, 'data-action="stop"');
   includes(active, 'disabled');
   includes(active, 'id="live-pressure"');
 
-  const finalizing = renderLivePanel({ active: false, finalizing: true, busy: false });
+  includes(active, 'data-action="live-ghost-toggle"');
+  includes(active, 'live-ghost-button active');
+  includes(active, 'Hide reference overlay (18g → 36g)');
+
+  const finalizing = renderLivePanel({ active: false, finalizing: true, busy: false, ghost: null });
   includes(finalizing, 'Saving shot');
   includes(finalizing, 'Saving…');
   excludes(finalizing, 'data-action="stop"');

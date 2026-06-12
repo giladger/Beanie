@@ -1,5 +1,5 @@
 import type { BeanBatch, ShotRecord } from '../api/types';
-import { renderHistoryView, selectedHistoryShot } from '../views/historyView';
+import { liveGhostReference, renderHistoryView, selectedHistoryShot } from '../views/historyView';
 
 run('history view hides service shots while keeping pagination based on raw shots', () => {
   const html = renderHistoryView({
@@ -253,6 +253,17 @@ run('history view renders raw shot stats under the chart, with compare values wh
 run('selectedHistoryShot skips service shots and falls back to the first visible shot', () => {
   equal(selectedHistoryShot([shot('steam-shot', 'steam'), shot('shot-a', 'espresso')], 'steam-shot')?.id, 'shot-a');
   equal(selectedHistoryShot([shot('steam-shot', 'steam')], null), null);
+});
+
+run('liveGhostReference prefers the compare shot and requires measurements', () => {
+  const shots = [shot('shot-a', 'espresso'), shot('shot-b', 'espresso')];
+  equal(liveGhostReference(shots, 'shot-a', 'shot-b')?.id, 'shot-b');
+  equal(liveGhostReference(shots, 'shot-a', null)?.id, 'shot-a');
+  // Falls back to the first visible shot when nothing is selected.
+  equal(liveGhostReference(shots, null, null)?.id, 'shot-a');
+  const bare = { ...shot('shot-c', 'espresso'), measurements: [] };
+  equal(liveGhostReference([bare], 'shot-c', null), null);
+  equal(liveGhostReference([], null, null), null);
 });
 
 function shot(
