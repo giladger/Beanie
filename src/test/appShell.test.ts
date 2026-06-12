@@ -7,7 +7,11 @@ import {
   liveChartModelOptions,
   machineCommandsAvailable,
   machineStatus,
+  scaleBatteryLow,
+  scaleBatteryPercent,
   scaleConnected,
+  scaleStatLabel,
+  scaleStatTitle,
   temp,
   water,
   workflowSignature
@@ -24,6 +28,35 @@ run('app shell status helpers format machine water scale and numbers', () => {
   equal(formatNumber(null, 1), '--');
   equal(scaleConnected({ status: 'connected', weight: 1, weightFlow: 0, timestamp: 'now' }), true);
   equal(scaleConnected({ status: 'disconnected', weight: 1, weightFlow: 0, timestamp: 'now' }), false);
+});
+
+run('scale battery normalizes fractions and surfaces only when low', () => {
+  const scale = (batteryLevel?: number, status: 'connected' | 'disconnected' = 'connected') => ({
+    status,
+    weight: 18.2,
+    weightFlow: 0,
+    timestamp: 'now',
+    batteryLevel
+  });
+
+  equal(scaleBatteryPercent(scale(0.12)), 12);
+  equal(scaleBatteryPercent(scale(85)), 85);
+  equal(scaleBatteryPercent(scale(140)), 100);
+  equal(scaleBatteryPercent(scale(undefined)), null);
+  equal(scaleBatteryPercent(null), null);
+
+  equal(scaleStatLabel(scale(0.12)), '18.2 g · 12%');
+  equal(scaleStatLabel(scale(85)), '18.2 g');
+  equal(scaleStatLabel(scale(0.12, 'disconnected')), 'offline');
+  equal(scaleStatLabel(null), '-- g');
+
+  equal(scaleBatteryLow(scale(0.12)), true);
+  equal(scaleBatteryLow(scale(85)), false);
+  equal(scaleBatteryLow(scale(0.12, 'disconnected')), false);
+
+  equal(scaleStatTitle(scale(85)), 'Tare scale · battery 85%');
+  equal(scaleStatTitle(scale(undefined)), 'Tare scale');
+  equal(scaleStatTitle(null), 'Search for preferred scale');
 });
 
 run('app shell command and chart helpers preserve app decisions', () => {

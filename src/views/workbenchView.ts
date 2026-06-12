@@ -15,6 +15,8 @@ export interface WorkbenchTopbarViewModel {
   scale: {
     label: string;
     title: string;
+    /** Warn styling, e.g. when the scale battery is running low. */
+    tone: '' | 'stat-warn';
   };
   machineCommands: {
     available: boolean;
@@ -134,7 +136,7 @@ export function renderTopbar(model: WorkbenchTopbarViewModel): string {
           ${topStat('Group', model.groupTemperature, 'stat-group')}
           ${topStat('Steam', model.steamTemperature, 'stat-steam')}
           ${topStat('Water', model.water, 'stat-water', model.waterTone)}
-          ${topStatButton('Scale', model.scale.label, model.scale.title, 'scale-stat', 'stat-scale')}
+          ${topStatButton('Scale', model.scale.label, model.scale.title, 'scale-stat', 'stat-scale', model.scale.tone)}
         </div>
         ${renderMachineCommands(model.machineCommands)}
         <div class="top-icons" role="toolbar" aria-label="Skin actions">
@@ -283,10 +285,11 @@ function topStat(label: string, value: string, id?: string, toneClass?: string):
   return `<div class="top-stat${cls}"><label>${escapeHtml(label)}</label><strong${idAttr}>${escapeHtml(value)}</strong></div>`;
 }
 
-function topStatButton(label: string, value: string, title: string, action: string, id?: string): string {
+function topStatButton(label: string, value: string, title: string, action: string, id?: string, toneClass?: string): string {
   const idAttr = id ? ` id="${id}"` : '';
+  const cls = toneClass ? ` ${toneClass}` : '';
   return `
-    <button class="top-stat top-stat-button" data-action="${escapeAttr(action)}" aria-label="${escapeAttr(`${label}: ${value}. ${title}`)}" title="${escapeAttr(title)}">
+    <button class="top-stat top-stat-button${cls}" data-action="${escapeAttr(action)}" aria-label="${escapeAttr(`${label}: ${value}. ${title}`)}" title="${escapeAttr(title)}">
       <span class="top-stat-label">${escapeHtml(label)}</span>
       <strong${idAttr}>${escapeHtml(value)}</strong>
     </button>

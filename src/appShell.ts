@@ -35,6 +35,41 @@ export function scaleConnected(scale: ScaleSnapshot | null): boolean {
   return scale != null && scale.status !== 'disconnected';
 }
 
+export const SCALE_BATTERY_LOW_PERCENT = 20;
+
+/**
+ * Scale battery as a 0-100 percentage. Scales report either a fraction (0-1)
+ * or a percentage depending on firmware; values at or below 1 are read as a
+ * fraction.
+ */
+export function scaleBatteryPercent(scale: ScaleSnapshot | null): number | null {
+  const raw = scale?.batteryLevel;
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) return null;
+  const percent = raw <= 1 ? raw * 100 : raw;
+  return Math.min(100, Math.round(percent));
+}
+
+/** Topbar scale readout: weight, plus the battery while it is running low. */
+export function scaleStatLabel(scale: ScaleSnapshot | null): string {
+  if (scale?.status === 'disconnected') return 'offline';
+  const weight = `${formatNumber(scale?.weight, 1)} g`;
+  const battery = scaleBatteryPercent(scale);
+  if (battery != null && battery <= SCALE_BATTERY_LOW_PERCENT) return `${weight} · ${battery}%`;
+  return weight;
+}
+
+export function scaleBatteryLow(scale: ScaleSnapshot | null): boolean {
+  if (!scaleConnected(scale)) return false;
+  const battery = scaleBatteryPercent(scale);
+  return battery != null && battery <= SCALE_BATTERY_LOW_PERCENT;
+}
+
+export function scaleStatTitle(scale: ScaleSnapshot | null): string {
+  const base = scaleConnected(scale) ? 'Tare scale' : 'Search for preferred scale';
+  const battery = scaleBatteryPercent(scale);
+  return battery == null ? base : `${base} · battery ${battery}%`;
+}
+
 export function isNoScaleShotBlockError(error: unknown): boolean {
   if (!(error instanceof GatewayRequestError)) return false;
   const message = error.issue.message.toLowerCase();

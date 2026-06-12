@@ -46,7 +46,10 @@ import {
   nonNegativeNumber,
   positiveNumber,
   round,
+  scaleBatteryLow,
   scaleConnected,
+  scaleStatLabel,
+  scaleStatTitle,
   startupStatusLabel,
   temp,
   water,
@@ -2736,7 +2739,7 @@ export class BeanieApp {
     set('stat-group', temp(machine?.groupTemperature));
     set('stat-steam', temp(machine?.steamTemperature));
     set('stat-water', water(this.state.waterLevel));
-    set('stat-scale', scale?.status === 'disconnected' ? 'offline' : `${formatNumber(scale?.weight, 1)} g`);
+    set('stat-scale', scaleStatLabel(scale));
   }
 
   private currentWaterAlert(): WaterAlertLevel {
@@ -5995,8 +5998,9 @@ export class BeanieApp {
         water: water(this.state.waterLevel),
         waterTone,
         scale: {
-          label: scale?.status === 'disconnected' ? 'offline' : `${formatNumber(scale?.weight, 1)} g`,
-          title: scaleConnected(scale) ? 'Tare scale' : 'Search for preferred scale'
+          label: scaleStatLabel(scale),
+          title: scaleStatTitle(scale),
+          tone: scaleBatteryLow(scale) ? 'stat-warn' : ''
         },
         machineCommands: {
           available: machineCommandsAvailable(this.state.demo, this.state.machineInfo),

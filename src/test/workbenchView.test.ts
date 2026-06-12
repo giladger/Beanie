@@ -90,7 +90,8 @@ function model(overrides: Partial<WorkbenchViewModel> = {}): WorkbenchViewModel 
       waterTone: 'stat-warn',
       scale: {
         label: '18.2 g',
-        title: 'Tare scale'
+        title: 'Tare scale',
+        tone: '' as const
       },
       machineCommands: {
         available: true,
