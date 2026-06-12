@@ -77,3 +77,23 @@ export function isShotNumberField(field: ShotEditField): field is ShotNumberFiel
 export function shotNumberFieldStep(field: ShotEditField): string {
   return field === 'drinkTds' || field === 'drinkEy' ? '0.01' : '0.1';
 }
+
+/**
+ * Extraction yield derived from the refractometer reading: beverage weight ×
+ * TDS ÷ dose, preferring actual weights over targets. Null until TDS, a dose,
+ * and a yield are all known. Rounded to two decimals, matching the EY field's
+ * input step.
+ */
+export function calculatedEy(
+  draft: Pick<ShotEditDraft, 'drinkTds' | 'actualDoseWeight' | 'targetDoseWeight' | 'actualYield' | 'targetYield'>
+): number | null {
+  const tds = positiveNumber(draft.drinkTds);
+  const dose = positiveNumber(draft.actualDoseWeight) ?? positiveNumber(draft.targetDoseWeight);
+  const beverage = positiveNumber(draft.actualYield) ?? positiveNumber(draft.targetYield);
+  if (tds == null || dose == null || beverage == null) return null;
+  return Math.round(((beverage * tds) / dose) * 100) / 100;
+}
+
+function positiveNumber(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}

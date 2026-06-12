@@ -1182,6 +1182,22 @@ p {
   white-space: nowrap;
 }
 
+/* One-tap fill for the EY derived from TDS × yield ÷ dose. */
+.ey-calc-hint {
+  justify-self: start;
+  margin-top: 3px;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--teal) 40%, var(--line));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--teal) 10%, transparent);
+  color: var(--soft);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
 /* Comparison shot's value, tinted like its overlay chip. */
 .detail-stat-compare {
   font-size: 11px;

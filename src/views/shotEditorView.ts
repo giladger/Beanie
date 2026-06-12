@@ -6,6 +6,7 @@ import {
   type ShotEditField,
   type ShotFieldSpec,
   type ShotNumberField,
+  calculatedEy,
   shotNumberFieldStep
 } from '../domain/shotEditModel';
 import { icon } from '../components/icons';
@@ -75,7 +76,7 @@ export function renderShotEditModal(model: ShotEditModalViewModel): string {
             <legend>Result</legend>
             <div class="shot-edit-fields">
               ${numberField('drinkTds', 'TDS', draft.drinkTds)}
-              ${numberField('drinkEy', 'EY', draft.drinkEy)}
+              ${numberField('drinkEy', 'EY', draft.drinkEy, eyCalcHint(draft))}
               <label class="wide">
                 <span>Score</span>
                 ${shotScoreControl(draft.enjoyment, { action: 'shot-edit-score', variant: 'edit' })}
@@ -113,7 +114,7 @@ function field(
   `;
 }
 
-function numberField(name: ShotNumberField, label: string, value: number | null): string {
+function numberField(name: ShotNumberField, label: string, value: number | null, extra = ''): string {
   return `
     <label>
       <span>${escapeHtml(label)}</span>
@@ -130,7 +131,21 @@ function numberField(name: ShotNumberField, label: string, value: number | null)
         data-step="${escapeAttr(shotNumberFieldStep(name))}"
         data-return-modal="edit-shot"
       ><strong>${escapeHtml(inputValue(value) || '--')}</strong></button>
+      ${extra}
     </label>
+  `;
+}
+
+// Offer the EY derived from the entered TDS and weights as a one-tap fill.
+// Hidden once the recorded EY already matches the arithmetic.
+function eyCalcHint(draft: ShotEditDraft): string {
+  const calculated = calculatedEy(draft);
+  if (calculated == null) return '';
+  if (draft.drinkEy != null && Math.abs(draft.drinkEy - calculated) < 0.05) return '';
+  return `
+    <button type="button" class="ey-calc-hint" data-action="shot-edit-ey-calc" data-value="${escapeAttr(String(calculated))}" title="Use the EY calculated from TDS, dose, and yield">
+      = ${escapeHtml(String(calculated))}% from TDS
+    </button>
   `;
 }
 

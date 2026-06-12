@@ -3823,6 +3823,12 @@ export class BeanieApp {
       'shot-bean-cancel-new': () => {
         if (this.state.shotBeanEdit) this.setState({ shotBeanEdit: { creating: false } });
       },
+      'shot-edit-ey-calc': ({ value }) => {
+        const ey = Number(value);
+        if (this.state.shotEdit && Number.isFinite(ey)) {
+          this.setState({ shotEdit: { ...this.state.shotEdit, drinkEy: ey } });
+        }
+      },
       'shot-edit-score': ({ value }) => {
         this.setShotEditEnjoyment(scoreValueFromTap(value, this.state.shotEdit?.enjoyment ?? null));
       },

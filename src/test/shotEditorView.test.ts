@@ -1,5 +1,5 @@
 import type { Bean, Grinder } from '../api/types';
-import type { ShotEditDraft } from '../domain/shotEditModel';
+import { calculatedEy, type ShotEditDraft } from '../domain/shotEditModel';
 import { renderShotEditModal, type ShotEditModalViewModel } from '../views/shotEditorView';
 
 const grinders: Grinder[] = [
@@ -20,6 +20,28 @@ run('shot editor renders the main modal from a plain view model', () => {
   includes(html, 'Niche Zero');
   includes(html, 'shot-score-word good active');
   includes(html, 'data-form="shot-dye-editor"');
+});
+
+run('shot editor offers the EY calculated from TDS unless it already matches', () => {
+  // Default draft: 37.2 g out × 9.25 TDS ÷ 18.1 g in = 19.01%.
+  equal(calculatedEy(model().draft), 19.01);
+
+  const offered = renderShotEditModal(model());
+  includes(offered, 'data-action="shot-edit-ey-calc"');
+  includes(offered, '= 19.01% from TDS');
+
+  const matching = renderShotEditModal(model({ draft: { ...model().draft, drinkEy: 19.01 } }));
+  excludes(matching, 'shot-edit-ey-calc');
+
+  const noTds = renderShotEditModal(model({ draft: { ...model().draft, drinkTds: null } }));
+  excludes(noTds, 'shot-edit-ey-calc');
+  equal(calculatedEy({ ...model().draft, drinkTds: null }), null);
+
+  // Falls back to target weights when actuals are missing.
+  equal(
+    calculatedEy({ drinkTds: 10, actualDoseWeight: null, targetDoseWeight: 18, actualYield: null, targetYield: 36 }),
+    20
+  );
 });
 
 run('shot editor renders nested field options when a field dialog is active', () => {
@@ -124,5 +146,17 @@ function run(name: string, fn: () => void): void {
 function includes(text: string, expected: string): void {
   if (!text.includes(expected)) {
     throw new Error(`Expected ${JSON.stringify(text.slice(0, 240))} to include ${expected}`);
+  }
+}
+
+function excludes(text: string, expected: string): void {
+  if (text.includes(expected)) {
+    throw new Error(`Expected rendered output not to include ${expected}`);
+  }
+}
+
+function equal<T>(actual: T, expected: T): void {
+  if (actual !== expected) {
+    throw new Error(`Expected ${String(expected)}, received ${String(actual)}`);
   }
 }
