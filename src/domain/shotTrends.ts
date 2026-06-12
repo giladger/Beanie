@@ -5,7 +5,7 @@ import { isServiceShot } from './shotRecord';
 // shots in brew order (oldest → newest). Display only states what was
 // measured — no freshness labels, no dial-in advice.
 
-export type ShotTrendKey = 'dose' | 'yield' | 'ratio' | 'duration' | 'ey' | 'enjoyment';
+export type ShotTrendKey = 'dose' | 'yield' | 'ratio' | 'duration' | 'grind' | 'ey' | 'enjoyment';
 
 export interface ShotTrendPoint {
   shotId: string;
@@ -46,6 +46,7 @@ const TREND_DEFINITIONS: ShotTrendDefinition[] = [
     }
   },
   { key: 'duration', label: 'Time', unit: 's', decimals: 0, value: shotDurationSeconds },
+  { key: 'grind', label: 'Grind', unit: '', decimals: 1, value: grindSetting },
   { key: 'ey', label: 'EY', unit: '%', decimals: 1, value: (shot) => positive(shot.annotations?.drinkEy) },
   {
     key: 'enjoyment',
@@ -114,6 +115,16 @@ function computeShotDurationSeconds(shot: ShotRecord): number | null {
   const last = Date.parse(series[series.length - 1]!.machine.timestamp);
   if (!Number.isFinite(first) || !Number.isFinite(last) || last <= first) return null;
   return (last - first) / 1000;
+}
+
+// Grinder settings are stored as free text; chart them only when they parse
+// as plain numbers (dial positions like "5.5"), since "2 turns coarse" has no
+// place on a numeric axis.
+function grindSetting(shot: ShotRecord): number | null {
+  const raw = shot.workflow?.context?.grinderSetting;
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
+  if (typeof raw !== 'string' || !/^\s*-?\d+(?:\.\d+)?\s*$/.test(raw)) return null;
+  return Number(raw);
 }
 
 function doseIn(shot: ShotRecord): number | null {

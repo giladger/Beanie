@@ -48,6 +48,22 @@ run('shot trends drop rows with fewer than two measured points', () => {
   equal(rows.some((row) => row.key === 'dose'), true);
 });
 
+run('shot trends chart numeric grinder settings and skip free-text ones', () => {
+  const numeric = buildShotTrends([
+    shot('b', { dose: 18, yieldOut: 36, grind: '5.5' }),
+    shot('a', { dose: 18, yieldOut: 36, grind: '6' })
+  ]).find((row) => row.key === 'grind');
+  if (!numeric) throw new Error('Expected a grind row');
+  equal(numeric.points[0]!.value, 6);
+  equal(numeric.latest, 5.5);
+
+  const text = buildShotTrends([
+    shot('b', { dose: 18, yieldOut: 36, grind: '2 turns coarse' }),
+    shot('a', { dose: 18, yieldOut: 36, grind: 'fine' })
+  ]).find((row) => row.key === 'grind');
+  equal(text, undefined);
+});
+
 run('shot trends include duration from the pour window', () => {
   const shots = [shot('b', { dose: 18, yieldOut: 36 }), shot('a', { dose: 18, yieldOut: 36 })];
   const duration = buildShotTrends(shots).find((row) => row.key === 'duration');
@@ -67,6 +83,7 @@ interface ShotSpec {
   actualYield?: number;
   ey?: number;
   enjoyment?: number;
+  grind?: string;
   beverageType?: string;
 }
 
@@ -79,6 +96,7 @@ function shot(id: string, spec: ShotSpec): ShotRecord {
       context: {
         targetDoseWeight: spec.dose ?? null,
         targetYield: spec.yieldOut ?? null,
+        grinderSetting: spec.grind ?? null,
         finalBeverageType: spec.beverageType ?? 'espresso'
       }
     },
