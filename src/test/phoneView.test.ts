@@ -11,7 +11,7 @@ run('phone shell exposes helper workflows without machine service controls', () 
 
   includes(html, 'data-action="open-label-scanner"');
   includes(html, 'data-action="phone-select-bean"');
-  includes(html, 'data-action="open-batch-storage"');
+  includes(html, 'data-action="open-edit-bean"');
   includes(html, 'data-action="phone-select-shot"');
   includes(html, 'data-action="phone-shot-field"');
   includes(html, 'data-action="phone-save-shot"');
@@ -29,6 +29,36 @@ run('phone shell exposes helper workflows without machine service controls', () 
   excludes(html, 'data-action="select-history-shot"');
   excludes(html, 'data-action="edit-field"');
   excludes(html, 'data-action="phone-edit-shot"');
+  excludes(html, 'data-action="open-batch-storage"');
+});
+
+run('phone home hero opens the bean picker and shows bag facts', () => {
+  const html = renderPhoneShell(model());
+
+  includes(html, 'phone-home-hero" data-action="open-bean-picker"');
+  includes(html, '180g left');
+  includes(html, '~10 shots');
+});
+
+run('phone bean rows carry the picker stock facts and favorites', () => {
+  const html = renderPhoneShell({ ...model(), activeTab: 'beans' });
+
+  includes(html, 'phone-row-fav');
+  includes(html, 'd active');
+  includes(html, '~10 shots');
+});
+
+run('phone bean rows fall back to origin facts without bags', () => {
+  const base = model();
+  const html = renderPhoneShell({
+    ...base,
+    activeTab: 'beans',
+    batchesByBean: {},
+    beans: [{ ...base.beans[0]!, country: 'Colombia', processing: 'washed' }]
+  });
+
+  includes(html, 'Colombia · washed');
+  excludes(html, 'shots ·');
 });
 
 run('phone shots render selected shot as an accordion below the row', () => {
@@ -89,9 +119,12 @@ function model(): PhoneShellModel {
     machineStatus: 'Ready',
     asleep: false,
     selectedBean: bean,
+    selectedBatch: batch,
     batchesByBean: { [bean.id]: [batch] },
     beans: [bean],
     beanSearch: '',
+    favoriteBeanIds: [bean.id],
+    averageDoseIn: 18,
     shots: [shot('shot-1', 'espresso', batch.id), shot('flush-1', 'flush')],
     selectedShot: shot('shot-1', 'espresso', batch.id),
     selectedShotDraft: {

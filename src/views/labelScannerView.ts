@@ -9,7 +9,8 @@ import type { LabelScanDraft, LabelScanDraftField } from '../domain/labelScan';
  * the form on submit (same idiom as the bean form), so typing never triggers a
  * re-render. The review step pre-fills the same bean/batch fields Beanie already
  * uses; low-confidence fields are flagged for the human to double-check — the
- * scan only fills a draft, it never saves on its own.
+ * scan only fills a draft, it never saves on its own. A roaster-website lookup
+ * (enrich) starts automatically when the review opens; the button re-runs it.
  */
 
 export type LabelScannerStep = 'onboard' | 'capture' | 'extracting' | 'review' | 'error';
@@ -114,6 +115,8 @@ function renderOnboard(model: LabelScannerViewModel): string {
   `;
 }
 
+// The file input has no `capture` attribute on purpose: capture forces
+// camera-only on phones, blocking photos the user already took of the bag.
 function renderCapture(model: LabelScannerViewModel): string {
   const canExtract = model.demo || model.images.length > 0;
   return `
@@ -122,7 +125,7 @@ function renderCapture(model: LabelScannerViewModel): string {
       <p>Add a clear photo of the front, plus the back if it shows the roast date or weight.</p>
       <label class="scan-add-photos">
         ${icon('camera')}<span>Add photos</span>
-        <input type="file" accept="image/*" capture="environment" multiple data-action="scanner-add-photos" />
+        <input type="file" accept="image/*" multiple data-action="scanner-add-photos" />
       </label>
       ${
         model.images.length === 0
@@ -149,6 +152,9 @@ function renderExtracting(): string {
     <div class="label-scanner-extracting">
       <div class="scan-spinner" aria-hidden="true"></div>
       <p>Reading your bag…</p>
+      <div class="label-scanner-actions">
+        <button type="button" class="secondary-button" data-action="scanner-rescan">Cancel</button>
+      </div>
     </div>
   `;
 }

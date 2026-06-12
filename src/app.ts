@@ -97,7 +97,7 @@ import {
   demoShotsForBean,
   demoWorkflow
 } from './mock/demo';
-import { enrichLabel, GeminiError, scanLabel, verifyGeminiKey } from './api/gemini';
+import { enrichLabel, GeminiError, isGeminiKeyError, scanLabel, verifyGeminiKey } from './api/gemini';
 import { fileToScaledImage, type CapturedImage } from './domain/labelImage';
 import {
   findExistingBean,
@@ -3056,7 +3056,9 @@ export class BeanieApp {
       case 'phone-select-bean':
         if (id) {
           this.setState({ secondTapHint: null });
-          await this.selectBean(id, { apply: false, preferWorkflow: false });
+          // Match the tablet picker: selecting a coffee also sets it as the
+          // machine's next brew (there is no separate "brew this" step).
+          await this.selectBean(id, { apply: true, preferWorkflow: false });
         }
         return true;
       case 'phone-select-shot':
@@ -3257,13 +3259,13 @@ export class BeanieApp {
         await this.runScannerExtraction();
         return true;
       case 'scanner-rescan':
+        // Also the Cancel button while extracting — abort whatever is in flight.
+        this.cancelScannerWork();
         this.setScanner({ step: 'capture', scan: null, draft: null, error: null, saving: false, webFields: [], enriching: false });
         return true;
-      case 'scanner-enrich': {
-        const form = el.closest<HTMLFormElement>('form[data-form="scanner-review"]');
-        if (form) await this.runScannerEnrich(form);
+      case 'scanner-enrich':
+        await this.runScannerEnrich();
         return true;
-      }
       default:
         return false;
     }
@@ -3272,6 +3274,32 @@ export class BeanieApp {
   private setScanner(patch: Partial<LabelScannerState>): void {
     if (!this.state.scanner) return;
     this.setState({ scanner: { ...this.state.scanner, ...patch } });
+  }
+
+  /**
+   * Scanner requests are tied to a session id so a response that arrives after
+   * the modal was closed (or reopened) can't write into the new session, and an
+   * AbortController so closing/cancelling actually stops the network call.
+   */
+  private scannerSession = 0;
+  private scannerRequest: AbortController | null = null;
+
+  /** Abort in-flight scanner network work and invalidate its session. */
+  private cancelScannerWork(): void {
+    this.scannerSession++;
+    this.scannerRequest?.abort();
+    this.scannerRequest = null;
+  }
+
+  /** Fresh signal for one scanner request, bound to the current session. */
+  private beginScannerRequest(): { signal: AbortSignal; session: number } {
+    this.scannerRequest?.abort();
+    this.scannerRequest = new AbortController();
+    return { signal: this.scannerRequest.signal, session: this.scannerSession };
+  }
+
+  private scannerSessionAlive(session: number): boolean {
+    return session === this.scannerSession && this.state.scanner != null;
   }
 
   /**
@@ -3301,6 +3329,7 @@ export class BeanieApp {
    * on-device. Demo and the QR-arrival both go straight to the on-device flow.
    */
   private async openLabelScanner(options: { fromHandoff?: boolean } = {}): Promise<void> {
+    this.cancelScannerWork();
     await this.syncGeminiKey();
     const hasKey = readGeminiApiKey() != null;
     const handoff = isDecentAppWebView() && options.fromHandoff !== true && !this.state.demo;
@@ -3332,27 +3361,45 @@ export class BeanieApp {
 
   private async addScannerPhotos(files: File[]): Promise<void> {
     if (!this.state.scanner) return;
-    try {
-      const added: CapturedImage[] = await Promise.all(files.map((file) => fileToScaledImage(file)));
-      if (!this.state.scanner) return;
-      this.setScanner({ images: [...this.state.scanner.images, ...added] });
-    } catch (error) {
-      console.error('[Beanie] Could not prepare photo', error);
-      this.setState({ status: 'Could not read that photo' });
+    // Per-file isolation: one unreadable photo must not drop the others.
+    const results = await Promise.allSettled(files.map((file) => fileToScaledImage(file)));
+    if (!this.state.scanner) return;
+    const added: CapturedImage[] = results
+      .filter((result): result is PromiseFulfilledResult<CapturedImage> => result.status === 'fulfilled')
+      .map((result) => result.value);
+    const failed = results.length - added.length;
+    if (added.length > 0) this.setScanner({ images: [...this.state.scanner.images, ...added] });
+    if (failed > 0) {
+      console.error(
+        '[Beanie] Could not prepare photo',
+        results.find((result) => result.status === 'rejected')
+      );
+      this.setState({ status: failed === 1 ? 'Could not read one photo' : `Could not read ${failed} photos` });
     }
   }
 
   private async runScannerExtraction(): Promise<void> {
     const scanner = this.state.scanner;
     if (!scanner) return;
+    if (!this.state.demo && readGeminiApiKey() == null) {
+      this.setScanner({
+        step: 'onboard',
+        handoff: false,
+        verifyMessage: { tone: 'warn', text: 'Add your Gemini API key first.' }
+      });
+      return;
+    }
+    const { signal, session } = this.beginScannerRequest();
     this.setScanner({ step: 'extracting', error: null });
     try {
       const scan: LabelScan = this.state.demo
         ? demoLabelScan()
         : await scanLabel(
             scanner.images.map((image) => ({ mime: image.mime, base64: image.base64 })),
-            readGeminiApiKey() ?? ''
+            readGeminiApiKey() ?? '',
+            { signal }
           );
+      if (!this.scannerSessionAlive(session)) return;
       const draft = labelScanToDraft(scan);
       const existing = findExistingBean(this.state.beans, draft.roaster, draft.name);
       this.setScanner({
@@ -3365,20 +3412,34 @@ export class BeanieApp {
         existingBeanId: existing?.id ?? null,
         existingBeanLabel: existing ? beanLabel(existing) : null
       });
+      // Look up the roaster's site in the background — the review form is
+      // already editable while it searches.
+      void this.runScannerEnrich({ auto: true });
     } catch (error) {
-      const message = error instanceof GeminiError ? error.message : 'Could not read the label — try again.';
+      if (signal.aborted || !this.scannerSessionAlive(session)) return;
       console.error('[Beanie] Label scan failed', error);
+      if (isGeminiKeyError(error)) {
+        // The stored key went bad — back to onboarding instead of a dead retry loop.
+        this.setScanner({
+          step: 'onboard',
+          handoff: false,
+          keyDraft: readGeminiApiKey() ?? '',
+          verifyMessage: { tone: 'warn', text: 'Gemini rejected your API key — check it and save again.' }
+        });
+        return;
+      }
+      const message = error instanceof GeminiError ? error.message : 'Could not read the label — try again.';
       this.setScanner({ step: 'error', error: message });
     }
   }
 
-  private async runScannerEnrich(form: HTMLFormElement): Promise<void> {
-    const scanner = this.state.scanner;
-    if (!scanner) return;
-    // Capture edits the user already made so enrichment merges on top of them.
+  /** The review form's live values, falling back to the stored draft. */
+  private readScannerReviewDraft(): LabelScanDraft | null {
+    const form = document.querySelector<HTMLFormElement>('form[data-form="scanner-review"]');
+    if (!form) return this.state.scanner?.draft ?? null;
     const data = new FormData(form);
     const get = (name: string): string => String(data.get(name) ?? '');
-    const draft: LabelScanDraft = {
+    return {
       roaster: get('roaster'),
       name: get('name'),
       country: get('country'),
@@ -3389,32 +3450,79 @@ export class BeanieApp {
       roastLevel: get('roastLevel'),
       weight: get('weight')
     };
-    if (!draft.roaster.trim() || !draft.name.trim()) {
-      this.setState({ status: 'Add a roaster and bean name to enrich.' });
+  }
+
+  /**
+   * Look up the roaster's site and fold extra detail into the draft. Runs
+   * automatically when the review opens (auto: failures stay quiet — the
+   * button is still there to retry) and from the enrich button (manual:
+   * failures surface in the status line). The merge reads the live form so
+   * edits made while it searches are never clobbered.
+   */
+  private async runScannerEnrich(options: { auto?: boolean } = {}): Promise<void> {
+    const scanner = this.state.scanner;
+    if (!scanner || scanner.enriching || scanner.step !== 'review') return;
+    const base = this.readScannerReviewDraft();
+    if (!base) return;
+    if (!base.roaster.trim() || !base.name.trim()) {
+      if (!options.auto) this.setState({ status: 'Add a roaster and bean name to enrich.' });
       return;
     }
 
+    const { signal, session } = this.beginScannerRequest();
     this.setScanner({ enriching: true });
     try {
       const enrichment = this.state.demo
         ? demoLabelEnrich()
         : await enrichLabel(
-            { roaster: draft.roaster, name: draft.name, country: draft.country },
-            readGeminiApiKey() ?? ''
+            { roaster: base.roaster, name: base.name, country: base.country },
+            readGeminiApiKey() ?? '',
+            { signal }
           );
-      if (!this.state.scanner) return;
-      const merged = mergeEnrichment(draft, enrichment);
-      this.setScanner({
-        enriching: false,
-        draft: merged.draft,
-        webFields: [...new Set([...this.state.scanner.webFields, ...merged.webFields])]
-      });
-      if (merged.webFields.length === 0) this.setState({ status: 'No extra details found.' });
+      if (!this.scannerSessionAlive(session) || this.state.scanner?.step !== 'review') return;
+      const current = this.readScannerReviewDraft() ?? base;
+      const merged = mergeEnrichment(current, enrichment);
+      this.withScannerFocusKept(() =>
+        this.setScanner({
+          enriching: false,
+          draft: merged.draft,
+          webFields: [...new Set([...(this.state.scanner?.webFields ?? []), ...merged.webFields])]
+        })
+      );
+      if (!options.auto && merged.webFields.length === 0) this.setState({ status: 'No extra details found.' });
     } catch (error) {
-      const message = error instanceof GeminiError ? error.message : 'Could not reach the roaster — try again.';
+      if (signal.aborted || !this.scannerSessionAlive(session)) return;
       console.error('[Beanie] Enrich failed', error);
       this.setScanner({ enriching: false });
-      this.setState({ status: message });
+      if (!options.auto) {
+        const message = error instanceof GeminiError ? error.message : 'Could not reach the roaster — try again.';
+        this.setState({ status: message });
+      }
+    }
+  }
+
+  /**
+   * Re-rendering replaces the review form's inputs; when a background enrich
+   * lands mid-typing, put the caret back where it was.
+   */
+  private withScannerFocusKept(render: () => void): void {
+    const active = document.activeElement;
+    const focused =
+      (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) &&
+      active.closest('form[data-form="scanner-review"]')
+        ? { name: active.name, start: active.selectionStart, end: active.selectionEnd }
+        : null;
+    render();
+    if (!focused) return;
+    const next = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+      `form[data-form="scanner-review"] [name="${focused.name}"]`
+    );
+    if (!next) return;
+    next.focus();
+    try {
+      if (focused.start != null && focused.end != null) next.setSelectionRange(focused.start, focused.end);
+    } catch {
+      // date/number inputs don't support selection ranges
     }
   }
 
@@ -3439,7 +3547,9 @@ export class BeanieApp {
       return;
     }
 
-    this.setScanner({ saving: true, error: null });
+    // Stop a still-running background enrich from re-rendering the form mid-save.
+    this.cancelScannerWork();
+    this.setScanner({ saving: true, error: null, enriching: false });
 
     const existing =
       (scanner.existingBeanId ? this.state.beans.find((bean) => bean.id === scanner.existingBeanId) : null) ??
@@ -3883,6 +3993,7 @@ export class BeanieApp {
           });
           return true;
         }
+        if (this.state.scanner) this.cancelScannerWork();
         this.setState({
           modal: null,
           scanner: null,
@@ -5771,9 +5882,12 @@ export class BeanieApp {
       machineStatus: this.machineStatusLabel(),
       asleep: this.state.asleep,
       selectedBean: bean,
+      selectedBatch: this.selectedBatch(),
       batchesByBean: this.state.batchesByBean,
       beans: this.sortedBeansForPicker(),
       beanSearch: this.state.search,
+      favoriteBeanIds: this.state.favoriteBeans,
+      averageDoseIn: this.averageDoseIn(),
       shots: this.state.shots,
       selectedShot,
       selectedShotDraft,

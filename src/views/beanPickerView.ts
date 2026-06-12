@@ -7,7 +7,9 @@ import {
   latestBatch
 } from '../domain/beanWorkflow';
 import {
+  beanStockSummary,
   dateInputValue,
+  isNearlyEmptyBatch,
   recentBatches,
   stockLocationLabel,
   stockOptionLabel,
@@ -123,23 +125,14 @@ function renderBeanPickerRow(
   `;
 }
 
-// Active age comes from the freshest bag on hand (the one you'd brew next);
-// shots-left sums the remaining grams across every active bag of this coffee,
-// divided by the average dose-in. Returns '' when no active bags carry the data.
+// Same facts as the phone bean list: active age of the freshest bag on hand
+// plus an estimated shots-left across every active bag.
 function beanRowMeta(batches: BeanBatch[], averageDoseIn: number | null): string {
-  const active = batches.filter((batch) => !isNearlyEmptyBatch(batch));
-  if (active.length === 0) return '';
-  const freshness = computeBeanFreshness(latestBatch(active));
-  const totalRemaining = active.reduce(
-    (sum, batch) => sum + (typeof batch.weightRemaining === 'number' && batch.weightRemaining > 0 ? batch.weightRemaining : 0),
-    0
-  );
-  const shotsLeft = averageDoseIn && averageDoseIn > 0 && totalRemaining > 0
-    ? Math.floor(totalRemaining / averageDoseIn)
-    : null;
+  const summary = beanStockSummary(batches, averageDoseIn);
+  if (!summary) return '';
   return [
-    freshness ? `${freshness.activeAgeDays}d active` : null,
-    shotsLeft != null ? `~${shotsLeft} shot${shotsLeft === 1 ? '' : 's'}` : null
+    summary.activeAgeDays != null ? `${summary.activeAgeDays}d active` : null,
+    summary.shotsLeft != null ? `~${summary.shotsLeft} shot${summary.shotsLeft === 1 ? '' : 's'}` : null
   ].filter(Boolean).join(' · ');
 }
 
@@ -493,10 +486,6 @@ function renderBeanPickerFirstStock(formNumbers: Record<string, string>): string
       </div>
     </div>
   `;
-}
-
-function isNearlyEmptyBatch(batch: BeanBatch): boolean {
-  return typeof batch.weightRemaining === 'number' && Number.isFinite(batch.weightRemaining) && batch.weightRemaining < 5;
 }
 
 function renderBeanPickerBatchDraft(

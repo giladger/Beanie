@@ -8,6 +8,10 @@ import { buildEnrichPrompt, LABEL_SCAN_PROMPT } from '../domain/labelScan';
  * (free-tier) key — no Beanie gateway, no proxy. The request/response *shaping*
  * is pure and unit-tested; only the thin `fetch` wrappers touch the network.
  *
+ * The free tier sheds load constantly (429 rate limits, 503 overloads), so every
+ * call retries transient failures on a short backoff and carries a per-attempt
+ * deadline — a hung call must never spin the scanner UI forever.
+ *
  * We deliberately drive structured output with `responseMimeType: application/json`
  * plus an explicit shape in the prompt, rather than a `responseSchema` — the
  * schema field's wire format has shifted across Gemini versions, and the parser
@@ -18,6 +22,12 @@ import { buildEnrichPrompt, LABEL_SCAN_PROMPT } from '../domain/labelScan';
 export const GEMINI_LABEL_MODEL = 'gemini-2.5-flash';
 
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta';
+
+/** Backoff between retries of transient failures. */
+const RETRY_DELAYS_MS = [750, 1500];
+
+/** Per-attempt deadline; free-tier calls occasionally hang far past usefulness. */
+const ATTEMPT_TIMEOUT_MS = 60_000;
 
 export interface ScanImage {
   /** e.g. image/jpeg, image/png, image/webp. */
@@ -30,16 +40,32 @@ type GeminiPart = { text: string } | { inline_data: { mime_type: string; data: s
 
 export interface GeminiRequest {
   contents: Array<{ parts: GeminiPart[] }>;
-  generationConfig: { responseMimeType: string; temperature: number };
+  generationConfig: {
+    responseMimeType: string;
+    temperature: number;
+    thinkingConfig: { thinkingBudget: number };
+  };
 }
 
 export class GeminiError extends Error {
   readonly status: number | null;
-  constructor(message: string, status: number | null = null) {
+  /** Worth retrying automatically (rate limit, overload, network blip). */
+  readonly transient: boolean;
+  constructor(message: string, status: number | null = null, transient = false) {
     super(message);
     this.name = 'GeminiError';
     this.status = status;
+    this.transient = transient;
   }
+}
+
+/** True when the failure means the stored API key is bad — re-onboard, don't retry. */
+export function isGeminiKeyError(error: unknown): boolean {
+  return (
+    error instanceof GeminiError &&
+    (error.status === 400 || error.status === 401 || error.status === 403) &&
+    /api key/i.test(error.message)
+  );
 }
 
 /** Pure: build the generateContent request body from images + prompt. */
@@ -49,7 +75,14 @@ export function buildGeminiRequest(images: ScanImage[], prompt: string): GeminiR
   }));
   return {
     contents: [{ parts: [...imageParts, { text: prompt }] }],
-    generationConfig: { responseMimeType: 'application/json', temperature: 0 }
+    generationConfig: {
+      responseMimeType: 'application/json',
+      // The 2.5 family degenerates (loops, empty candidates) at exactly 0.
+      temperature: 0.2,
+      // Reading print needs no reasoning pass — disabling thinking is faster
+      // and avoids the empty responses dynamic thinking sometimes produces.
+      thinkingConfig: { thinkingBudget: 0 }
+    }
   };
 }
 
@@ -69,7 +102,7 @@ export function parseGeminiResponse(payload: unknown): LabelScan {
 
   const parts = asRecord(first.content)?.parts;
   const text = Array.isArray(parts) ? parts.map((part) => stringOr(asRecord(part)?.text, '')).join('') : '';
-  if (!text.trim()) throw new GeminiError('Gemini returned an empty result');
+  if (!text.trim()) throw new GeminiError('Gemini returned an empty result', null, true);
 
   let parsed: unknown;
   try {
@@ -107,43 +140,25 @@ export function coerceLabelScan(value: unknown): LabelScan {
   };
 }
 
+interface TransportOptions {
+  signal?: AbortSignal;
+  /** Per-attempt deadline override. */
+  timeoutMs?: number;
+  /** Backoff schedule override ([] disables retries) — mainly a test hook. */
+  retryDelaysMs?: number[];
+}
+
 /** Network: run a label scan via Gemini generateContent. */
 export async function scanLabel(
   images: ScanImage[],
   apiKey: string,
-  options: { model?: string; prompt?: string; signal?: AbortSignal } = {}
+  options: { model?: string; prompt?: string } & TransportOptions = {}
 ): Promise<LabelScan> {
   if (images.length === 0) throw new GeminiError('Add at least one photo of the bag');
-  const model = options.model ?? GEMINI_LABEL_MODEL;
-  const url = `${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(
-    apiKey.trim()
-  )}`;
+  if (!apiKey.trim()) throw new GeminiError('Add your Gemini API key first');
   const body = buildGeminiRequest(images, options.prompt ?? LABEL_SCAN_PROMPT);
-
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: options.signal
-    });
-  } catch (error) {
-    if (isAbort(error, options.signal)) throw error;
-    throw new GeminiError('Could not reach Gemini — check your connection');
-  }
-
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    const message = stringOr(asRecord(asRecord(payload)?.error)?.message, `Gemini error ${response.status}`);
-    throw new GeminiError(message, response.status);
-  }
+  const payload = await postGenerateContent(modelUrl(options.model, apiKey), body, options);
   return parseGeminiResponse(payload);
-}
-
-/** A caller-initiated abort is not a network failure — let it propagate as-is. */
-function isAbort(error: unknown, signal: AbortSignal | undefined): boolean {
-  return signal?.aborted === true || (error instanceof Error && error.name === 'AbortError');
 }
 
 /** Validate a key cheaply by listing models. Returns a tone-able result; never throws. */
@@ -176,6 +191,7 @@ export interface EnrichRequest {
  * model look up the roaster's site. No `responseMimeType` here — JSON mode is
  * incompatible with grounding on these models, so the prompt asks for JSON and
  * `extractJsonObject` pulls it back out of the (possibly prose-wrapped) answer.
+ * Thinking stays on: it measurably helps the model pick the right product page.
  */
 export function buildEnrichRequest(prompt: string): EnrichRequest {
   return {
@@ -184,12 +200,18 @@ export function buildEnrichRequest(prompt: string): EnrichRequest {
   };
 }
 
-/** Pure: pull the first {...} JSON object out of grounded text. */
+/**
+ * Pure: pull the JSON object out of grounded text. Grounded answers often wrap
+ * the JSON in a ```json fence with prose around it — and the prose itself can
+ * contain braces — so a fenced block wins over the bare first-{...last-} span.
+ */
 export function extractJsonObject(text: string): string | null {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text);
+  const source = fenced ? fenced[1]! : text;
+  const start = source.indexOf('{');
+  const end = source.lastIndexOf('}');
   if (start < 0 || end <= start) return null;
-  return text.slice(start, end + 1);
+  return source.slice(start, end + 1);
 }
 
 /** Pure: coerce arbitrary JSON into a LabelScanEnrichment. */
@@ -207,32 +229,11 @@ export function coerceEnrichment(value: unknown): LabelScanEnrichment {
 export async function enrichLabel(
   input: { roaster: string; name: string; country?: string | null },
   apiKey: string,
-  options: { model?: string; signal?: AbortSignal } = {}
+  options: { model?: string } & TransportOptions = {}
 ): Promise<LabelScanEnrichment> {
-  const model = options.model ?? GEMINI_LABEL_MODEL;
-  const url = `${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(
-    apiKey.trim()
-  )}`;
+  if (!apiKey.trim()) throw new GeminiError('Add your Gemini API key first');
   const body = buildEnrichRequest(buildEnrichPrompt(input));
-
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: options.signal
-    });
-  } catch (error) {
-    if (isAbort(error, options.signal)) throw error;
-    throw new GeminiError('Could not reach Gemini — check your connection');
-  }
-
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    const message = stringOr(asRecord(asRecord(payload)?.error)?.message, `Gemini error ${response.status}`);
-    throw new GeminiError(message, response.status);
-  }
+  const payload = await postGenerateContent(modelUrl(options.model, apiKey), body, options);
 
   const json = extractJsonObject(candidateText(payload));
   if (!json) throw new GeminiError("Couldn't find details for that coffee");
@@ -241,6 +242,88 @@ export async function enrichLabel(
   } catch {
     throw new GeminiError("Couldn't read the roaster's details");
   }
+}
+
+function modelUrl(model: string | undefined, apiKey: string): string {
+  return `${GEMINI_BASE}/models/${encodeURIComponent(model ?? GEMINI_LABEL_MODEL)}:generateContent?key=${encodeURIComponent(
+    apiKey.trim()
+  )}`;
+}
+
+/** POST a generateContent body, retrying transient failures on the backoff schedule. */
+async function postGenerateContent(url: string, body: unknown, options: TransportOptions): Promise<unknown> {
+  const delays = options.retryDelaysMs ?? RETRY_DELAYS_MS;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await postOnce(url, body, options);
+    } catch (error) {
+      if (!(error instanceof GeminiError) || !error.transient || attempt >= delays.length) throw error;
+      await sleep(delays[attempt]!, options.signal);
+    }
+  }
+}
+
+/** One POST attempt with the caller's signal chained onto a local deadline. */
+async function postOnce(url: string, body: unknown, options: TransportOptions): Promise<unknown> {
+  // Chain by hand — AbortSignal.any is newer than the tablet's webview.
+  const attempt = new AbortController();
+  const timer = setTimeout(() => attempt.abort(), options.timeoutMs ?? ATTEMPT_TIMEOUT_MS);
+  const onAbort = (): void => attempt.abort();
+  options.signal?.addEventListener('abort', onAbort, { once: true });
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: attempt.signal
+    });
+  } catch (error) {
+    // A caller-initiated abort is not a failure — let it propagate as-is.
+    if (options.signal?.aborted) throw error;
+    if (attempt.signal.aborted) throw new GeminiError('Gemini took too long to answer — try again');
+    throw new GeminiError('Could not reach Gemini — check your connection', null, true);
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener('abort', onAbort);
+  }
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) throw statusError(payload, response.status);
+  return payload;
+}
+
+/** Map an HTTP failure to a user-facing error; rate limits and overloads are transient. */
+function statusError(payload: unknown, status: number): GeminiError {
+  if (status === 429) return new GeminiError('Gemini is rate-limited right now — give it a minute', status, true);
+  if (status >= 500) return new GeminiError('Gemini is overloaded — try again in a moment', status, true);
+  const message = stringOr(asRecord(asRecord(payload)?.error)?.message, `Gemini error ${status}`);
+  return new GeminiError(message, status);
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortError());
+      return;
+    }
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(abortError());
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function abortError(): Error {
+  const error = new Error('The operation was aborted.');
+  error.name = 'AbortError';
+  return error;
 }
 
 function candidateText(payload: unknown): string {
@@ -255,8 +338,12 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value != null && typeof value === 'object' ? (value as Record<string, unknown>) : null;
 }
 
+// Models sometimes write the *word* null (or a cousin) instead of JSON null.
 function strOrNull(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  if (!text || /^(null|none|n\/a|unknown)$/i.test(text)) return null;
+  return text;
 }
 
 function numOrNull(value: unknown): number | null {

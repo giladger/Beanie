@@ -1,11 +1,15 @@
 /**
  * Bag-photo preparation for the label scanner.
  *
- * Photos go straight to Gemini, so we downscale on-device first: a label's text
- * is perfectly legible at ~1280px on the long edge, and a smaller image means a
- * faster, cheaper call. `scaledDimensions` is pure (and tested); the actual
- * canvas encode is browser-only.
+ * Photos go straight to Gemini, so we downscale on-device first: a smaller
+ * image means a faster, cheaper call. The long edge stays at 2000px — roast
+ * dates are usually tiny stamped print, and 1280px (the original target)
+ * regularly blurred them past reading. `scaledDimensions` is pure (and
+ * tested); the actual decode + canvas encode is browser-only.
  */
+
+/** Long-edge target that keeps fine print (roast-date stamps) legible. */
+const DEFAULT_MAX_EDGE = 2000;
 
 /** A downscaled photo ready to send (and to preview as a thumbnail). */
 export interface CapturedImage {
@@ -41,21 +45,57 @@ export function scaledDimensions(
 /** Browser-only: decode a picked file, downscale it, and re-encode as JPEG. */
 export async function fileToScaledImage(
   file: Blob,
-  maxEdge = 1280,
+  maxEdge = DEFAULT_MAX_EDGE,
   quality = 0.85
 ): Promise<CapturedImage> {
-  const bitmap = await createImageBitmap(file);
+  const decoded = await decodeImage(file);
   try {
-    const { width, height } = scaledDimensions(bitmap.width, bitmap.height, maxEdge);
+    const { width, height } = scaledDimensions(decoded.width, decoded.height, maxEdge);
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
     const context = canvas.getContext('2d');
     if (!context) throw new Error('Canvas is not available');
-    context.drawImage(bitmap, 0, 0, width, height);
+    context.drawImage(decoded.source, 0, 0, width, height);
     const dataUrl = canvas.toDataURL('image/jpeg', quality);
     return { mime: 'image/jpeg', base64: dataUrl.slice(dataUrl.indexOf(',') + 1), dataUrl };
   } finally {
-    bitmap.close();
+    decoded.release();
+  }
+}
+
+interface DecodedImage {
+  source: CanvasImageSource;
+  width: number;
+  height: number;
+  release: () => void;
+}
+
+/**
+ * Decode a picked file. `from-image` keeps the EXIF rotation — phone photos
+ * are usually portrait only via EXIF, and sideways text scans badly. The
+ * `<img>` fallback covers what `createImageBitmap` can't decode (notably HEIC
+ * on Safari) and browsers that choke on the orientation option.
+ */
+async function decodeImage(file: Blob): Promise<DecodedImage> {
+  try {
+    const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    return { source: bitmap, width: bitmap.width, height: bitmap.height, release: () => bitmap.close() };
+  } catch {
+    const url = URL.createObjectURL(file);
+    try {
+      const image = new Image();
+      image.src = url;
+      await image.decode();
+      return {
+        source: image,
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+        release: () => URL.revokeObjectURL(url)
+      };
+    } catch (error) {
+      URL.revokeObjectURL(url);
+      throw error;
+    }
   }
 }

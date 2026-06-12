@@ -4,15 +4,14 @@ import { shotNumberFieldStep } from '../domain/shotEditModel';
 import {
   beanLabel,
   batchForShotFreshness,
-  batchStorageState,
   formatGrams,
   formatRatio,
-  latestBatch,
   ratioFor,
   recipeFromShot,
   roastFreshnessLabel,
   shotFreshnessBadgeForShot
 } from '../domain/beanWorkflow';
+import { beanStockSummary } from '../domain/beanDisplay';
 import { isServiceShot } from '../domain/shotRecord';
 import { escapeAttr, escapeHtml } from '../components/html';
 import { icon } from '../components/icons';
@@ -26,9 +25,12 @@ export interface PhoneShellModel {
   machineStatus: string;
   asleep: boolean;
   selectedBean: Bean | null;
+  selectedBatch: BeanBatch | null;
   batchesByBean: Record<string, BeanBatch[]>;
   beans: Bean[];
   beanSearch: string;
+  favoriteBeanIds: readonly string[];
+  averageDoseIn: number | null;
   shots: ShotRecord[];
   selectedShot: ShotRecord | null;
   selectedShotDraft: ShotEditDraft | null;
@@ -45,7 +47,7 @@ export interface PhoneShellModel {
 const TABS: Array<{ id: PhoneTab; label: string; icon: string }> = [
   { id: 'home', label: 'Home', icon: 'coffee' },
   { id: 'scan', label: 'Scan', icon: 'camera' },
-  { id: 'beans', label: 'Beans', icon: 'coffee' },
+  { id: 'beans', label: 'Beans', icon: 'bean' },
   { id: 'shots', label: 'Shots', icon: 'history' },
   { id: 'settings', label: 'Settings', icon: 'settings' }
 ];
@@ -94,22 +96,32 @@ function renderPhoneTabButton(
 
 function renderHomeTab(model: PhoneShellModel): string {
   const bean = model.selectedBean;
-  const batch = bean ? latestBatch(model.batchesByBean[bean.id] ?? []) : null;
+  const batch = bean ? model.selectedBatch : null;
   const freshness = bean ? roastFreshnessLabel(batch) : null;
+  const remaining = batch && typeof batch.weightRemaining === 'number' && batch.weightRemaining > 0
+    ? batch.weightRemaining
+    : null;
+  const shotsLeft = remaining != null && model.averageDoseIn && model.averageDoseIn > 0
+    ? Math.floor(remaining / model.averageDoseIn)
+    : null;
+  const facts = [
+    remaining != null ? `${formatGrams(remaining)} left` : null,
+    shotsLeft != null ? `~${shotsLeft} shot${shotsLeft === 1 ? '' : 's'}` : null
+  ].filter((item): item is string => item != null);
   return `
     <section class="phone-stack phone-home">
       <button type="button" class="phone-wake ${model.asleep ? 'sleeping' : ''}" data-action="${model.asleep ? 'wake' : 'sleep'}" aria-label="${model.asleep ? 'Wake machine' : 'Sleep machine'}">
         ${icon('power')}<span>${model.asleep ? 'Wake machine' : 'Sleep machine'}</span>
       </button>
-      <div class="phone-card phone-home-hero">
-        <span class="phone-card-label">Current bag</span>
-        <h2>${escapeHtml(bean ? beanLabel(bean) : 'No bean selected')}</h2>
-        <p>${escapeHtml(freshness ?? beanMeta(bean) ?? 'Scan or pick a bean to update coffee metadata.')}</p>
-        <div class="phone-home-stats">
-          <span>${escapeHtml(model.draft.profileTitle ?? 'No profile')}</span>
-          <span>${escapeHtml(`${formatGrams(model.draft.dose)} -> ${formatGrams(model.draft.yield)}`)}</span>
-        </div>
-      </div>
+      <button type="button" class="phone-card phone-home-hero" data-action="open-bean-picker" aria-label="Choose coffee">
+        <span class="phone-card-head">
+          <span class="phone-card-label">Current bag</span>
+          ${icon('chevron-down')}
+        </span>
+        <strong class="phone-hero-title">${escapeHtml(bean ? beanLabel(bean) : 'No bean selected')}</strong>
+        <span class="phone-hero-sub">${escapeHtml(freshness ?? beanMeta(bean) ?? 'Scan or pick a bean to update coffee metadata.')}</span>
+        ${facts.length ? `<span class="phone-home-stats">${facts.map((fact) => `<span>${escapeHtml(fact)}</span>`).join('')}</span>` : ''}
+      </button>
       ${renderPhoneRecipe(model)}
       ${renderRecentShots(model)}
     </section>
@@ -196,27 +208,44 @@ function renderBeansTab(model: PhoneShellModel): string {
 }
 
 function renderBeanRow(bean: Bean, model: PhoneShellModel): string {
-  const batch = latestBatch(model.batchesByBean[bean.id] ?? []);
-  const freshness = roastFreshnessLabel(batch);
   const selected = bean.id === model.selectedBean?.id;
-  const detail = freshness ?? batchWeight(batch) ?? beanMeta(bean) ?? (selected ? 'Current bean' : 'Tap to select');
-  const storageIcon = batchStorageState(batch) === 'frozen' ? 'snowflake' : 'archive';
+  const favorite = model.favoriteBeanIds.includes(bean.id);
+  const detail = beanRowDetail(bean, model, selected);
   return `
     <article class="phone-list-item ${selected ? 'active' : ''}">
       <button type="button" class="phone-list-main" data-action="phone-select-bean" data-id="${escapeAttr(bean.id)}">
-        <strong>${escapeHtml(beanLabel(bean))}</strong>
+        <strong>${favorite ? '<span class="phone-row-fav">★</span> ' : ''}${escapeHtml(beanLabel(bean))}</strong>
         <span>${escapeHtml(detail)}</span>
       </button>
       <span class="phone-row-actions">
-        ${
-          batch
-            ? `<button type="button" class="phone-icon-button phone-row-storage" data-action="open-batch-storage" data-id="${escapeAttr(batch.id)}" data-bean-id="${escapeAttr(bean.id)}" aria-label="Manage storage for ${escapeAttr(beanLabel(bean))}">${icon(storageIcon)}</button>`
-            : ''
-        }
-        <button type="button" class="phone-icon-button phone-row-edit" data-action="open-edit-bean" data-id="${escapeAttr(bean.id)}" aria-label="Edit bean">${icon('pencil')}</button>
+        <button type="button" class="phone-icon-button phone-row-edit" data-action="open-edit-bean" data-id="${escapeAttr(bean.id)}" aria-label="Manage bags for ${escapeAttr(beanLabel(bean))}">${icon('chevron-right')}</button>
       </span>
     </article>
   `;
+}
+
+// Raw bag facts, matching the bean picker: roast date and active age of the
+// freshest bag on hand, estimated shots left across all active bags (grams
+// when no dose average exists yet), plus bag-count and frozen counts.
+function beanRowDetail(bean: Bean, model: PhoneShellModel, selected: boolean): string {
+  const summary = beanStockSummary(model.batchesByBean[bean.id] ?? [], model.averageDoseIn);
+  if (summary) {
+    const detail = [
+      summary.roastDateText,
+      summary.activeAgeDays != null ? `${summary.activeAgeDays}d active` : null,
+      summary.shotsLeft != null
+        ? `~${summary.shotsLeft} shot${summary.shotsLeft === 1 ? '' : 's'}`
+        : summary.totalRemaining != null
+          ? `${formatGrams(summary.totalRemaining)} left`
+          : null,
+      summary.bagCount > 1 ? `${summary.bagCount} bags` : null,
+      summary.frozenCount > 0
+        ? summary.frozenCount === summary.bagCount ? 'frozen' : `${summary.frozenCount} frozen`
+        : null
+    ].filter(Boolean).join(' · ');
+    if (detail) return detail;
+  }
+  return beanMeta(bean) ?? (selected ? 'Current bean' : 'No bags on hand');
 }
 
 function renderShotsTab(model: PhoneShellModel): string {
@@ -350,11 +379,6 @@ function renderSettingsTab(model: PhoneShellModel): string {
 
 function visibleShots(shots: ShotRecord[]): ShotRecord[] {
   return shots.filter((shot) => !isServiceShot(shot));
-}
-
-function batchWeight(batch: BeanBatch | null): string | null {
-  if (!batch || batch.weightRemaining == null) return null;
-  return `${formatGrams(batch.weightRemaining)} left`;
 }
 
 function beanMeta(bean: Bean | null): string | null {

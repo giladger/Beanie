@@ -7878,15 +7878,37 @@ p {
 
   .phone-home-hero {
     gap: 8px;
+    width: 100%;
     border-color: color-mix(in srgb, var(--accent) 36%, var(--line));
     background:
       linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent 62%),
       var(--panel);
+    color: var(--ink);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
   }
 
-  .phone-home-hero h2 {
+  .phone-home-hero .phone-card-head svg {
+    width: 18px;
+    height: 18px;
+    color: var(--muted);
+  }
+
+  .phone-hero-title {
     font-size: 21px;
+    font-weight: 950;
     line-height: 1.08;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .phone-hero-sub {
+    color: var(--soft);
+    font-size: 14px;
+    line-height: 1.35;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   .phone-home-stats {
@@ -8126,15 +8148,15 @@ p {
     gap: 6px;
   }
 
-  .phone-row-edit,
-  .phone-row-storage {
+  .phone-row-edit {
     width: 36px;
     height: 36px;
+    border: 0;
     color: var(--muted);
     background: transparent;
   }
 
-  .phone-row-storage {
+  .phone-row-fav {
     color: var(--accent);
   }
 

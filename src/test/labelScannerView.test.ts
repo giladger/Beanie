@@ -50,10 +50,11 @@ run('onboard direct mode offers a phone hand-off toggle when a QR is available',
   includes(html, 'data-action="scanner-use-phone"');
 });
 
-run('capture step offers a camera file input and disables extract until a photo exists', () => {
+run('capture step offers a file input and disables extract until a photo exists', () => {
   const html = renderLabelScannerModal(model({ step: 'capture' }));
   includes(html, 'data-action="scanner-add-photos"');
-  includes(html, 'capture="environment"');
+  // No capture attribute — it would force camera-only and block library photos.
+  notIncludes(html, 'capture=');
   includes(html, 'data-action="scanner-extract" disabled');
   notIncludes(html, 'Change key');
   notIncludes(html, 'data-action="scanner-change-key"');
@@ -116,6 +117,13 @@ run('review shows a searching state while enriching', () => {
   const html = renderLabelScannerModal(model({ step: 'review', draft: draft({}), enriching: true }));
   includes(html, 'Searching the roaster');
   includes(html, 'data-action="scanner-enrich" disabled');
+});
+
+run('extracting step shows progress and a cancel', () => {
+  const html = renderLabelScannerModal(model({ step: 'extracting' }));
+  includes(html, 'Reading your bag');
+  includes(html, 'data-action="scanner-rescan"');
+  includes(html, 'Cancel');
 });
 
 run('error step shows the message and a retry', () => {
