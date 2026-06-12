@@ -1146,12 +1146,48 @@ p {
 
 .shot-detail-pane {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 10px;
   min-width: 0;
   min-height: 0;
   padding: 12px;
   overflow: hidden;
+}
+
+.detail-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+  padding-top: 2px;
+}
+
+.detail-stat {
+  display: grid;
+  row-gap: 2px;
+}
+
+.detail-stat label {
+  font-size: 10px;
+  font-weight: 900;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.detail-stat strong {
+  font-size: 14px;
+  font-weight: 900;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+/* Comparison shot's value, tinted like its overlay chip. */
+.detail-stat-compare {
+  font-size: 11px;
+  font-weight: 800;
+  color: color-mix(in srgb, var(--amber) 70%, var(--soft));
+  white-space: nowrap;
 }
 
 .pane-head {

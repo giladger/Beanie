@@ -1,6 +1,7 @@
 import type { BeanBatch, RecipeDraft, ShotRecord } from '../api/types';
 import { batchForShotFreshness, formatGrams, recipeFromShot, shotFreshnessBadgeForShot } from '../domain/beanWorkflow';
 import { isServiceShot } from '../domain/shotRecord';
+import { buildShotStats, hasShotStats, type ShotStats } from '../domain/shotStats';
 import { buildShotTrends, shotDurationSeconds, type ShotTrendRow } from '../domain/shotTrends';
 import { icon } from '../components/icons';
 import { enjoymentBadge, shotScoreControl } from '../components/shotScore';
@@ -171,7 +172,45 @@ function renderShotDetailPane(
       ${compare ? renderCompareChip(compare) : ''}
       <canvas id="detail-canvas" class="live-canvas detail-canvas"></canvas>
     </div>
+    ${renderShotStats(shot, compare)}
   `;
+}
+
+interface ShotStatSpec {
+  key: keyof ShotStats;
+  label: string;
+  format: (value: number) => string;
+}
+
+const SHOT_STAT_SPECS: ShotStatSpec[] = [
+  { key: 'peakPressure', label: 'Peak pressure', format: (v) => `${v.toFixed(1)} bar` },
+  { key: 'avgFlow', label: 'Avg flow', format: (v) => `${v.toFixed(1)} ml/s` },
+  { key: 'avgTemperature', label: 'Avg temp', format: (v) => `${v.toFixed(1)}°C` },
+  { key: 'firstDropsSeconds', label: 'First drops', format: (v) => `${v.toFixed(1)}s` },
+  { key: 'endWeight', label: 'End weight', format: (v) => `${v.toFixed(1)}g` },
+  { key: 'postStopDrip', label: 'After stop', format: (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}g` }
+];
+
+function renderShotStats(shot: ShotRecord, compare: ShotRecord | null): string {
+  const stats = buildShotStats(shot);
+  const compareStats = compare ? buildShotStats(compare) : null;
+  if (!hasShotStats(stats) && (compareStats == null || !hasShotStats(compareStats))) return '';
+  const cells = SHOT_STAT_SPECS.flatMap((spec) => {
+    const value = stats[spec.key];
+    const compareValue = compareStats?.[spec.key];
+    if (value == null && compareValue == null) return [];
+    return [
+      `
+      <div class="detail-stat">
+        <label>${escapeHtml(spec.label)}</label>
+        <strong>${value == null ? '--' : escapeHtml(spec.format(value))}</strong>
+        ${compareStats ? `<span class="detail-stat-compare">${compareValue == null ? '--' : escapeHtml(spec.format(compareValue))}</span>` : ''}
+      </div>
+    `
+    ];
+  });
+  if (cells.length === 0) return '';
+  return `<div class="detail-stats ${compareStats ? 'with-compare' : ''}">${cells.join('')}</div>`;
 }
 
 function renderCompareChip(compare: ShotRecord): string {

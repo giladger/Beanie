@@ -210,6 +210,46 @@ run('history view re-renders memoized rows when selection or compare flags chang
   includes(renderHistoryView({ ...base, compareShotId: 'shot-b' }), 'compare-badge');
 });
 
+run('history view renders raw shot stats under the chart, with compare values when overlaid', () => {
+  const rich = (id: string): ShotRecord => ({
+    ...shot(id, 'espresso'),
+    measurements: [
+      {
+        machine: {
+          timestamp: '2026-06-05T10:00:00.000Z',
+          pressure: 8.6,
+          flow: 2.2,
+          groupTemperature: 92.6,
+          state: { substate: 'pouring' }
+        } as ShotRecord['measurements'][number]['machine'],
+        scale: { timestamp: '2026-06-05T10:00:00.000Z', weight: 36, weightFlow: 1.5 }
+      }
+    ]
+  });
+  const base = {
+    shots: [rich('shot-a'), rich('shot-b')],
+    detailShotId: 'shot-a',
+    compareShotId: null as string | null,
+    comparePicking: false,
+    showTrends: false,
+    demo: false,
+    shotsTotal: 2,
+    shotsLoadingMore: false,
+    secondTapHint: null,
+    batchesByBean: {}
+  };
+
+  const alone = renderHistoryView(base);
+  includes(alone, 'detail-stats');
+  includes(alone, 'Peak pressure');
+  includes(alone, '8.6 bar');
+  excludes(alone, 'detail-stat-compare');
+
+  const compared = renderHistoryView({ ...base, compareShotId: 'shot-b' });
+  includes(compared, 'detail-stats with-compare');
+  includes(compared, 'detail-stat-compare');
+});
+
 run('selectedHistoryShot skips service shots and falls back to the first visible shot', () => {
   equal(selectedHistoryShot([shot('steam-shot', 'steam'), shot('shot-a', 'espresso')], 'steam-shot')?.id, 'shot-a');
   equal(selectedHistoryShot([shot('steam-shot', 'steam')], null), null);
