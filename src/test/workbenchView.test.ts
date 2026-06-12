@@ -28,6 +28,15 @@ run('workbench renders topbar metrics, hero bean actions, recipe controls, and h
   excludes(html, '<history>');
 });
 
+run('workbench marks the status stat with the alert tone when the gateway link is down', () => {
+  const html = renderWorkbench(
+    model({ topbar: { ...model().topbar, machineStatus: 'Offline', machineTone: 'stat-alert' } })
+  );
+
+  includes(html, 'id="stat-machine">Offline</strong>');
+  includes(html, 'class="top-stat stat-alert"');
+});
+
 run('workbench hides remaining/age chips and machine commands when model says unavailable', () => {
   const html = renderWorkbench(
     model({
@@ -74,6 +83,7 @@ function model(overrides: Partial<WorkbenchViewModel> = {}): WorkbenchViewModel 
   const base: WorkbenchViewModel = {
     topbar: {
       machineStatus: 'Ready',
+      machineTone: '' as const,
       groupTemperature: '93°C',
       steamTemperature: '140°C',
       water: '820 ml',

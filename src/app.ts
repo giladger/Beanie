@@ -306,6 +306,7 @@ import {
   writeCleaningThreshold,
   type CleaningState
 } from './domain/cleaning';
+import { reconnectDelayMs } from './domain/connectionHealth';
 import { waterAlertLevel, type WaterAlertLevel } from './domain/waterAlert';
 import {
   FLUSH_PRESETS,
@@ -600,6 +601,8 @@ interface AppState {
   machineRefillLevel: number | null;
   /** The profiles picker is choosing the cleaning-override profile, not the recipe. */
   cleaningProfilePicking: boolean;
+  /** The gateway snapshot socket is down; machine readouts are stale. */
+  gatewayLinkDown: boolean;
 }
 
 interface LiveReadoutEls {
@@ -714,13 +717,18 @@ export class BeanieApp {
     cleaningThreshold: readCleaningThreshold(),
     waterAlertDismissed: false,
     machineRefillLevel: null,
-    cleaningProfilePicking: false
+    cleaningProfilePicking: false,
+    gatewayLinkDown: false
   };
 
   private applyTimer: number | null = null;
   private machineRetryTimer: number | null = null;
   private scaleRetryTimer: number | null = null;
   private waterRetryTimer: number | null = null;
+  // Consecutive failed (re)connect attempts per socket, for backoff pacing.
+  private machineSocketAttempts = 0;
+  private scaleSocketAttempts = 0;
+  private waterSocketAttempts = 0;
   private shotRefreshTimer: number | null = null;
   private beanRefreshTimer: number | null = null;
   private machineSocket: WebSocket | null = null;
@@ -2196,6 +2204,7 @@ export class BeanieApp {
   }
 
   private machineStatusLabel(): string {
+    if (this.state.gatewayLinkDown && !this.state.demo) return 'Offline';
     if (Date.now() < this.noScaleShotWarningUntilMs) return NO_SCALE_MACHINE_STATUS;
     return machineStatus(this.state.machine, this.state.loading);
   }
@@ -2299,6 +2308,9 @@ export class BeanieApp {
     this.closeSocket(machineSocket);
     this.closeSocket(scaleSocket);
     this.closeSocket(waterSocket);
+    this.machineSocketAttempts = 0;
+    this.scaleSocketAttempts = 0;
+    this.waterSocketAttempts = 0;
   }
 
   private closeSocket(socket: WebSocket | null): void {
@@ -2317,6 +2329,11 @@ export class BeanieApp {
     this.closeSocket(previous);
     const ws = new WebSocket(`${gatewayWsOrigin()}/ws/v1/machine/snapshot`);
     this.machineSocket = ws;
+    ws.onopen = () => {
+      if (this.disposed || this.machineSocket !== ws) return;
+      this.machineSocketAttempts = 0;
+      if (this.state.gatewayLinkDown) this.handleGatewayReconnected();
+    };
     ws.onmessage = (event) => {
       try {
         const snapshot = readMachineSnapshot(JSON.parse(event.data));
@@ -2328,12 +2345,24 @@ export class BeanieApp {
     ws.onclose = () => {
       if (this.disposed) return;
       if (this.machineSocket !== ws) return;
+      // The snapshot stream is the skin's lifeline to the gateway: while it is
+      // down every machine readout is stale, so say so instead of keeping the
+      // last state on screen as if it were live.
+      if (!this.state.gatewayLinkDown) this.setState({ gatewayLinkDown: true });
       if (this.machineRetryTimer != null) window.clearTimeout(this.machineRetryTimer);
       this.machineRetryTimer = window.setTimeout(() => {
         this.machineRetryTimer = null;
         this.connectMachineSocket();
-      }, 2500);
+      }, reconnectDelayMs(this.machineSocketAttempts++));
     };
+  }
+
+  // Re-sync after an outage: anything could have changed while the link was
+  // down (shots pulled from another UI, beans edited, machine state moved).
+  private handleGatewayReconnected(): void {
+    this.setState({ gatewayLinkDown: false, status: 'Gateway reconnected' });
+    void this.refreshBeans({ force: true });
+    void this.refreshVisibleShots();
   }
 
   private connectScaleSocket(): void {
@@ -2343,6 +2372,9 @@ export class BeanieApp {
     this.closeSocket(previous);
     const ws = new WebSocket(`${gatewayWsOrigin()}/ws/v1/scale/snapshot`);
     this.scaleSocket = ws;
+    ws.onopen = () => {
+      if (this.scaleSocket === ws) this.scaleSocketAttempts = 0;
+    };
     ws.onmessage = (event) => {
       try {
         const snapshot = readScaleSnapshot(JSON.parse(event.data));
@@ -2358,7 +2390,7 @@ export class BeanieApp {
       this.scaleRetryTimer = window.setTimeout(() => {
         this.scaleRetryTimer = null;
         this.connectScaleSocket();
-      }, 3000);
+      }, reconnectDelayMs(this.scaleSocketAttempts++));
     };
   }
 
@@ -2399,6 +2431,9 @@ export class BeanieApp {
         console.warn('[Beanie] Bad water level frame', error);
       }
     };
+    ws.onopen = () => {
+      if (this.waterSocket === ws) this.waterSocketAttempts = 0;
+    };
     ws.onclose = () => {
       if (this.disposed) return;
       if (this.waterSocket !== ws) return;
@@ -2406,7 +2441,7 @@ export class BeanieApp {
       this.waterRetryTimer = window.setTimeout(() => {
         this.waterRetryTimer = null;
         this.connectWaterLevelSocket();
-      }, 3000);
+      }, reconnectDelayMs(this.waterSocketAttempts++));
     };
   }
 
@@ -5969,6 +6004,7 @@ export class BeanieApp {
     return renderWorkbenchView({
       topbar: {
         machineStatus: this.machineStatusLabel(),
+        machineTone: this.state.gatewayLinkDown && !this.state.demo ? 'stat-alert' : '',
         groupTemperature: temp(this.state.machine?.groupTemperature),
         steamTemperature: temp(this.state.machine?.steamTemperature),
         water: water(this.state.waterLevel),

@@ -6,6 +6,8 @@ export type WorkbenchMachineCommandState = Extract<MachineState, 'espresso' | 's
 
 export interface WorkbenchTopbarViewModel {
   machineStatus: string;
+  /** Alert styling for the status stat (e.g. when the gateway link is down). */
+  machineTone: '' | 'stat-alert';
   groupTemperature: string;
   steamTemperature: string;
   water: string;
@@ -128,7 +130,7 @@ export function renderTopbar(model: WorkbenchTopbarViewModel): string {
     <header class="topbar">
       <div class="top-inline">
         <div class="top-stats" aria-label="Machine metrics">
-          ${topStat('Status', model.machineStatus, 'stat-machine')}
+          ${topStat('Status', model.machineStatus, 'stat-machine', model.machineTone)}
           ${topStat('Group', model.groupTemperature, 'stat-group')}
           ${topStat('Steam', model.steamTemperature, 'stat-steam')}
           ${topStat('Water', model.water, 'stat-water', model.waterTone)}

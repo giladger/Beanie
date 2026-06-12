@@ -65,7 +65,11 @@ export async function loadFullShot(
     const record = await deps.gateway.shot(shot.id);
     if (canWriteCache(deps)) await deps.cache.putShotRecord(record).catch(() => {});
     return record;
-  } catch {
+  } catch (error) {
+    // Degrade to the summary (no chart) rather than dropping the shot, but
+    // leave a trace — a silent empty chart is indistinguishable from a shot
+    // that genuinely recorded no measurements.
+    console.warn(`[Beanie] Could not load measurements for shot ${shot.id}`, error);
     return { ...shot, measurements: [] };
   }
 }
