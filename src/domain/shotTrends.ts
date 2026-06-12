@@ -86,12 +86,23 @@ export function buildShotTrends(shots: ShotRecord[]): ShotTrendRow[] {
   });
 }
 
+// Saved shots are replaced (never mutated) when they change, and computing a
+// duration walks the full measurement array, so memoize by record identity.
+const durationCache = new WeakMap<ShotRecord, number | null>();
+
 /**
  * Shot duration in seconds from its measurement timestamps, preferring the
  * espresso pour (preinfusion/pouring) window when substates are recorded —
  * the same window the shot charts plot.
  */
 export function shotDurationSeconds(shot: ShotRecord): number | null {
+  if (durationCache.has(shot)) return durationCache.get(shot)!;
+  const duration = computeShotDurationSeconds(shot);
+  durationCache.set(shot, duration);
+  return duration;
+}
+
+function computeShotDurationSeconds(shot: ShotRecord): number | null {
   const all = shot.measurements;
   if (!Array.isArray(all) || all.length < 2) return null;
   const pour = all.filter((measurement) => {

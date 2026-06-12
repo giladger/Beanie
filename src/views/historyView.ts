@@ -27,7 +27,7 @@ export function renderHistoryView(model: HistoryViewModel): string {
   const compare = compareHistoryShot(model.shots, model.detailShotId, model.compareShotId);
   return `
     <section class="history-panel panel ${model.showTrends ? 'with-trends' : ''}">
-      ${model.showTrends ? renderTrendStrip(shots) : ''}
+      ${model.showTrends ? renderTrendStrip(model.shots) : ''}
       <div class="history-split">
         <div class="shot-list">
           ${model.comparePicking ? '<p class="compare-hint">Tap a shot to overlay it on the chart.</p>' : ''}
@@ -66,9 +66,29 @@ export function selectedHistoryShot(shots: ShotRecord[], detailShotId: string | 
   return history.find((shot) => shot.id === detailShotId) ?? history[0] ?? null;
 }
 
+// Shot records are replaced (never mutated) when they change, so per-shot
+// rendering can be memoized by object identity. With paginated histories the
+// list grows into the hundreds, and recomputing recipe, freshness, and the
+// duration (a walk over every measurement) for each row on every re-render is
+// the main thing that makes render cost scale with history size.
+let historyShotsCache: { source: ShotRecord[]; result: ShotRecord[] } | null = null;
+
 function historyShots(shots: ShotRecord[]): ShotRecord[] {
-  return shots.filter((shot) => !isServiceShot(shot));
+  if (historyShotsCache?.source === shots) return historyShotsCache.result;
+  const result = shots.filter((shot) => !isServiceShot(shot));
+  historyShotsCache = { source: shots, result };
+  return result;
 }
+
+interface ShotListItemCacheEntry {
+  html: string;
+  active: boolean;
+  comparing: boolean;
+  hint: string;
+  batchesByBean: Record<string, BeanBatch[]>;
+}
+
+const shotListItemCache = new WeakMap<ShotRecord, ShotListItemCacheEntry>();
 
 function renderShotListItem(
   shot: ShotRecord,
@@ -77,13 +97,23 @@ function renderShotListItem(
   secondTapHint: HistoryViewModel['secondTapHint'],
   batchesByBean: Record<string, BeanBatch[]>
 ): string {
+  const hint = renderSecondTapHint('shot', shot.id, secondTapHint);
+  const cached = shotListItemCache.get(shot);
+  if (
+    cached &&
+    cached.active === active &&
+    cached.comparing === comparing &&
+    cached.hint === hint &&
+    cached.batchesByBean === batchesByBean
+  ) {
+    return cached.html;
+  }
   const recipe = recipeFromShot(shot);
   const duration = shotDurationLabel(shot);
   const recipeText = shotRecipeDisplay(shot, recipe);
   const date = shotDateShortLabel(shot.timestamp);
   const freshness = shotFreshnessBadgeForShot(shot, batchForShotFreshness(shot, batchesByBean));
-  const hint = renderSecondTapHint('shot', shot.id, secondTapHint);
-  return `
+  const html = `
     <button class="shot-item ${active ? 'active' : ''} ${comparing ? 'comparing' : ''} ${hint ? 'has-second-tap-hint' : ''}" data-action="select-history-shot" data-id="${escapeAttr(shot.id)}">
       <span class="shot-item-info">
         <span class="shot-item-recipe">${escapeHtml(recipeText)}${duration ? ` @ ${escapeHtml(duration)}` : ''}</span>
@@ -94,6 +124,8 @@ function renderShotListItem(
       ${hint}
     </button>
   `;
+  shotListItemCache.set(shot, { html, active, comparing, hint, batchesByBean });
+  return html;
 }
 
 function renderSecondTapHint(
@@ -157,18 +189,28 @@ function renderCompareChip(compare: ShotRecord): string {
   `;
 }
 
+// The strip only changes when the shots array is replaced; trend extraction
+// walks every loaded shot, so cache the rendered strip by array identity.
+let trendStripCache: { source: ShotRecord[]; html: string } | null = null;
+
 function renderTrendStrip(shots: ShotRecord[]): string {
+  if (trendStripCache?.source === shots) return trendStripCache.html;
   const rows = buildShotTrends(shots);
-  if (rows.length === 0) {
-    return '<div class="shot-trends"><p class="trend-note">Not enough recorded shots to chart trends.</p></div>';
-  }
-  const sampled = Math.max(...rows.map((row) => row.points.length));
-  return `
+  const html =
+    rows.length === 0
+      ? '<div class="shot-trends"><p class="trend-note">Not enough recorded shots to chart trends.</p></div>'
+      : `
     <div class="shot-trends">
       <div class="trend-grid">${rows.map(renderTrendRow).join('')}</div>
-      <p class="trend-note">Oldest → newest · ${sampled} loaded shot${sampled === 1 ? '' : 's'}</p>
+      <p class="trend-note">Oldest → newest · ${trendShotCount(rows)} loaded shot${trendShotCount(rows) === 1 ? '' : 's'}</p>
     </div>
   `;
+  trendStripCache = { source: shots, html };
+  return html;
+}
+
+function trendShotCount(rows: ShotTrendRow[]): number {
+  return Math.max(...rows.map((row) => row.points.length));
 }
 
 function renderTrendRow(row: ShotTrendRow): string {

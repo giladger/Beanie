@@ -178,6 +178,38 @@ run('history view renders the trend strip only when enabled', () => {
   excludes(withoutTrends, 'shot-trends');
 });
 
+run('history view re-renders memoized rows when selection or compare flags change', () => {
+  const shots = [shot('shot-a', 'espresso'), shot('shot-b', 'espresso')];
+  const base = {
+    shots,
+    detailShotId: 'shot-a',
+    compareShotId: null as string | null,
+    comparePicking: false,
+    showTrends: false,
+    demo: false,
+    shotsTotal: 2,
+    shotsLoadingMore: false,
+    secondTapHint: null,
+    batchesByBean: {}
+  };
+
+  // Same model twice: the memoized rows must keep rendering correctly.
+  renderHistoryView(base);
+  const again = renderHistoryView(base);
+  includes(again, 'data-id="shot-a"');
+
+  // Selection moves: the active class must follow despite the row cache.
+  const moved = renderHistoryView({ ...base, detailShotId: 'shot-b' });
+  const activeIndex = moved.indexOf('shot-item active');
+  const shotBIndex = moved.indexOf('data-id="shot-b"');
+  if (activeIndex === -1 || shotBIndex === -1 || Math.abs(activeIndex - shotBIndex) > 120) {
+    throw new Error('Expected the active class to move to shot-b');
+  }
+
+  // Compare flag set: the badge appears on the comparison row.
+  includes(renderHistoryView({ ...base, compareShotId: 'shot-b' }), 'compare-badge');
+});
+
 run('selectedHistoryShot skips service shots and falls back to the first visible shot', () => {
   equal(selectedHistoryShot([shot('steam-shot', 'steam'), shot('shot-a', 'espresso')], 'steam-shot')?.id, 'shot-a');
   equal(selectedHistoryShot([shot('steam-shot', 'steam')], null), null);

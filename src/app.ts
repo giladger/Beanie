@@ -1232,7 +1232,7 @@ export class BeanieApp {
     const requestId = ++this.loadMoreRequestId;
     const offset = this.state.shots.length;
     const batch = this.selectedBatch();
-    this.setState({ shotsLoadingMore: true, status: 'Loading more shots' });
+    this.setHistoryState({ shotsLoadingMore: true, status: 'Loading more shots' });
     try {
       const { records } = await this.fetchShotPage(bean, batch, offset);
       if (
@@ -1241,6 +1241,7 @@ export class BeanieApp {
         this.selectedBatch()?.id !== batch?.id
       ) return;
       const shots = [...this.state.shots, ...records];
+      // Full render: the appended shots also feed the hero's shots-left estimate.
       this.setState({ shots, shotsLoadingMore: false, status: `${shots.length} shots` });
     } catch (error) {
       console.warn('[Beanie] Could not load more shots', error);
@@ -1248,7 +1249,7 @@ export class BeanieApp {
       // Never leave the flag stuck: it gates both pagination and the periodic
       // shot refresh. A newer request owns the flag, so only the latest clears.
       if (requestId === this.loadMoreRequestId && this.state.shotsLoadingMore) {
-        this.setState({ shotsLoadingMore: false });
+        this.setHistoryState({ shotsLoadingMore: false });
       }
     }
   }
@@ -1467,7 +1468,7 @@ export class BeanieApp {
   private selectHistoryShot(shotId: string): void {
     if (this.state.comparePicking) {
       const sameAsSelected = this.selectedHistoryShot()?.id === shotId;
-      this.setState({
+      this.setHistoryState({
         compareShotId: sameAsSelected ? this.state.compareShotId : shotId,
         comparePicking: false,
         status: sameAsSelected ? this.state.status : 'Comparing shots'
@@ -1478,7 +1479,7 @@ export class BeanieApp {
       this.loadShotRecipe(shotId);
       return;
     }
-    this.setState({
+    this.setHistoryState({
       detailShotId: shotId,
       secondTapHint: this.nextSecondTapHint('shot', shotId),
       status: 'Shot selected'
@@ -3759,16 +3760,16 @@ export class BeanieApp {
         await this.loadMoreShots();
         return true;
       case 'toggle-trends':
-        this.setState({ showTrends: !this.state.showTrends });
+        this.setHistoryState({ showTrends: !this.state.showTrends });
         return true;
       case 'toggle-compare-pick':
-        this.setState({
+        this.setHistoryState({
           comparePicking: !this.state.comparePicking,
           status: this.state.comparePicking ? this.state.status : 'Pick a shot to compare'
         });
         return true;
       case 'clear-compare-shot':
-        this.setState({ compareShotId: null, comparePicking: false });
+        this.setHistoryState({ compareShotId: null, comparePicking: false });
         return true;
       default:
         return false;
@@ -7253,6 +7254,39 @@ export class BeanieApp {
     if (this.disposed) return;
     this.state = { ...this.state, ...next };
     this.render();
+  }
+
+  // State changes whose visible effect is confined to the workbench history
+  // panel (shot selection, compare mode, trends, pagination) re-render only
+  // that panel. A full innerHTML rebuild costs O(whole app) and resets scroll
+  // and focus everywhere, which a list tap shouldn't pay for. Falls back to a
+  // full render whenever the panel isn't on screen (phone layout shows status
+  // text outside the panel, other views/modals don't show it at all).
+  private setHistoryState(next: Partial<AppState>): void {
+    if (this.disposed) return;
+    const panel = this.isPhoneLayout() ? null : this.root.querySelector<HTMLElement>('.history-panel');
+    if (!panel) {
+      this.setState(next);
+      return;
+    }
+    this.state = { ...this.state, ...next };
+
+    const list = panel.querySelector<HTMLElement>('.shot-list');
+    const scrollTop = list?.scrollTop ?? 0;
+    const template = document.createElement('template');
+    template.innerHTML = this.renderHistory();
+    const fresh = template.content.firstElementChild as HTMLElement | null;
+    if (!fresh) {
+      this.render();
+      return;
+    }
+    panel.replaceWith(fresh);
+    refreshIcons();
+    this.bindDetailChart();
+    if (scrollTop > 0) {
+      const freshList = fresh.querySelector<HTMLElement>('.shot-list');
+      if (freshList) freshList.scrollTop = scrollTop;
+    }
   }
 
 }
