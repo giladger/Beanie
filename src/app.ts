@@ -61,7 +61,6 @@ import {
   compareBeansForPicker,
   emptyRecipe,
   editLastBatchStorageEventDate,
-  freshnessSnapshotForShot,
   formatGrams,
   formatRatio,
   latestBatch,
@@ -307,6 +306,7 @@ import {
   type CleaningState
 } from './domain/cleaning';
 import { reconnectDelayMs } from './domain/connectionHealth';
+import { optimisticShotFromLive, shotMetadataWithFreshness } from './domain/liveShotRecord';
 import { waterAlertLevel, type WaterAlertLevel } from './domain/waterAlert';
 import {
   FLUSH_PRESETS,
@@ -395,6 +395,8 @@ interface ClickActionContext {
   index?: string;
   value?: string;
 }
+
+type ClickActionHandler = (context: ClickActionContext) => void | Promise<void>;
 type ApplyState = 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
 // 'starting' = machine ramping up (substate preparingForShot), before flow;
 // 'active' = actually flowing (substate pouring); 'purging' = flow stopped but
@@ -3091,38 +3093,58 @@ export class BeanieApp {
 
     await this.commitActiveBeanPickerFormBeforeAction(el);
 
-    if (await this.handlePhoneClickAction(action, context)) return;
-    if (await this.handleBeanClickAction(action, context)) return;
-    if (await this.handleScannerClickAction(action, context)) return;
-    if (await this.handleRecipeClickAction(action, context)) return;
-    if (await this.handleShotClickAction(action, context)) return;
-    if (await this.handleMachineClickAction(action, context)) return;
-    if (await this.handleSettingsClickAction(action, context)) return;
-    if (await this.handleNavigationClickAction(action, context)) return;
-    if (await this.handleProfileEditorClickAction(action, context)) return;
+    const handler = action ? this.clickActionTable().get(action) : undefined;
+    if (handler) await handler(context);
   }
 
-  private async handlePhoneClickAction(action: string | undefined, context: ClickActionContext): Promise<boolean> {
-    const { id, value } = context;
-    switch (action) {
-      case 'phone-tab': {
-        if (!isPhoneTab(value)) return true;
+  // Every data-action click in the skin routes through this table — one flat
+  // registry instead of a chain of switch statements, so an action name can
+  // only ever be claimed by one feature group. Built lazily on first click.
+  private clickActions: Map<string, ClickActionHandler> | null = null;
+
+  private clickActionTable(): Map<string, ClickActionHandler> {
+    if (this.clickActions) return this.clickActions;
+    const table = new Map<string, ClickActionHandler>();
+    const groups = [
+      this.phoneClickActions(),
+      this.beanClickActions(),
+      this.scannerClickActions(),
+      this.recipeClickActions(),
+      this.shotClickActions(),
+      this.machineClickActions(),
+      this.settingsClickActions(),
+      this.navigationClickActions(),
+      this.profileEditorClickActions()
+    ];
+    for (const group of groups) {
+      for (const [action, handler] of Object.entries(group)) {
+        if (table.has(action)) throw new Error(`Duplicate click action: ${action}`);
+        table.set(action, handler);
+      }
+    }
+    this.clickActions = table;
+    return table;
+  }
+
+  private phoneClickActions(): Record<string, ClickActionHandler> {
+    return {
+      'phone-tab': ({ value }) => {
+        if (!isPhoneTab(value)) return;
         this.setState({ phoneTab: value, view: 'workbench' });
         if (value === 'settings') {
           this.openSettingsForPhone();
         }
         if (value === 'beans') void this.refreshBeans({ force: true });
-        return true;
-      }
-      case 'phone-select-bean':
+      },
+      'phone-select-bean': async ({ id }) => {
         if (id) {
           this.setState({ secondTapHint: null });
           // Match the tablet picker: selecting a coffee also sets it as the
           // machine's next brew (there is no separate "brew this" step).
           await this.selectBean(id, { apply: true, preferWorkflow: false });
         }
-        return true;
-      case 'phone-select-shot':
+      },
+      'phone-select-shot': ({ id }) => {
         if (id) {
           const closing = this.state.detailShotId === id;
           this.setState({
@@ -3132,38 +3154,34 @@ export class BeanieApp {
             status: closing ? 'Shot closed' : 'Shot selected'
           });
         }
-        return true;
-      case 'phone-edit-shot':
+      },
+      'phone-edit-shot': ({ id }) => {
         if (id) this.setState({ detailShotId: id, secondTapHint: null });
         this.openShotEditor();
-        return true;
-      case 'phone-shot-score': {
+      },
+      'phone-shot-score': ({ id, value }) => {
         if (id) {
           const shot = this.state.shots.find((item) => item.id === id);
           const draft = this.state.shotEdit?.shotId === id ? this.state.shotEdit : shot ? shotEditDraftFromShot(shot) : null;
           this.applyPhoneShotScore(id, scoreValueFromTap(value, draft?.enjoyment ?? null));
         }
-        return true;
-      }
-      case 'phone-save-shot':
+      },
+      'phone-save-shot': async ({ id }) => {
         if (id) await this.savePhoneShotDraft(id);
-        return true;
-      default:
-        return false;
-    }
+      },
+    };
   }
 
-  private async handleBeanClickAction(action: string | undefined, context: ClickActionContext): Promise<boolean> {
-    const { el, id } = context;
-    switch (action) {
-      case 'select-bean':
+  private beanClickActions(): Record<string, ClickActionHandler> {
+    return {
+      'select-bean': async ({ id }) => {
         if (id) {
           this.completeSecondTapHint('bean');
           this.setState({ modal: null, secondTapHint: null });
           await this.selectBean(id, { apply: true, preferWorkflow: false });
         }
-        return true;
-      case 'inspect-bean':
+      },
+      'inspect-bean': async ({ id }) => {
         if (id) {
           const focusedId = this.state.beanPickerBeanId ?? this.state.selectedBeanId;
           if (id === focusedId) {
@@ -3176,8 +3194,8 @@ export class BeanieApp {
             await this.inspectBeanInPicker(id);
           }
         }
-        return true;
-      case 'open-add-bean':
+      },
+      'open-add-bean': async () => {
         if (this.state.modal === 'bean-picker') {
           this.setState({
             beanPickerBeanId: null,
@@ -3191,14 +3209,14 @@ export class BeanieApp {
         } else {
           await this.openBeanPicker(null, { create: true });
         }
-        return true;
-      case 'open-edit-bean':
+      },
+      'open-edit-bean': async ({ id }) => {
         await this.openBeanPicker(id ?? this.state.selectedBeanId, { autofocusSearch: false });
-        return true;
-      case 'archive-bean':
+      },
+      'archive-bean': async ({ id }) => {
         if (id) await this.archiveBean(id);
-        return true;
-      case 'toggle-bean-details':
+      },
+      'toggle-bean-details': ({ id }) => {
         if (id) {
           this.setState({
             beanPickerEditingBeanId: this.state.beanPickerEditingBeanId === id ? null : id,
@@ -3207,8 +3225,8 @@ export class BeanieApp {
             beanPickerMode: 'inspect'
           });
         }
-        return true;
-      case 'toggle-batch-details':
+      },
+      'toggle-batch-details': ({ id }) => {
         if (id) {
           this.setState({
             beanPickerEditingBatchId: this.state.beanPickerEditingBatchId === id ? null : id,
@@ -3216,8 +3234,8 @@ export class BeanieApp {
             beanPickerFreezeBatchId: null
           });
         }
-        return true;
-      case 'focus-batch':
+      },
+      'focus-batch': async ({ el, id }) => {
         if (id) {
           const changed = this.state.beanPickerFocusedBatchId !== id;
           this.setState({
@@ -3228,35 +3246,35 @@ export class BeanieApp {
           // Selecting a bag also sets it as the bean's in-use bag (no separate Brew button).
           if (changed && el.dataset.beanId) await this.selectBatchFromPicker(el.dataset.beanId, id);
         }
-        return true;
-      case 'toggle-freeze-stepper':
+      },
+      'toggle-freeze-stepper': ({ id }) => {
         if (id) {
           this.setState({
             beanPickerFreezeBatchId: this.state.beanPickerFreezeBatchId === id ? null : id,
             beanPickerEditingBatchId: null
           });
         }
-        return true;
-      case 'confirm-freeze-stock':
+      },
+      'confirm-freeze-stock': async ({ el, id }) => {
         if (id && el.dataset.beanId) await this.freezeStock(el.dataset.beanId, id);
-        return true;
-      case 'toggle-bean-picker-show-all':
+      },
+      'toggle-bean-picker-show-all': () => {
         this.setState({ beanPickerShowAllBags: !this.state.beanPickerShowAllBags });
-        return true;
-      case 'toggle-favorite-bean':
+      },
+      'toggle-favorite-bean': ({ id }) => {
         if (id) this.toggleFavoriteBean(id);
-        return true;
-      case 'open-add-batch':
+      },
+      'open-add-batch': async () => {
         await this.openBeanPicker(this.state.selectedBeanId);
         this.startBatchDraftInPicker(this.state.selectedBeanId);
-        return true;
-      case 'bean-picker-add-batch':
+      },
+      'bean-picker-add-batch': () => {
         this.startBatchDraftInPicker(this.state.beanPickerBeanId ?? this.state.selectedBeanId);
-        return true;
-      case 'cancel-batch-draft':
+      },
+      'cancel-batch-draft': () => {
         this.cancelBatchDraft();
-        return true;
-      case 'open-batch-storage':
+      },
+      'open-batch-storage': ({ el, id }) => {
         if (id && el.dataset.beanId) {
           this.setState({
             modal: 'batch-storage',
@@ -3264,37 +3282,31 @@ export class BeanieApp {
             status: 'Dates and history'
           });
         }
-        return true;
-      case 'batch-storage-event':
+      },
+      'batch-storage-event': async ({ el, id }) => {
         if (el.dataset.type === 'frozen' || el.dataset.type === 'thawed') {
           const target = id && el.dataset.beanId ? { beanId: el.dataset.beanId, batchId: id } : null;
           await this.saveBatchStorageEvent(el.dataset.type, target);
         }
-        return true;
-      case 'finish-batch':
+      },
+      'finish-batch': async ({ el, id }) => {
         if (id) await this.finishBatchFromPicker(el.dataset.beanId ?? null, id);
-        return true;
-      default:
-        return false;
-    }
+      },
+    };
   }
 
-  private async handleScannerClickAction(
-    action: string | undefined,
-    context: ClickActionContext
-  ): Promise<boolean> {
-    const { el, index } = context;
-    switch (action) {
-      case 'open-label-scanner':
+  private scannerClickActions(): Record<string, ClickActionHandler> {
+    return {
+      'open-label-scanner': async () => {
         await this.openLabelScanner();
-        return true;
-      case 'scanner-setup-here':
+      },
+      'scanner-setup-here': () => {
         this.setScanner({ handoff: false });
-        return true;
-      case 'scanner-use-phone':
+      },
+      'scanner-use-phone': () => {
         this.setScanner({ handoff: true });
-        return true;
-      case 'scanner-verify-key': {
+      },
+      'scanner-verify-key': async ({ el }) => {
         const input = el.closest('form')?.querySelector<HTMLInputElement>('input[name="apiKey"]');
         const key = input?.value.trim() ?? '';
         this.setScanner({ keyDraft: key, verifying: true, verifyMessage: null });
@@ -3303,33 +3315,29 @@ export class BeanieApp {
           verifying: false,
           verifyMessage: { tone: result.ok ? 'good' : 'warn', text: result.message }
         });
-        return true;
-      }
-      case 'scanner-change-key':
+      },
+      'scanner-change-key': () => {
         this.setScanner({ step: 'onboard', keyDraft: readGeminiApiKey() ?? '', verifyMessage: null });
-        return true;
-      case 'scanner-remove-photo': {
+      },
+      'scanner-remove-photo': ({ index }) => {
         const scanner = this.state.scanner;
         const removeAt = Number(index);
         if (scanner && Number.isInteger(removeAt)) {
           this.setScanner({ images: scanner.images.filter((_, position) => position !== removeAt) });
         }
-        return true;
-      }
-      case 'scanner-extract':
+      },
+      'scanner-extract': async () => {
         await this.runScannerExtraction();
-        return true;
-      case 'scanner-rescan':
+      },
+      'scanner-rescan': () => {
         // Also the Cancel button while extracting — abort whatever is in flight.
         this.cancelScannerWork();
         this.setScanner({ step: 'capture', scan: null, draft: null, error: null, saving: false, webFields: [], enriching: false });
-        return true;
-      case 'scanner-enrich':
+      },
+      'scanner-enrich': async () => {
         await this.runScannerEnrich();
-        return true;
-      default:
-        return false;
-    }
+      },
+    };
   }
 
   private setScanner(patch: Partial<LabelScannerState>): void {
@@ -3708,184 +3716,173 @@ export class BeanieApp {
     });
   }
 
-  private async handleRecipeClickAction(action: string | undefined, context: ClickActionContext): Promise<boolean> {
-    const { el, field, id } = context;
-    switch (action) {
-      case 'adjust':
+  private recipeClickActions(): Record<string, ClickActionHandler> {
+    return {
+      'adjust': ({ el, field }) => {
         if (field) this.adjustField(field, Number(el.dataset.delta ?? '0'));
-        return true;
-      case 'edit-field':
+      },
+      'edit-field': ({ field }) => {
         if (isEditField(field)) this.openEditDialog(field);
-        return true;
-      case 'open-number-edit':
+      },
+      'open-number-edit': ({ el }) => {
         this.openNumberEditDialog(el);
-        return true;
-      case 'dialog-adjust':
+      },
+      'dialog-adjust': ({ el }) => {
         this.adjustDialogValue(Number(el.dataset.delta ?? '0'));
-        return true;
-      case 'dialog-key':
+      },
+      'dialog-key': ({ el }) => {
         this.typeDialogKey(el.dataset.key ?? '');
-        return true;
-      case 'dialog-backspace':
+      },
+      'dialog-backspace': () => {
         this.backspaceDialogValue();
-        return true;
-      case 'dialog-clear':
+      },
+      'dialog-clear': () => {
         this.clearDialogValue();
-        return true;
-      case 'dialog-recent':
+      },
+      'dialog-recent': ({ el }) => {
         this.setDialogValue(el.dataset.value ?? '');
-        return true;
-      case 'dialog-choice':
+      },
+      'dialog-choice': ({ id }) => {
         this.selectDialogChoice(id ?? null);
-        return true;
-      case 'dialog-commit':
+      },
+      'dialog-commit': async () => {
         await this.commitEditDialog();
-        return true;
-      default:
-        return false;
-    }
+      },
+    };
   }
 
-  private async handleShotClickAction(action: string | undefined, context: ClickActionContext): Promise<boolean> {
-    const { field, id, value } = context;
-    switch (action) {
-      case 'select-history-shot':
+  private shotClickActions(): Record<string, ClickActionHandler> {
+    return {
+      'select-history-shot': ({ id }) => {
         if (id) this.selectHistoryShot(id);
-        return true;
-      case 'edit-shot':
+      },
+      'edit-shot': () => {
         this.openShotEditor();
-        return true;
-      case 'delete-shot':
+      },
+      'delete-shot': async ({ id }) => {
         if (id) await this.deleteShot(id);
-        return true;
-      case 'open-shot-field':
+      },
+      'open-shot-field': ({ field }) => {
         if (isShotEditField(field)) this.setState({ shotEditField: field, shotBeanEdit: null });
-        return true;
-      case 'close-shot-field':
+      },
+      'close-shot-field': () => {
         this.setState({ shotEditField: null });
-        return true;
-      case 'shot-field-option':
+      },
+      'shot-field-option': ({ field, value }) => {
         if (isShotEditField(field)) this.applyShotEditField(field, value ?? '');
-        return true;
-      case 'open-shot-bean':
+      },
+      'open-shot-bean': async () => {
         await this.openShotBeanDialog();
-        return true;
-      case 'close-shot-bean':
+      },
+      'close-shot-bean': () => {
         this.setState({ shotBeanEdit: null });
-        return true;
-      case 'shot-bean-pick':
+      },
+      'shot-bean-pick': async ({ id }) => {
         await this.pickShotBean(id ?? '');
-        return true;
-      case 'shot-bean-new':
+      },
+      'shot-bean-new': () => {
         if (this.state.shotBeanEdit) this.setState({ shotBeanEdit: { creating: true } });
-        return true;
-      case 'shot-bean-cancel-new':
+      },
+      'shot-bean-cancel-new': () => {
         if (this.state.shotBeanEdit) this.setState({ shotBeanEdit: { creating: false } });
-        return true;
-      case 'shot-edit-score':
+      },
+      'shot-edit-score': ({ value }) => {
         this.setShotEditEnjoyment(scoreValueFromTap(value, this.state.shotEdit?.enjoyment ?? null));
-        return true;
-      case 'set-shot-score':
+      },
+      'set-shot-score': async ({ id, value }) => {
         if (id) {
           const shot = this.state.shots.find((item) => item.id === id);
           await this.updateShotEnjoyment(id, scoreValueFromTap(value, shot?.annotations?.enjoyment ?? null));
         }
-        return true;
-      case 'load-more-shots':
+      },
+      'load-more-shots': async () => {
         await this.loadMoreShots();
-        return true;
-      case 'toggle-trends':
+      },
+      'toggle-trends': () => {
         this.setHistoryState({ showTrends: !this.state.showTrends });
-        return true;
-      case 'toggle-compare-pick':
+      },
+      'toggle-compare-pick': () => {
         this.setHistoryState({
           comparePicking: !this.state.comparePicking,
           status: this.state.comparePicking ? this.state.status : 'Pick a shot to compare'
         });
-        return true;
-      case 'clear-compare-shot':
+      },
+      'clear-compare-shot': () => {
         this.setHistoryState({ compareShotId: null, comparePicking: false });
-        return true;
-      default:
-        return false;
-    }
+      },
+    };
   }
 
-  private async handleMachineClickAction(action: string | undefined, context: ClickActionContext): Promise<boolean> {
-    const { el, value } = context;
-    switch (action) {
-      case 'machine-edit-value':
+  private machineClickActions(): Record<string, ClickActionHandler> {
+    return {
+      'machine-edit-value': ({ el }) => {
         this.openMachineValueDialog(el);
-        return true;
-      case 'machine-preset':
+      },
+      'machine-preset': async ({ el, value }) => {
         if (el.dataset.name && value) await this.applyMachinePreset(el.dataset.name, value);
-        return true;
-      case 'machine-steam-purge-mode':
+      },
+      'machine-steam-purge-mode': async ({ value }) => {
         await this.setSteamPurgeMode(Number(value));
-        return true;
-      case 'machine-water-stop-mode':
+      },
+      'machine-water-stop-mode': async ({ value }) => {
         await this.setHotWaterStopMode(value === 'time' ? 'time' : 'volume');
-        return true;
-      case 'machine-edit-label':
+      },
+      'machine-edit-label': ({ el }) => {
         this.openMachineLabelDialog(el);
-        return true;
-      case 'machine-label-save':
+      },
+      'machine-label-save': () => {
         this.commitMachineLabelEdit();
-        return true;
-      case 'machine-command':
+      },
+      'machine-command': async ({ value }) => {
         if (isMachineCommand(value)) await this.toggleMachineCommand(value);
-        return true;
-      case 'run-cleaning':
+      },
+      'run-cleaning': async () => {
         await this.runCleaningCycle();
-        return true;
-      case 'cleaning-threshold': {
+      },
+      'cleaning-threshold': ({ value }) => {
         const shots = Number(value);
         if (Number.isFinite(shots)) this.setCleaningThreshold(shots);
-        return true;
-      }
-      case 'water-alert-dismiss':
+      },
+      'water-alert-dismiss': () => {
         this.setState({ waterAlertDismissed: true });
-        return true;
-      case 'scale-stat':
+      },
+      'scale-stat': async () => {
         await this.handleScaleStatTap();
-        return true;
-      case 'stop':
+      },
+      'stop': async () => {
         await this.stopMachineService();
-        return true;
-      case 'machine-extend-service':
+      },
+      'machine-extend-service': async () => {
         await this.extendMachineServiceDuration(5);
-        return true;
-      case 'sleep':
+      },
+      'sleep': async () => {
         await this.machineAction('sleeping');
-        return true;
-      case 'wake':
+      },
+      'wake': async () => {
         this.setState({ asleep: false });
         await this.machineAction('idle');
         if (this.applyAfterWake && !this.machineIsSleeping()) {
           this.applyAfterWake = false;
           await this.applyDraft();
         }
-        return true;
-      case 'simulate-shot':
+      },
+      'simulate-shot': () => {
         this.startSimulatedShot();
-        return true;
-      case 'open-machine-settings':
+      },
+      'open-machine-settings': () => {
         this.setState({ view: 'machine' });
         void this.loadMachineControlState();
-        return true;
-      default:
-        return false;
-    }
+      },
+    };
   }
 
-  private async handleSettingsClickAction(action: string | undefined, context: ClickActionContext): Promise<boolean> {
-    const { el, id, value } = context;
-    switch (action) {
-      case 'open-settings':
+  private settingsClickActions(): Record<string, ClickActionHandler> {
+    return {
+      'open-settings': () => {
         if (this.isPhoneLayout()) {
           this.setState({ phoneTab: 'settings', view: 'workbench' });
           this.openSettingsForPhone();
-          return true;
+          return;
         }
         this.setState({
           view: 'settings',
@@ -3898,35 +3895,35 @@ export class BeanieApp {
         });
         void this.loadReaSettings();
         void this.loadDecentAccount();
-        return true;
-      case 'open-flow-calibrator':
+      },
+      'open-flow-calibrator': () => {
         this.openFlowCalibrator();
-        return true;
-      case 'flow-cal-adjust':
+      },
+      'flow-cal-adjust': ({ el }) => {
         this.adjustFlowCalibrationDraft(Number(el.dataset.delta ?? '0'));
-        return true;
-      case 'flow-cal-save-preview':
+      },
+      'flow-cal-save-preview': async ({ value }) => {
         await this.saveFlowCalibrationValue(Number(value));
-        return true;
-      case 'flow-cal-shot':
+      },
+      'flow-cal-shot': ({ id }) => {
         if (id) this.selectFlowCalibrationShot(id);
-        return true;
-      case 'settings-section':
+      },
+      'settings-section': ({ value }) => {
         if (value) this.setState({ settingsSection: value });
-        return true;
-      case 'settings-reset-machine':
+      },
+      'settings-reset-machine': async () => {
         await this.resetMachineSettings();
-        return true;
-      case 'settings-plugin-config':
+      },
+      'settings-plugin-config': async ({ id }) => {
         if (id) await this.togglePluginConfig(id);
-        return true;
-      case 'settings-plugin-save':
+      },
+      'settings-plugin-save': async ({ id }) => {
         if (id) await this.savePluginConfig(id);
-        return true;
-      case 'settings-plugin-verify':
+      },
+      'settings-plugin-verify': async ({ id }) => {
         if (id) await this.verifyPluginConfig(id);
-        return true;
-      case 'settings-change-scanner-key':
+      },
+      'settings-change-scanner-key': async () => {
         await this.openLabelScanner();
         this.setScanner({
           step: 'onboard',
@@ -3934,55 +3931,52 @@ export class BeanieApp {
           keyDraft: readGeminiApiKey() ?? '',
           verifyMessage: null
         });
-        return true;
-      case 'settings-account-login':
+      },
+      'settings-account-login': async () => {
         await this.loginDecentAccount();
-        return true;
-      case 'settings-account-logout':
+      },
+      'settings-account-logout': async () => {
         await this.logoutDecentAccount();
-        return true;
-      case 'settings-account-refresh':
+      },
+      'settings-account-refresh': async () => {
         await this.refreshDecentAccount();
-        return true;
-      case 'settings-scan-devices':
+      },
+      'settings-scan-devices': async () => {
         await this.scanDevices();
-        return true;
-      case 'settings-connect-preferred-devices':
+      },
+      'settings-connect-preferred-devices': async () => {
         await this.connectPreferredDevices();
-        return true;
-      case 'settings-connect-device':
+      },
+      'settings-connect-device': async ({ id }) => {
         if (id) await this.connectDevice(id, true);
-        return true;
-      case 'settings-disconnect-device':
+      },
+      'settings-disconnect-device': async ({ id }) => {
         if (id) await this.connectDevice(id, false);
-        return true;
-      case 'settings-machine-state':
+      },
+      'settings-machine-state': async ({ value }) => {
         if (value) await this.requestMachineState(value);
-        return true;
-      case 'settings-schedule-add': {
+      },
+      'settings-schedule-add': async () => {
         const timeInput = this.root.querySelector<HTMLInputElement>('[data-action="settings-schedule-time"]');
         await this.addWakeSchedule(timeInput?.value ?? '');
-        return true;
-      }
-      case 'settings-schedule-delete':
+      },
+      'settings-schedule-delete': async ({ id }) => {
         if (id) await this.deleteWakeSchedule(id);
-        return true;
-      case 'settings-theme':
+      },
+      'settings-theme': ({ el }) => {
         if (isThemePreference(el.dataset.value)) {
           this.updateSettingsPreferences({ theme: el.dataset.value });
         }
-        return true;
-      case 'settings-ui-scale':
+      },
+      'settings-ui-scale': ({ el }) => {
         if (isUIScalePreference(el.dataset.value)) {
           this.updateSettingsPreferences({ uiScale: el.dataset.value });
         }
-        return true;
-      case 'settings-reset-cache':
+      },
+      'settings-reset-cache': async () => {
         await this.resetLocalCache();
-        return true;
-      default:
-        return false;
-    }
+      },
+    };
   }
 
   private openSettingsForPhone(): void {
@@ -3998,19 +3992,18 @@ export class BeanieApp {
     void this.loadDecentAccount();
   }
 
-  private async handleNavigationClickAction(action: string | undefined, context: ClickActionContext): Promise<boolean> {
-    const { id, value } = context;
-    switch (action) {
-      case 'go-view':
+  private navigationClickActions(): Record<string, ClickActionHandler> {
+    return {
+      'go-view': ({ value }) => {
         if (value) this.goView(value as View);
-        return true;
-      case 'open-add-grinder':
+      },
+      'open-add-grinder': () => {
         this.setState({ view: 'grinder-editor', editingGrinderId: null, modal: null, editDialog: null });
-        return true;
-      case 'open-edit-grinder':
+      },
+      'open-edit-grinder': ({ id }) => {
         if (id) this.setState({ view: 'grinder-editor', editingGrinderId: id, modal: null, editDialog: null });
-        return true;
-      case 'open-profile-picker':
+      },
+      'open-profile-picker': () => {
         this.setState({
           view: 'profiles',
           cleaningProfilePicking: false,
@@ -4018,8 +4011,8 @@ export class BeanieApp {
           profilePage: 0,
           profileFocusId: this.profileIdForDraft()
         });
-        return true;
-      case 'open-cleaning-profile-picker':
+      },
+      'open-cleaning-profile-picker': () => {
         this.setState({
           view: 'profiles',
           cleaningProfilePicking: true,
@@ -4027,29 +4020,29 @@ export class BeanieApp {
           profilePage: 0,
           profileFocusId: resolveCleaningProfile(this.state.profiles, this.state.cleaningProfileOverride)?.id ?? null
         });
-        return true;
-      case 'open-bean-picker':
+      },
+      'open-bean-picker': async () => {
         await this.openBeanPicker(this.state.selectedBeanId);
-        return true;
-      case 'profiles-page':
+      },
+      'profiles-page': ({ value }) => {
         if (value) this.setState({ profilePage: Number(value) });
-        return true;
-      case 'focus-profile':
+      },
+      'focus-profile': ({ id }) => {
         if (id) this.focusProfile(id);
-        return true;
-      case 'pick-profile':
+      },
+      'pick-profile': ({ id }) => {
         if (id) {
           if (this.state.cleaningProfilePicking) this.pickCleaningProfile(id);
           else this.pickProfile(id);
         }
-        return true;
-      case 'toggle-favorite-profile':
+      },
+      'toggle-favorite-profile': ({ id }) => {
         if (id) this.toggleFavoriteProfile(id);
-        return true;
-      case 'close-modal':
+      },
+      'close-modal': () => {
         if (this.state.modal === 'batch-storage') {
           this.setState({ modal: 'bean-picker', batchStorageTarget: null });
-          return true;
+          return;
         }
         if (this.state.profileEdit || this.state.machineEdit || this.state.numberEdit || this.state.machineLabelEdit) {
           const returnModal = this.state.numberEdit?.returnModal ?? null;
@@ -4064,7 +4057,7 @@ export class BeanieApp {
             numberEdit: null,
             machineLabelEdit: null
           });
-          return true;
+          return;
         }
         if (this.state.scanner) this.cancelScannerWork();
         this.setState({
@@ -4086,91 +4079,85 @@ export class BeanieApp {
           numberEdit: null,
           machineLabelEdit: null
         });
-        return true;
-      default:
-        return false;
-    }
+      },
+    };
   }
 
-  private async handleProfileEditorClickAction(
-    action: string | undefined,
-    context: ClickActionContext
-  ): Promise<boolean> {
-    const { el, id, index, value } = context;
-    switch (action) {
-      case 'pe-edit-value':
+  private profileEditorClickActions(): Record<string, ClickActionHandler> {
+    return {
+      'pe-edit-value': ({ el }) => {
         this.openProfileValueDialog(el);
-        return true;
-      case 'new-profile':
+      },
+      'new-profile': () => {
         this.openNewProfileEditor();
-        return true;
-      case 'edit-profile':
+      },
+      'edit-profile': ({ id }) => {
         if (id) this.openProfileEditor(id);
-        return true;
-      case 'save-profile':
+      },
+      'save-profile': async () => {
         await this.submitProfileEditor();
-        return true;
-      case 'pe-add-step':
+      },
+      'pe-add-step': () => {
         this.editorDispatch(addStep);
-        return true;
-      case 'pe-duplicate-step':
+      },
+      'pe-duplicate-step': ({ index }) => {
         if (index != null) this.editorDispatch((pe) => duplicateStep(pe, Number(index)));
-        return true;
-      case 'pe-remove-step':
+      },
+      'pe-remove-step': ({ index }) => {
         if (index != null) this.editorDispatch((pe) => removeStep(pe, Number(index)));
-        return true;
-      case 'pe-move-step':
+      },
+      'pe-move-step': ({ index, value }) => {
         if (index != null) this.editorDispatch((pe) => moveStep(pe, Number(index), value === '1' ? 1 : -1));
-        return true;
-      case 'pe-select-step':
+      },
+      'pe-select-step': ({ index }) => {
         if (index != null) this.editorDispatch((pe) => selectStep(pe, Number(index)));
-        return true;
-      case 'pe-step-pump':
+      },
+      'pe-step-pump': ({ index, value }) => {
         if (index != null) this.editorDispatch((pe) => setStepPump(pe, Number(index), value === 'flow' ? 'flow' : 'pressure'));
-        return true;
-      case 'pe-step-transition':
+      },
+      'pe-step-transition': ({ index, value }) => {
         if (index != null) this.editorDispatch((pe) => setStepTransition(pe, Number(index), value === 'smooth' ? 'smooth' : 'fast'));
-        return true;
-      case 'pe-step-sensor-toggle':
+      },
+      'pe-step-sensor-toggle': ({ index }) => {
         if (index != null) {
           this.editorDispatch((pe) => {
             const step = pe.steps[Number(index)];
             return setStepField(pe, Number(index), 'sensor', step?.sensor === 'water' ? 'coffee' : 'water');
           });
         }
-        return true;
-      case 'pe-step-transition-toggle':
+      },
+      'pe-step-transition-toggle': ({ index }) => {
         if (index != null) {
           this.editorDispatch((pe) => {
             const step = pe.steps[Number(index)];
             return setStepTransition(pe, Number(index), step?.transition === 'smooth' ? 'fast' : 'smooth');
           });
         }
-        return true;
-      case 'pe-step-nudge':
+      },
+      'pe-step-nudge': ({ el, index }) => {
         if (index != null && el.dataset.key) {
           this.editorDispatch((pe) =>
             nudgeStepField(pe, Number(index), el.dataset.key as StepFieldKey, Number(el.dataset.delta ?? '0'))
           );
         }
-        return true;
-      case 'pe-simple-nudge':
+      },
+      'pe-simple-nudge': ({ el }) => {
         if (el.dataset.key) {
           this.editorDispatch((pe) =>
             nudgeSimpleProfileField(pe, el.dataset.key as SimpleProfileField, Number(el.dataset.delta ?? '0'))
           );
         }
-        return true;
-      case 'pe-set-mode':
+      },
+      'pe-set-mode': ({ value }) => {
         this.editorDispatch((pe) => setEditorMode(pe, value === 'basic' ? 'basic' : 'advanced'));
-        return true;
-      case 'pe-set-simple-type':
+      },
+      'pe-set-simple-type': ({ value }) => {
         this.editorDispatch((pe) => setSimpleProfileType(pe, value === 'flow' ? 'flow' : 'pressure'));
-        return true;
-      case 'pe-advanced-tab':
+      },
+      'pe-advanced-tab': ({ value }) => {
         this.editorDispatch((pe) => setAdvancedTab(pe, value === 'limits' ? 'limits' : 'steps'));
-        return true;
-      case 'pe-step-exit-nudge':
+      },
+      'pe-step-exit-nudge': ({ el, index }) => {
         if (index != null) {
           this.editorDispatch((pe) => {
             const step = pe.steps[Number(index)];
@@ -4186,8 +4173,8 @@ export class BeanieApp {
             });
           });
         }
-        return true;
-      case 'pe-step-exit-preset':
+      },
+      'pe-step-exit-preset': ({ el, index }) => {
         if (index != null) {
           this.editorDispatch((pe) =>
             setStepExit(pe, Number(index), {
@@ -4197,13 +4184,11 @@ export class BeanieApp {
             })
           );
         }
-        return true;
-      case 'pe-step-exit-clear':
+      },
+      'pe-step-exit-clear': ({ index }) => {
         if (index != null) this.editorDispatch((pe) => setStepExit(pe, Number(index), null));
-        return true;
-      default:
-        return false;
-    }
+      },
+    };
   }
 
   private onInput(event: Event): void {
@@ -7325,78 +7310,6 @@ export class BeanieApp {
     }
   }
 
-}
-
-function optimisticShotFromLive(
-  bean: Bean,
-  batch: BeanBatch | null,
-  workflow: Workflow | null,
-  draft: RecipeDraft,
-  liveState: LiveShotState
-): ShotRecord | null {
-  if (liveState.startMs == null) return null;
-  const shotWorkflow = buildWorkflowUpdate(bean, batch, draft, draft.profile, workflow);
-  return {
-    id: `pending-live-${liveState.startMs}`,
-    timestamp: new Date(liveState.startMs).toISOString(),
-    workflow: shotWorkflow,
-    annotations: {
-      actualDoseWeight: draft.dose ?? shotWorkflow.context?.targetDoseWeight ?? null,
-      actualYield: liveState.latest.weight ?? draft.yield ?? shotWorkflow.context?.targetYield ?? null
-    },
-    metadata: shotMetadataWithFreshness({ pendingLiveShot: true }, null, batch, new Date(liveState.startMs).toISOString()),
-    measurements: measurementsFromLiveShot(liveState)
-  };
-}
-
-function shotMetadataWithFreshness(
-  existing: Record<string, unknown> | null | undefined,
-  extras: Record<string, unknown> | null | undefined,
-  batch: BeanBatch | null | undefined,
-  timestamp: string
-): Record<string, unknown> | null {
-  const metadata = {
-    ...(existing ?? {}),
-    ...(extras ?? {})
-  };
-  const freshness = freshnessSnapshotForShot(batch, timestamp);
-  if (freshness) metadata.freshness = freshness;
-  return Object.keys(metadata).length > 0 ? metadata : null;
-}
-
-function measurementsFromLiveShot(liveState: LiveShotState): ShotMeasurement[] {
-  if (liveState.startMs == null) return [];
-  const byMs = new Map<number, { machine: Record<string, unknown>; scale: Record<string, unknown> }>();
-  const frameFor = (t: number) => {
-    const tMs = liveState.startMs! + Math.round(t * 1000);
-    let frame = byMs.get(tMs);
-    if (!frame) {
-      const timestamp = new Date(tMs).toISOString();
-      frame = {
-        machine: { timestamp, state: { state: 'espresso', substate: 'pouring' } },
-        scale: { timestamp }
-      };
-      byMs.set(tMs, frame);
-    }
-    return frame;
-  };
-
-  for (const series of liveState.series) {
-    for (const point of series.points) {
-      const frame = frameFor(point.t);
-      if (series.key === 'pressure') frame.machine.pressure = point.value;
-      if (series.key === 'flow') frame.machine.flow = point.value;
-      if (series.key === 'targetPressure') frame.machine.targetPressure = point.value;
-      if (series.key === 'targetFlow') frame.machine.targetFlow = point.value;
-      if (series.key === 'groupTemperature') frame.machine.groupTemperature = point.value * 10;
-      if (series.key === 'targetTemperature') frame.machine.targetGroupTemperature = point.value * 10;
-      if (series.key === 'weightFlow') frame.scale.weightFlow = point.value;
-    }
-  }
-
-  return [...byMs.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([, frame]) => ({ machine: frame.machine, scale: frame.scale }) as ShotMeasurement);
 }
 
 function promoteBean(beans: Bean[], beanId: string): Bean[] {
