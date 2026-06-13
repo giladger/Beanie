@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.1 - 2026-06-13
+
+- Added shot comparison: overlay a second shot's measured curves (faded, thinner, legend-free) under the selected shot on the history detail chart — pick the comparison with one tap from the shot list and dismiss it from a chip on the chart.
+- Added a per-bean trend strip showing raw sparklines of dose, yield, ratio, time, EY, and score across the loaded shots in brew order, plus a grind row when the stored settings parse as plain numbers.
+- Added a ghost reference trace: when a pull starts, the armed comparison shot (or the shot open in the history pane) is drawn faded beneath the live curves so you can watch the pull track against the shot you're dialing toward; a Ghost button in the live panel toggles the overlay.
+- Added raw shot stats under the history detail chart — peak pressure, average pour flow, average pour temperature, time to first drops, last measured weight, and post-stop drip — shown alongside the overlaid shot when comparing.
+- Added a one-tap EY fill in the shot editor: a hint under the extraction-yield field shows the value derived from TDS, dose, and beverage weight, and fills it on tap.
+- Added a low scale-battery readout: the topbar carries the scale battery percentage in its tooltip and surfaces it inline with a warning tone once it drops below 20%.
+- Improved gateway resilience: WebSocket reconnects now back off exponentially, the status reads Offline with alert styling when the live connection drops, and a successful reconnect re-syncs beans and visible shots in case anything changed during the outage.
+
+
 ## v0.2.0 - 2026-06-11
 
 - Added bean freshness and storage tracking: each bag records its roast date and freeze/thaw history, and Beanie reports roast age, active age (paused while a bag is frozen), and remaining weight.
