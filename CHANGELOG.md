@@ -1,5 +1,8 @@
 # Changelog
 
+## v0.2.3 - 2026-06-14
+- Debugging changes
+
 ## v0.2.2 - 2026-06-14
 
 - Fixed tap-to-wake on tablets where it silently fell back to button controls: Beanie now recognizes the reaprime webview by its embedded JS bridge rather than only the user agent, which some Android System WebView builds drop on first load.
