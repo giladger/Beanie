@@ -60,24 +60,33 @@ run('scale battery normalizes fractions and surfaces only when low', () => {
   equal(scaleStatTitle(null), 'Search for preferred scale');
 });
 
-run('detect Decent webview tolerates UA quirks and falls back to the inappwebview bridge', () => {
-  // The intended signal: reaprime overrides the UA to the bare token "Decent".
-  equal(detectDecentAppWebView('Decent', false), true);
-  equal(detectDecentAppWebView('  Decent  ', false), true);
-  // Lenient: casing, a version suffix, or the override appended to a default
-  // WebView UA must all still count as the Decent app.
-  equal(detectDecentAppWebView('decent', false), true);
-  equal(detectDecentAppWebView('Decent/2.1', false), true);
-  equal(detectDecentAppWebView('Mozilla/5.0 (Linux; Android 10; wv) AppleWebKit Decent', false), true);
-  // Tablets where setUserAgentString didn't take: default WebView UA, but the
-  // flutter_inappwebview JS bridge is still injected — treat as the Decent app.
-  equal(detectDecentAppWebView('Mozilla/5.0 (Linux; Android 10; wv) AppleWebKit/537.36', true), true);
-  // A plain browser on :3000 has neither signal — use web sleep controls.
-  equal(detectDecentAppWebView('Mozilla/5.0 (Macintosh; Intel Mac OS X) Chrome/120 Safari/537.36', false), false);
-  equal(detectDecentAppWebView('', false), false);
-  equal(detectDecentAppWebView(null, false), false);
+run('detect Decent webview prefers the reaprime beacon, then bridge, then UA', () => {
+  const browserUA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X) Chrome/120 Safari/537.36';
+  const androidWvUA = 'Mozilla/5.0 (Linux; Android 10; wv) AppleWebKit/537.36';
+
+  // 1. Deterministic signal: reaprime's injected window.__REA_HOST__ beacon wins
+  //    even when the UA looks like a plain browser and the bridge is absent.
+  equal(detectDecentAppWebView({ app: 'reaprime', platform: 'android' }, false, browserUA), true);
+  equal(detectDecentAppWebView({}, false, androidWvUA), true);
+  // A non-object beacon value is ignored (must be the injected object).
+  equal(detectDecentAppWebView('reaprime', false, browserUA), false);
+
+  // 2. Bridge fallback for older reaprime builds without the beacon.
+  equal(detectDecentAppWebView(undefined, true, androidWvUA), true);
+
+  // 3. UA fallback: the "Decent" override, matched leniently.
+  equal(detectDecentAppWebView(undefined, false, 'Decent'), true);
+  equal(detectDecentAppWebView(undefined, false, '  Decent  '), true);
+  equal(detectDecentAppWebView(undefined, false, 'decent'), true);
+  equal(detectDecentAppWebView(undefined, false, 'Decent/2.1'), true);
+  equal(detectDecentAppWebView(undefined, false, 'Mozilla/5.0 (Linux; Android 10; wv) AppleWebKit Decent'), true);
+
+  // None of the three signals present → a plain browser on :3000, use web controls.
+  equal(detectDecentAppWebView(null, false, browserUA), false);
+  equal(detectDecentAppWebView(undefined, false, ''), false);
+  equal(detectDecentAppWebView(undefined, false, null), false);
   // Word-boundary match must not fire on "decent" embedded in another token.
-  equal(detectDecentAppWebView('Mozilla/5.0 IndecentBrowser/1.0', false), false);
+  equal(detectDecentAppWebView(undefined, false, 'Mozilla/5.0 IndecentBrowser/1.0'), false);
 });
 
 run('app shell command and chart helpers preserve app decisions', () => {

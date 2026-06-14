@@ -197,33 +197,43 @@ export function isUIScalePreference(value: string | undefined): value is UIScale
 // tap-to-wake overlay — so we must tell "inside reaprime" apart from "a browser
 // hitting :3000".
 //
-// The UA override was the original signal but it's unreliable: on some Android
-// System WebView builds setUserAgentString isn't honoured on the first load (and
-// reaprime lets Android kill/recreate the renderer), so navigator.userAgent
-// comes back as the default "Mozilla/5.0 (…; wv) …" and a strict `=== 'Decent'`
-// check misses — that's why tap-to-wake silently fell back to button mode on
-// those tablets.
+// Detecting this turned out to be fragile, so we layer three signals weakest-last:
 //
-// So the primary signal is the flutter_inappwebview JS bridge: the plugin binds
-// window.flutter_inappwebview into every hosted page via the native layer
-// (Android addJavascriptInterface / iOS+macOS a document-start WKUserScript),
-// independently of the UA override, and it never exists in a plain browser on
-// :3000. The lenient UA match stays as a defensive fallback in case the bridge
-// is ever renamed or disabled.
+// 1. window.__REA_HOST__ — a beacon reaprime injects via a document-start user
+//    script in the page content world (see skin_view.dart). This is the
+//    deterministic signal: visible to our code regardless of UA or webview
+//    internals, and absent in a plain browser because it isn't part of the
+//    served HTML. Requires a reaprime build new enough to inject it.
+// 2. window.flutter_inappwebview — the plugin's JS bridge. Works on some setups
+//    but isn't dependable: flutter_inappwebview v6 gates the bridge behind a
+//    bridge secret/origin allow-list and doesn't reliably expose it as a plain
+//    page global, so this is false even inside reaprime on some Android builds.
+// 3. UA token "Decent" — reaprime's userAgent override. Unreliable too: some
+//    Android System WebView builds drop setUserAgentString on first load. Matched
+//    leniently (case/whitespace/version-suffix) as a last resort.
+//
+// Older reaprime builds that predate __REA_HOST__ still fall through to 2/3.
 export function detectDecentAppWebView(
-  userAgent: string | null | undefined,
-  hasInAppWebViewBridge: boolean
+  reaHost: unknown,
+  hasInAppWebViewBridge: boolean,
+  userAgent: string | null | undefined
 ): boolean {
+  if (reaHost != null && typeof reaHost === 'object') return true;
   if (hasInAppWebViewBridge) return true;
   return /\bdecent\b/i.test(userAgent ?? '');
 }
 
 export function isDecentAppWebView(): boolean {
+  const win =
+    typeof window !== 'undefined'
+      ? (window as { __REA_HOST__?: unknown; flutter_inappwebview?: unknown })
+      : undefined;
   const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : null;
-  const hasInAppWebViewBridge =
-    typeof window !== 'undefined' &&
-    (window as { flutter_inappwebview?: unknown }).flutter_inappwebview != null;
-  return detectDecentAppWebView(userAgent, hasInAppWebViewBridge);
+  return detectDecentAppWebView(
+    win?.__REA_HOST__,
+    win?.flutter_inappwebview != null,
+    userAgent
+  );
 }
 
 export function defaultExitValueForApp(type: 'pressure' | 'flow', condition: 'over' | 'under'): number {
