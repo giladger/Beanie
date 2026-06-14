@@ -190,8 +190,40 @@ export function isUIScalePreference(value: string | undefined): value is UIScale
   return value === 'compact' || value === 'standard' || value === 'large';
 }
 
+// reaprime hosts Beanie inside a flutter_inappwebview pointed at localhost:3000
+// and overrides the webview user agent to the bare string "Decent". The very
+// same origin is reachable from an ordinary browser on the tablet's :3000 port,
+// where we want the on-screen power buttons rather than the full-screen
+// tap-to-wake overlay — so we must tell "inside reaprime" apart from "a browser
+// hitting :3000".
+//
+// The UA override was the original signal but it's unreliable: on some Android
+// System WebView builds setUserAgentString isn't honoured on the first load (and
+// reaprime lets Android kill/recreate the renderer), so navigator.userAgent
+// comes back as the default "Mozilla/5.0 (…; wv) …" and a strict `=== 'Decent'`
+// check misses — that's why tap-to-wake silently fell back to button mode on
+// those tablets.
+//
+// So the primary signal is the flutter_inappwebview JS bridge: the plugin binds
+// window.flutter_inappwebview into every hosted page via the native layer
+// (Android addJavascriptInterface / iOS+macOS a document-start WKUserScript),
+// independently of the UA override, and it never exists in a plain browser on
+// :3000. The lenient UA match stays as a defensive fallback in case the bridge
+// is ever renamed or disabled.
+export function detectDecentAppWebView(
+  userAgent: string | null | undefined,
+  hasInAppWebViewBridge: boolean
+): boolean {
+  if (hasInAppWebViewBridge) return true;
+  return /\bdecent\b/i.test(userAgent ?? '');
+}
+
 export function isDecentAppWebView(): boolean {
-  return navigator.userAgent.trim() === 'Decent';
+  const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : null;
+  const hasInAppWebViewBridge =
+    typeof window !== 'undefined' &&
+    (window as { flutter_inappwebview?: unknown }).flutter_inappwebview != null;
+  return detectDecentAppWebView(userAgent, hasInAppWebViewBridge);
 }
 
 export function defaultExitValueForApp(type: 'pressure' | 'flow', condition: 'over' | 'under'): number {

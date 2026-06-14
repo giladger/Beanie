@@ -1,5 +1,6 @@
 import type { MachineInfo, MachineSnapshot, RecipeDraft, Workflow } from '../api/types';
 import {
+  detectDecentAppWebView,
   draftSignature,
   formatNumber,
   isMachineCommand,
@@ -57,6 +58,26 @@ run('scale battery normalizes fractions and surfaces only when low', () => {
   equal(scaleStatTitle(scale(85)), 'Tare scale · battery 85%');
   equal(scaleStatTitle(scale(undefined)), 'Tare scale');
   equal(scaleStatTitle(null), 'Search for preferred scale');
+});
+
+run('detect Decent webview tolerates UA quirks and falls back to the inappwebview bridge', () => {
+  // The intended signal: reaprime overrides the UA to the bare token "Decent".
+  equal(detectDecentAppWebView('Decent', false), true);
+  equal(detectDecentAppWebView('  Decent  ', false), true);
+  // Lenient: casing, a version suffix, or the override appended to a default
+  // WebView UA must all still count as the Decent app.
+  equal(detectDecentAppWebView('decent', false), true);
+  equal(detectDecentAppWebView('Decent/2.1', false), true);
+  equal(detectDecentAppWebView('Mozilla/5.0 (Linux; Android 10; wv) AppleWebKit Decent', false), true);
+  // Tablets where setUserAgentString didn't take: default WebView UA, but the
+  // flutter_inappwebview JS bridge is still injected — treat as the Decent app.
+  equal(detectDecentAppWebView('Mozilla/5.0 (Linux; Android 10; wv) AppleWebKit/537.36', true), true);
+  // A plain browser on :3000 has neither signal — use web sleep controls.
+  equal(detectDecentAppWebView('Mozilla/5.0 (Macintosh; Intel Mac OS X) Chrome/120 Safari/537.36', false), false);
+  equal(detectDecentAppWebView('', false), false);
+  equal(detectDecentAppWebView(null, false), false);
+  // Word-boundary match must not fire on "decent" embedded in another token.
+  equal(detectDecentAppWebView('Mozilla/5.0 IndecentBrowser/1.0', false), false);
 });
 
 run('app shell command and chart helpers preserve app decisions', () => {
