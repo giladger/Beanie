@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.2 - 2026-06-14
+
+- Fixed tap-to-wake on tablets where it silently fell back to button controls: Beanie now recognizes the reaprime webview by its embedded JS bridge rather than only the user agent, which some Android System WebView builds drop on first load.
+
 ## v0.2.1 - 2026-06-13
 
 - Added shot comparison: overlay a second shot's measured curves (faded, thinner, legend-free) under the selected shot on the history detail chart — pick the comparison with one tap from the shot list and dismiss it from a chip on the chart.
