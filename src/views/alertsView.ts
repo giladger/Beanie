@@ -29,6 +29,36 @@ export function renderNoScaleShotModal(blockEnabled: boolean): string {
   `;
 }
 
+export function renderDeleteShotModal(
+  reclaim: { dose: string; remaining: string; next: string } | null
+): string {
+  const reclaimAction = reclaim
+    ? `<button type="button" class="command primary" data-action="confirm-delete-shot-reclaim">Delete &amp; reclaim ${escapeHtml(reclaim.dose)}</button>`
+    : '';
+  const reclaimNote = reclaim
+    ? `<p class="delete-shot-reclaim">Reclaim returns ${escapeHtml(reclaim.dose)} to the bag (${escapeHtml(reclaim.remaining)} → ${escapeHtml(reclaim.next)}).</p>`
+    : '';
+  return `
+    <div class="modal-backdrop delete-shot-backdrop">
+      <section class="modal panel delete-shot-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-shot-title">
+        <div class="modal-head delete-shot-head">
+          <div>
+            <h2 id="delete-shot-title">Delete this shot?</h2>
+          </div>
+          <button type="button" class="icon-button" data-action="close-modal" aria-label="Close">${icon('x')}</button>
+        </div>
+        <p class="delete-shot-detail">This action cannot be undone.</p>
+        ${reclaimNote}
+        <div class="modal-actions delete-shot-actions">
+          ${reclaimAction}
+          <button type="button" class="command danger" data-action="confirm-delete-shot">${reclaim ? 'Delete without reclaiming' : 'Delete'}</button>
+          <button type="button" class="command" data-action="close-modal">Cancel</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 export function renderWaterWarningBanner(mlLabel: string | null): string {
   return `
     <div class="water-warning-banner" role="status">

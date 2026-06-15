@@ -258,6 +258,7 @@ import {
 } from './views/beanPickerView';
 import {
   renderNoScaleShotModal as renderNoScaleShotModalView,
+  renderDeleteShotModal as renderDeleteShotModalView,
   renderWaterAlert as renderWaterAlertView,
   renderWaterWarningBanner as renderWaterWarningBannerView
 } from './views/alertsView';
@@ -390,6 +391,7 @@ type Modal =
   | 'machine-label'
   | 'no-scale-shot'
   | 'label-scanner'
+  | 'delete-shot'
   | null;
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
 interface ClickActionContext {
@@ -484,6 +486,22 @@ interface BatchStorageTarget {
   batchId: string;
 }
 
+// A shot's dose handed back to the bag it was pulled from when the shot is
+// deleted — the inverse of consumeBatchDoseForShot. `remaining`/`next` are the
+// bag weights before and after, kept for the confirm dialog's before→after line.
+interface ReclaimPlan {
+  bean: Bean;
+  batch: BeanBatch;
+  dose: number;
+  remaining: number;
+  next: number;
+}
+
+interface DeleteShotTarget {
+  shotId: string;
+  reclaim: ReclaimPlan | null;
+}
+
 // Where the scanner's Gemini key lives in the gateway KV store, so it's entered
 // once and shared across every device that loads Beanie.
 const GEMINI_KEY_NAMESPACE = 'beanie';
@@ -559,6 +577,7 @@ interface AppState {
   beanPickerFocusedBatchId: string | null;
   beanPickerFreezeBatchId: string | null;
   batchStorageTarget: BatchStorageTarget | null;
+  deleteShotTarget: DeleteShotTarget | null;
   editingGrinderId: string | null;
   profileEditor: ProfileEditorState | null;
   editingProfileId: string | null;
@@ -685,6 +704,7 @@ export class BeanieApp {
     beanPickerFocusedBatchId: null,
     beanPickerFreezeBatchId: null,
     batchStorageTarget: null,
+    deleteShotTarget: null,
     editingGrinderId: null,
     profileEditor: null,
     editingProfileId: null,
@@ -1589,10 +1609,23 @@ export class BeanieApp {
     });
   }
 
-  private async deleteShot(shotId: string): Promise<void> {
+  // Open the confirm dialog; the actual delete (and optional reclaim) runs from
+  // its buttons via performDeleteShot. The reclaim plan is computed now, while
+  // the shot still names the bag and dose, so the dialog can show before→after.
+  private deleteShot(shotId: string): void {
     const shot = this.state.shots.find((item) => item.id === shotId);
     if (!shot) return;
-    if (!window.confirm('Delete this shot? This action cannot be undone.')) return;
+    this.setState({
+      modal: 'delete-shot',
+      deleteShotTarget: { shotId, reclaim: this.reclaimableDoseForShot(shot) }
+    });
+  }
+
+  private async performDeleteShot(reclaim: boolean): Promise<void> {
+    const target = this.state.deleteShotTarget;
+    if (!target) return;
+    const shotId = target.shotId;
+    const reclaimPlan = reclaim ? target.reclaim : null;
 
     const applyDeletedShot = (status: string) => {
       const shots = this.state.shots.filter((item) => item.id !== shotId);
@@ -1603,6 +1636,7 @@ export class BeanieApp {
         detailShotId: visibleShots[0]?.id ?? null,
         compareShotId: this.state.compareShotId === shotId ? null : this.state.compareShotId,
         modal: null,
+        deleteShotTarget: null,
         editDialog: null,
         shotEdit: null,
         shotEditField: null,
@@ -1612,9 +1646,12 @@ export class BeanieApp {
       });
     };
 
-    this.setState({ busy: true, status: 'Deleting shot' });
+    this.setState({ busy: true, status: 'Deleting shot', modal: null, deleteShotTarget: null });
     if (this.state.demo) {
-      applyDeletedShot('Shot deleted (demo)');
+      if (reclaimPlan) await this.applyDoseReclaim(reclaimPlan);
+      applyDeletedShot(
+        reclaimPlan ? `Shot deleted (demo) · Bag: ${formatGrams(reclaimPlan.next)} left` : 'Shot deleted (demo)'
+      );
       return;
     }
 
@@ -1622,7 +1659,8 @@ export class BeanieApp {
       await gateway.deleteShot(shotId);
       this.shotCacheGeneration += 1;
       await beanieCache.invalidateShotMutation(shotId);
-      applyDeletedShot('Shot deleted');
+      if (reclaimPlan) await this.applyDoseReclaim(reclaimPlan);
+      applyDeletedShot(reclaimPlan ? `Shot deleted · Bag: ${formatGrams(reclaimPlan.next)} left` : 'Shot deleted');
     } catch (error) {
       console.error('[Beanie] Delete shot failed', error);
       this.setState({ busy: false, status: 'Delete shot failed' });
@@ -2258,6 +2296,9 @@ export class BeanieApp {
 
   private async zeroDisplayForSleep(): Promise<void> {
     if (this.state.demo || this.sleepBrightnessZeroed) return;
+    // The dim is deferred ~1s; if the machine woke in that window, don't black
+    // out the screen (and don't fight reaprime's wake-restore).
+    if (!this.machineIsSleeping()) return;
     this.sleepBrightnessZeroed = true;
     try {
       const display = await gateway.setDisplayBrightness(0);
@@ -3064,6 +3105,36 @@ export class BeanieApp {
     await this.saveBatchStoragePatch(bean, batch.id, batchInput, `Bag: ${formatGrams(next)} left`);
   }
 
+  // The inverse of consumeBatchDoseForShot: a deleted shot can return its dose to
+  // the bag it was pulled from. Only bags with a tracked remaining weight qualify
+  // (remaining may be 0 if this shot emptied it), and we never refill past the
+  // bag's original weight.
+  private reclaimableDoseForShot(shot: ShotRecord): ReclaimPlan | null {
+    const dose = positiveNumber(shot.annotations?.actualDoseWeight);
+    if (dose == null) return null;
+    const found = this.batchAndBeanForId(shot.workflow?.context?.beanBatchId ?? null);
+    if (!found) return null;
+    const remaining = nonNegativeNumber(found.batch.weightRemaining);
+    if (remaining == null) return null;
+    const cap = positiveNumber(found.batch.weight);
+    const next = round(cap == null ? remaining + dose : Math.min(cap, remaining + dose), 1);
+    return { bean: found.bean, batch: found.batch, dose, remaining, next };
+  }
+
+  private async applyDoseReclaim(plan: ReclaimPlan): Promise<void> {
+    const { bean, batch, next } = plan;
+    const batchInput: Partial<BeanBatch> = {
+      beanId: bean.id,
+      roastDate: batch.roastDate ?? null,
+      roastLevel: batch.roastLevel ?? null,
+      weight: batch.weight ?? null,
+      weightRemaining: next,
+      storageEvents: batch.storageEvents ?? null,
+      frozen: batch.frozen
+    };
+    await this.saveBatchStoragePatch(bean, batch.id, batchInput, `Bag: ${formatGrams(next)} left`);
+  }
+
   private async saveFreshnessForCompletedShot(shot: ShotRecord, batch: BeanBatch | null): Promise<ShotRecord> {
     const metadata = shotMetadataWithFreshness(shot.metadata, null, batch, shot.timestamp);
     if (!metadata?.freshness) return shot;
@@ -3796,8 +3867,14 @@ export class BeanieApp {
       'edit-shot': () => {
         this.openShotEditor();
       },
-      'delete-shot': async ({ id }) => {
-        if (id) await this.deleteShot(id);
+      'delete-shot': ({ id }) => {
+        if (id) this.deleteShot(id);
+      },
+      'confirm-delete-shot': () => {
+        void this.performDeleteShot(false);
+      },
+      'confirm-delete-shot-reclaim': () => {
+        void this.performDeleteShot(true);
       },
       'open-shot-field': ({ field }) => {
         if (isShotEditField(field)) this.setState({ shotEditField: field, shotBeanEdit: null });
@@ -4111,6 +4188,7 @@ export class BeanieApp {
           modal: null,
           scanner: null,
           batchStorageTarget: null,
+          deleteShotTarget: null,
           beanPickerDraftBatchBeanId: null,
           beanPickerEditingBeanId: null,
           beanPickerEditingBatchId: null,
@@ -6392,6 +6470,7 @@ export class BeanieApp {
     if (this.state.modal === 'machine-label') return this.renderMachineLabelModal();
     if (this.state.modal === 'no-scale-shot') return this.renderNoScaleShotModal();
     if (this.state.modal === 'label-scanner') return this.renderLabelScannerModal();
+    if (this.state.modal === 'delete-shot') return this.renderDeleteShotModal();
     return '';
   }
 
@@ -6403,6 +6482,14 @@ export class BeanieApp {
   private renderNoScaleShotModal(): string {
     const blockEnabled = this.state.settingsBundle?.rea.blockOnNoScale !== false;
     return renderNoScaleShotModalView(blockEnabled);
+  }
+
+  private renderDeleteShotModal(): string {
+    const plan = this.state.deleteShotTarget?.reclaim ?? null;
+    const reclaim = plan
+      ? { dose: formatGrams(plan.dose), remaining: formatGrams(plan.remaining), next: formatGrams(plan.next) }
+      : null;
+    return renderDeleteShotModalView(reclaim);
   }
 
   private renderWaterWarningBanner(): string {

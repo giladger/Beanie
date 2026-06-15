@@ -2164,6 +2164,29 @@ p {
   background: color-mix(in srgb, var(--red) 80%, var(--ink));
 }
 
+.delete-shot-detail {
+  margin: 0;
+  color: var(--soft);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.delete-shot-reclaim {
+  margin: -6px 0 0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.delete-shot-actions {
+  grid-template-columns: 1fr;
+}
+
+.delete-shot-actions .command {
+  min-height: 52px;
+  font-size: 14px;
+}
+
 .bean-picker-backdrop {
   padding: 8px;
 }
