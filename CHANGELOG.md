@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.4 - 2026-06-15
+
+- Added a delete-shot dialog: removing a shot now offers to reclaim its dose back to the bag it was pulled from (adding the weight back, capped at the bag's size), delete without reclaiming, or cancel — replacing the bare confirmation prompt.
+- Fixed espresso shots disappearing from history after a backflush: a cleaning cycle no longer leaves its "cleaning" beverage tag on the active workflow, so later pulls are recorded as espresso instead of being hidden as service shots.
+
 ## v0.2.3 - 2026-06-14
 - Debugging changes
 
