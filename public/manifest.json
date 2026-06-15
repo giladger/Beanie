@@ -2,7 +2,7 @@
   "id": "beanie",
   "name": "Beanie",
   "description": "Bean-first dial-in workflow for Decent.app.",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "author": "Gilad",
   "repository": "https://github.com/giladger/beanie"
 }
