@@ -193,6 +193,42 @@ run('preserves unknown workflow fields and context keys when applying', () => {
   equal(update.context?.coffeeName, 'Pink Bourbon');
 });
 
+run('resets a stale service beverage type to espresso when applying a bean recipe', () => {
+  // Regression: a backflush sets finalBeverageType to "cleaning". Restoring the
+  // recipe must not inherit it, or every later espresso pull is recorded as a
+  // service shot and silently hidden from the bean's history.
+  const base: Workflow = {
+    id: 'wf-1',
+    context: { finalBeverageType: 'cleaning' } as Record<string, unknown>
+  };
+  const update = buildWorkflowUpdate(beans[0]!, null, { dose: 18, yield: 40 }, null, base);
+  equal(update.context?.finalBeverageType, 'espresso');
+});
+
+run('preserves a deliberately-set non-service drink when applying a bean recipe', () => {
+  const base: Workflow = {
+    id: 'wf-1',
+    context: { finalBeverageType: 'latte' } as Record<string, unknown>
+  };
+  const update = buildWorkflowUpdate(beans[0]!, null, { dose: 18, yield: 40 }, null, base);
+  equal(update.context?.finalBeverageType, 'latte');
+});
+
+run('keeps the base profile when neither override nor draft carries one', () => {
+  const base: Workflow = {
+    id: 'wf-1',
+    profile: { title: 'Existing Profile' },
+    context: {}
+  };
+
+  const update = buildWorkflowUpdate(beans[0]!, null, { dose: 18 }, null, base);
+
+  // Regression: a dial-in update with no profile loaded must NOT null out the
+  // workflow's profile. The gateway PUT is a deep-merge and a `profile: null`
+  // is rejected with 400, silently dropping the entire update.
+  equal(update.profile?.title, 'Existing Profile');
+});
+
 run('derives and inverts brew ratio', () => {
   equal(ratioFor(18, 45), 2.5);
   equal(ratioFor(0, 45), null);

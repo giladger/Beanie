@@ -10,6 +10,7 @@ import type {
   Workflow,
   WorkflowContext
 } from '../api/types';
+import { isServiceBeverageType } from './shotRecord';
 
 export {
   appendBatchStorageEvent,
@@ -227,9 +228,17 @@ export function buildWorkflowUpdate(
     grinderId: draft.grinderId ?? null,
     grinderModel: draft.grinderModel ?? null,
     grinderSetting: draft.grinderSetting ?? null,
-    finalBeverageType: base?.context?.finalBeverageType ?? 'espresso'
+    // A bean pull is espresso. Preserve a deliberately-set drink (e.g. "latte"),
+    // but never inherit a service tag — otherwise a backflush leaves every later
+    // shot stamped "cleaning", which the history then hides as a service shot.
+    finalBeverageType: isServiceBeverageType(base?.context?.finalBeverageType)
+      ? 'espresso'
+      : base?.context?.finalBeverageType ?? 'espresso'
   };
-  let profile = profileOverride ?? draft.profile ?? null;
+  // Fall back to the base workflow's profile so a dial-in with no profile
+  // loaded does not null it out: the gateway PUT is a deep-merge and a
+  // `profile: null` is rejected with 400, dropping the whole update.
+  let profile = profileOverride ?? draft.profile ?? base?.profile ?? null;
   if (profile && draft.brewTemp != null) {
     profile = withProfileTemperature(profile, draft.brewTemp);
   }
