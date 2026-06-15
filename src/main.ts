@@ -11,14 +11,14 @@ declare global {
 // TEMP DEBUG: surface webview-detection signals on screen, hidden until you tap
 // the topbar Status value 10 times. Remove before release.
 function showWebViewDetectionDebug(): void {
-  if (document.getElementById('rea-detect-debug')) return;
+  if (document.getElementById('decent-detect-debug')) return;
 
-  const win = window as { __REA_HOST__?: unknown; flutter_inappwebview?: unknown };
-  const reaHost = win.__REA_HOST__;
+  const win = window as { __DECENT_HOST__?: unknown; flutter_inappwebview?: unknown };
+  const decentHost = win.__DECENT_HOST__;
   const hasBridge = win.flutter_inappwebview != null;
   const ua = navigator.userAgent;
   const box = document.createElement('div');
-  box.id = 'rea-detect-debug';
+  box.id = 'decent-detect-debug';
   box.style.cssText =
     'position:fixed;left:8px;bottom:8px;z-index:99999;max-width:90vw;display:none;' +
     'background:rgba(0,0,0,.85);color:#0f0;font:12px/1.4 monospace;' +
@@ -26,10 +26,10 @@ function showWebViewDetectionDebug(): void {
     'word-break:break-all;pointer-events:none;';
   box.textContent = [
     `isDecentAppWebView(): ${isDecentAppWebView()}`,
-    `  via __REA_HOST__: ${detectDecentAppWebView(reaHost, false, null)}`,
-    `  via bridge:       ${detectDecentAppWebView(undefined, hasBridge, null)}`,
-    `  via UA token:     ${detectDecentAppWebView(undefined, false, ua)}`,
-    `__REA_HOST__: ${reaHost == null ? 'absent' : JSON.stringify(reaHost)}`,
+    `  via __DECENT_HOST__: ${detectDecentAppWebView(decentHost, false, null)}`,
+    `  via bridge:        ${detectDecentAppWebView(undefined, hasBridge, null)}`,
+    `  via UA token:      ${detectDecentAppWebView(undefined, false, ua)}`,
+    `__DECENT_HOST__: ${decentHost == null ? 'absent' : JSON.stringify(decentHost)}`,
     `flutter_inappwebview: ${hasBridge ? 'present' : 'absent'}`,
     `userAgent: ${ua}`
   ].join('\n');

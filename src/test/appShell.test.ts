@@ -64,7 +64,7 @@ run('detect Decent webview prefers the reaprime beacon, then bridge, then UA', (
   const browserUA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X) Chrome/120 Safari/537.36';
   const androidWvUA = 'Mozilla/5.0 (Linux; Android 10; wv) AppleWebKit/537.36';
 
-  // 1. Deterministic signal: reaprime's injected window.__REA_HOST__ beacon wins
+  // 1. Deterministic signal: reaprime's injected window.__DECENT_HOST__ beacon wins
   //    even when the UA looks like a plain browser and the bridge is absent.
   equal(detectDecentAppWebView({ app: 'reaprime', platform: 'android' }, false, browserUA), true);
   equal(detectDecentAppWebView({}, false, androidWvUA), true);

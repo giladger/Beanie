@@ -199,7 +199,7 @@ export function isUIScalePreference(value: string | undefined): value is UIScale
 //
 // Detecting this turned out to be fragile, so we layer three signals weakest-last:
 //
-// 1. window.__REA_HOST__ — a beacon reaprime injects via a document-start user
+// 1. window.__DECENT_HOST__ — a beacon reaprime injects via a document-start user
 //    script in the page content world (see skin_view.dart). This is the
 //    deterministic signal: visible to our code regardless of UA or webview
 //    internals, and absent in a plain browser because it isn't part of the
@@ -212,13 +212,13 @@ export function isUIScalePreference(value: string | undefined): value is UIScale
 //    Android System WebView builds drop setUserAgentString on first load. Matched
 //    leniently (case/whitespace/version-suffix) as a last resort.
 //
-// Older reaprime builds that predate __REA_HOST__ still fall through to 2/3.
+// Older reaprime builds that predate __DECENT_HOST__ still fall through to 2/3.
 export function detectDecentAppWebView(
-  reaHost: unknown,
+  decentHost: unknown,
   hasInAppWebViewBridge: boolean,
   userAgent: string | null | undefined
 ): boolean {
-  if (reaHost != null && typeof reaHost === 'object') return true;
+  if (decentHost != null && typeof decentHost === 'object') return true;
   if (hasInAppWebViewBridge) return true;
   return /\bdecent\b/i.test(userAgent ?? '');
 }
@@ -226,11 +226,11 @@ export function detectDecentAppWebView(
 export function isDecentAppWebView(): boolean {
   const win =
     typeof window !== 'undefined'
-      ? (window as { __REA_HOST__?: unknown; flutter_inappwebview?: unknown })
+      ? (window as { __DECENT_HOST__?: unknown; flutter_inappwebview?: unknown })
       : undefined;
   const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : null;
   return detectDecentAppWebView(
-    win?.__REA_HOST__,
+    win?.__DECENT_HOST__,
     win?.flutter_inappwebview != null,
     userAgent
   );
