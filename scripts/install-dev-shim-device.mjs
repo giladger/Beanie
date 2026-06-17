@@ -20,10 +20,10 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import dgram from 'node:dgram';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { devShimHtml } from './shim-template.mjs';
+import { resolveLanViteOrigin } from './net.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = process.env.DECENT_PACKAGE ?? 'net.tadel.reaprime';
@@ -34,7 +34,10 @@ const manifestJson = readFileSync(manifestPathLocal, 'utf8');
 const skinId = JSON.parse(manifestJson).id;
 if (!skinId) fail('public/manifest.json has no "id"');
 
-const origin = await resolveOrigin();
+const origin = await resolveLanViteOrigin();
+if (!origin) {
+  fail('could not determine your LAN IP — set BEANIE_DEV_HOST=<ip> or VITE_DEV_ORIGIN=http://<ip>:5173');
+}
 // No gateway override: the page stays on Decent's localhost:3000, so the skin
 // resolves the gateway to the device's own localhost:8080 automatically.
 const shimHtml = devShimHtml(origin, '');
@@ -165,62 +168,6 @@ function resolveAdb() {
   });
   if (which.status === 0 && which.stdout.trim()) return which.stdout.split('\n')[0].trim();
   return null;
-}
-
-async function resolveOrigin() {
-  if (process.env.VITE_DEV_ORIGIN) return process.env.VITE_DEV_ORIGIN.replace(/\/$/, '');
-  const port = process.env.VITE_PORT ?? '5173';
-  const host = process.env.BEANIE_DEV_HOST ?? (await detectLanIp()) ?? privateIpv4();
-  if (!host) {
-    fail('could not determine your LAN IP — set BEANIE_DEV_HOST=<ip> or VITE_DEV_ORIGIN=http://<ip>:5173');
-  }
-  return `http://${host}:${port}`;
-}
-
-// Source IP toward the default route — the address the tablet reaches us on.
-// connect() on a UDP socket sets the default peer; it sends no packets.
-function detectLanIp() {
-  return new Promise((resolve) => {
-    const sock = dgram.createSocket('udp4');
-    let settled = false;
-    let timer;
-    const done = (ip) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      try {
-        sock.close();
-      } catch {}
-      resolve(ip);
-    };
-    sock.once('error', () => done(null));
-    sock.once('connect', () => {
-      let ip = null;
-      try {
-        ip = sock.address().address;
-      } catch {}
-      done(ip);
-    });
-    timer = setTimeout(() => done(null), 800);
-    try {
-      sock.connect(80, '8.8.8.8');
-    } catch {
-      done(null);
-    }
-  });
-}
-
-function privateIpv4() {
-  const ifaces = os.networkInterfaces();
-  const addrs = [];
-  for (const name of Object.keys(ifaces)) {
-    for (const ni of ifaces[name] || []) {
-      if (ni.family === 'IPv4' && !ni.internal) addrs.push(ni.address);
-    }
-  }
-  const isPrivate = (ip) =>
-    /^10\./.test(ip) || /^192\.168\./.test(ip) || /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
-  return addrs.find(isPrivate) || addrs[0] || null;
 }
 
 function safe(s) {
