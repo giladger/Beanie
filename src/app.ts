@@ -141,6 +141,7 @@ import {
   type SettingsBundle
 } from './domain/settingsModel';
 import type { DecentAccountStatus, PluginSettings } from './api/settings';
+import { readDisplayState } from './api/settings';
 import { createSettingsController } from './controllers/settingsController';
 import {
   BeanWorkflowController,
@@ -754,15 +755,18 @@ export class BeanieApp {
   private machineRetryTimer: number | null = null;
   private scaleRetryTimer: number | null = null;
   private waterRetryTimer: number | null = null;
+  private displayRetryTimer: number | null = null;
   // Consecutive failed (re)connect attempts per socket, for backoff pacing.
   private machineSocketAttempts = 0;
   private scaleSocketAttempts = 0;
   private waterSocketAttempts = 0;
+  private displaySocketAttempts = 0;
   private shotRefreshTimer: number | null = null;
   private beanRefreshTimer: number | null = null;
   private machineSocket: WebSocket | null = null;
   private scaleSocket: WebSocket | null = null;
   private waterSocket: WebSocket | null = null;
+  private displaySocket: WebSocket | null = null;
   private disposed = false;
   private shotRefreshInFlight = false;
   private beanRefreshInFlight = false;
@@ -905,6 +909,7 @@ export class BeanieApp {
     if (this.machineRetryTimer != null) window.clearTimeout(this.machineRetryTimer);
     if (this.scaleRetryTimer != null) window.clearTimeout(this.scaleRetryTimer);
     if (this.waterRetryTimer != null) window.clearTimeout(this.waterRetryTimer);
+    if (this.displayRetryTimer != null) window.clearTimeout(this.displayRetryTimer);
     if (this.shotRefreshTimer != null) window.clearInterval(this.shotRefreshTimer);
     if (this.beanRefreshTimer != null) window.clearInterval(this.beanRefreshTimer);
     if (this.simTimer != null) window.clearTimeout(this.simTimer);
@@ -916,6 +921,7 @@ export class BeanieApp {
     this.machineRetryTimer = null;
     this.scaleRetryTimer = null;
     this.waterRetryTimer = null;
+    this.displayRetryTimer = null;
     this.shotRefreshTimer = null;
     this.beanRefreshTimer = null;
     this.simTimer = null;
@@ -1077,6 +1083,7 @@ export class BeanieApp {
       this.connectMachineSocket();
       this.connectScaleSocket();
       this.connectWaterLevelSocket();
+      this.connectDisplaySocket();
       this.startShotRefreshTimer();
       this.startBeanRefreshTimer();
     } catch (error) {
@@ -2356,15 +2363,19 @@ export class BeanieApp {
     const machineSocket = this.machineSocket;
     const scaleSocket = this.scaleSocket;
     const waterSocket = this.waterSocket;
+    const displaySocket = this.displaySocket;
     this.machineSocket = null;
     this.scaleSocket = null;
     this.waterSocket = null;
+    this.displaySocket = null;
     this.closeSocket(machineSocket);
     this.closeSocket(scaleSocket);
     this.closeSocket(waterSocket);
+    this.closeSocket(displaySocket);
     this.machineSocketAttempts = 0;
     this.scaleSocketAttempts = 0;
     this.waterSocketAttempts = 0;
+    this.displaySocketAttempts = 0;
   }
 
   private closeSocket(socket: WebSocket | null): void {
@@ -2496,6 +2507,52 @@ export class BeanieApp {
         this.waterRetryTimer = null;
         this.connectWaterLevelSocket();
       }, reconnectDelayMs(this.waterSocketAttempts++));
+    };
+  }
+
+  // Track the gateway's display state live instead of relying on a one-shot GET
+  // on wake. That GET races the gateway's own brightness restore (which lands a
+  // beat after the wake transition) and can cache a transient 0%, leaving the
+  // Settings readout stuck at 0 while the screen is actually lit. The gateway
+  // pushes every DisplayState change on this socket, so the bundle always
+  // reflects the real value — and a restore that arrives late still updates it.
+  private connectDisplaySocket(): void {
+    if (this.disposed || this.state.demo) return;
+    const previous = this.displaySocket;
+    this.displaySocket = null;
+    this.closeSocket(previous);
+    const ws = new WebSocket(`${gatewayWsOrigin()}/ws/v1/display`);
+    this.displaySocket = ws;
+    ws.onmessage = (event) => {
+      try {
+        const display = readDisplayState(JSON.parse(event.data));
+        const current = this.state.settingsBundle?.display;
+        if (
+          current &&
+          current.brightness === display.brightness &&
+          current.requestedBrightness === display.requestedBrightness &&
+          current.lowBatteryBrightnessActive === display.lowBatteryBrightnessActive &&
+          current.wakeLockEnabled === display.wakeLockEnabled &&
+          current.wakeLockOverride === display.wakeLockOverride
+        ) {
+          return;
+        }
+        this.patchBundle({ display });
+      } catch (error) {
+        console.warn('[Beanie] Bad display frame', error);
+      }
+    };
+    ws.onopen = () => {
+      if (this.displaySocket === ws) this.displaySocketAttempts = 0;
+    };
+    ws.onclose = () => {
+      if (this.disposed) return;
+      if (this.displaySocket !== ws) return;
+      if (this.displayRetryTimer != null) window.clearTimeout(this.displayRetryTimer);
+      this.displayRetryTimer = window.setTimeout(() => {
+        this.displayRetryTimer = null;
+        this.connectDisplaySocket();
+      }, reconnectDelayMs(this.displaySocketAttempts++));
     };
   }
 
