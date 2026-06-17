@@ -2902,11 +2902,11 @@ export class BeanieApp {
     if ((!this.state.liveActive && !this.state.liveFinalizing) || !this.liveChart) return;
     this.liveDirty = false;
     this.liveChart.resize();
-    const model = this.liveShot.model(liveChartModelOptions(this.state.liveChartMode));
+    const ghost = this.state.liveGhost ? this.liveGhostModel : null;
+    const model = this.liveShot.model(liveChartModelOptions(this.state.liveChartMode, ghost?.maxTime));
     this.liveChart.setOptions({
       hideMaxTimeLabel: liveChartHideMaxTimeLabel(this.state.liveChartMode, model.maxTime)
     });
-    const ghost = this.state.liveGhost ? this.liveGhostModel : null;
     this.liveChart.setModel(ghost ? overlayComparisonModel(model, ghost) : model);
     this.liveChart.draw();
     this.updateLiveReadouts();

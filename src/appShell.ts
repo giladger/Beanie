@@ -153,7 +153,15 @@ export function machineCommandsAvailable(demo: boolean, info: MachineInfo | null
   return isSimulatorMachine(info) || hasGroupHeadController(info) === false;
 }
 
-export function liveChartModelOptions(mode: LiveChartMode): { minTime?: number } {
+export function liveChartModelOptions(
+  mode: LiveChartMode,
+  ghostMaxTime?: number | null
+): { minTime?: number } {
+  // A ghost overlay frames the live pull against the reference shot, so anchor
+  // the time axis to the ghost's length rather than the mode default. The axis
+  // still grows past it if the live pull runs longer (buildLiveChartModel maxes
+  // elapsed time against minTime).
+  if (ghostMaxTime != null && ghostMaxTime > 0) return { minTime: ghostMaxTime };
   return mode === 'preset30' ? { minTime: 30 } : {};
 }
 

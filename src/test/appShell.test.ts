@@ -97,6 +97,11 @@ run('app shell command and chart helpers preserve app decisions', () => {
   equal(machineCommandsAvailable(false, machineInfo({ serialNumber: 'simulator-1' })), true);
   equal(liveChartModelOptions('preset30').minTime, 30);
   equal(JSON.stringify(liveChartModelOptions('auto')), '{}');
+  // A ghost overlay anchors the time axis to the ghost's length, overriding the mode default.
+  equal(liveChartModelOptions('preset30', 22).minTime, 22);
+  equal(liveChartModelOptions('auto', 45).minTime, 45);
+  equal(liveChartModelOptions('preset30', 0).minTime, 30);
+  equal(JSON.stringify(liveChartModelOptions('auto', null)), '{}');
   equal(liveChartHideMaxTimeLabel('auto', 20), true);
   equal(liveChartHideMaxTimeLabel('preset30', 31), true);
   equal(liveChartHideMaxTimeLabel('preset30', 30), false);
