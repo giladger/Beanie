@@ -16,8 +16,12 @@
 // pushed to the machine; the machine's live value is therefore the *active*
 // multiplier, never the source of truth for the global default.
 
-const globalKey = 'beanie:flow-cal:global';
-const overridesKey = 'beanie:flow-cal:profile-overrides';
+import {
+  flowCalGlobalKey as globalKey,
+  flowCalOverridesKey as overridesKey,
+  getSyncedItem,
+  setSyncedItem
+} from './settingsStore';
 
 // Calibration keys that must survive a Beanie cache reset (re-export so the
 // reset-preservation list stays in sync with the storage layer).
@@ -38,7 +42,7 @@ function sanitizeMultiplier(value: unknown): number | null {
 
 export function readFlowCalibrationGlobal(): number | null {
   try {
-    return sanitizeMultiplier(localStorage.getItem(globalKey));
+    return sanitizeMultiplier(getSyncedItem(globalKey));
   } catch {
     return null;
   }
@@ -47,16 +51,12 @@ export function readFlowCalibrationGlobal(): number | null {
 export function writeFlowCalibrationGlobal(value: number): void {
   const sanitized = sanitizeMultiplier(value);
   if (sanitized == null) return;
-  try {
-    localStorage.setItem(globalKey, String(sanitized));
-  } catch {
-    // Best-effort: the live in-memory bundle remains authoritative this session.
-  }
+  setSyncedItem(globalKey, String(sanitized));
 }
 
 export function readFlowCalibrationOverrides(): Record<string, number> {
   try {
-    const raw = localStorage.getItem(overridesKey);
+    const raw = getSyncedItem(overridesKey);
     const parsed = raw ? JSON.parse(raw) : {};
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     return Object.fromEntries(
@@ -71,11 +71,7 @@ export function readFlowCalibrationOverrides(): Record<string, number> {
 }
 
 export function writeFlowCalibrationOverrides(overrides: Record<string, number>): void {
-  try {
-    localStorage.setItem(overridesKey, JSON.stringify(overrides));
-  } catch {
-    // Best-effort, as above.
-  }
+  setSyncedItem(overridesKey, JSON.stringify(overrides));
 }
 
 export interface ResolvedFlowCalibration {

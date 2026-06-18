@@ -310,6 +310,12 @@ import {
   writeSettingsPreferences
 } from './domain/settings';
 import {
+  loadAllFromStore,
+  pollFromStore,
+  setStorePushHandler,
+  SETTINGS_STORE_NAMESPACE
+} from './domain/settingsStore';
+import {
   cleaningDue,
   readCleaningProfileOverride,
   readCleaningState,
@@ -512,11 +518,6 @@ interface DeleteShotTarget {
   reclaim: ReclaimPlan | null;
 }
 
-// Where the scanner's Gemini key lives in the gateway KV store, so it's entered
-// once and shared across every device that loads Beanie.
-const GEMINI_KEY_NAMESPACE = 'beanie';
-const GEMINI_KEY_NAME = 'geminiApiKey';
-
 interface LabelScannerState {
   step: LabelScannerStep;
   handoff: boolean;
@@ -557,6 +558,11 @@ interface AppState {
   favoriteProfiles: string[];
   favoriteBeans: string[];
   settingsPreferences: SettingsPreferences;
+  // True while one or more settings failed to save to the gateway store; drives
+  // the blocking store-error overlay.
+  storeError: boolean;
+  // False until settings have loaded from the store on boot; drives the spinner.
+  settingsLoaded: boolean;
   settingsSearch: string;
   demo: boolean;
   loading: boolean;
@@ -684,6 +690,8 @@ export class BeanieApp {
     favoriteProfiles: readFavoriteProfiles(),
     favoriteBeans: readFavoriteBeans(),
     settingsPreferences: initialSettingsPreferences,
+    storeError: false,
+    settingsLoaded: false,
     settingsSearch: '',
     demo: false,
     loading: true,
@@ -777,6 +785,12 @@ export class BeanieApp {
   private waterSocket: WebSocket | null = null;
   private displaySocket: WebSocket | null = null;
   private disposed = false;
+  // Memoised so the boot settings load runs once; the scanner awaits it too.
+  private settingsLoadPromise: Promise<void> | null = null;
+  // Live cross-device sync: re-poll the store on this interval.
+  private settingsPollTimer: number | null = null;
+  // Setting pushes that failed; keyed by store key so a Retry re-sends each.
+  private readonly failedStoreWrites = new Map<string, string | null>();
   private shotRefreshInFlight = false;
   private beanRefreshInFlight = false;
   private applyRequestId = 0;
@@ -883,6 +897,8 @@ export class BeanieApp {
 
   start(): void {
     this.disposed = false;
+    // Route synced-setting writes to the gateway store (no-op in demo).
+    setStorePushHandler((storeKey, value) => this.pushSettingToStore(storeKey, value));
     applySettingsPreferences(this.state.settingsPreferences);
     this.root.addEventListener('click', this.handleClick);
     this.root.addEventListener('input', this.handleInput);
@@ -894,6 +910,8 @@ export class BeanieApp {
     this.root.addEventListener('touchstart', this.handleTouchStart, { passive: true });
     this.root.addEventListener('touchmove', this.handleTouchMove, { passive: false });
     this.phoneMedia?.addEventListener('change', this.handlePhoneMediaChange);
+    // Live settings sync: re-poll the store whenever this device regains focus.
+    window.addEventListener('focus', this.handleWindowFocus);
     this.render();
     void this.load();
     if (isHandoffArrival(location.search)) {
@@ -904,6 +922,7 @@ export class BeanieApp {
 
   dispose(): void {
     this.disposed = true;
+    setStorePushHandler(null);
     this.root.removeEventListener('click', this.handleClick);
     this.root.removeEventListener('input', this.handleInput);
     this.root.removeEventListener('change', this.handleChange);
@@ -914,6 +933,8 @@ export class BeanieApp {
     this.root.removeEventListener('touchstart', this.handleTouchStart);
     this.root.removeEventListener('touchmove', this.handleTouchMove);
     this.phoneMedia?.removeEventListener('change', this.handlePhoneMediaChange);
+    window.removeEventListener('focus', this.handleWindowFocus);
+    if (this.settingsPollTimer != null) window.clearInterval(this.settingsPollTimer);
     if (this.applyTimer != null) window.clearTimeout(this.applyTimer);
     if (this.machineRetryTimer != null) window.clearTimeout(this.machineRetryTimer);
     if (this.scaleRetryTimer != null) window.clearTimeout(this.scaleRetryTimer);
@@ -1031,6 +1052,9 @@ export class BeanieApp {
   private async load(): Promise<void> {
     const prevSignature = this.state.appliedSignature;
     this.setState({ loading: true, status: 'Loading Decent.app data' });
+    // Settings live only in the gateway store now — load them (the spinner shows
+    // until this resolves) before rendering real content.
+    await this.loadSettings();
     try {
       const latestShotQuery = new URLSearchParams({ limit: '50', offset: '0', order: 'desc' });
       const startup = await loadGatewayStartupWithCache(latestShotQuery, { cache: beanieCache });
@@ -3548,23 +3572,109 @@ export class BeanieApp {
   }
 
   /**
-   * Share the Gemini key across devices via the gateway's KV store: the gateway
-   * is the source of truth, localStorage is a per-device cache. So the key is
-   * entered once (on any device) and every other device picks it up.
+   * Push a synced setting's current value to the gateway store. Optimistic: the
+   * local cache was already updated by the writer, so on failure we surface a
+   * blocking overlay (hard-fail) rather than silently diverging from the store.
    */
-  private async syncGeminiKey(): Promise<void> {
+  private pushSettingToStore(storeKey: string, value: string | null): void {
     if (this.state.demo) return;
-    try {
-      const remote = await gateway.storeGet(GEMINI_KEY_NAMESPACE, GEMINI_KEY_NAME);
-      if (typeof remote === 'string' && remote.trim()) {
-        writeGeminiApiKey(remote.trim());
-        return;
+    // A cleared value DELETEs the key (POSTing null would store the string
+    // "null"); otherwise the raw string is written.
+    const push =
+      value === null
+        ? gateway.storeDelete(SETTINGS_STORE_NAMESPACE, storeKey)
+        : gateway.storeSet(SETTINGS_STORE_NAMESPACE, storeKey, value);
+    void push.then(
+      () => {
+        this.failedStoreWrites.delete(storeKey);
+        if (this.failedStoreWrites.size === 0 && this.state.storeError) {
+          this.setState({ storeError: false });
+        }
+      },
+      (error: unknown) => {
+        console.error('[Beanie] Failed to save setting to gateway store', storeKey, error);
+        this.failedStoreWrites.set(storeKey, value);
+        if (!this.state.storeError) this.setState({ storeError: true });
       }
-      const local = readGeminiApiKey();
-      if (local) await gateway.storeSet(GEMINI_KEY_NAMESPACE, GEMINI_KEY_NAME, local);
-    } catch {
-      // fail-soft: fall back to the local cache
+    );
+  }
+
+  /**
+   * Load all settings from the gateway store into the in-memory cache, once per
+   * app lifecycle (memoised so the boot path and the scanner share one run).
+   * Settings have no localStorage home, so this must finish before real content
+   * renders — the app shows a spinner until it does. Fail-soft: on a store error
+   * we fall back to defaults so the app is still usable.
+   */
+  private loadSettings(): Promise<void> {
+    if (!this.settingsLoadPromise) {
+      this.settingsLoadPromise = this.runLoadSettings();
     }
+    return this.settingsLoadPromise;
+  }
+
+  private async runLoadSettings(): Promise<void> {
+    if (this.state.demo) {
+      this.applyLoadedSettings();
+      return;
+    }
+    try {
+      await loadAllFromStore(gateway);
+      if (this.disposed) return;
+      this.applyLoadedSettings();
+      this.startSettingsPoll();
+    } catch (error) {
+      console.warn('[Beanie] Settings load failed; using defaults', error);
+      if (!this.disposed) this.applyLoadedSettings();
+    }
+  }
+
+  /** Re-derive settings-backed state from the in-memory cache and render. */
+  private applyLoadedSettings(): void {
+    this.setState({
+      settingsLoaded: true,
+      settingsPreferences: readSettingsPreferences(),
+      favoriteProfiles: readFavoriteProfiles(),
+      favoriteBeans: readFavoriteBeans(),
+      machinePresetLabels: readMachinePresetLabels(),
+      machinePresetValues: readMachinePresetValues(),
+      hotWaterStopMode: readHotWaterStopMode(),
+      cleaning: readCleaningState(),
+      cleaningProfileOverride: readCleaningProfileOverride(),
+      cleaningThreshold: readCleaningThreshold()
+    });
+    applySettingsPreferences(this.state.settingsPreferences);
+  }
+
+  private startSettingsPoll(): void {
+    if (this.settingsPollTimer != null) return;
+    this.settingsPollTimer = window.setInterval(() => void this.pollSettings(), 10_000);
+  }
+
+  /** Live sync: re-poll the store; re-render only if something changed. */
+  private async pollSettings(): Promise<void> {
+    if (this.state.demo || this.disposed) return;
+    try {
+      const changed = await pollFromStore(gateway);
+      if (changed.length > 0 && !this.disposed) this.applyLoadedSettings();
+    } catch (error) {
+      console.warn('[Beanie] Settings poll failed', error);
+    }
+  }
+
+  private readonly handleWindowFocus = (): void => {
+    void this.pollSettings();
+  };
+
+  private retryFailedStoreWrites(): void {
+    for (const [storeKey, value] of [...this.failedStoreWrites.entries()]) {
+      this.pushSettingToStore(storeKey, value);
+    }
+  }
+
+  private dismissStoreError(): void {
+    this.failedStoreWrites.clear();
+    this.setState({ storeError: false });
   }
 
   /**
@@ -3575,7 +3685,8 @@ export class BeanieApp {
    */
   private async openLabelScanner(options: { fromHandoff?: boolean } = {}): Promise<void> {
     this.cancelScannerWork();
-    await this.syncGeminiKey();
+    // The Gemini key lives in the store; make sure settings have loaded.
+    await this.loadSettings();
     const hasKey = readGeminiApiKey() != null;
     const handoff = isDecentAppWebView() && options.fromHandoff !== true && !this.state.demo;
     // Build the QR from the gateway's LAN IP (the tablet webview is on localhost).
@@ -3777,8 +3888,8 @@ export class BeanieApp {
       this.setScanner({ verifyMessage: { tone: 'warn', text: 'Enter your API key first.' } });
       return;
     }
+    // writeGeminiApiKey is a synced write — it pushes to the store itself.
     writeGeminiApiKey(key);
-    void gateway.storeSet(GEMINI_KEY_NAMESPACE, GEMINI_KEY_NAME, key);
     this.setScanner({ step: 'capture', keyDraft: '', verifyMessage: null });
   }
 
@@ -4070,6 +4181,12 @@ export class BeanieApp {
 
   private settingsClickActions(): Record<string, ClickActionHandler> {
     return {
+      'retry-store-write': () => {
+        this.retryFailedStoreWrites();
+      },
+      'dismiss-store-error': () => {
+        this.dismissStoreError();
+      },
       'open-settings': () => {
         if (this.isPhoneLayout()) {
           this.setState({ phoneTab: 'settings', view: 'workbench' });
@@ -6083,6 +6200,17 @@ export class BeanieApp {
   }
 
   private render(): void {
+    if (!this.state.settingsLoaded) {
+      this.root.innerHTML = `
+        <div class="app-shell">
+          <div class="settings-boot">
+            <div class="settings-boot-spinner"></div>
+            <p>Loading settings…</p>
+          </div>
+        </div>
+      `;
+      return;
+    }
     const bean = this.selectedBean();
     const focus = this.captureFocus();
     const scroll = this.captureScroll();
@@ -6097,6 +6225,7 @@ export class BeanieApp {
         ${isPage ? '' : this.renderWaterAlert()}
         ${this.renderWaterWarningBanner()}
         ${this.renderSleepOverlay()}
+        ${this.renderStoreErrorOverlay()}
       </div>
     `;
     refreshIcons();
@@ -6431,6 +6560,24 @@ export class BeanieApp {
     if (!this.state.asleep || this.usesWebSleepControls()) return '';
     return `
       <button type="button" class="sleep-overlay" data-action="wake" aria-label="Wake machine"></button>
+    `;
+  }
+
+  private renderStoreErrorOverlay(): string {
+    if (!this.state.storeError) return '';
+    const count = this.failedStoreWrites.size;
+    const noun = count === 1 ? 'setting change' : 'setting changes';
+    return `
+      <div class="store-error-overlay" role="alertdialog" aria-modal="true" aria-labelledby="store-error-title">
+        <div class="store-error-dialog">
+          <h2 id="store-error-title">Couldn't save to the machine</h2>
+          <p>${count} ${noun} didn't reach the gateway. Your change is held on this device but isn't synced across your devices.</p>
+          <div class="store-error-actions">
+            <button type="button" class="store-error-retry" data-action="retry-store-write">Retry</button>
+            <button type="button" class="store-error-dismiss" data-action="dismiss-store-error">Keep local copy</button>
+          </div>
+        </div>
+      </div>
     `;
   }
 

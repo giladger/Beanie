@@ -1,4 +1,4 @@
-const secondTapHintStorageKey = 'beanie:second-tap-hint-v3';
+import { getSyncedItem, secondTapHintKey as secondTapHintStorageKey, setSyncedItem } from './settingsStore';
 
 // The "tap again to load" hint sticks around until the gesture has been used
 // this many times, so it keeps reminding new users across several sessions.
@@ -19,7 +19,7 @@ function readCount(value: unknown): number {
 
 function readSecondTapHintPrefs(): SecondTapHintPrefs {
   try {
-    const raw = localStorage.getItem(secondTapHintStorageKey);
+    const raw = getSyncedItem(secondTapHintStorageKey);
     const parsed = raw ? JSON.parse(raw) : {};
     return {
       beanUses: readCount(parsed?.beanUses),
@@ -31,11 +31,7 @@ function readSecondTapHintPrefs(): SecondTapHintPrefs {
 }
 
 function writeSecondTapHintPrefs(prefs: SecondTapHintPrefs): void {
-  try {
-    localStorage.setItem(secondTapHintStorageKey, JSON.stringify(prefs));
-  } catch {
-    // Ignore storage failures; the hint is purely instructional.
-  }
+  setSyncedItem(secondTapHintStorageKey, JSON.stringify(prefs));
 }
 
 export function shouldShowSecondTapHint(kind: SecondTapHintKind): boolean {

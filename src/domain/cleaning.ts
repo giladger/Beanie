@@ -6,6 +6,15 @@
 // cleaningDue) are unit-tested; the read*/write* wrappers are thin localStorage
 // persistence used only in the browser.
 
+import {
+  cleaningOverrideKey as overrideKey,
+  cleaningStateKey as stateKey,
+  cleaningThresholdKey as thresholdKey,
+  getSyncedItem,
+  removeSyncedItem,
+  setSyncedItem
+} from './settingsStore';
+
 /** Minimal shape of a profile list entry (matches app.ts state.profiles items). */
 export interface CleaningProfileLike {
   id: string;
@@ -68,18 +77,10 @@ export function cleaningDue(state: CleaningState, threshold: number): boolean {
   return threshold > 0 && state.shotsSinceClean >= threshold;
 }
 
-// ---- persistence (browser only) -------------------------------------------
-
-const stateKey = 'beanie:cleaning:state';
-const overrideKey = 'beanie:cleaning:profile-id';
-const thresholdKey = 'beanie:cleaning:threshold';
-
-function storage(): Storage | null {
-  return typeof localStorage !== 'undefined' ? localStorage : null;
-}
+// ---- persistence -----------------------------------------------------------
 
 export function readCleaningState(): CleaningState {
-  const raw = storage()?.getItem(stateKey);
+  const raw = getSyncedItem(stateKey);
   if (!raw) return { ...EMPTY_STATE };
   try {
     const parsed = JSON.parse(raw) as Partial<CleaningState>;
@@ -96,27 +97,25 @@ export function readCleaningState(): CleaningState {
 }
 
 export function writeCleaningState(state: CleaningState): void {
-  storage()?.setItem(stateKey, JSON.stringify(state));
+  setSyncedItem(stateKey, JSON.stringify(state));
 }
 
 export function readCleaningProfileOverride(): string | null {
-  return storage()?.getItem(overrideKey) ?? null;
+  return getSyncedItem(overrideKey);
 }
 
 export function writeCleaningProfileOverride(id: string | null): void {
-  const store = storage();
-  if (!store) return;
-  if (id) store.setItem(overrideKey, id);
-  else store.removeItem(overrideKey);
+  if (id) setSyncedItem(overrideKey, id);
+  else removeSyncedItem(overrideKey);
 }
 
 export function readCleaningThreshold(): number {
-  const raw = storage()?.getItem(thresholdKey);
+  const raw = getSyncedItem(thresholdKey);
   if (raw == null) return DEFAULT_CLEANING_THRESHOLD;
   const value = Number(raw);
   return Number.isFinite(value) && value >= 0 ? Math.floor(value) : DEFAULT_CLEANING_THRESHOLD;
 }
 
 export function writeCleaningThreshold(shots: number): void {
-  storage()?.setItem(thresholdKey, String(Math.max(0, Math.floor(shots))));
+  setSyncedItem(thresholdKey, String(Math.max(0, Math.floor(shots))));
 }

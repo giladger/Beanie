@@ -371,32 +371,81 @@ export const gateway = {
     }
   },
 
-  // Generic gateway KV store (/api/v1/store/{namespace}/{key}) — used to share the
-  // scanner's API key across devices. Fail-soft: callers fall back to localStorage.
+  // Generic gateway KV store (/api/v1/store/{namespace}/{key}) — the source of
+  // truth for cross-device settings. Errors propagate (no fail-soft): a 404
+  // means the key is absent (returns undefined), but a network/timeout/server
+  // error throws so callers can surface it instead of silently losing data.
   storeGet: async (namespace: string, key: string): Promise<unknown> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2500);
+    let res: Response;
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 2500);
-      const res = await fetch(
+      res = await fetch(
         `${gatewayHttpOrigin()}/api/v1/store/${encodeURIComponent(namespace)}/${encodeURIComponent(key)}`,
         { signal: controller.signal }
       );
+    } finally {
       clearTimeout(timer);
-      if (!res.ok) return null;
-      return await res.json().catch(() => null);
-    } catch {
-      return null;
     }
+    if (res.status === 404) return undefined;
+    if (!res.ok) throw new Error(`Gateway store GET ${namespace}/${key} failed: ${res.status}`);
+    return (await res.json()) as unknown;
+  },
+  // Bulk read of a whole namespace in one request (?full=1) instead of one GET
+  // per key. Returns the {key: value} map, or null when the gateway is too old
+  // to support the flag — older builds ignore it and return the key list (an
+  // array), so callers fall back to per-key gets.
+  storeGetAll: async (namespace: string): Promise<Record<string, unknown> | null> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2500);
+    let res: Response;
+    try {
+      res = await fetch(
+        `${gatewayHttpOrigin()}/api/v1/store/${encodeURIComponent(namespace)}?full=1`,
+        { signal: controller.signal }
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) throw new Error(`Gateway store GET-all ${namespace} failed: ${res.status}`);
+    const data = (await res.json()) as unknown;
+    if (data === null || typeof data !== 'object' || Array.isArray(data)) return null;
+    return data as Record<string, unknown>;
   },
   storeSet: async (namespace: string, key: string, value: unknown): Promise<void> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2500);
+    let res: Response;
     try {
-      await fetch(
+      res = await fetch(
         `${gatewayHttpOrigin()}/api/v1/store/${encodeURIComponent(namespace)}/${encodeURIComponent(key)}`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) }
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(value),
+          signal: controller.signal
+        }
       );
-    } catch {
-      // fail-soft
+    } finally {
+      clearTimeout(timer);
     }
+    if (!res.ok) throw new Error(`Gateway store SET ${namespace}/${key} failed: ${res.status}`);
+  },
+  // True removal — POSTing `null` would store the string "null" rather than
+  // clear the key, so a cleared setting must DELETE to read back as absent.
+  storeDelete: async (namespace: string, key: string): Promise<void> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2500);
+    let res: Response;
+    try {
+      res = await fetch(
+        `${gatewayHttpOrigin()}/api/v1/store/${encodeURIComponent(namespace)}/${encodeURIComponent(key)}`,
+        { method: 'DELETE', signal: controller.signal }
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) throw new Error(`Gateway store DELETE ${namespace}/${key} failed: ${res.status}`);
   },
 
   // --- devices (pairing) ---

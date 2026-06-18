@@ -6,36 +6,10 @@ import {
   writeFlowCalibrationGlobal,
   writeFlowCalibrationOverrides
 } from '../domain/flowCalibration';
-
-class FakeStorage {
-  private readonly values = new Map<string, string>();
-
-  getItem(key: string): string | null {
-    return this.values.get(key) ?? null;
-  }
-
-  setItem(key: string, value: string): void {
-    this.values.set(key, String(value));
-  }
-
-  removeItem(key: string): void {
-    this.values.delete(key);
-  }
-
-  clear(): void {
-    this.values.clear();
-  }
-}
-
-const storage = new FakeStorage();
-Object.defineProperty(globalThis, 'localStorage', {
-  configurable: true,
-  writable: true,
-  value: storage
-});
+import { clearSyncedCache, setSyncedItem } from '../domain/settingsStore';
 
 run('global default is null until set, then round-trips', () => {
-  storage.clear();
+  clearSyncedCache();
   equal(readFlowCalibrationGlobal(), null);
 
   writeFlowCalibrationGlobal(1.12);
@@ -43,30 +17,30 @@ run('global default is null until set, then round-trips', () => {
 });
 
 run('global default rejects non-positive / non-numeric stored values', () => {
-  storage.clear();
-  localStorage.setItem('beanie:flow-cal:global', 'n/a');
+  clearSyncedCache();
+  setSyncedItem('beanie.flow-cal.global', 'n/a');
   equal(readFlowCalibrationGlobal(), null);
-  localStorage.setItem('beanie:flow-cal:global', '0');
+  setSyncedItem('beanie.flow-cal.global', '0');
   equal(readFlowCalibrationGlobal(), null);
   // writeFlowCalibrationGlobal ignores invalid values rather than persisting them.
-  storage.clear();
+  clearSyncedCache();
   writeFlowCalibrationGlobal(Number.NaN);
   equal(readFlowCalibrationGlobal(), null);
 });
 
 run('overrides default to empty and drop malformed entries', () => {
-  storage.clear();
+  clearSyncedCache();
   equal(JSON.stringify(readFlowCalibrationOverrides()), '{}');
 
-  localStorage.setItem(
-    'beanie:flow-cal:profile-overrides',
+  setSyncedItem(
+    'beanie.flow-cal.profile-overrides',
     JSON.stringify({ 'Light Filter': 1.05, Broken: 'x', Zero: 0, '': 1.2 })
   );
   equal(JSON.stringify(readFlowCalibrationOverrides()), '{"Light Filter":1.05}');
 });
 
 run('overrides round-trip through local storage', () => {
-  storage.clear();
+  clearSyncedCache();
   writeFlowCalibrationOverrides({ Espresso: 0.95 });
   equal(JSON.stringify(readFlowCalibrationOverrides()), '{"Espresso":0.95}');
 });

@@ -1,14 +1,18 @@
-const machinePresetLabelsStorageKey = 'beanie:machine-preset-labels';
-const machinePresetValuesStorageKey = 'beanie:machine-preset-values';
-const hotWaterStopModeStorageKey = 'beanie:hot-water-stop-mode';
-const hotWaterWeightTargetStorageKey = 'beanie:hot-water-weight-target';
+import {
+  getSyncedItem,
+  hotWaterStopModeKey as hotWaterStopModeStorageKey,
+  hotWaterWeightTargetKey as hotWaterWeightTargetStorageKey,
+  machinePresetLabelsKey as machinePresetLabelsStorageKey,
+  machinePresetValuesKey as machinePresetValuesStorageKey,
+  setSyncedItem
+} from './settingsStore';
 
 export type HotWaterStopMode = 'volume' | 'time';
 export type MachinePresetValueOverrides = Record<string, Record<string, number>>;
 
 export function readMachinePresetLabels(): Record<string, string> {
   try {
-    const raw = localStorage.getItem(machinePresetLabelsStorageKey);
+    const raw = getSyncedItem(machinePresetLabelsStorageKey);
     const parsed = raw ? JSON.parse(raw) : {};
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     return Object.fromEntries(
@@ -20,12 +24,12 @@ export function readMachinePresetLabels(): Record<string, string> {
 }
 
 export function writeMachinePresetLabels(labels: Record<string, string>): void {
-  localStorage.setItem(machinePresetLabelsStorageKey, JSON.stringify(labels));
+  setSyncedItem(machinePresetLabelsStorageKey, JSON.stringify(labels));
 }
 
 export function readMachinePresetValues(): MachinePresetValueOverrides {
   try {
-    const raw = localStorage.getItem(machinePresetValuesStorageKey);
+    const raw = getSyncedItem(machinePresetValuesStorageKey);
     const parsed = raw ? JSON.parse(raw) : {};
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     return Object.fromEntries(
@@ -45,12 +49,12 @@ export function readMachinePresetValues(): MachinePresetValueOverrides {
 }
 
 export function writeMachinePresetValues(values: MachinePresetValueOverrides): void {
-  localStorage.setItem(machinePresetValuesStorageKey, JSON.stringify(values));
+  setSyncedItem(machinePresetValuesStorageKey, JSON.stringify(values));
 }
 
 export function readHotWaterStopMode(): HotWaterStopMode {
   try {
-    const value = localStorage.getItem(hotWaterStopModeStorageKey);
+    const value = getSyncedItem(hotWaterStopModeStorageKey);
     return value === 'time' ? 'time' : 'volume';
   } catch {
     return 'volume';
@@ -58,12 +62,12 @@ export function readHotWaterStopMode(): HotWaterStopMode {
 }
 
 export function writeHotWaterStopMode(mode: HotWaterStopMode): void {
-  localStorage.setItem(hotWaterStopModeStorageKey, mode);
+  setSyncedItem(hotWaterStopModeStorageKey, mode);
 }
 
 export function readHotWaterWeightTarget(): number | null {
   try {
-    const value = Number(localStorage.getItem(hotWaterWeightTargetStorageKey));
+    const value = Number(getSyncedItem(hotWaterWeightTargetStorageKey));
     return Number.isFinite(value) && value > 0 ? value : null;
   } catch {
     return null;
@@ -71,10 +75,6 @@ export function readHotWaterWeightTarget(): number | null {
 }
 
 export function writeHotWaterWeightTarget(value: number | null | undefined): void {
-  try {
-    if (value == null || !Number.isFinite(value) || value <= 0) return;
-    localStorage.setItem(hotWaterWeightTargetStorageKey, String(value));
-  } catch {
-    // Local target persistence is best-effort; the live in-memory state remains authoritative.
-  }
+  if (value == null || !Number.isFinite(value) || value <= 0) return;
+  setSyncedItem(hotWaterWeightTargetStorageKey, String(value));
 }

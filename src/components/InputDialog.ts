@@ -1,4 +1,9 @@
 import type { Grinder } from '../api/types';
+import {
+  getSyncedItem,
+  inputDialogRecentKeyPrefix as recentKeyPrefix,
+  setSyncedItem
+} from '../domain/settingsStore';
 import { escapeAttr, escapeHtml } from './html';
 import { icon } from './icons';
 
@@ -67,7 +72,6 @@ interface InputDialogPreset {
   allowDecimal: boolean;
 }
 
-const recentKeyPrefix = 'beanie:input-dialog-recents:';
 
 const presets: Record<InputDialogKind, InputDialogPreset> = {
   dose: {
@@ -170,7 +174,7 @@ export function inputDialogKindForField(field: InputDialogField): InputDialogKin
 
 export function readInputDialogRecents(kind: InputDialogKind): string[] {
   try {
-    const raw = localStorage.getItem(recentKey(kind));
+    const raw = getSyncedItem(recentKey(kind));
     return raw ? uniqueValues(JSON.parse(raw) as string[]) : [];
   } catch {
     return [];
@@ -181,7 +185,7 @@ export function rememberInputDialogValue(kind: InputDialogKind, value: string): 
   const next = value.trim();
   if (!next) return;
   const values = uniqueValues([next, ...readInputDialogRecents(kind)]).slice(0, 8);
-  localStorage.setItem(recentKey(kind), JSON.stringify(values));
+  setSyncedItem(recentKey(kind), JSON.stringify(values));
 }
 
 export function parseInputDialogNumber(value: string): number | null {

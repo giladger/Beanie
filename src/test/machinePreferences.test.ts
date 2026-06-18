@@ -8,35 +8,13 @@ import {
   writeMachinePresetLabels,
   writeMachinePresetValues
 } from '../domain/machinePreferences';
-
-class FakeStorage {
-  private readonly values = new Map<string, string>();
-
-  getItem(key: string): string | null {
-    return this.values.get(key) ?? null;
-  }
-
-  setItem(key: string, value: string): void {
-    this.values.set(key, String(value));
-  }
-
-  clear(): void {
-    this.values.clear();
-  }
-}
-
-const storage = new FakeStorage();
-Object.defineProperty(globalThis, 'localStorage', {
-  configurable: true,
-  writable: true,
-  value: storage
-});
+import { clearSyncedCache, setSyncedItem } from '../domain/settingsStore';
 
 run('machine preset labels default to empty and ignore malformed entries', () => {
-  storage.clear();
+  clearSyncedCache();
   equal(JSON.stringify(readMachinePresetLabels()), '{}');
 
-  localStorage.setItem('beanie:machine-preset-labels', JSON.stringify({
+  setSyncedItem('beanie.machine-preset-labels', JSON.stringify({
     'flush:short': 'Morning rinse',
     'flush:bad': 4
   }));
@@ -45,7 +23,7 @@ run('machine preset labels default to empty and ignore malformed entries', () =>
 });
 
 run('machine preset labels round-trip through local storage', () => {
-  storage.clear();
+  clearSyncedCache();
 
   writeMachinePresetLabels({ 'steam:milk': 'Milk' });
 
@@ -53,8 +31,8 @@ run('machine preset labels round-trip through local storage', () => {
 });
 
 run('machine preset values keep finite numeric overrides only', () => {
-  storage.clear();
-  localStorage.setItem('beanie:machine-preset-values', JSON.stringify({
+  clearSyncedCache();
+  setSyncedItem('beanie.machine-preset-values', JSON.stringify({
     'hot-water:tea': { volume: 240, seconds: '20', flow: Number.NaN },
     'flush:empty': { flow: 'fast' },
     'flush:short': { flow: 5.5 }
@@ -64,7 +42,7 @@ run('machine preset values keep finite numeric overrides only', () => {
 });
 
 run('machine preset values round-trip through local storage', () => {
-  storage.clear();
+  clearSyncedCache();
 
   writeMachinePresetValues({ 'flush:short': { flow: 5.5, seconds: 8 } });
 
@@ -72,18 +50,18 @@ run('machine preset values round-trip through local storage', () => {
 });
 
 run('hot water stop mode defaults to volume and accepts time', () => {
-  storage.clear();
+  clearSyncedCache();
   equal(readHotWaterStopMode(), 'volume');
 
   writeHotWaterStopMode('time');
 
   equal(readHotWaterStopMode(), 'time');
-  localStorage.setItem('beanie:hot-water-stop-mode', 'surprise');
+  setSyncedItem('beanie.hot-water-stop-mode', 'surprise');
   equal(readHotWaterStopMode(), 'volume');
 });
 
 run('hot water weight target persists positive finite values only', () => {
-  storage.clear();
+  clearSyncedCache();
   equal(readHotWaterWeightTarget(), null);
 
   writeHotWaterWeightTarget(175);

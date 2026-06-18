@@ -1,5 +1,13 @@
 import type { MachineSnapshot, ScaleSnapshot } from '../api/types';
 import { FLOW_CALIBRATION_STORAGE_KEYS } from './flowCalibration';
+import {
+  getSyncedItem,
+  removeSyncedItem,
+  setSyncedItem,
+  syncedCacheKeys,
+  uiScaleKey,
+  waterSoftKey
+} from './settingsStore';
 import { DEFAULT_WATER_SOFT_ML } from './waterAlert';
 
 export type ThemePreference =
@@ -81,30 +89,31 @@ export interface BuildSettingsShellModelOptions {
   machineRefillLevelMm: number | null;
 }
 
+// Theme stays per-browser: it lives in localStorage (not the gateway store) and
+// keeps its historic key so an upgrading device keeps its current theme.
 const themeKey = 'beanie:settings:theme';
-const uiScaleKey = 'beanie:settings:ui-scale';
-const waterSoftKey = 'beanie:settings:water-soft-ml';
+
 const preservedResetKeys = new Set([
-  themeKey,
   uiScaleKey,
   waterSoftKey,
-  // Per-profile/global flow calibration is hardware-tuning config — a cache
-  // reset (which clears cached gateway data) must not silently wipe it.
+  // Per-profile/global flow calibration is hardware-tuning config — a reset
+  // must not wipe it.
   ...FLOW_CALIBRATION_STORAGE_KEYS
 ]);
 
 export function readSettingsPreferences(): SettingsPreferences {
   return {
-    theme: readEnum(themeKey, THEME_PREFERENCES, 'espresso'),
+    theme: readLocalTheme(),
     uiScale: readEnum(uiScaleKey, ['compact', 'standard', 'large'], 'standard'),
     waterSoftLimitMl: readNonNegativeNumber(waterSoftKey, DEFAULT_WATER_SOFT_ML)
   };
 }
 
 export function writeSettingsPreferences(next: SettingsPreferences): void {
-  localStorage.setItem(themeKey, next.theme);
-  localStorage.setItem(uiScaleKey, next.uiScale);
-  localStorage.setItem(waterSoftKey, String(next.waterSoftLimitMl));
+  // Theme is per-browser (localStorage); scale and water sync via the store.
+  writeLocalTheme(next.theme);
+  setSyncedItem(uiScaleKey, next.uiScale);
+  setSyncedItem(waterSoftKey, String(next.waterSoftLimitMl));
 }
 
 export function applySettingsPreferences(preferences: SettingsPreferences): void {
@@ -131,14 +140,14 @@ export function buildSettingsShellModel(
 }
 
 export function listResettableBeanieKeys(): string[] {
-  return Object.keys(localStorage)
-    .filter((key) => key.startsWith('beanie:') && !preservedResetKeys.has(key))
+  return syncedCacheKeys()
+    .filter((key) => !preservedResetKeys.has(key))
     .sort();
 }
 
 export function resetBeanieCache(): number {
   const keys = listResettableBeanieKeys();
-  keys.forEach((key) => localStorage.removeItem(key));
+  keys.forEach((key) => removeSyncedItem(key));
   return keys.length;
 }
 
@@ -199,13 +208,31 @@ function formatBuildTime(value: string): string {
       });
 }
 
+function readLocalTheme(): ThemePreference {
+  try {
+    if (typeof localStorage === 'undefined') return 'espresso';
+    const stored = localStorage.getItem(themeKey);
+    return THEME_PREFERENCES.includes(stored as ThemePreference) ? (stored as ThemePreference) : 'espresso';
+  } catch {
+    return 'espresso';
+  }
+}
+
+function writeLocalTheme(theme: ThemePreference): void {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(themeKey, theme);
+  } catch {
+    // Best-effort; the live in-memory preference stays authoritative this session.
+  }
+}
+
 function readEnum<T extends string>(key: string, values: readonly T[], fallback: T): T {
-  const stored = localStorage.getItem(key);
+  const stored = getSyncedItem(key);
   return values.includes(stored as T) ? (stored as T) : fallback;
 }
 
 function readNonNegativeNumber(key: string, fallback: number): number {
-  const stored = localStorage.getItem(key);
+  const stored = getSyncedItem(key);
   if (stored == null) return fallback;
   const value = Number(stored);
   return Number.isFinite(value) && value >= 0 ? value : fallback;

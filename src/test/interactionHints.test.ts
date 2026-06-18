@@ -3,39 +3,17 @@ import {
   secondTapHintUsesBeforeHiding,
   shouldShowSecondTapHint
 } from '../domain/interactionHints';
-
-class FakeStorage {
-  private readonly values = new Map<string, string>();
-
-  getItem(key: string): string | null {
-    return this.values.get(key) ?? null;
-  }
-
-  setItem(key: string, value: string): void {
-    this.values.set(key, String(value));
-  }
-
-  clear(): void {
-    this.values.clear();
-  }
-}
-
-const storage = new FakeStorage();
-Object.defineProperty(globalThis, 'localStorage', {
-  configurable: true,
-  writable: true,
-  value: storage
-});
+import { clearSyncedCache, setSyncedItem } from '../domain/settingsStore';
 
 run('second tap hints show by default', () => {
-  storage.clear();
+  clearSyncedCache();
 
   equal(shouldShowSecondTapHint('bean'), true);
   equal(shouldShowSecondTapHint('shot'), true);
 });
 
 run('hint stays visible until used the configured number of times', () => {
-  storage.clear();
+  clearSyncedCache();
 
   for (let i = 0; i < secondTapHintUsesBeforeHiding - 1; i += 1) {
     markSecondTapHintUsed('bean');
@@ -47,7 +25,7 @@ run('hint stays visible until used the configured number of times', () => {
 });
 
 run('counting one hint up does not affect the other', () => {
-  storage.clear();
+  clearSyncedCache();
 
   for (let i = 0; i < secondTapHintUsesBeforeHiding; i += 1) {
     markSecondTapHintUsed('bean');
@@ -58,8 +36,8 @@ run('counting one hint up does not affect the other', () => {
 });
 
 run('malformed hint preferences recover to defaults', () => {
-  storage.clear();
-  localStorage.setItem('beanie:second-tap-hint-v3', '{');
+  clearSyncedCache();
+  setSyncedItem('beanie.second-tap-hint-v3', '{');
 
   equal(shouldShowSecondTapHint('bean'), true);
   equal(shouldShowSecondTapHint('shot'), true);

@@ -94,6 +94,8 @@ function installBrowserFakes(): void {
   };
   const windowFake = {
     BEANIE_GATEWAY: 'http://beanie-test-gateway',
+    addEventListener: () => {},
+    removeEventListener: () => {},
     setTimeout,
     clearTimeout,
     setInterval,
@@ -119,7 +121,12 @@ function installBrowserFakes(): void {
     __APP_VERSION__: 'test',
     __GIT_COMMIT__: 'test',
     __BUILD_TIME__: '2026-06-07T00:00:00.000Z',
-    fetch: () => new Promise(() => {})
+    // Resolve settings-store GETs (so the boot settings load completes and the
+    // spinner clears); every other gateway call hangs to keep a controlled state.
+    fetch: (input: unknown) =>
+      String(input).includes('/api/v1/store/')
+        ? Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(null) })
+        : new Promise(() => {})
   });
 }
 
@@ -127,12 +134,16 @@ installBrowserFakes();
 
 const { BeanieApp } = await import('../app');
 
-await run('BeanieApp starts by rendering the workbench shell and delegated listeners', () => {
+await run('BeanieApp starts by rendering the workbench shell and delegated listeners', async () => {
   const root = new FakeElement();
   const app = new BeanieApp(root as unknown as HTMLElement);
 
   app.start();
 
+  // Settings now load from the store first, so the very first paint is a spinner.
+  includes(root.innerHTML, 'settings-boot');
+  // Once the settings load resolves, the workbench shell renders.
+  await flushAsync();
   includes(root.innerHTML, 'app-shell');
   includes(root.innerHTML, 'topbar');
   equal(root.listenerCount('click'), 1);
