@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.5 - 2026-06-18
+
+- Added global and per-profile flow calibration overrides: flow calibration is now an overridable default plus per-profile overrides keyed by profile title, modelled on the de1app Graphical Flow Calibrator.
+- Anchored the live chart's time axis to the ghost shot's length when a ghost overlay is enabled
+- Fixed the Settings brightness readout sometimes sticking at 0% after the screen woke.
+
 ## v0.2.4 - 2026-06-15
 
 - Added a delete-shot dialog: removing a shot now offers to reclaim its dose back to the bag it was pulled from (adding the weight back, capped at the bag's size), delete without reclaiming, or cancel — replacing the bare confirmation prompt.
