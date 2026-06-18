@@ -132,7 +132,7 @@ import {
   type InputDialogState,
   typeInputDialogKey
 } from './components/InputDialog';
-import { renderSettingsShell, type DecentAccountPanelState } from './components/SettingsShell';
+import { renderSettingsShell, type DecentAccountPanelState, type FlowCalibrationDisplay } from './components/SettingsShell';
 import {
   SETTINGS_SPEC,
   coerceFieldValue,
@@ -224,8 +224,17 @@ import {
   clampCalibration,
   recordedFlowMultiplier,
   renderFlowCalibrator,
-  roundCalibration
+  roundCalibration,
+  shotProfileTitle
 } from './components/flowCalibrator';
+import {
+  readFlowCalibrationGlobal,
+  readFlowCalibrationOverrides,
+  resolveFlowCalibration,
+  setProfileOverride,
+  writeFlowCalibrationGlobal,
+  writeFlowCalibrationOverrides
+} from './domain/flowCalibration';
 import {
   LiveShotSession,
   liveShotDurationMs,
@@ -1445,6 +1454,7 @@ export class BeanieApp {
         appliedSignature: signature,
         status: 'Workflow applied in demo'
       });
+      void this.applyProfileFlowCalibration(draft.profileTitle ?? draft.profile?.title ?? null);
       return;
     }
 
@@ -1470,6 +1480,7 @@ export class BeanieApp {
         appliedSignature: signature,
         status: 'Workflow applied'
       });
+      void this.applyProfileFlowCalibration(draft.profileTitle ?? draft.profile?.title ?? null);
     } catch (error) {
       if (requestId !== this.applyRequestId) return;
       const currentSignature = draftSignature(
@@ -4083,8 +4094,11 @@ export class BeanieApp {
       'flow-cal-adjust': ({ el }) => {
         this.adjustFlowCalibrationDraft(Number(el.dataset.delta ?? '0'));
       },
-      'flow-cal-save-preview': async ({ value }) => {
-        await this.saveFlowCalibrationValue(Number(value));
+      'flow-cal-save-global': async ({ value }) => {
+        await this.saveFlowCalibrationGlobal(Number(value));
+      },
+      'flow-cal-save-profile': async ({ value }) => {
+        await this.saveFlowCalibrationProfile(Number(value));
       },
       'flow-cal-shot': ({ id }) => {
         if (id) this.selectFlowCalibrationShot(id);
@@ -6113,7 +6127,7 @@ export class BeanieApp {
           this.state.pluginConfig,
           this.decentAccountPanelState(),
           ['app', 'account', 'plugins', 'connection'],
-          { phone: true }
+          { phone: true, flowCalibration: this.flowCalibrationDisplay() }
         )
       : '';
     return renderPhoneShell({
@@ -6570,19 +6584,33 @@ export class BeanieApp {
         this.state.settingsSection,
         this.state.settingsBundle,
         this.state.pluginConfig,
-        this.decentAccountPanelState()
+        this.decentAccountPanelState(),
+        undefined,
+        { flowCalibration: this.flowCalibrationDisplay() }
       )}
     `;
   }
 
   private renderFlowCalibratorPage(): string {
-    const savedMultiplier = this.currentFlowCalibrationMultiplier();
-    const draftMultiplier = this.flowCalibrationDraft();
     const shots = this.flowCalibrationShots();
     const selected = this.flowCalibrationSelectedShot();
+    const profileTitle = selected ? shotProfileTitle(selected) : null;
+    const overrides = readFlowCalibrationOverrides();
+    const override = profileTitle != null && overrides[profileTitle] != null ? roundCalibration(overrides[profileTitle]) : null;
     return `
       ${this.pageHeader('Flow Calibrator', 'workbench')}
-      ${renderFlowCalibrator(shots, savedMultiplier, draftMultiplier, selected?.id ?? null, this.state.busy)}
+      ${renderFlowCalibrator(
+        shots,
+        {
+          draft: this.flowCalibrationDraft(),
+          global: this.globalFlowCalibrationDefault(),
+          active: this.currentFlowCalibrationMultiplier(),
+          profileTitle,
+          profileOverride: override,
+          selectedShotId: selected?.id ?? null
+        },
+        this.state.busy
+      )}
     `;
   }
 
@@ -6901,6 +6929,15 @@ export class BeanieApp {
       settingsSource: result.source,
       status: result.status ?? this.state.status
     });
+    // Ground the per-profile global default from the machine's real calibration
+    // the first time we see it, so profiles without an override keep the user's
+    // existing calibration instead of being reset to 1.0.
+    if (result.source === 'gateway' && readFlowCalibrationGlobal() == null) {
+      const seed = result.bundle.calibration.flowMultiplier;
+      if (typeof seed === 'number' && Number.isFinite(seed) && seed > 0) {
+        writeFlowCalibrationGlobal(roundCalibration(seed));
+      }
+    }
   }
 
   private patchBundle(patch: Partial<SettingsBundle>): void {
@@ -6952,6 +6989,13 @@ export class BeanieApp {
     return roundCalibration(typeof value === 'number' && Number.isFinite(value) ? value : 1);
   }
 
+  // The global default profiles without an override follow. Persisted locally;
+  // before it has ever been grounded (seeded from the machine in loadReaSettings)
+  // it falls back to the machine's current value.
+  private globalFlowCalibrationDefault(): number {
+    return roundCalibration(readFlowCalibrationGlobal() ?? this.currentFlowCalibrationMultiplier());
+  }
+
   private flowCalibrationDraft(): number {
     return this.state.flowCalDraft ?? this.currentFlowCalibrationMultiplier();
   }
@@ -6993,25 +7037,103 @@ export class BeanieApp {
     this.setState({ flowCalShotId: id, status: 'Shot selected' });
   }
 
-  private async saveFlowCalibrationValue(raw: number): Promise<void> {
+  // Save the tuned value as the overridable DEFAULT. Profiles with their own
+  // override are untouched (they still win when used) — only profiles that
+  // follow the default move. The machine re-syncs to the active profile, so a
+  // profile with its own value is never changed by editing the default.
+  private async saveFlowCalibrationGlobal(raw: number): Promise<void> {
     if (!Number.isFinite(raw)) return;
-    const flowMultiplier = roundCalibration(clampCalibration(raw));
+    const value = roundCalibration(clampCalibration(raw));
+    writeFlowCalibrationGlobal(value);
+    await this.commitCalibrationConfig(value, 'Default flow calibration saved');
+  }
+
+  // Save the tuned value as an OVERRIDE for the selected shot's profile. A value
+  // equal to the default clears the override (the profile reverts to following
+  // the default). The machine re-syncs to the active profile afterwards.
+  private async saveFlowCalibrationProfile(raw: number): Promise<void> {
+    if (!Number.isFinite(raw)) return;
+    const selected = this.flowCalibrationSelectedShot();
+    const profileTitle = selected ? shotProfileTitle(selected) : null;
+    if (!profileTitle) return;
+    const value = roundCalibration(clampCalibration(raw));
+    const overrides = setProfileOverride(
+      readFlowCalibrationOverrides(),
+      profileTitle,
+      value,
+      this.globalFlowCalibrationDefault()
+    );
+    writeFlowCalibrationOverrides(overrides);
+    const cleared = overrides[profileTitle] == null;
+    await this.commitCalibrationConfig(
+      value,
+      cleared ? `${profileTitle} now follows the default` : `Flow calibration saved for ${profileTitle}`
+    );
+  }
+
+  private activeProfileTitle(): string | null {
+    return this.state.draft?.profileTitle ?? this.state.draft?.profile?.title ?? null;
+  }
+
+  // Resolved flow calibration for the active profile, for the read-only Settings
+  // → Brew readout. Computed fresh from the override store so it stays current
+  // when the profile changes.
+  private flowCalibrationDisplay(): FlowCalibrationDisplay {
+    const profileTitle = this.activeProfileTitle();
+    const { value, source } = resolveFlowCalibration({
+      profileTitle,
+      overrides: readFlowCalibrationOverrides(),
+      globalDefault: this.globalFlowCalibrationDefault()
+    });
+    return { value: roundCalibration(value), origin: source === 'profile' ? 'profile' : 'default', profileTitle };
+  }
+
+  // After changing stored calibration config (the default or an override), sync
+  // the machine to the ACTIVE profile's resolved value. This is what keeps a
+  // profile with its own override from being disturbed by a default change, and
+  // keeps the machine on the loaded profile when saving an override for another.
+  private async commitCalibrationConfig(savedValue: number, status: string): Promise<void> {
+    this.setState({
+      flowCalBase: this.state.flowCalBase ?? this.currentFlowCalibrationMultiplier(),
+      // Keep the view on the value just saved — don't snap the stepper/chart back
+      // to the machine's current (pulled-at) value.
+      flowCalDraft: savedValue
+    });
+    await this.applyProfileFlowCalibration(this.activeProfileTitle());
+    this.setState({ status });
+  }
+
+  // The multiplier a profile should run at: its override else the global default.
+  // Returns null when the global default has never been grounded AND the profile
+  // has no override — so we never reset a machine calibration the user hasn't
+  // opted into managing.
+  private resolveProfileFlowCalibration(profileTitle: string | null): number | null {
+    const overrides = readFlowCalibrationOverrides();
+    const globalDefault = readFlowCalibrationGlobal();
+    if (globalDefault == null) {
+      const title = profileTitle?.trim();
+      const override = title ? overrides[title] : undefined;
+      return override != null ? roundCalibration(override) : null;
+    }
+    return roundCalibration(resolveFlowCalibration({ profileTitle, overrides, globalDefault }).value);
+  }
+
+  // Push the active profile's resolved calibration to the machine when it differs
+  // from what's live — the "changes when that profile is used" behaviour. Called
+  // from applyDraft once the workflow (and thus the profile) has been applied.
+  private async applyProfileFlowCalibration(profileTitle: string | null): Promise<void> {
+    const resolved = this.resolveProfileFlowCalibration(profileTitle);
+    if (resolved == null || resolved === this.currentFlowCalibrationMultiplier()) return;
     const bundle = this.state.settingsBundle ?? demoSettingsBundle();
     this.setState({
-      settingsBundle: { ...bundle, calibration: { ...bundle.calibration, flowMultiplier } },
-      // Freeze the base at the value the shots were pulled under (pre-change) so
-      // their suggestions stay put after this apply.
-      flowCalBase: this.state.flowCalBase ?? roundCalibration(bundle.calibration.flowMultiplier),
-      flowCalDraft: null,
-      status: 'Flow calibration updated'
+      settingsBundle: { ...bundle, calibration: { ...bundle.calibration, flowMultiplier: resolved } },
+      status: `Flow calibration ${resolved.toFixed(2)}×`
     });
     if (this.settingsLocal) return;
     try {
-      await gateway.updateCalibration(flowMultiplier);
-      this.setState({ status: 'Flow calibration saved' });
+      await gateway.updateCalibration(resolved);
     } catch (error) {
-      console.error('[Beanie] Flow calibration save failed', error);
-      this.setState({ status: 'Flow calibration save failed' });
+      console.error('[Beanie] Per-profile flow calibration apply failed', error);
     }
   }
 

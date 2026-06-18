@@ -23,22 +23,31 @@ export function calibrationPreviewFactor(baseMultiplier: number, draftMultiplier
   return draft / base;
 }
 
+export interface FlowCalibratorModel {
+  /** The previewed multiplier currently driving the chart. */
+  draft: number;
+  /** The global default — the value profiles without an override follow. */
+  global: number;
+  /** The machine's live multiplier right now. */
+  active: number;
+  /** The selected shot's profile title, or null when the shot has none. */
+  profileTitle: string | null;
+  /** This profile's stored override, or null when it follows the global. */
+  profileOverride: number | null;
+  selectedShotId: string | null;
+}
+
 export function renderFlowCalibrator(
   shots: ShotRecord[],
-  savedMultiplier: number,
-  draftMultiplier: number,
-  selectedShotId: string | null,
+  model: FlowCalibratorModel,
   busy: boolean
 ): string {
-  const saved = roundCalibration(savedMultiplier);
-  const draft = roundCalibration(draftMultiplier);
-  const dirty = draft !== saved;
-  const selected = shots.find((shot) => shot.id === selectedShotId) ?? shots[0] ?? null;
+  const selected = shots.find((shot) => shot.id === model.selectedShotId) ?? shots[0] ?? null;
 
   return `
     <main class="page-body flow-cal-page">
       <header class="flow-cal-head">
-        <p class="flow-cal-explain">Pick a shot pulled on a scale, then use −/+ to scale the <b class="flow-cal-ink-machine">machine flow</b> line until it sits on the <b class="flow-cal-ink-scale">scale flow</b> line. Fully manual — there's no auto-suggestion, since some water stays in the puck.</p>
+        <p class="flow-cal-explain">Pick a shot pulled on a scale, then use −/+ to scale the <b class="flow-cal-ink-machine">machine flow</b> line until it sits on the <b class="flow-cal-ink-scale">scale flow</b> line. Save it as the <b>default</b>, or just for <b>this shot's profile</b> — a per-profile value overrides the default whenever that profile is used. Changing the default leaves profiles with their own value untouched.</p>
       </header>
       <div class="flow-cal-split">
         <div class="flow-cal-list">
@@ -49,7 +58,7 @@ export function renderFlowCalibrator(
           }
         </div>
         <div class="flow-cal-detail">
-          ${selected ? renderShotDetail(selected, saved, draft, dirty, busy) : '<p class="flow-cal-empty">Select a shot to calibrate against.</p>'}
+          ${selected ? renderShotDetail(selected, model, busy) : '<p class="flow-cal-empty">Select a shot to calibrate against.</p>'}
         </div>
       </div>
     </main>
@@ -80,14 +89,18 @@ function renderShotRow(shot: ShotRecord, active: boolean): string {
   `;
 }
 
-function renderShotDetail(
-  shot: ShotRecord,
-  savedMultiplier: number,
-  draftMultiplier: number,
-  dirty: boolean,
-  busy: boolean
-): string {
+function renderShotDetail(shot: ShotRecord, model: FlowCalibratorModel, busy: boolean): string {
   const recorded = recordedFlowMultiplier(shot);
+  const draft = roundCalibration(model.draft);
+  const global = roundCalibration(model.global);
+  const active = roundCalibration(model.active);
+  const title = model.profileTitle;
+  const override = model.profileOverride == null ? null : roundCalibration(model.profileOverride);
+  const effectiveProfile = override ?? global;
+  const globalDirty = draft !== global;
+  const profileDirty = title != null && draft !== effectiveProfile;
+  // Saving the global value as this profile's override clears it (reverts to global).
+  const clearsOverride = profileDirty && override != null && draft === global;
   return `
     <div class="flow-cal-detail-head">
       <strong>${escapeHtml(recipeLabel(shot))}</strong>
@@ -99,29 +112,51 @@ function renderShotDetail(
       <canvas id="flow-cal-canvas" class="live-canvas detail-canvas"></canvas>
     </div>
     <div class="flow-cal-controls">
-      <div class="flow-cal-stepper" aria-label="Flow calibration multiplier">
-        <button type="button" data-action="flow-cal-adjust" data-delta="-0.01" aria-label="Decrease flow calibration">${icon('minus')}</button>
-        <button
-          type="button"
-          class="settings-input number-edit-button flow-cal-number"
-          data-action="open-number-edit"
-          data-target="flow-calibration"
-          data-title="Flow calibration"
-          data-value="${escapeAttr(String(draftMultiplier))}"
-          data-min="${FLOW_CALIBRATION_MIN}"
-          data-max="${FLOW_CALIBRATION_MAX}"
-          data-step="${FLOW_CALIBRATION_STEP}"
-          data-unit="x"
-        ><span>${escapeHtml(formatMultiplierPlain(draftMultiplier))}</span></button>
-        <button type="button" data-action="flow-cal-adjust" data-delta="0.01" aria-label="Increase flow calibration">${icon('plus')}</button>
+      <div class="flow-cal-scopes">
+        <span class="flow-cal-scope"><small>default</small><strong>${escapeHtml(formatMultiplier(global))}</strong></span>
+        ${
+          title == null
+            ? ''
+            : `<span class="flow-cal-scope ${override == null ? '' : 'has-override'}"><small>${escapeHtml(title)}</small><strong>${override == null ? 'follows default' : escapeHtml(formatMultiplier(override))}</strong></span>`
+        }
       </div>
-      ${
-        dirty
-          ? `<button type="button" class="flow-cal-save" data-action="flow-cal-save-preview" data-value="${draftMultiplier}" ${busy ? 'disabled' : ''}>${icon('save')}<span>Save ${escapeHtml(formatMultiplierPlain(draftMultiplier))}</span></button>`
-          : `<small class="flow-cal-control-note">${escapeHtml(formatMultiplier(savedMultiplier))} active on the machine</small>`
-      }
+      <div class="flow-cal-actions">
+        <div class="flow-cal-stepper" aria-label="Flow calibration multiplier">
+          <button type="button" data-action="flow-cal-adjust" data-delta="-0.01" aria-label="Decrease flow calibration">${icon('minus')}</button>
+          <button
+            type="button"
+            class="settings-input number-edit-button flow-cal-number"
+            data-action="open-number-edit"
+            data-target="flow-calibration"
+            data-title="Flow calibration"
+            data-value="${escapeAttr(String(draft))}"
+            data-min="${FLOW_CALIBRATION_MIN}"
+            data-max="${FLOW_CALIBRATION_MAX}"
+            data-step="${FLOW_CALIBRATION_STEP}"
+            data-unit="x"
+          ><span>${escapeHtml(formatMultiplierPlain(draft))}</span></button>
+          <button type="button" data-action="flow-cal-adjust" data-delta="0.01" aria-label="Increase flow calibration">${icon('plus')}</button>
+        </div>
+        <div class="flow-cal-saves">
+          <button type="button" class="flow-cal-save" data-action="flow-cal-save-global" data-value="${draft}" ${globalDirty && !busy ? '' : 'disabled'}>${icon('save')}<span>Save as default</span></button>
+          ${
+            title == null
+              ? ''
+              : `<button type="button" class="flow-cal-save flow-cal-save-profile" data-action="flow-cal-save-profile" data-value="${draft}" ${profileDirty && !busy ? '' : 'disabled'}>${icon('save')}<span>${clearsOverride ? 'Clear override for' : 'Save for'} ${escapeHtml(title)}</span></button>`
+          }
+        </div>
+      </div>
+      <small class="flow-cal-control-note">${escapeHtml(formatMultiplier(active))} active on the machine</small>
     </div>
   `;
+}
+
+// The profile title used to key a per-profile override — strictly the recorded
+// profile title (no "No profile" / workflow-name fallback), so an override is
+// only offered when there is a real title to key on and apply against later.
+export function shotProfileTitle(shot: ShotRecord): string | null {
+  const title = shot.workflow?.profile?.title;
+  return typeof title === 'string' && title.trim() !== '' ? title.trim() : null;
 }
 
 export function clampCalibration(value: number): number {

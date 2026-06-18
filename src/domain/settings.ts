@@ -1,4 +1,5 @@
 import type { MachineSnapshot, ScaleSnapshot } from '../api/types';
+import { FLOW_CALIBRATION_STORAGE_KEYS } from './flowCalibration';
 import { DEFAULT_WATER_SOFT_ML } from './waterAlert';
 
 export type ThemePreference =
@@ -86,7 +87,10 @@ const waterSoftKey = 'beanie:settings:water-soft-ml';
 const preservedResetKeys = new Set([
   themeKey,
   uiScaleKey,
-  waterSoftKey
+  waterSoftKey,
+  // Per-profile/global flow calibration is hardware-tuning config — a cache
+  // reset (which clears cached gateway data) must not silently wipe it.
+  ...FLOW_CALIBRATION_STORAGE_KEYS
 ]);
 
 export function readSettingsPreferences(): SettingsPreferences {

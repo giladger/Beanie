@@ -39,6 +39,19 @@ interface SettingsSection {
   html: string;
 }
 
+// The resolved flow calibration for the active profile, surfaced read-only in
+// Settings → Brew so it always reflects the value the active profile applies.
+export interface FlowCalibrationDisplay {
+  value: number;
+  origin: 'default' | 'profile';
+  profileTitle: string | null;
+}
+
+interface SettingsRenderOptions {
+  phone?: boolean;
+  flowCalibration?: FlowCalibrationDisplay;
+}
+
 export interface DecentAccountPanelState {
   status: DecentAccountStatus | null;
   source: 'loading' | 'gateway' | 'demo' | 'unavailable' | null;
@@ -55,7 +68,7 @@ export function renderSettingsShell(
   pluginConfig: PluginConfigState | null,
   decentAccount: DecentAccountPanelState,
   allowedSectionIds?: string[],
-  options: { phone?: boolean } = {}
+  options: SettingsRenderOptions = {}
 ): string {
   const allSections = settingsSections(model, bundle, pluginConfig, decentAccount, options);
   const sections = allowedSectionIds?.length
@@ -85,7 +98,7 @@ function settingsSections(
   bundle: SettingsBundle | null,
   pluginConfig: PluginConfigState | null,
   decentAccount: DecentAccountPanelState,
-  options: { phone?: boolean }
+  options: SettingsRenderOptions
 ): SettingsSection[] {
   const connectionSection: SettingsSection = {
     id: 'connection',
@@ -166,12 +179,12 @@ function settingsSections(
   return sections;
 }
 
-function renderSpecSectionById(id: string, bundle: SettingsBundle, options: { phone?: boolean } = {}): string {
+function renderSpecSectionById(id: string, bundle: SettingsBundle, options: SettingsRenderOptions = {}): string {
   const section = SETTINGS_SPEC.find((spec) => spec.id === id);
   return section ? renderSpecSection(section, bundle, options) : '';
 }
 
-function renderSpecSection(section: SettingsSpecSection, bundle: SettingsBundle, options: { phone?: boolean } = {}): string {
+function renderSpecSection(section: SettingsSpecSection, bundle: SettingsBundle, options: SettingsRenderOptions = {}): string {
   const rows = section.fields.map((field) => renderSettingsField(field, bundle, options)).join('');
   let extra = '';
   if (section.id === 'danger-zone') {
@@ -216,7 +229,7 @@ function renderPowerRuntimeSection(bundle: SettingsBundle): string {
   return renderSection('Battery state', settingReadout('Battery', battery, `${mode} · ${phase} · ${usb}`, 'muted'));
 }
 
-function renderDisplayRuntimeSection(bundle: SettingsBundle, options: { phone?: boolean } = {}): string {
+function renderDisplayRuntimeSection(bundle: SettingsBundle, options: SettingsRenderOptions = {}): string {
   const display = bundle.display;
   const supported = display.platformSupported.brightness;
   const requested = String(display.requestedBrightness);
@@ -347,13 +360,13 @@ function renderDangerActions(): string {
     </div>`;
 }
 
-function renderPluginsSection(bundle: SettingsBundle, pluginConfig: PluginConfigState | null, options: { phone?: boolean } = {}): string {
+function renderPluginsSection(bundle: SettingsBundle, pluginConfig: PluginConfigState | null, options: SettingsRenderOptions = {}): string {
   if (!bundle.plugins.length) return renderSection('Plugins', `<p class="settings-empty">No plugins installed.</p>`);
   const rows = bundle.plugins.map((plugin) => renderPluginRow(plugin, pluginConfig, options)).join('');
   return renderSection('Plugins', rows);
 }
 
-function renderPluginRow(plugin: PluginInfo, pluginConfig: PluginConfigState | null, options: { phone?: boolean } = {}): string {
+function renderPluginRow(plugin: PluginInfo, pluginConfig: PluginConfigState | null, options: SettingsRenderOptions = {}): string {
   const spec = pluginSettingsSpec(plugin.id);
   const expanded = pluginConfig?.id === plugin.id;
   const configure = spec
@@ -372,7 +385,7 @@ function renderPluginRow(plugin: PluginInfo, pluginConfig: PluginConfigState | n
   return row + panel;
 }
 
-function renderPluginConfig(spec: PluginSettingsSpec, config: PluginConfigState, options: { phone?: boolean } = {}): string {
+function renderPluginConfig(spec: PluginSettingsSpec, config: PluginConfigState, options: SettingsRenderOptions = {}): string {
   const help = spec.help ? `<p class="settings-plugin-help">${escapeHtml(spec.help)}</p>` : '';
   const fields = spec.fields.map((field) => renderPluginField(field, config, options)).join('');
   const verifyMsg = config.verify
@@ -394,7 +407,7 @@ function renderPluginConfig(spec: PluginSettingsSpec, config: PluginConfigState,
     </div>`;
 }
 
-function renderPluginField(field: PluginSettingField, config: PluginConfigState, options: { phone?: boolean } = {}): string {
+function renderPluginField(field: PluginSettingField, config: PluginConfigState, options: SettingsRenderOptions = {}): string {
   const base = `data-action="settings-plugin-field" data-key="${escapeAttr(field.key)}" data-type="${field.type}"`;
   const draftVal = config.draft[field.key];
   let control: string;
@@ -480,7 +493,7 @@ function renderWakeSchedules(bundle: SettingsBundle): string {
   return `<div class="settings-subsection"><h4>Wake schedules</h4>${rows}${add}</div>`;
 }
 
-function renderSettingsField(field: SettingsField, bundle: SettingsBundle, options: { phone?: boolean } = {}): string {
+function renderSettingsField(field: SettingsField, bundle: SettingsBundle, options: SettingsRenderOptions = {}): string {
   const value = fieldValue(bundle, field);
   const base = `data-action="settings-field" data-group="${field.group}" data-key="${escapeAttr(field.key)}" data-type="${field.type}"`;
   let control = '';
@@ -520,9 +533,21 @@ function renderSettingsField(field: SettingsField, bundle: SettingsBundle, optio
         })
       : `<button type="button" class="settings-input number-edit-button settings-number-button" data-action="open-number-edit" data-target="settings-field" data-group="${field.group}" data-key="${escapeAttr(field.key)}" data-title="${escapeAttr(field.label)}" data-value="${escapeAttr(num)}" data-min="${field.min ?? 0}" data-max="${field.max ?? 9999}" data-step="${field.step ?? 1}" data-unit="${escapeAttr(field.unit ?? '')}"><span>${escapeHtml(num || '--')}</span>${unit}</button>`;
     if (field.group === 'calibration' && field.key === 'flowMultiplier') {
+      // Read-only: flow calibration is set in the Flow Calibrator (Graph), per
+      // profile or as the default. Show the resolved value and where it came from.
+      const fc = options.flowCalibration;
+      const display = (fc ? fc.value : typeof value === 'number' ? value : 1).toFixed(2);
+      const origin = fc
+        ? fc.origin === 'profile'
+          ? `from profile${fc.profileTitle ? ` · ${escapeHtml(fc.profileTitle)}` : ''}`
+          : 'from default'
+        : '';
       control = `
         <span class="settings-inline-actions">
-          ${control}
+          <span class="settings-flow-cal" title="Set in the Flow Calibrator">
+            <strong>${escapeHtml(display)}×</strong>
+            ${origin ? `<em class="settings-flow-cal-origin">${origin}</em>` : ''}
+          </span>
           <button type="button" class="text-button" data-action="open-flow-calibrator">${icon('sliders-horizontal')}<span>Graph</span></button>
         </span>`;
     }
@@ -601,7 +626,7 @@ function renderScannerKeyRows(): string {
   );
 }
 
-function renderWaterAlertRows(model: SettingsShellModel, options: { phone?: boolean } = {}): string {
+function renderWaterAlertRows(model: SettingsShellModel, options: SettingsRenderOptions = {}): string {
   const soft = model.preferences.waterSoftLimitMl;
   const refill = model.machineRefillLevelMm;
   const refillKnown = refill != null;
