@@ -3648,10 +3648,20 @@ export class BeanieApp {
 
   private startSettingsPoll(): void {
     if (this.settingsPollTimer != null) return;
-    this.settingsPollTimer = window.setInterval(() => void this.pollSettings(), 10_000);
+    this.settingsPollTimer = window.setInterval(() => void this.syncFromGateway(), 10_000);
   }
 
-  /** Live sync: re-poll the store; re-render only if something changed. */
+  /**
+   * Pick up changes made on another device sharing this gateway — synced
+   * settings, plus the selected coffee and the workflow recipe. Runs on a timer
+   * and immediately on window focus.
+   */
+  private async syncFromGateway(): Promise<void> {
+    await this.pollSettings();
+    await this.resyncWorkflowAndBean();
+  }
+
+  /** Live sync: re-poll the settings store; re-render only if something changed. */
   private async pollSettings(): Promise<void> {
     if (this.state.demo || this.disposed) return;
     try {
@@ -3662,8 +3672,60 @@ export class BeanieApp {
     }
   }
 
+  /** Safe to overwrite the displayed recipe: in sync, not mid-edit or applying. */
+  private canResyncRecipe(): boolean {
+    return this.state.applyState === 'idle' || this.state.applyState === 'applied';
+  }
+
+  /**
+   * Re-fetch the workflow and selected coffee from the gateway so this device
+   * reflects what another device changed. Only while calmly viewing (idle, or
+   * settled after an apply) so it never clobbers an in-progress edit, apply,
+   * live shot, or open dialog.
+   */
+  private async resyncWorkflowAndBean(): Promise<void> {
+    if (
+      this.state.demo ||
+      this.disposed ||
+      this.state.busy ||
+      this.state.liveActive ||
+      !this.canResyncRecipe() ||
+      this.state.modal != null
+    ) {
+      return;
+    }
+    let workflow: Workflow;
+    try {
+      workflow = await gateway.workflow();
+    } catch (error) {
+      console.warn('[Beanie] Workflow resync failed', error);
+      return;
+    }
+    if (this.disposed || this.state.busy || !this.canResyncRecipe()) return;
+    // The selected coffee can travel in the workflow (context.beanId) or, when
+    // the workflow carries no bean, in last-bean-id; the recipe signature omits
+    // the bean. Check all three so any of them re-syncs.
+    const lastBeanId = readLastBeanId();
+    const newBeanId = workflow.context?.beanId ?? null;
+    const currentBeanId = this.state.workflow?.context?.beanId ?? null;
+    const changed =
+      newBeanId !== currentBeanId ||
+      (lastBeanId != null && lastBeanId !== this.state.selectedBeanId) ||
+      workflowSignature(workflow) !== workflowSignature(this.state.workflow);
+    if (!changed) return;
+    // Adopt the gateway's workflow, then re-derive the displayed recipe + bean
+    // from it (display only — never applied back to the machine).
+    this.state.workflow = workflow;
+    const selected = selectInitialBean(this.state.beans, workflow, lastBeanId, null);
+    if (selected) {
+      await this.selectBean(selected.id, { apply: false, preferWorkflow: true });
+    } else {
+      this.setState({ workflow, appliedSignature: workflowSignature(workflow) });
+    }
+  }
+
   private readonly handleWindowFocus = (): void => {
-    void this.pollSettings();
+    void this.syncFromGateway();
   };
 
   private retryFailedStoreWrites(): void {
