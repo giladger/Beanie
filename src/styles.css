@@ -5556,6 +5556,14 @@ p {
   text-overflow: clip;
 }
 
+/* Opt-in: stack the control under the label across the full row width, instead
+   of squeezing it into the narrow right-hand control column. */
+.settings-line.settings-line-stack {
+  grid-template-columns: 1fr;
+  align-items: stretch;
+  gap: 8px;
+}
+
 .settings-line small {
   margin-top: 3px;
   color: var(--muted);
@@ -5896,14 +5904,14 @@ p {
   width: 100%;
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  gap: 6px;
 }
 
 .theme-swatch {
   display: grid;
-  gap: 6px;
-  padding: 6px;
+  gap: 4px;
+  padding: 4px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel-2);
@@ -5923,11 +5931,11 @@ p {
 }
 
 .theme-swatch-preview {
-  height: 38px;
+  height: 24px;
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 0 8px;
+  gap: 4px;
+  padding: 0 6px;
   border-radius: 6px;
   background: var(--bg);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 16%, transparent);
@@ -5962,9 +5970,12 @@ p {
 }
 
 .theme-swatch-name {
-  font-size: 11px;
-  font-weight: 900;
+  font-size: 10px;
+  font-weight: 800;
   text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-segmented {

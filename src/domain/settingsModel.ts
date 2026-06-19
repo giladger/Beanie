@@ -9,7 +9,6 @@ import {
   GATEWAY_MODES,
   LOG_LEVELS,
   SCALE_POWER_MODES,
-  THEME_MODES,
   demoCalibration,
   demoDe1AdvancedSettings,
   demoDevices,
@@ -111,9 +110,7 @@ export const SETTINGS_SPEC: SettingsSpecSection[] = [
     title: 'Skin & diagnostics',
     terms: 'skin update log theme diagnostics',
     fields: [
-      { group: 'rea', key: 'defaultSkinId', label: 'Active skin', type: 'select', optionsFrom: 'skins', help: 'The skin Decent.app serves by default.' },
       { group: 'rea', key: 'automaticUpdateCheck', label: 'Automatic update check', type: 'toggle' },
-      { group: 'rea', key: 'themeMode', label: 'Decent.app theme', type: 'select', options: opts(THEME_MODES), help: 'Stored Decent.app theme preference.' },
       { group: 'rea', key: 'logLevel', label: 'Log level', type: 'select', options: opts(LOG_LEVELS, (v) => v), help: 'Only change while debugging.' }
     ]
   },

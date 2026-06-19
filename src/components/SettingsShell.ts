@@ -117,12 +117,11 @@ function settingsSections(
     {
       id: 'app',
       title: 'App',
-      terms: 'appearance theme ui skin update diagnostics about version brightness screen display water level low tank refill warning block alert sleep wake tap zone area machine asleep',
+      terms: 'appearance theme ui skin update diagnostics about version brightness screen display sleep wake tap zone area machine asleep',
       html: [
         renderSection('Beanie display', renderAppearanceRows(model.preferences)),
         renderSection('Sleep screen', renderSleepScreenRows(model.preferences)),
         renderSection('Bean scanner', renderScannerKeyRows()),
-        renderSection('Water level alerts', renderWaterAlertRows(model, options)),
         bundle ? renderDisplayRuntimeSection(bundle, options) : '',
         bundle ? renderSpecSectionById('app-skin', bundle, options) : '',
         renderSection('About', renderAboutRows(model))
@@ -141,8 +140,11 @@ function settingsSections(
       {
         id: 'machine',
         title: 'Machine',
-        terms: 'descale sleep routine defaults',
-        html: renderMaintenanceSection()
+        terms: 'descale sleep routine defaults water level low tank refill warning alert',
+        html: [
+          renderMaintenanceSection(),
+          renderSection('Water level alerts', renderWaterAlertRows(model, options))
+        ].join('')
       },
       {
         id: 'power',
@@ -572,7 +574,8 @@ function renderAppearanceRows(preferences: SettingsPreferences): string {
     ${settingControlRow(
       'Theme',
       'Skin color theme (tap a swatch to preview it live)',
-      themePicker(preferences.theme)
+      themePicker(preferences.theme),
+      'settings-line-stack'
     )}
     ${settingControlRow(
       'UI scale',

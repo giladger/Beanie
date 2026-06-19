@@ -86,9 +86,7 @@ run('settings model exposes every currently editable backend setting', () => {
   const keys = new Set(SETTINGS_SPEC.flatMap((section) => section.fields.map((field) => `${field.group}.${field.key}`)));
   [
     'rea.gatewayMode',
-    'rea.defaultSkinId',
     'rea.automaticUpdateCheck',
-    'rea.themeMode',
     'rea.logLevel',
     'rea.blockOnNoScale',
     'rea.weightFlowMultiplier',

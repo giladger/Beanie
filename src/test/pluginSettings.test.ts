@@ -122,10 +122,14 @@ run('phone settings use native number inputs and expose scanner key setup', () =
   const html = renderSettingsShell(settingsModel(), 'app', bundle, null, accountPanel(), ['app'], { phone: true });
 
   equal(html.includes('data-action="settings-change-scanner-key"'), true);
-  equal(html.includes('data-action="settings-water-soft"'), true);
-  equal(html.includes('data-action="settings-machine-refill"'), true);
   equal(html.includes('data-action="settings-display-brightness"'), true);
   equal(html.includes('data-action="open-number-edit"'), false);
+
+  // Water level alerts now live under Machine; still native number inputs on phone.
+  const machineHtml = renderSettingsShell(settingsModel(), 'machine', bundle, null, accountPanel(), ['machine'], { phone: true });
+  equal(machineHtml.includes('data-action="settings-water-soft"'), true);
+  equal(machineHtml.includes('data-action="settings-machine-refill"'), true);
+  equal(machineHtml.includes('data-action="open-number-edit"'), false);
 });
 
 run('phone plugin number fields use native inputs instead of the number dialog', () => {
