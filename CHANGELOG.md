@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.2.6 - 2026-06-19
 
 - Added a sleep-screen "wake app without the machine" tap zone: when enabled in Settings → App → Sleep screen, an edge strip (top, bottom, left, or right) appears on the tablet sleep screen, and tapping it opens Beanie while the machine stays asleep — the same view you'd get by opening the skin in a browser. The rest of the sleep screen still wakes the machine as before. The zone restores the screen brightness itself (the machine never wakes, so reaprime won't), and after 5 minutes of inactivity the screen turns back off and returns to the sleep screen. The setting syncs across devices.
 
