@@ -8,7 +8,12 @@ import type {
   Workflow
 } from './api/types';
 import { GatewayRequestError } from './api/gateway';
-import { THEME_PREFERENCES, type ThemePreference, type UIScalePreference } from './domain/settings';
+import {
+  THEME_PREFERENCES,
+  type ThemePreference,
+  type UIScalePreference,
+  type WakeAppZonePosition
+} from './domain/settings';
 import { waterTankMlFromMm } from './domain/waterTank';
 
 export type LiveChartMode = 'preset30' | 'auto';
@@ -196,6 +201,36 @@ export function isThemePreference(value: string | undefined): value is ThemePref
 
 export function isUIScalePreference(value: string | undefined): value is UIScalePreference {
   return value === 'compact' || value === 'standard' || value === 'large';
+}
+
+export interface SleepOverlayModel {
+  /** Render the full-screen black overlay that wakes the machine on tap. */
+  showOverlay: boolean;
+  /** Render the edge tap zone that wakes only the app (machine stays asleep). */
+  showWakeAppZone: boolean;
+  /** Which edge the wake-app zone sits on (only meaningful when shown). */
+  zonePosition: WakeAppZonePosition;
+}
+
+/**
+ * Decide what the sleep screen shows. The black wake-the-machine overlay only
+ * appears inside the Decent app webview (a browser already shows the app while
+ * the machine sleeps). When the wake-app zone is enabled, an edge strip layers
+ * on top of that overlay so a tap there opens Beanie without waking the machine.
+ */
+export function sleepOverlayModel(input: {
+  asleep: boolean;
+  appAwake: boolean;
+  usesWebSleepControls: boolean;
+  wakeAppZoneEnabled: boolean;
+  wakeAppZonePosition: WakeAppZonePosition;
+}): SleepOverlayModel {
+  const showOverlay = input.asleep && !input.appAwake && !input.usesWebSleepControls;
+  return {
+    showOverlay,
+    showWakeAppZone: showOverlay && input.wakeAppZoneEnabled,
+    zonePosition: input.wakeAppZonePosition
+  };
 }
 
 // reaprime hosts Beanie inside a flutter_inappwebview pointed at localhost:3000

@@ -50,6 +50,7 @@ import {
   scaleConnected,
   scaleStatLabel,
   scaleStatTitle,
+  sleepOverlayModel,
   startupStatusLabel,
   temp,
   water,
@@ -304,9 +305,11 @@ import { isServiceShot } from './domain/shotRecord';
 import {
   applySettingsPreferences,
   buildSettingsShellModel,
+  isWakeAppZonePosition,
   readSettingsPreferences,
   resetBeanieCache,
   type SettingsPreferences,
+  type WakeAppZonePosition,
   writeSettingsPreferences
 } from './domain/settings';
 import {
@@ -438,9 +441,12 @@ const initialSettingsPreferences = readSettingsPreferences();
 const FOCUSABLE_SEARCH = new Set(['search', 'profile-search', 'settings-search']);
 
 // Scrollable containers whose scroll position must survive a re-render.
-const SCROLL_SELECTORS = ['.bean-picker-list', '.bean-picker-batch-list', '.shot-list', '.shot-bean-list', '.profile-list', '.page-body', '.phone-main', '.phone-list'];
+const SCROLL_SELECTORS = ['.bean-picker-list', '.bean-picker-batch-list', '.shot-list', '.shot-bean-list', '.profile-list', '.page-body', '.settings-detail', '.phone-main', '.phone-list'];
 const PHONE_MEDIA_QUERY = '(max-width: 640px), (max-height: 500px) and (max-width: 900px)';
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 15_000;
+// While the app is shown over a sleeping machine (wake-app zone), turn the screen
+// back off after this much inactivity.
+const WAKE_APP_IDLE_SCREEN_OFF_MS = 5 * 60 * 1000;
 const SHOT_REFRESH_INTERVAL_MS = 60_000;
 const BEAN_REFRESH_INTERVAL_MS = 30_000;
 const NO_SCALE_SHOT_MESSAGE = 'Shot blocked: connect a scale to start.';
@@ -627,6 +633,12 @@ interface AppState {
   liveFinalizing: boolean;
   liveChartMode: LiveChartMode;
   asleep: boolean;
+  /** User tapped the sleep-screen wake-app zone: show Beanie while the machine
+   * stays asleep. Independent of `asleep`, which tracks the machine itself. */
+  appAwake: boolean;
+  /** Edge to flash a translucent wake-app-zone preview over for ~2s after the
+   * user enables the zone or changes its placement in Settings; null when idle. */
+  wakeZonePreview: WakeAppZonePosition | null;
   applyState: ApplyState;
   appliedSignature: string | null;
   flowCalDraft: number | null;
@@ -752,6 +764,8 @@ export class BeanieApp {
     liveFinalizing: false,
     liveChartMode: 'preset30',
     asleep: false,
+    appAwake: false,
+    wakeZonePreview: null,
     applyState: 'idle',
     appliedSignature: null,
     flowCalDraft: null,
@@ -837,6 +851,14 @@ export class BeanieApp {
   private hotWaterWeightStopTareFailed = false;
   private sleepBrightnessTimer: number | null = null;
   private sleepBrightnessZeroed = false;
+  // Brightness to restore when the user wakes the app without the machine.
+  // Kept current off the live display socket; falls back to 100.
+  private wakeAppRestoreBrightness = 100;
+  // The in-flight sleep-dim brightness PUT, so a wake-app restore can sequence
+  // after it (otherwise the two PUTs race and the screen can stay black).
+  private sleepDimPromise: Promise<void> | null = null;
+  private wakeZonePreviewTimer: number | null = null;
+  private wakeAppIdleTimer: number | null = null;
   private applyAfterWake = false;
   private lastPresenceHeartbeatMs = 0;
   private lastScaleFrameMs: number | null = null;
@@ -945,6 +967,8 @@ export class BeanieApp {
     if (this.simTimer != null) window.clearTimeout(this.simTimer);
     if (this.timedSteamStopTimer != null) window.clearTimeout(this.timedSteamStopTimer);
     if (this.sleepBrightnessTimer != null) window.clearTimeout(this.sleepBrightnessTimer);
+    if (this.wakeZonePreviewTimer != null) window.clearTimeout(this.wakeZonePreviewTimer);
+    if (this.wakeAppIdleTimer != null) window.clearTimeout(this.wakeAppIdleTimer);
     if (this.liveRaf != null) window.cancelAnimationFrame(this.liveRaf);
     this.clearMachineStopRequest();
     this.applyTimer = null;
@@ -1041,6 +1065,10 @@ export class BeanieApp {
 
   private noteUserActivity(): void {
     if (this.state.demo) return;
+    // Showing the app over a sleeping machine: any interaction defers the
+    // screen-off; once it's no longer awake-over-asleep, drop a stale timer.
+    if (this.state.appAwake) this.armWakeAppIdleTimer();
+    else this.clearWakeAppIdleTimer();
     const now = Date.now();
     if (now - this.lastPresenceHeartbeatMs < PRESENCE_HEARTBEAT_INTERVAL_MS) return;
     this.lastPresenceHeartbeatMs = now;
@@ -1977,6 +2005,7 @@ export class BeanieApp {
         view: service ? 'machine' : this.state.view,
         liveActive: state === 'espresso' ? this.state.liveActive : false,
         asleep: state === 'sleeping',
+        appAwake: false,
         status: machineActionStatus(state, 'demo')
       });
       if (state === 'espresso') this.startSimulatedShot();
@@ -2018,6 +2047,7 @@ export class BeanieApp {
       machine: optimisticMachineSnapshot(this.state.machine, state),
       view: service ? 'machine' : this.state.view,
       asleep: state === 'sleeping',
+      appAwake: false,
       status: command.status
     });
     if (state === 'sleeping') this.scheduleSleepBrightnessZero(1000);
@@ -2309,6 +2339,8 @@ export class BeanieApp {
 
   private observeSleepBrightnessState(sleeping: boolean): void {
     if (sleeping) {
+      // The user kept the app awake while the machine sleeps — leave the screen lit.
+      if (this.state.appAwake) return;
       this.scheduleSleepBrightnessZero(0);
       return;
     }
@@ -2319,7 +2351,7 @@ export class BeanieApp {
   }
 
   private scheduleSleepBrightnessZero(delayMs: number): void {
-    if (this.state.demo || this.sleepBrightnessZeroed) return;
+    if (this.state.demo || this.sleepBrightnessZeroed || this.state.appAwake) return;
     if (this.sleepBrightnessTimer != null) {
       if (delayMs > 0) return;
       this.clearSleepBrightnessTimer();
@@ -2337,17 +2369,24 @@ export class BeanieApp {
   }
 
   private async zeroDisplayForSleep(): Promise<void> {
-    if (this.state.demo || this.sleepBrightnessZeroed) return;
+    if (this.state.demo || this.sleepBrightnessZeroed || this.state.appAwake) return;
     // The dim is deferred ~1s; if the machine woke in that window, don't black
     // out the screen (and don't fight reaprime's wake-restore).
     if (!this.machineIsSleeping()) return;
     this.sleepBrightnessZeroed = true;
-    try {
-      const display = await gateway.setDisplayBrightness(0);
-      this.patchBundle({ display });
-    } catch (error) {
-      console.warn('[Beanie] Sleep brightness dim failed', error);
-    }
+    // Publish the PUT so a concurrent wake-app tap restores brightness only
+    // after this dim lands — otherwise the two writes race and 0 can win last.
+    const dim = (async () => {
+      try {
+        const display = await gateway.setDisplayBrightness(0);
+        this.patchBundle({ display });
+      } catch (error) {
+        console.warn('[Beanie] Sleep brightness dim failed', error);
+      }
+    })();
+    this.sleepDimPromise = dim;
+    await dim;
+    if (this.sleepDimPromise === dim) this.sleepDimPromise = null;
   }
 
   private async refreshDisplayStateSilently(): Promise<void> {
@@ -2357,6 +2396,66 @@ export class BeanieApp {
     } catch {
       // Display state is best-effort; machine controls should stay quiet.
     }
+  }
+
+  // Show Beanie while the machine stays asleep — the same view you'd get by
+  // opening the skin in a browser. Deliberately sends NO machine command, so the
+  // DE1 keeps sleeping; we only undo the screen dim ourselves (reaprime restores
+  // brightness only on a real wake). `appAwake` then suppresses re-dimming and
+  // hides the screensaver until the machine actually wakes.
+  private async wakeAppWithoutMachine(): Promise<void> {
+    const wasDimmed = this.sleepBrightnessZeroed;
+    this.clearSleepBrightnessTimer();
+    this.sleepBrightnessZeroed = false;
+    this.setState({ appAwake: true, status: 'App awake — machine still asleep' });
+    this.armWakeAppIdleTimer();
+    if (this.state.demo || !wasDimmed) return;
+    try {
+      // Wait out any dim PUT still in flight so our restore is the last write.
+      if (this.sleepDimPromise) await this.sleepDimPromise;
+      const display = await gateway.setDisplayBrightness(this.wakeAppRestoreBrightness);
+      this.patchBundle({ display });
+    } catch (error) {
+      console.warn('[Beanie] Wake-app brightness restore failed', error);
+    }
+  }
+
+  // While the app is shown over a sleeping machine, turn the screen back off
+  // after WAKE_APP_IDLE_SCREEN_OFF_MS of no interaction. Re-armed on every
+  // user action via noteUserActivity().
+  private armWakeAppIdleTimer(): void {
+    if (this.state.demo) return;
+    this.clearWakeAppIdleTimer();
+    this.wakeAppIdleTimer = window.setTimeout(() => {
+      this.wakeAppIdleTimer = null;
+      this.wakeAppIdleScreenOff();
+    }, WAKE_APP_IDLE_SCREEN_OFF_MS);
+  }
+
+  private clearWakeAppIdleTimer(): void {
+    if (this.wakeAppIdleTimer == null) return;
+    window.clearTimeout(this.wakeAppIdleTimer);
+    this.wakeAppIdleTimer = null;
+  }
+
+  // Idle timeout while awake over a sleeping machine: drop back to the sleep
+  // screen and turn the display off again.
+  private wakeAppIdleScreenOff(): void {
+    if (this.state.demo || !this.state.appAwake || !this.machineIsSleeping()) return;
+    this.setState({ appAwake: false });
+    this.scheduleSleepBrightnessZero(0);
+  }
+
+  // Flash a translucent preview of the wake-app zone over the current view for
+  // ~2s so the user can see where the tap area lands when they enable it or
+  // change its placement in Settings.
+  private previewWakeAppZone(position: WakeAppZonePosition): void {
+    if (this.wakeZonePreviewTimer != null) window.clearTimeout(this.wakeZonePreviewTimer);
+    this.setState({ wakeZonePreview: position });
+    this.wakeZonePreviewTimer = window.setTimeout(() => {
+      this.wakeZonePreviewTimer = null;
+      if (!this.disposed) this.setState({ wakeZonePreview: null });
+    }, 2000);
   }
 
   private async stopMachineService(): Promise<void> {
@@ -2561,6 +2660,10 @@ export class BeanieApp {
     ws.onmessage = (event) => {
       try {
         const display = readDisplayState(JSON.parse(event.data));
+        // Keep the wake-app restore target current off the live socket so it's
+        // right even before the settings bundle loads. Ignore the sleep dim's own
+        // 0 (and any low-battery cap, which leaves requestedBrightness intact).
+        if (display.requestedBrightness > 0) this.wakeAppRestoreBrightness = display.requestedBrightness;
         const current = this.state.settingsBundle?.display;
         if (
           current &&
@@ -2671,7 +2774,9 @@ export class BeanieApp {
     // streaming snapshot never re-renders the whole app (which would reset
     // scroll position of the bean list / history / pages).
     if (decision.type === 'set-asleep') {
-      this.setState({ asleep: decision.asleep });
+      // A fresh sleep returns to the screensaver; a real wake ends it. Either
+      // transition clears the app-awake-while-asleep override.
+      this.setState({ asleep: decision.asleep, appAwake: false });
       return true;
     }
     if (decision.type === 'enter-service') {
@@ -4224,12 +4329,15 @@ export class BeanieApp {
         await this.machineAction('sleeping');
       },
       'wake': async () => {
-        this.setState({ asleep: false });
+        this.setState({ asleep: false, appAwake: false });
         await this.machineAction('idle');
         if (this.applyAfterWake && !this.machineIsSleeping()) {
           this.applyAfterWake = false;
           await this.applyDraft();
         }
+      },
+      'wake-app': async () => {
+        await this.wakeAppWithoutMachine();
       },
       'simulate-shot': () => {
         this.startSimulatedShot();
@@ -4283,7 +4391,13 @@ export class BeanieApp {
         if (id) this.selectFlowCalibrationShot(id);
       },
       'settings-section': ({ value }) => {
-        if (value) this.setState({ settingsSection: value });
+        if (!value) return;
+        this.setState({ settingsSection: value });
+        // A section switch should open at the top, not inherit the prior
+        // section's scroll (which restoreScroll would otherwise carry over now
+        // that .settings-detail is scroll-preserved across re-renders).
+        const detail = this.root.querySelector<HTMLElement>('.settings-detail');
+        if (detail) detail.scrollTop = 0;
       },
       'settings-reset-machine': async () => {
         await this.resetMachineSettings();
@@ -4345,6 +4459,12 @@ export class BeanieApp {
       'settings-ui-scale': ({ el }) => {
         if (isUIScalePreference(el.dataset.value)) {
           this.updateSettingsPreferences({ uiScale: el.dataset.value });
+        }
+      },
+      'settings-wake-app-zone-position': ({ el }) => {
+        if (isWakeAppZonePosition(el.dataset.value)) {
+          this.updateSettingsPreferences({ wakeAppZonePosition: el.dataset.value });
+          this.previewWakeAppZone(el.dataset.value);
         }
       },
       'settings-reset-cache': async () => {
@@ -4835,6 +4955,12 @@ export class BeanieApp {
     if (target.dataset.action === 'settings-water-soft') {
       const ml = Number(target.value);
       if (Number.isFinite(ml)) this.updateSettingsPreferences({ waterSoftLimitMl: Math.max(0, ml) });
+      return;
+    }
+    if (target.dataset.action === 'settings-wake-app-zone') {
+      const enabled = (target as HTMLInputElement).checked;
+      this.updateSettingsPreferences({ wakeAppZoneEnabled: enabled });
+      if (enabled) this.previewWakeAppZone(this.state.settingsPreferences.wakeAppZonePosition);
       return;
     }
     if (target.dataset.action === 'settings-machine-refill') {
@@ -6287,6 +6413,7 @@ export class BeanieApp {
         ${isPage ? '' : this.renderWaterAlert()}
         ${this.renderWaterWarningBanner()}
         ${this.renderSleepOverlay()}
+        ${this.renderWakeAppZonePreview()}
         ${this.renderStoreErrorOverlay()}
       </div>
     `;
@@ -6619,10 +6746,29 @@ export class BeanieApp {
   }
 
   private renderSleepOverlay(): string {
-    if (!this.state.asleep || this.usesWebSleepControls()) return '';
+    const model = sleepOverlayModel({
+      asleep: this.state.asleep,
+      appAwake: this.state.appAwake,
+      usesWebSleepControls: this.usesWebSleepControls(),
+      wakeAppZoneEnabled: this.state.settingsPreferences.wakeAppZoneEnabled,
+      wakeAppZonePosition: this.state.settingsPreferences.wakeAppZonePosition
+    });
+    if (!model.showOverlay) return '';
+    // The wake-app zone layers on top of (and is rendered after) the wake-machine
+    // overlay so a tap on the strip opens the app without waking the machine.
+    const zone = model.showWakeAppZone
+      ? `<button type="button" class="sleep-wake-app-zone sleep-wake-app-zone-${model.zonePosition}" data-action="wake-app" aria-label="Open app without waking the machine"></button>`
+      : '';
     return `
       <button type="button" class="sleep-overlay" data-action="wake" aria-label="Wake machine"></button>
+      ${zone}
     `;
+  }
+
+  private renderWakeAppZonePreview(): string {
+    const position = this.state.wakeZonePreview;
+    if (!position) return '';
+    return `<div class="sleep-wake-app-zone sleep-wake-app-zone-${position} wake-zone-preview" aria-hidden="true"></div>`;
   }
 
   private renderStoreErrorOverlay(): string {
@@ -7436,8 +7582,15 @@ export class BeanieApp {
   private async requestMachineState(state: string): Promise<void> {
     const result = await this.settingsController.requestMachineState({ state, local: this.settingsLocal });
     this.setState({ status: result.status });
-    if (result.sleepRequested) this.scheduleSleepBrightnessZero(1000);
-    else if (result.status !== 'Machine command failed') this.observeSleepBrightnessState(false);
+    if (result.sleepRequested) {
+      // An explicit sleep ends a wake-app override so the screen can re-dim and
+      // the screensaver returns — even when the machine was already asleep (no
+      // telemetry transition to clear it for us).
+      if (this.state.appAwake) this.setState({ appAwake: false });
+      this.scheduleSleepBrightnessZero(1000);
+    } else if (result.status !== 'Machine command failed') {
+      this.observeSleepBrightnessState(false);
+    }
   }
 
   private async uploadFirmware(file: File): Promise<void> {

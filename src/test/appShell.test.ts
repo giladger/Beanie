@@ -13,6 +13,7 @@ import {
   scaleConnected,
   scaleStatLabel,
   scaleStatTitle,
+  sleepOverlayModel,
   temp,
   water,
   workflowSignature
@@ -87,6 +88,39 @@ run('detect Decent webview prefers the reaprime beacon, then bridge, then UA', (
   equal(detectDecentAppWebView(undefined, false, null), false);
   // Word-boundary match must not fire on "decent" embedded in another token.
   equal(detectDecentAppWebView(undefined, false, 'Mozilla/5.0 IndecentBrowser/1.0'), false);
+});
+
+run('sleep overlay shows only in the webview and layers the wake-app zone when enabled', () => {
+  const base = {
+    asleep: true,
+    appAwake: false,
+    usesWebSleepControls: false,
+    wakeAppZoneEnabled: false,
+    wakeAppZonePosition: 'top' as const
+  };
+
+  // Awake machine → nothing.
+  equal(sleepOverlayModel({ ...base, asleep: false }).showOverlay, false);
+  // In a browser the app already shows while the machine sleeps → no overlay.
+  equal(sleepOverlayModel({ ...base, usesWebSleepControls: true }).showOverlay, false);
+  // Asleep inside the webview → the wake-machine overlay.
+  equal(sleepOverlayModel(base).showOverlay, true);
+  // Zone is off by default even when the overlay shows.
+  equal(sleepOverlayModel(base).showWakeAppZone, false);
+
+  // Enabling the zone layers it on top of the overlay, carrying the position.
+  const withZone = sleepOverlayModel({ ...base, wakeAppZoneEnabled: true, wakeAppZonePosition: 'right' });
+  equal(withZone.showOverlay, true);
+  equal(withZone.showWakeAppZone, true);
+  equal(withZone.zonePosition, 'right');
+
+  // Once the app is woken, both the overlay and its zone disappear.
+  const woken = sleepOverlayModel({ ...base, appAwake: true, wakeAppZoneEnabled: true });
+  equal(woken.showOverlay, false);
+  equal(woken.showWakeAppZone, false);
+
+  // The zone never appears without the overlay (e.g. in a browser).
+  equal(sleepOverlayModel({ ...base, usesWebSleepControls: true, wakeAppZoneEnabled: true }).showWakeAppZone, false);
 });
 
 run('app shell command and chart helpers preserve app decisions', () => {

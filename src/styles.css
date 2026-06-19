@@ -1517,6 +1517,87 @@ p {
   cursor: pointer;
 }
 
+/* Edge strip layered over the black sleep overlay: tapping it opens Beanie
+   while the machine stays asleep. A faint handle marks the otherwise-invisible
+   tap target on the dark screen. */
+.sleep-wake-app-zone {
+  position: fixed;
+  z-index: 91;
+  background: transparent;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sleep-wake-app-zone::after {
+  content: "";
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+}
+
+.sleep-wake-app-zone-top,
+.sleep-wake-app-zone-bottom {
+  left: 0;
+  right: 0;
+  height: 125px;
+}
+
+.sleep-wake-app-zone-top {
+  top: 0;
+}
+
+.sleep-wake-app-zone-bottom {
+  bottom: 0;
+}
+
+.sleep-wake-app-zone-top::after,
+.sleep-wake-app-zone-bottom::after {
+  width: 104px;
+  height: 6px;
+}
+
+.sleep-wake-app-zone-left,
+.sleep-wake-app-zone-right {
+  top: 0;
+  bottom: 0;
+  width: 156px;
+}
+
+.sleep-wake-app-zone-left {
+  left: 0;
+}
+
+.sleep-wake-app-zone-right {
+  right: 0;
+}
+
+.sleep-wake-app-zone-left::after,
+.sleep-wake-app-zone-right::after {
+  width: 6px;
+  height: 104px;
+}
+
+/* A 2s translucent flash of the zone shown in Settings when the user enables it
+   or changes its placement, so they can see where the tap area will be. Reuses
+   the .sleep-wake-app-zone-<edge> geometry above. */
+.wake-zone-preview {
+  background: var(--teal);
+  pointer-events: none;
+  animation: wake-zone-preview-flash 2s ease forwards;
+}
+
+@keyframes wake-zone-preview-flash {
+  0% { opacity: 0; }
+  10% { opacity: 0.3; }
+  75% { opacity: 0.3; }
+  100% { opacity: 0; }
+}
+
 .live-panel {
   position: fixed;
   inset: 0;
@@ -5462,6 +5543,17 @@ p {
   color: var(--soft);
   font-size: 13px;
   font-weight: 900;
+}
+
+/* Opt-in: let a row's help text wrap to multiple lines instead of truncating. */
+.settings-line.settings-line-wrap {
+  align-items: start;
+}
+
+.settings-line.settings-line-wrap small {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .settings-line small {

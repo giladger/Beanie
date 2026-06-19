@@ -6,6 +6,8 @@ import {
   setSyncedItem,
   syncedCacheKeys,
   uiScaleKey,
+  wakeAppZoneEnabledKey,
+  wakeAppZonePositionKey,
   waterSoftKey
 } from './settingsStore';
 import { DEFAULT_WATER_SOFT_ML } from './waterAlert';
@@ -23,6 +25,15 @@ export type ThemePreference =
   | 'rosepine'
   | 'contrast';
 export type UIScalePreference = 'compact' | 'standard' | 'large';
+
+/** Edge the sleep-screen "wake app only" tap zone sits on. */
+export type WakeAppZonePosition = 'top' | 'bottom' | 'left' | 'right';
+
+export const WAKE_APP_ZONE_POSITIONS: WakeAppZonePosition[] = ['top', 'bottom', 'left', 'right'];
+
+export function isWakeAppZonePosition(value: string | undefined): value is WakeAppZonePosition {
+  return value === 'top' || value === 'bottom' || value === 'left' || value === 'right';
+}
 
 /**
  * Every selectable theme. Each value (except `system`) must have a matching
@@ -49,6 +60,11 @@ export interface SettingsPreferences {
   /** Soft low-water warning threshold in ml (0 = off). The hard block is the
    * machine's own refill threshold (configured via gateway.setRefillLevel). */
   waterSoftLimitMl: number;
+  /** When on, the sleep screen shows a tap zone that wakes Beanie (restoring the
+   * screen) while leaving the machine asleep — like opening the skin in a browser. */
+  wakeAppZoneEnabled: boolean;
+  /** Which screen edge the wake-app tap zone occupies. */
+  wakeAppZonePosition: WakeAppZonePosition;
 }
 
 export interface GatewayStatusModel {
@@ -96,6 +112,8 @@ const themeKey = 'beanie:settings:theme';
 const preservedResetKeys = new Set([
   uiScaleKey,
   waterSoftKey,
+  wakeAppZoneEnabledKey,
+  wakeAppZonePositionKey,
   // Per-profile/global flow calibration is hardware-tuning config — a reset
   // must not wipe it.
   ...FLOW_CALIBRATION_STORAGE_KEYS
@@ -105,15 +123,19 @@ export function readSettingsPreferences(): SettingsPreferences {
   return {
     theme: readLocalTheme(),
     uiScale: readEnum(uiScaleKey, ['compact', 'standard', 'large'], 'standard'),
-    waterSoftLimitMl: readNonNegativeNumber(waterSoftKey, DEFAULT_WATER_SOFT_ML)
+    waterSoftLimitMl: readNonNegativeNumber(waterSoftKey, DEFAULT_WATER_SOFT_ML),
+    wakeAppZoneEnabled: readBoolean(wakeAppZoneEnabledKey, false),
+    wakeAppZonePosition: readEnum(wakeAppZonePositionKey, WAKE_APP_ZONE_POSITIONS, 'top')
   };
 }
 
 export function writeSettingsPreferences(next: SettingsPreferences): void {
-  // Theme is per-browser (localStorage); scale and water sync via the store.
+  // Theme is per-browser (localStorage); the rest sync via the store.
   writeLocalTheme(next.theme);
   setSyncedItem(uiScaleKey, next.uiScale);
   setSyncedItem(waterSoftKey, String(next.waterSoftLimitMl));
+  setSyncedItem(wakeAppZoneEnabledKey, String(next.wakeAppZoneEnabled));
+  setSyncedItem(wakeAppZonePositionKey, next.wakeAppZonePosition);
 }
 
 export function applySettingsPreferences(preferences: SettingsPreferences): void {
@@ -229,6 +251,12 @@ function writeLocalTheme(theme: ThemePreference): void {
 function readEnum<T extends string>(key: string, values: readonly T[], fallback: T): T {
   const stored = getSyncedItem(key);
   return values.includes(stored as T) ? (stored as T) : fallback;
+}
+
+function readBoolean(key: string, fallback: boolean): boolean {
+  const stored = getSyncedItem(key);
+  if (stored == null) return fallback;
+  return stored === 'true';
 }
 
 function readNonNegativeNumber(key: string, fallback: number): number {

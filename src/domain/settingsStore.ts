@@ -19,6 +19,8 @@ export const SETTINGS_STORE_NAMESPACE = 'beanie';
 // so its existing store value isn't orphaned.
 export const uiScaleKey = 'beanie.settings.ui-scale';
 export const waterSoftKey = 'beanie.settings.water-soft-ml';
+export const wakeAppZoneEnabledKey = 'beanie.settings.wake-app-zone';
+export const wakeAppZonePositionKey = 'beanie.settings.wake-app-zone-position';
 export const favoriteProfilesKey = 'beanie.favorite-profiles';
 export const favoriteBeansKey = 'beanie.favorite-beans';
 export const lastBeanKey = 'beanie.last-bean-id';
@@ -41,6 +43,8 @@ const inputDialogRecentKeys = inputDialogRecentKinds.map((kind) => `${inputDialo
 export const SYNCED_SETTING_KEYS: readonly string[] = [
   uiScaleKey,
   waterSoftKey,
+  wakeAppZoneEnabledKey,
+  wakeAppZonePositionKey,
   favoriteProfilesKey,
   favoriteBeansKey,
   lastBeanKey,

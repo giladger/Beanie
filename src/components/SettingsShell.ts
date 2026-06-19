@@ -1,8 +1,10 @@
-import type {
-  SettingsPreferences,
-  SettingsShellModel,
-  ThemePreference,
-  UIScalePreference
+import {
+  WAKE_APP_ZONE_POSITIONS,
+  type SettingsPreferences,
+  type SettingsShellModel,
+  type ThemePreference,
+  type UIScalePreference,
+  type WakeAppZonePosition
 } from '../domain/settings';
 import {
   SETTINGS_SPEC,
@@ -115,9 +117,10 @@ function settingsSections(
     {
       id: 'app',
       title: 'App',
-      terms: 'appearance theme ui skin update diagnostics about version brightness screen display water level low tank refill warning block alert',
+      terms: 'appearance theme ui skin update diagnostics about version brightness screen display water level low tank refill warning block alert sleep wake tap zone area machine asleep',
       html: [
         renderSection('Beanie display', renderAppearanceRows(model.preferences)),
+        renderSection('Sleep screen', renderSleepScreenRows(model.preferences)),
         renderSection('Bean scanner', renderScannerKeyRows()),
         renderSection('Water level alerts', renderWaterAlertRows(model, options)),
         bundle ? renderDisplayRuntimeSection(bundle, options) : '',
@@ -583,6 +586,39 @@ function renderAppearanceRows(preferences: SettingsPreferences): string {
   `;
 }
 
+const WAKE_APP_ZONE_LABELS: Record<WakeAppZonePosition, string> = {
+  top: 'Top',
+  bottom: 'Bottom',
+  left: 'Left',
+  right: 'Right'
+};
+
+function renderSleepScreenRows(preferences: SettingsPreferences): string {
+  const enabled = preferences.wakeAppZoneEnabled;
+  const toggle = `<label class="settings-toggle"><input type="checkbox" data-action="settings-wake-app-zone" ${enabled ? 'checked' : ''} /><span></span></label>`;
+  const positionRow = enabled
+    ? settingControlRow(
+        'Tap zone position',
+        'Which screen edge the wake-app zone sits on',
+        segmentedControl(
+          'settings-wake-app-zone-position',
+          preferences.wakeAppZonePosition,
+          WAKE_APP_ZONE_POSITIONS.map((position) => [position, WAKE_APP_ZONE_LABELS[position]])
+        ),
+        'settings-line-wrap'
+      )
+    : '';
+  return `
+    ${settingControlRow(
+      'Wake app without the machine',
+      'Adds a tap zone to the tablet sleep screen that opens Beanie while the machine stays asleep',
+      toggle,
+      'settings-line-wrap'
+    )}
+    ${positionRow}
+  `;
+}
+
 function numberEditButton(opts: {
   target: string;
   title: string;
@@ -731,9 +767,9 @@ function settingReadout(
   `;
 }
 
-function settingControlRow(label: string, detail: string, control: string): string {
+function settingControlRow(label: string, detail: string, control: string, extraClass = ''): string {
   return `
-    <div class="settings-line">
+    <div class="settings-line${extraClass ? ` ${extraClass}` : ''}">
       <div>
         <span>${escapeHtml(label)}</span>
         <small>${escapeHtml(detail)}</small>

@@ -177,7 +177,13 @@ function equal<T>(actual: T, expected: T): void {
 function settingsModel(): SettingsShellModel {
   return {
     query: '',
-    preferences: { theme: 'dark', uiScale: 'standard', waterSoftLimitMl: 400 },
+    preferences: {
+      theme: 'dark',
+      uiScale: 'standard',
+      waterSoftLimitMl: 400,
+      wakeAppZoneEnabled: false,
+      wakeAppZonePosition: 'top'
+    },
     machineRefillLevelMm: null,
     gateway: {
       label: 'Connected',
