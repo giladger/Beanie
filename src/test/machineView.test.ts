@@ -53,38 +53,38 @@ run('machine value helpers adapt hot-water weight mode and stop mode tiles', () 
   equal(stopTile.actionValue, 'time');
 });
 
-run('cleaning bar renders due state, threshold choices, and enabled run action', () => {
+run('cleaning bar renders due state, threshold choices, and opens the wizard', () => {
   const html = renderCleaningBar({
     due: true,
     profileTitle: 'Cleaning / forward flush x5',
     profilesAvailable: true,
     shotsSinceClean: 12,
     lastCleanedAt: '2026-06-05T10:00:00.000Z',
-    threshold: 40,
-    canRun: true
+    threshold: 40
   });
 
   includes(html, 'cleaning-bar due');
   includes(html, 'Cleaning / forward flush x5');
   includes(html, '12 shots since last clean');
   includes(html, 'data-value="40" aria-pressed="true"');
-  excludes(html, 'data-action="run-cleaning" title="Insert a blind basket with detergent, then run a forward-flush cycle (no beans). Your recipe is restored afterwards." disabled');
+  includes(html, 'data-action="open-cleaning-wizard"');
+  // The run button is never disabled by transient machine state.
+  excludes(html, 'data-action="open-cleaning-wizard" title="Open the guided backflush cleaning routine — detergent in a blind basket, run the profile, flush, then repeat. Your recipe is restored afterwards." disabled');
 });
 
-run('cleaning bar explains missing profile and disables run action', () => {
+run('cleaning bar explains missing profile but still opens the wizard', () => {
   const html = renderCleaningBar({
     due: false,
     profileTitle: null,
     profilesAvailable: false,
     shotsSinceClean: 0,
     lastCleanedAt: null,
-    threshold: 0,
-    canRun: false
+    threshold: 0
   });
 
   includes(html, 'No profiles loaded');
   includes(html, 'Install a');
-  includes(html, 'disabled');
+  includes(html, 'data-action="open-cleaning-wizard"');
 });
 
 run('machine progress page renders stats and stop request state', () => {

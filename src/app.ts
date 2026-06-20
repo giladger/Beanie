@@ -41,6 +41,7 @@ import {
   isUIScalePreference,
   liveChartHideMaxTimeLabel,
   liveChartModelOptions,
+  hasGroupHeadController,
   machineCommandsAvailable,
   machineStatus,
   nonNegativeNumber,
@@ -175,6 +176,14 @@ import {
   pickCleaningProfilePlan
 } from './controllers/cleaningWorkflowController';
 import {
+  cleaningWizardBack,
+  cleaningWizardNext,
+  cleaningWizardOnFlushComplete,
+  cleaningWizardOnPullComplete,
+  startCleaningWizard,
+  type CleaningWizardState
+} from './controllers/cleaningWizardController';
+import {
   applyMachinePresetPlan,
   applyMachineValuePlan,
   buildMachineWorkflowPlan,
@@ -289,6 +298,7 @@ import {
   renderMachinePage as renderMachinePageView,
   renderMachineProgressPage as renderMachineProgressPageView
 } from './views/machineView';
+import { renderCleaningWizardModal as renderCleaningWizardModalView } from './views/cleaningWizardView';
 import {
   renderGrinderEditorPage as renderGrinderEditorPageView,
   renderMachineLabelModal as renderMachineLabelModalView
@@ -411,6 +421,7 @@ type Modal =
   | 'no-scale-shot'
   | 'label-scanner'
   | 'delete-shot'
+  | 'cleaning-wizard'
   | null;
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
 interface ClickActionContext {
@@ -654,6 +665,8 @@ interface AppState {
   machineRefillLevel: number | null;
   /** The profiles picker is choosing the cleaning-override profile, not the recipe. */
   cleaningProfilePicking: boolean;
+  /** Guided backflush cleaning wizard; null when the dialog is closed. */
+  cleaningWizard: CleaningWizardState | null;
   /** The gateway snapshot socket is down; machine readouts are stale. */
   gatewayLinkDown: boolean;
   /** Draw the reference shot's curves under the live trace while pulling. */
@@ -778,6 +791,7 @@ export class BeanieApp {
     waterAlertDismissed: false,
     machineRefillLevel: null,
     cleaningProfilePicking: false,
+    cleaningWizard: null,
     gatewayLinkDown: false,
     liveGhost: true
   };
@@ -2058,7 +2072,16 @@ export class BeanieApp {
   // Backflush / cleaning cycle: load the cleaning profile (bean-independent),
   // then run it as an espresso pull. The user's dial-in `draft` is left intact,
   // so finishCleaningCycle() can restore the real recipe afterwards.
-  private async runCleaningCycle(): Promise<void> {
+  //
+  // On a GHC machine the DE1 firmware only starts flows from the physical
+  // controller (Decent's de1app: "once the GHC is enabled, only the GHC can
+  // start operations"), so `startShot` is false: we just load the cleaning
+  // profile and leave it on the machine. Crucially we must NOT then restore the
+  // recipe — the cleaning profile has to stay loaded so that when the user
+  // presses the GHC, reaprime sees a cleaning profile and skips the no-scale
+  // block. finishCleaningCycle() restores the recipe once the pull completes.
+  private async runCleaningCycle(opts: { startShot?: boolean } = {}): Promise<void> {
+    const startShot = opts.startShot !== false;
     const plan = cleaningStartPlan({
       busy: this.state.busy,
       liveActive: this.state.liveActive,
@@ -2067,7 +2090,8 @@ export class BeanieApp {
       cleaningProfileOverride: this.state.cleaningProfileOverride,
       workflow: this.state.workflow,
       demo: this.state.demo,
-      machineSleeping: this.machineIsSleeping(),
+      // Only block on sleep when WE start the shot; on a GHC the user does.
+      machineSleeping: startShot && this.machineIsSleeping(),
       waterAlert: this.currentWaterAlert()
     });
     if (plan.type === 'ignored') return;
@@ -2091,6 +2115,12 @@ export class BeanieApp {
       return;
     }
     this.state.workflow = result.workflow;
+    if (!startShot) {
+      // GHC: cleaning profile is loaded and we stay armed. Do NOT restore the
+      // recipe — the user starts the flush on the GHC with the profile in place.
+      this.setState({ busy: false, status: 'Press the GHC to run the cleaning flush' });
+      return;
+    }
     // Run as an espresso pull; a backflush has no yield, so skip the scale gate.
     const started = await this.machineAction('espresso', { skipScaleCheck: true });
     if (!started) {
@@ -2102,21 +2132,118 @@ export class BeanieApp {
     }
   }
 
+  private machineHasGhc(): boolean {
+    return !this.state.demo && hasGroupHeadController(this.state.machineInfo ?? { GHC: false }) === true;
+  }
+
   // A cleaning pull just ended: reset the counter, restore the real recipe.
   private finishCleaningCycle(): void {
     this.cleaningInProgress = false;
     this.liveShot.reset();
     const plan = finishCleaningCyclePlan(new Date().toISOString());
     writeCleaningState(plan.cleaning);
+    // If the wizard started this pull, re-open it (it was hidden during the pull)
+    // advanced to the next step.
+    const wizard = this.state.cleaningWizard;
+    const advance = wizard ? cleaningWizardOnPullComplete(wizard) : null;
     this.setState({
       cleaning: plan.cleaning,
       liveActive: false,
       liveFinalizing: false,
-      status: plan.status
+      status: plan.status,
+      ...(advance?.type === 'advance'
+        ? { modal: 'cleaning-wizard', cleaningWizard: advance.next }
+        : wizard?.actionPending === 'pull'
+          ? { modal: 'cleaning-wizard', cleaningWizard: { ...wizard, actionPending: null } }
+          : {})
     });
     // The draft was never touched by cleaning, so re-applying it restores the
     // user's profile/dose/yield on the machine (no-op if no bean is selected).
     void this.applyDraft();
+  }
+
+  // Open the guided backflush cleaning wizard.
+  private openCleaningWizard(): void {
+    this.setState({ modal: 'cleaning-wizard', cleaningWizard: startCleaningWizard() });
+  }
+
+  // Wizard action: run the cleaning (forward-flush) profile as an espresso pull.
+  // The dialog STAYS OPEN showing a "running" state — it does not depend on the
+  // live-shot screen, because on flaky BLE the cleaning pull's telemetry can be
+  // missed and the wizard would otherwise vanish into a dead state. If tracking
+  // works, finishCleaningCycle() auto-advances; otherwise the user taps Skip.
+  private async runCleaningWizardPull(): Promise<void> {
+    const wizard = this.state.cleaningWizard;
+    if (!wizard || wizard.actionPending) return;
+    if (this.state.busy || this.cleaningInProgress || this.state.liveActive || this.state.liveFinalizing) return;
+    this.setState({ modal: 'cleaning-wizard', cleaningWizard: { ...wizard, actionPending: 'pull', note: null } });
+    // On a GHC machine the firmware ignores API state requests, so there's no
+    // point starting the espresso here — we only load the profile and the user
+    // presses the GHC. (startShot:false also skips the recipe-restore, so the
+    // cleaning profile stays loaded for the no-scale carve-out at GHC-press.)
+    await this.runCleaningCycle({ startShot: !this.machineHasGhc() });
+    if (!this.cleaningInProgress && this.state.cleaningWizard) {
+      // The pull never started (no profile / asleep / low water): clear the
+      // running state and surface the reason inline.
+      this.setState({
+        cleaningWizard: { ...this.state.cleaningWizard, actionPending: null, note: this.state.status }
+      });
+    }
+  }
+
+  // Wizard action: run a group-head flush to rinse detergent out. Like the pull,
+  // the dialog stays open in a "running" state; the flush-end transition in
+  // trackMachineServiceState() auto-advances when tracked, else the user taps Skip.
+  private async runCleaningWizardFlush(): Promise<void> {
+    const wizard = this.state.cleaningWizard;
+    if (!wizard || wizard.actionPending) return;
+    if (this.state.busy || this.cleaningInProgress || this.state.liveActive || this.state.liveFinalizing) return;
+    this.setState({ modal: 'cleaning-wizard', cleaningWizard: { ...wizard, actionPending: 'flush', note: null } });
+    const started = await this.machineAction('flush');
+    if (!started && this.state.cleaningWizard) {
+      this.setState({
+        cleaningWizard: { ...this.state.cleaningWizard, actionPending: null, note: this.state.status }
+      });
+    }
+  }
+
+  // A flush the wizard started just ended: re-open the dialog at the next step.
+  private advanceCleaningWizardAfterFlush(): void {
+    const wizard = this.state.cleaningWizard;
+    if (!wizard || wizard.actionPending !== 'flush') return;
+    const advance = cleaningWizardOnFlushComplete(wizard);
+    this.setState({
+      modal: 'cleaning-wizard',
+      cleaningWizard: advance.type === 'advance' ? advance.next : { ...wizard, actionPending: null }
+    });
+  }
+
+  // The user advances the wizard by hand while an action is marked running. If
+  // the live shot was never picked up (flaky telemetry), the pull would stay
+  // "in progress" forever and block the next step (and could mis-save a stray
+  // frame as a shot), so tear that tracking down. When the shot IS being tracked
+  // (liveActive), leave it — finishCleaningCycle handles the real end.
+  private teardownUntrackedCleaningAction(): void {
+    const wizard = this.state.cleaningWizard;
+    if (wizard?.actionPending && this.cleaningInProgress && !this.state.liveActive) {
+      this.cleaningInProgress = false;
+      this.liveShot.reset();
+      // The cleaning profile is on the machine; restore the user's recipe (the
+      // draft was never touched), the same way finishCleaningCycle would.
+      void this.applyDraft();
+    }
+  }
+
+  // On a GHC machine the user starts the pull on the controller, so when the
+  // wizard reaches a pull step we load the cleaning profile automatically —
+  // no extra "Load profile" tap. (Non-GHC machines keep the explicit Run
+  // button; auto-starting an API pull there would be surprising.)
+  private maybeAutoLoadCleaningProfile(): void {
+    const wizard = this.state.cleaningWizard;
+    if (!wizard || wizard.actionPending || !this.machineHasGhc()) return;
+    if (wizard.step === 'pull-1' || wizard.step === 'pull-2') {
+      void this.runCleaningWizardPull();
+    }
   }
 
   // Count a completed espresso pull toward the next cleaning reminder.
@@ -2831,6 +2958,10 @@ export class BeanieApp {
     if (transition.clearTimedSteamTimer) this.clearTimedSteamStopTimer();
     if (transition.restoreWorkflowAfterEnd) void this.restoreMachineServiceWorkflowAfterEnd();
     if (transition.updateTimedSteamStopTimer) this.updateTimedSteamStopTimer(nowMs);
+    // A flush the cleaning wizard kicked off just returned to idle — step it on.
+    if (transition.previousService === 'flush' && transition.currentService == null) {
+      this.advanceCleaningWizardAfterFlush();
+    }
   }
 
   private updateTimedSteamStopTimer(nowMs = Date.now()): void {
@@ -4302,8 +4433,27 @@ export class BeanieApp {
       'machine-command': async ({ value }) => {
         if (isMachineCommand(value)) await this.toggleMachineCommand(value);
       },
-      'run-cleaning': async () => {
-        await this.runCleaningCycle();
+      'open-cleaning-wizard': () => {
+        this.openCleaningWizard();
+      },
+      'cleaning-wizard-next': () => {
+        const wizard = this.state.cleaningWizard;
+        if (!wizard) return;
+        this.teardownUntrackedCleaningAction();
+        this.setState({ cleaningWizard: cleaningWizardNext(wizard) });
+        this.maybeAutoLoadCleaningProfile();
+      },
+      'cleaning-wizard-back': () => {
+        const wizard = this.state.cleaningWizard;
+        if (!wizard) return;
+        this.teardownUntrackedCleaningAction();
+        this.setState({ cleaningWizard: cleaningWizardBack(wizard) });
+      },
+      'cleaning-wizard-run-pull': async () => {
+        await this.runCleaningWizardPull();
+      },
+      'cleaning-wizard-run-flush': async () => {
+        await this.runCleaningWizardFlush();
       },
       'cleaning-threshold': ({ value }) => {
         const shots = Number(value);
@@ -4534,6 +4684,7 @@ export class BeanieApp {
         if (id) this.toggleFavoriteProfile(id);
       },
       'close-modal': () => {
+        if (this.state.modal === 'cleaning-wizard') this.teardownUntrackedCleaningAction();
         if (this.state.modal === 'batch-storage') {
           this.setState({ modal: 'bean-picker', batchStorageTarget: null });
           return;
@@ -4572,7 +4723,8 @@ export class BeanieApp {
           profileEdit: null,
           machineEdit: null,
           numberEdit: null,
-          machineLabelEdit: null
+          machineLabelEdit: null,
+          cleaningWizard: null
         });
       },
     };
@@ -6897,7 +7049,21 @@ export class BeanieApp {
     if (this.state.modal === 'no-scale-shot') return this.renderNoScaleShotModal();
     if (this.state.modal === 'label-scanner') return this.renderLabelScannerModal();
     if (this.state.modal === 'delete-shot') return this.renderDeleteShotModal();
+    if (this.state.modal === 'cleaning-wizard') return this.renderCleaningWizardModal();
     return '';
+  }
+
+  private renderCleaningWizardModal(): string {
+    const wizard = this.state.cleaningWizard;
+    if (!wizard) return '';
+    return renderCleaningWizardModalView({
+      step: wizard.step,
+      note: wizard.note,
+      actionPending: wizard.actionPending,
+      hasGhc: this.machineHasGhc(),
+      loading: this.state.busy,
+      canRunPull: resolveCleaningProfile(this.state.profiles, this.state.cleaningProfileOverride) != null
+    });
   }
 
   private renderBatchStorageModal(): string {
@@ -7067,15 +7233,13 @@ export class BeanieApp {
     const cleaning = this.state.cleaning;
     const threshold = this.state.cleaningThreshold;
     const due = cleaningDue(cleaning, threshold);
-    const blocked = this.state.busy || this.state.liveActive || this.state.liveFinalizing;
     return renderCleaningBarView({
       due,
       profileTitle: resolved?.profile?.title ?? null,
       profilesAvailable: profiles.length > 0,
       shotsSinceClean: cleaning.shotsSinceClean,
       lastCleanedAt: cleaning.lastCleanedAt,
-      threshold,
-      canRun: resolved != null && !blocked
+      threshold
     });
   }
 

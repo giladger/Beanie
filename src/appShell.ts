@@ -284,7 +284,7 @@ export function defaultExitValueForApp(type: 'pressure' | 'flow', condition: 'ov
   return condition === 'over' ? 6 : 0;
 }
 
-function hasGroupHeadController(info: MachineInfo): boolean | null {
+export function hasGroupHeadController(info: MachineInfo): boolean | null {
   if (typeof info.GHC === 'boolean') return info.GHC;
   if (typeof info.groupHeadControllerPresent === 'boolean') return info.groupHeadControllerPresent;
   return null;

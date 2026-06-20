@@ -14,7 +14,6 @@ export interface CleaningBarViewModel {
   shotsSinceClean: number;
   lastCleanedAt: string | null;
   threshold: number;
-  canRun: boolean;
 }
 
 export interface MachineProgressViewModel {
@@ -112,7 +111,7 @@ export function renderCleaningBar(model: CleaningBarViewModel): string {
         <span>Remind</span>
         <div class="settings-segmented cleaning-threshold" role="group" aria-label="Cleaning reminder threshold">${thresholdButtons}</div>
       </div>
-      <button type="button" class="cleaning-run" data-action="run-cleaning" title="Insert a blind basket with detergent, then run a forward-flush cycle (no beans). Your recipe is restored afterwards." ${model.canRun ? '' : 'disabled'}>
+      <button type="button" class="cleaning-run" data-action="open-cleaning-wizard" title="Open the guided backflush cleaning routine — detergent in a blind basket, run the profile, flush, then repeat. Your recipe is restored afterwards.">
         ${icon('refresh-cw')}<span>Run cleaning cycle</span>
       </button>
     </section>`;

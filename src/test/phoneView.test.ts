@@ -22,7 +22,7 @@ run('phone shell exposes helper workflows without machine service controls', () 
   excludes(html, 'class="phone-nav-button"');
   excludes(html, 'class="phone-back-home"');
   excludes(html, 'data-action="machine-command"');
-  excludes(html, 'data-action="run-cleaning"');
+  excludes(html, 'data-action="open-cleaning-wizard"');
   excludes(html, 'data-action="open-machine-settings"');
   excludes(html, 'data-action="machine-extend-service"');
   excludes(html, 'data-action="stop"');
