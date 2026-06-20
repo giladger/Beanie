@@ -97,6 +97,28 @@ export class GatewayRequestError extends Error {
   }
 }
 
+// Every gateway request is guarded by a timeout so a hung gateway can never
+// wedge the UI forever. reaprime can sit on a workflow PUT for up to its ~10s
+// BLE write timeout (plus a reconnect attempt) when the DE1 is asleep, so the
+// budget is generous enough not to abort a request it is still honestly
+// processing — but it always settles instead of hanging.
+const REQUEST_TIMEOUT_MS = 20000;
+
+// Respect an explicit caller signal; otherwise attach a timeout signal.
+function requestTimeout(existing?: AbortSignal | null): {
+  signal: AbortSignal | undefined;
+  done: () => void;
+} {
+  if (existing) return { signal: existing, done: () => {} };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  return { signal: controller.signal, done: () => clearTimeout(timer) };
+}
+
+function isAbort(cause: unknown): boolean {
+  return cause instanceof DOMException && cause.name === 'AbortError';
+}
+
 async function fetchJson<T>(
   resource: ApiResourceName,
   path: string,
@@ -104,11 +126,15 @@ async function fetchJson<T>(
   init?: RequestInit
 ): Promise<T> {
   const method = init?.method ?? 'GET';
+  const timeout = requestTimeout(init?.signal);
   let res: Response;
   try {
-    res = await fetch(`${gatewayHttpOrigin()}${path}`, init);
+    res = await fetch(`${gatewayHttpOrigin()}${path}`, { ...init, signal: timeout.signal });
   } catch (cause) {
-    throw requestError(resource, path, method, 'network', `Could not reach ${path}`, cause);
+    const message = isAbort(cause) ? `${method} ${path} timed out` : `Could not reach ${path}`;
+    throw requestError(resource, path, method, 'network', message, cause);
+  } finally {
+    timeout.done();
   }
 
   if (!res.ok) {
@@ -156,11 +182,15 @@ async function fetchEmpty(
   init?: RequestInit
 ): Promise<void> {
   const method = init?.method ?? 'GET';
+  const timeout = requestTimeout(init?.signal);
   let res: Response;
   try {
-    res = await fetch(`${gatewayHttpOrigin()}${path}`, init);
+    res = await fetch(`${gatewayHttpOrigin()}${path}`, { ...init, signal: timeout.signal });
   } catch (cause) {
-    throw requestError(resource, path, method, 'network', `Could not reach ${path}`, cause);
+    const message = isAbort(cause) ? `${method} ${path} timed out` : `Could not reach ${path}`;
+    throw requestError(resource, path, method, 'network', message, cause);
+  } finally {
+    timeout.done();
   }
 
   if (!res.ok) {
