@@ -16,39 +16,8 @@ export interface MachineServiceProgressTransition {
   clearTimedSteamTimer: boolean;
   clearTimedSteamRequest: boolean;
   clearMachineStopRequest: boolean;
-  resetHotWaterWeightStop: boolean;
   restoreWorkflowAfterEnd: boolean;
   updateTimedSteamStopTimer: boolean;
-}
-
-export interface HotWaterWeightStopController {
-  targetWeight: number;
-  configuredFlow: number;
-  armedAtMs: number;
-  tareRequestedAtMs: number | null;
-  activeSeen: boolean;
-  stopRequested: boolean;
-}
-
-export type HotWaterWeightStopDecision =
-  | { action: 'wait'; controller: HotWaterWeightStopController }
-  | { action: 'clear'; controller: null }
-  | {
-    action: 'stop';
-    controller: HotWaterWeightStopController;
-    targetWeight: number;
-    weight: number;
-    projectedWeight: number;
-  };
-
-export interface HotWaterWeightStopDecisionInput {
-  machineState: MachineState | undefined;
-  nowMs: number;
-  freshScale: boolean;
-  lastScaleFrameMs: number | null;
-  weight: number | null | undefined;
-  weightFlow: number | null | undefined;
-  lookaheadSeconds: number;
 }
 
 export function emptyMachineServiceProgress(): MachineServiceProgressState {
@@ -81,7 +50,6 @@ export function nextMachineServiceProgress(
       clearTimedSteamTimer: true,
       clearTimedSteamRequest: false,
       clearMachineStopRequest: true,
-      resetHotWaterWeightStop: current.service === 'hotWater',
       restoreWorkflowAfterEnd: current.service != null,
       updateTimedSteamStopTimer: false
     };
@@ -107,7 +75,6 @@ export function nextMachineServiceProgress(
       clearTimedSteamTimer: true,
       clearTimedSteamRequest,
       clearMachineStopRequest: false,
-      resetHotWaterWeightStop: false,
       restoreWorkflowAfterEnd: false,
       updateTimedSteamStopTimer: false
     };
@@ -134,7 +101,6 @@ export function nextMachineServiceProgress(
     clearTimedSteamTimer: false,
     clearTimedSteamRequest,
     clearMachineStopRequest: false,
-    resetHotWaterWeightStop: false,
     restoreWorkflowAfterEnd: false,
     updateTimedSteamStopTimer: true
   };
@@ -227,38 +193,6 @@ export function machineServicePrimaryTime(
   return { value: `${formatSecondsValue(targetSeconds - elapsedSeconds)}s`, label: 'remaining' };
 }
 
-export function nextHotWaterWeightStop(
-  controller: HotWaterWeightStopController,
-  input: HotWaterWeightStopDecisionInput
-): HotWaterWeightStopDecision {
-  let next = { ...controller };
-  if (input.machineState === 'hotWater') {
-    next = { ...next, activeSeen: true };
-  } else if (next.activeSeen || input.nowMs - next.armedAtMs > 10_000) {
-    return { action: 'clear', controller: null };
-  }
-
-  if (!next.activeSeen || next.stopRequested) return { action: 'wait', controller: next };
-  if (!input.freshScale) return { action: 'wait', controller: next };
-  if (next.tareRequestedAtMs != null && input.lastScaleFrameMs != null && input.lastScaleFrameMs < next.tareRequestedAtMs) {
-    return { action: 'wait', controller: next };
-  }
-
-  const weight = finiteNumber(input.weight) ?? 0;
-  const flow = positiveNumber(input.weightFlow) ?? next.configuredFlow;
-  const projectedWeight = weight + flow * input.lookaheadSeconds;
-  if (projectedWeight < next.targetWeight) return { action: 'wait', controller: next };
-
-  next = { ...next, stopRequested: true };
-  return {
-    action: 'stop',
-    controller: next,
-    targetWeight: next.targetWeight,
-    weight,
-    projectedWeight
-  };
-}
-
 function hotWaterVolumeSeconds(water: HotWaterData): number | null {
   const volume = positiveNumber(water.volume);
   const flow = positiveNumber(water.flow);
@@ -268,10 +202,6 @@ function hotWaterVolumeSeconds(water: HotWaterData): number | null {
 
 function positiveNumber(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
-}
-
-function finiteNumber(value: number | null | undefined): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function scaleConnected(scale: ScaleSnapshot | null): boolean {

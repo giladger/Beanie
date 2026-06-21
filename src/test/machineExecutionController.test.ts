@@ -1,12 +1,9 @@
 import type { HotWaterData, MachineSnapshot, RinseData, SteamSettings, Workflow } from '../api/types';
 import {
-  HOT_WATER_WEIGHT_NATIVE_VOLUME_ML,
   captureMachineServiceWorkflowRestore,
-  createHotWaterWeightStopController,
   extendedMachineServiceWorkflow,
-  hotWaterDataForNativeWorkflow,
-  hotWaterWeightNativeDuration,
-  hotWaterWeightStopTarget,
+  hotWaterBackstopDuration,
+  hotWaterDataForGateway,
   machineActionPreflight,
   machineActionStatus,
   optimisticMachineSnapshot,
@@ -14,8 +11,6 @@ import {
   restoreMachineServiceWorkflowAfterEnd,
   restoredMachineServiceWorkflow,
   sendMachineActionCommand,
-  stopHotWaterAtWeight,
-  tareAndArmHotWaterWeightStop,
   timedSteamHeadroomPlan
 } from '../controllers/machineExecutionController';
 
@@ -24,10 +19,7 @@ run('machine execution preflight blocks espresso on no-scale before water checks
     state: 'espresso',
     skipScaleCheck: false,
     noScaleBlocked: true,
-    waterAlertHard: true,
-    hotWaterStopMode: 'volume',
-    scaleConnected: true,
-    hotWaterData: water()
+    waterAlertHard: true
   });
 
   equal(result.type, 'blocked-no-scale');
@@ -38,54 +30,50 @@ run('machine execution preflight blocks espresso on hard water alert', () => {
     state: 'espresso',
     skipScaleCheck: true,
     noScaleBlocked: true,
-    waterAlertHard: true,
-    hotWaterStopMode: 'volume',
-    scaleConnected: true,
-    hotWaterData: water()
+    waterAlertHard: true
   });
 
   equal(result.type, 'blocked-water');
 });
 
-run('machine execution preflight arms hot water weight stop when scale volume mode is available', () => {
+run('machine execution preflight is ready for hot water', () => {
   const result = machineActionPreflight({
     state: 'hotWater',
     skipScaleCheck: false,
     noScaleBlocked: false,
-    waterAlertHard: false,
-    hotWaterStopMode: 'volume',
-    scaleConnected: true,
-    hotWaterData: water({ volume: 120, flow: 6 })
+    waterAlertHard: false
   });
 
   equal(result.type, 'ready');
   equal(result.type === 'ready' ? result.service : null, 'hotWater');
   equal(result.type === 'ready' ? result.status : null, 'Starting water');
-  equal(result.type === 'ready' ? result.hotWaterWeightStop?.targetWeight : null, 120);
-  equal(result.type === 'ready' ? result.hotWaterWeightStop?.configuredFlow : null, 6);
 });
 
-run('hot water target is not armed outside scale-backed volume mode', () => {
-  equal(hotWaterWeightStopTarget(water({ volume: 100 }), 'time', true), null);
-  equal(hotWaterWeightStopTarget(water({ volume: 100 }), 'volume', false), null);
-  equal(hotWaterWeightStopTarget(water({ volume: 0 }), 'volume', true), null);
+run('hot water backstop duration projects the pour time with headroom', () => {
+  // 120 g at 6 ml/s ≈ 20 s + 30 s headroom = 50 s.
+  equal(hotWaterBackstopDuration(water({ volume: 120, flow: 6 })), 50);
+  // No usable target → no backstop (DE1's stored duration governs).
+  equal(hotWaterBackstopDuration(water({ volume: 0, flow: 6 })), null);
 });
 
-run('hot water native workflow pads duration for weight stop mode', () => {
-  equal(hotWaterWeightNativeDuration(water({ volume: 120, flow: 6 })), 50);
+run('hot water gateway data keeps the real volume and pads the time backstop in weight mode', () => {
+  // reaprime stops at weight (volume as grams); the DE1 time stop only needs to
+  // sit far enough back to not pre-empt it, so the volume is left untouched.
+  const padded = hotWaterDataForGateway(water({ volume: 120, flow: 6, duration: 20 }), 'volume');
+  equal(padded.volume, 120);
+  equal(padded.duration, 50);
 
-  const native = hotWaterDataForNativeWorkflow(water({ volume: 120, flow: 6, duration: 20 }), 'volume', true);
-  equal(native.volume, HOT_WATER_WEIGHT_NATIVE_VOLUME_ML);
-  equal(native.duration, 50);
+  const longer = hotWaterDataForGateway(water({ volume: 120, flow: 6, duration: 70 }), 'volume');
+  equal(longer.volume, 120);
+  equal(longer.duration, 70);
 });
 
-run('hot water native workflow preserves larger existing duration and non-weight modes', () => {
-  const long = hotWaterDataForNativeWorkflow(water({ volume: 120, flow: 6, duration: 70 }), 'volume', true);
-  equal(long.volume, HOT_WATER_WEIGHT_NATIVE_VOLUME_ML);
-  equal(long.duration, 70);
-
-  const timed = water({ volume: 120, flow: 6, duration: 20 });
-  equal(hotWaterDataForNativeWorkflow(timed, 'time', true), timed);
+run('hot water gateway data disables the volume stop in time mode', () => {
+  // volume 0 turns off the DE1 volume target so the pour stops on duration, and
+  // keeps reaprime's stop-at-weight inert (it skips targets <= 0).
+  const timed = hotWaterDataForGateway(water({ volume: 120, flow: 6, duration: 25 }), 'time');
+  equal(timed.volume, 0);
+  equal(timed.duration, 25);
 });
 
 run('machine action statuses preserve user-facing labels', () => {
@@ -288,109 +276,12 @@ await runAsync('restore machine service workflow after end updates restored serv
   equal(savedWorkflow.rinseData?.duration, 11);
 });
 
-await runAsync('tare and arm hot water weight stop returns an armed controller after tare', async () => {
-  const result = await tareAndArmHotWaterWeightStop({
-    target: { targetWeight: 120, configuredFlow: 6 },
-    shouldArm: () => true
-  }, {
-    tareScale: async () => {},
-    nowMs: () => 1_000
-  });
-
-  equal(result.type, 'armed');
-  equal(result.type === 'armed' ? result.controller.targetWeight : null, 120);
-  equal(result.type === 'armed' ? result.controller.tareRequestedAtMs : null, 1_000);
-  equal(result.type === 'armed' ? result.controller.armedAtMs : null, 1_000);
-});
-
-await runAsync('tare and arm hot water weight stop ignores stale services after tare', async () => {
-  const result = await tareAndArmHotWaterWeightStop({
-    target: { targetWeight: 120, configuredFlow: 6 },
-    shouldArm: () => false
-  }, {
-    tareScale: async () => {},
-    nowMs: () => 1_000
-  });
-
-  equal(result.type, 'ignored');
-});
-
-await runAsync('tare and arm hot water weight stop reports tare failures', async () => {
-  const result = await tareAndArmHotWaterWeightStop({
-    target: { targetWeight: 120, configuredFlow: 6 },
-    shouldArm: () => true
-  }, {
-    tareScale: async () => {
-      throw new Error('tare failed');
-    },
-    nowMs: () => 1_000
-  });
-
-  equal(result.type, 'failed');
-  equal(result.type === 'failed' ? result.status : null, 'Hot water scale tare failed');
-});
-
-await runAsync('stop hot water at weight requests idle and formats projected status', async () => {
-  let requested: string | null = null;
-  const result = await stopHotWaterAtWeight({
-    demo: false,
-    weight: 118.25,
-    projectedWeight: 120.75
-  }, {
-    requestState: async (state) => {
-      requested = state;
-    }
-  });
-
-  equal(result.type, 'requested');
-  equal(requested, 'idle');
-  equal(result.type === 'requested' ? result.status : null, 'Stopping at 118.3 g (120.8 g projected)');
-});
-
-await runAsync('stop hot water at weight handles demo and request failure paths', async () => {
-  const demo = await stopHotWaterAtWeight({
-    demo: true,
-    weight: 1,
-    projectedWeight: 1
-  }, {
-    requestState: async () => {
-      throw new Error('unexpected request');
-    }
-  });
-  equal(demo.type, 'demo');
-  equal(demo.type === 'demo' ? demo.status : null, 'Demo water stopped');
-
-  const failed = await stopHotWaterAtWeight({
-    demo: false,
-    weight: 1,
-    projectedWeight: 1
-  }, {
-    requestState: async () => {
-      throw new Error('stop failed');
-    }
-  });
-  equal(failed.type, 'failed');
-  equal(failed.type === 'failed' ? failed.status : null, 'Hot water stop failed');
-});
-
-run('create hot water weight stop controller initializes inactive state', () => {
-  const controller = createHotWaterWeightStopController(
-    { targetWeight: 120, configuredFlow: 6 },
-    10,
-    20
-  );
-
-  equal(controller.armedAtMs, 20);
-  equal(controller.tareRequestedAtMs, 10);
-  equal(controller.activeSeen, false);
-  equal(controller.stopRequested, false);
-});
-
-await runAsync('send machine action command tares hot water before requesting state', async () => {
+await runAsync('send machine action command requests state for hot water without taring', async () => {
+  // reaprime now owns the scale tare + stop-at-weight, so beanie just asks the
+  // gateway to enter hotWater.
   const calls: string[] = [];
   const result = await sendMachineActionCommand({
     state: 'hotWater',
-    hotWaterWeightStop: { targetWeight: 120, configuredFlow: 6 },
     workflow: workflow(),
     steamSettings: steam(),
     hotWaterData: water(),
@@ -398,25 +289,19 @@ await runAsync('send machine action command tares hot water before requesting st
     twoTapSteamStop: false
   }, {
     updateWorkflow: async (next) => next,
-    tareScale: async () => {
-      calls.push('tare');
-    },
     requestState: async (state) => {
       calls.push(`state:${state}`);
     },
-    nowMs: () => 1_000,
     isNoScaleShotBlockError: () => false
   });
 
   equal(result.type, 'sent');
-  equal(calls.join(','), 'tare,state:hotWater');
-  equal(result.type === 'sent' ? result.hotWaterWeightStop?.targetWeight : null, 120);
+  equal(calls.join(','), 'state:hotWater');
 });
 
 await runAsync('send machine action command prepares steam headroom and preserves restore on request failure', async () => {
   const result = await sendMachineActionCommand({
     state: 'steam',
-    hotWaterWeightStop: null,
     workflow: workflow(),
     steamSettings: steam({ duration: 12 }),
     hotWaterData: water(),
@@ -424,11 +309,9 @@ await runAsync('send machine action command prepares steam headroom and preserve
     twoTapSteamStop: false
   }, {
     updateWorkflow: async (next) => next,
-    tareScale: async () => {},
     requestState: async () => {
       throw new Error('request failed');
     },
-    nowMs: () => 1_000,
     isNoScaleShotBlockError: () => false
   });
 
@@ -440,7 +323,6 @@ await runAsync('send machine action command prepares steam headroom and preserve
 await runAsync('send machine action command maps espresso no-scale gateway blocks', async () => {
   const result = await sendMachineActionCommand({
     state: 'espresso',
-    hotWaterWeightStop: null,
     workflow: workflow(),
     steamSettings: steam(),
     hotWaterData: water(),
@@ -448,40 +330,14 @@ await runAsync('send machine action command maps espresso no-scale gateway block
     twoTapSteamStop: false
   }, {
     updateWorkflow: async (next) => next,
-    tareScale: async () => {},
     requestState: async () => {
       throw new Error('block_no_scale');
     },
-    nowMs: () => 1_000,
     isNoScaleShotBlockError: () => true
   });
 
   equal(result.type, 'failed');
   equal(result.type === 'failed' ? result.noScaleBlocked : null, true);
-  equal(result.type === 'failed' ? result.clearHotWaterWeightStop : null, false);
-});
-
-await runAsync('send machine action command clears hot water controller on request failure', async () => {
-  const result = await sendMachineActionCommand({
-    state: 'hotWater',
-    hotWaterWeightStop: { targetWeight: 120, configuredFlow: 6 },
-    workflow: workflow(),
-    steamSettings: steam(),
-    hotWaterData: water(),
-    rinseData: rinse(),
-    twoTapSteamStop: false
-  }, {
-    updateWorkflow: async (next) => next,
-    tareScale: async () => {},
-    requestState: async () => {
-      throw new Error('request failed');
-    },
-    nowMs: () => 1_000,
-    isNoScaleShotBlockError: () => false
-  });
-
-  equal(result.type, 'failed');
-  equal(result.type === 'failed' ? result.clearHotWaterWeightStop : null, true);
 });
 
 function water(overrides: Partial<HotWaterData> = {}): HotWaterData {

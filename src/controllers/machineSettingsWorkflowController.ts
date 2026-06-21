@@ -15,7 +15,7 @@ import {
   type WaterControlCapabilities,
   type WaterPreset
 } from '../domain/waterSettings';
-import { hotWaterDataForNativeWorkflow } from './machineExecutionController';
+import { hotWaterDataForGateway } from './machineExecutionController';
 
 export type MachinePresetName = 'steamPreset' | 'waterPreset' | 'flushPreset';
 export type MachineValueField =
@@ -38,7 +38,6 @@ export interface MachineWorkflowPlanInput {
   rinseData: RinseData;
   currentMachineSettings: De1MachineSettings | null;
   hotWaterStopMode: HotWaterStopMode;
-  hotWaterScaleConnected: boolean;
   status: string;
 }
 
@@ -130,14 +129,13 @@ export function buildMachineWorkflowPlan(input: MachineWorkflowPlanInput): Machi
     hotWaterData: input.hotWaterData,
     rinseData: input.rinseData
   };
-  const nativeHotWaterData = hotWaterDataForNativeWorkflow(
+  const gatewayHotWaterData = hotWaterDataForGateway(
     input.hotWaterData,
-    input.hotWaterStopMode,
-    input.hotWaterScaleConnected
+    input.hotWaterStopMode
   );
   return {
     workflow,
-    workflowForGateway: { ...workflow, hotWaterData: nativeHotWaterData },
+    workflowForGateway: { ...workflow, hotWaterData: gatewayHotWaterData },
     machineSettings: machineSettingsFromWorkflow(
       input.steamSettings,
       input.hotWaterData,

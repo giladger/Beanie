@@ -1,23 +1,16 @@
 import type { HotWaterData, MachineSnapshot, MachineState, RinseData, SteamSettings, Workflow } from '../api/types';
 import type { HotWaterStopMode } from '../domain/machinePreferences';
-import {
-  machineServiceState,
-  type HotWaterWeightStopController
-} from '../domain/machineService';
+import { machineServiceState } from '../domain/machineService';
 import {
   paddedSteamDurationSeconds,
   type MachineServiceState
 } from '../domain/timedSteamStop';
 import { DEFAULT_HOT_WATER } from '../domain/waterSettings';
 
-export const DEFAULT_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS = 0.3;
-export const HOT_WATER_WEIGHT_NATIVE_HEADROOM_SECONDS = 30;
-export const HOT_WATER_WEIGHT_NATIVE_VOLUME_ML = 500;
-
-export interface HotWaterWeightStopTarget {
-  targetWeight: number;
-  configuredFlow: number;
-}
+// Headroom (seconds) added to the projected pour time so the DE1's native time
+// stop never pre-empts the volume/weight stop — it stays a far backstop while
+// reaprime stops hot water at weight (or the DE1 stops at the volume target).
+export const HOT_WATER_BACKSTOP_HEADROOM_SECONDS = 30;
 
 export interface MachineServiceWorkflowRestore {
   steamSettings: SteamSettings;
@@ -31,7 +24,6 @@ export type MachineActionPreflight =
   | {
       type: 'ready';
       service: MachineServiceState | null;
-      hotWaterWeightStop: HotWaterWeightStopTarget | null;
       status: string;
     };
 
@@ -40,9 +32,6 @@ export interface MachineActionPreflightInput {
   skipScaleCheck: boolean;
   noScaleBlocked: boolean;
   waterAlertHard: boolean;
-  hotWaterStopMode: HotWaterStopMode;
-  scaleConnected: boolean;
-  hotWaterData: HotWaterData;
 }
 
 export function machineActionPreflight(input: MachineActionPreflightInput): MachineActionPreflight {
@@ -55,119 +44,36 @@ export function machineActionPreflight(input: MachineActionPreflightInput): Mach
   return {
     type: 'ready',
     service: machineServiceState(input.state),
-    hotWaterWeightStop: input.state === 'hotWater'
-      ? hotWaterWeightStopTarget(input.hotWaterData, input.hotWaterStopMode, input.scaleConnected)
-      : null,
     status: machineActionStatus(input.state, 'sending')
   };
 }
 
-export function hotWaterWeightStopTarget(
+// The hot-water data beanie pushes to the gateway. reaprime owns stop-at-weight
+// (it tares the scale and stops the dispense at the volume target treated as
+// grams), so beanie just shapes the workflow it sends:
+//   - Weight mode: keep the real volume target; give the DE1's time stop generous
+//     headroom so it stays a backstop behind reaprime's weight stop.
+//   - Time mode: disable the volume target (0) so the DE1 stops on duration and
+//     reaprime's stop-at-weight stays inert (it skips targets <= 0).
+export function hotWaterDataForGateway(
   water: HotWaterData,
-  hotWaterStopMode: HotWaterStopMode,
-  hotWaterScaleConnected: boolean
-): HotWaterWeightStopTarget | null {
-  if (hotWaterStopMode !== 'volume') return null;
-  if (!hotWaterScaleConnected) return null;
-  const targetWeight = positiveNumber(water.volume);
-  if (targetWeight == null) return null;
-  return {
-    targetWeight,
-    configuredFlow: positiveNumber(water.flow) ?? 0
-  };
-}
-
-export function hotWaterDataForNativeWorkflow(
-  water: HotWaterData,
-  hotWaterStopMode: HotWaterStopMode,
-  hotWaterScaleConnected: boolean
+  hotWaterStopMode: HotWaterStopMode
 ): HotWaterData {
-  if (hotWaterStopMode !== 'volume' || !hotWaterScaleConnected) return water;
-  const nativeDuration = hotWaterWeightNativeDuration(water);
-  if (nativeDuration == null) return water;
-  const currentDuration = positiveNumber(water.duration) ?? 0;
-  const duration = Math.max(currentDuration, nativeDuration);
-  if (water.volume === HOT_WATER_WEIGHT_NATIVE_VOLUME_ML && water.duration === duration) return water;
-  return {
-    ...water,
-    volume: HOT_WATER_WEIGHT_NATIVE_VOLUME_ML,
-    duration
-  };
+  if (hotWaterStopMode === 'time') {
+    return { ...water, volume: 0 };
+  }
+  const headroom = hotWaterBackstopDuration(water);
+  if (headroom == null) return water;
+  const duration = Math.max(positiveNumber(water.duration) ?? 0, headroom);
+  if (water.duration === duration) return water;
+  return { ...water, duration };
 }
 
-export function hotWaterWeightNativeDuration(water: HotWaterData): number | null {
-  const targetWeight = positiveNumber(water.volume);
+export function hotWaterBackstopDuration(water: HotWaterData): number | null {
+  const targetVolume = positiveNumber(water.volume);
   const flow = positiveNumber(water.flow) ?? positiveNumber(DEFAULT_HOT_WATER.flow);
-  if (targetWeight == null || flow == null) return null;
-  return Math.min(180, Math.ceil(targetWeight / flow + HOT_WATER_WEIGHT_NATIVE_HEADROOM_SECONDS));
-}
-
-export function createHotWaterWeightStopController(
-  target: HotWaterWeightStopTarget,
-  tareRequestedAtMs: number | null,
-  armedAtMs: number
-): HotWaterWeightStopController {
-  return {
-    ...target,
-    armedAtMs,
-    tareRequestedAtMs,
-    activeSeen: false,
-    stopRequested: false
-  };
-}
-
-export type TareAndArmHotWaterWeightStopResult =
-  | { type: 'armed'; controller: HotWaterWeightStopController }
-  | { type: 'ignored' }
-  | { type: 'failed'; error: unknown; status: 'Hot water scale tare failed' };
-
-export async function tareAndArmHotWaterWeightStop(
-  input: {
-    target: HotWaterWeightStopTarget;
-    shouldArm(): boolean;
-  },
-  deps: {
-    tareScale(): Promise<void>;
-    nowMs(): number;
-  }
-): Promise<TareAndArmHotWaterWeightStopResult> {
-  try {
-    await deps.tareScale();
-    if (!input.shouldArm()) return { type: 'ignored' };
-    return {
-      type: 'armed',
-      controller: createHotWaterWeightStopController(input.target, deps.nowMs(), deps.nowMs())
-    };
-  } catch (error) {
-    return { type: 'failed', error, status: 'Hot water scale tare failed' };
-  }
-}
-
-export type StopHotWaterAtWeightResult =
-  | { type: 'demo'; status: 'Demo water stopped' }
-  | { type: 'requested'; status: string }
-  | { type: 'failed'; error: unknown; status: 'Hot water stop failed' };
-
-export async function stopHotWaterAtWeight(
-  input: {
-    demo: boolean;
-    weight: number;
-    projectedWeight: number;
-  },
-  deps: {
-    requestState(state: MachineState): Promise<void>;
-  }
-): Promise<StopHotWaterAtWeightResult> {
-  if (input.demo) return { type: 'demo', status: 'Demo water stopped' };
-  try {
-    await deps.requestState('idle');
-    return {
-      type: 'requested',
-      status: `Stopping at ${formatNumber(input.weight, 1)} g (${formatNumber(input.projectedWeight, 1)} g projected)`
-    };
-  } catch (error) {
-    return { type: 'failed', error, status: 'Hot water stop failed' };
-  }
+  if (targetVolume == null || flow == null) return null;
+  return Math.min(180, Math.ceil(targetVolume / flow + HOT_WATER_BACKSTOP_HEADROOM_SECONDS));
 }
 
 export type SendMachineActionCommandResult =
@@ -175,21 +81,18 @@ export type SendMachineActionCommandResult =
       type: 'sent';
       status: string;
       restore: MachineServiceWorkflowRestore | null;
-      hotWaterWeightStop: HotWaterWeightStopController | null;
     }
   | {
       type: 'failed';
       error: unknown;
       status: 'Machine command failed';
       noScaleBlocked: boolean;
-      clearHotWaterWeightStop: boolean;
       restore: MachineServiceWorkflowRestore | null;
     };
 
 export async function sendMachineActionCommand(
   input: {
     state: MachineState;
-    hotWaterWeightStop: HotWaterWeightStopTarget | null;
     workflow: Workflow | null;
     steamSettings: SteamSettings;
     hotWaterData: HotWaterData;
@@ -198,9 +101,7 @@ export async function sendMachineActionCommand(
   },
   deps: {
     updateWorkflow(workflow: Workflow): Promise<Workflow>;
-    tareScale(): Promise<void>;
     requestState(state: MachineState): Promise<void>;
-    nowMs(): number;
     isNoScaleShotBlockError(error: unknown): boolean;
   }
 ): Promise<SendMachineActionCommandResult> {
@@ -218,22 +119,11 @@ export async function sendMachineActionCommand(
       if (prepared.type === 'prepared') restore = prepared.restore;
     }
 
-    let hotWaterWeightStop: HotWaterWeightStopController | null = null;
-    if (input.state === 'hotWater' && input.hotWaterWeightStop) {
-      const tare = await tareAndArmHotWaterWeightStop({
-        target: input.hotWaterWeightStop,
-        shouldArm: () => true
-      }, deps);
-      if (tare.type === 'failed') throw tare.error;
-      hotWaterWeightStop = tare.type === 'armed' ? tare.controller : null;
-    }
-
     await deps.requestState(input.state);
     return {
       type: 'sent',
       status: machineActionStatus(input.state, 'sent'),
-      restore,
-      hotWaterWeightStop
+      restore
     };
   } catch (error) {
     return {
@@ -241,7 +131,6 @@ export async function sendMachineActionCommand(
       error,
       status: 'Machine command failed',
       noScaleBlocked: input.state === 'espresso' && deps.isNoScaleShotBlockError(error),
-      clearHotWaterWeightStop: input.state === 'hotWater',
       restore
     };
   }
@@ -429,8 +318,4 @@ function machineStateLabel(state: MachineState): string {
 
 function positiveNumber(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
-}
-
-function formatNumber(value: number | null | undefined, digits: number): string {
-  return value == null || Number.isNaN(value) ? '--' : value.toFixed(digits);
 }

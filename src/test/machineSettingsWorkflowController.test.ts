@@ -9,7 +9,6 @@ import {
   steamPurgeModePlan,
   updateSteamPurgeModeAndReadBack
 } from '../controllers/machineSettingsWorkflowController';
-import { HOT_WATER_WEIGHT_NATIVE_VOLUME_ML } from '../controllers/machineExecutionController';
 import { demoSettingsBundle } from '../domain/settingsModel';
 import { waterControlCapabilities } from '../domain/waterSettings';
 
@@ -21,12 +20,13 @@ await run('machine workflow plan builds app workflow gateway workflow and machin
     rinseData: rinse({ duration: 8, flow: 4 }),
     currentMachineSettings: { usb: true },
     hotWaterStopMode: 'volume',
-    hotWaterScaleConnected: true,
     status: 'Machine setting saved'
   });
 
   equal(plan.workflow.hotWaterData?.volume, 120);
-  equal(plan.workflowForGateway.hotWaterData?.volume, HOT_WATER_WEIGHT_NATIVE_VOLUME_ML);
+  // Weight mode keeps the real volume target (reaprime stops at weight); only the
+  // DE1 time stop is padded so it stays a backstop. 120 g at 6 ml/s + 30 s = 50 s.
+  equal(plan.workflowForGateway.hotWaterData?.volume, 120);
   equal(plan.workflowForGateway.hotWaterData?.duration, 50);
   equal(plan.machineSettings.usb, true);
   equal(plan.machineSettings.steamFlow, 1.1);
@@ -170,7 +170,7 @@ await run('steam purge readback reports mismatched gateway state', async () => {
   equal(failed, true);
 });
 
-await run('machine workflow plan preserves time-based hot water settings for gateway', () => {
+await run('machine workflow plan disables the volume stop for time-based hot water', () => {
   const plan = buildMachineWorkflowPlan({
     workflow: workflow(),
     steamSettings: steam(),
@@ -178,11 +178,13 @@ await run('machine workflow plan preserves time-based hot water settings for gat
     rinseData: rinse(),
     currentMachineSettings: null,
     hotWaterStopMode: 'time',
-    hotWaterScaleConnected: true,
     status: 'Water stop mode saved'
   });
 
-  equal(plan.workflowForGateway.hotWaterData?.volume, 140);
+  // Time mode zeroes the gateway volume (DE1 stops on duration; reaprime stays
+  // inert) while the local workflow keeps the real target for the UI.
+  equal(plan.workflow.hotWaterData?.volume, 140);
+  equal(plan.workflowForGateway.hotWaterData?.volume, 0);
   equal(plan.workflowForGateway.hotWaterData?.duration, 22);
   equal(plan.successStatus, 'Water stop mode saved');
 });
@@ -296,7 +298,6 @@ function plan(hotWaterStopMode: 'volume' | 'time' = 'volume') {
     rinseData: rinse(),
     currentMachineSettings: null,
     hotWaterStopMode,
-    hotWaterScaleConnected: false,
     status: 'Machine setting saved'
   });
 }

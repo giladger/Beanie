@@ -362,27 +362,17 @@ import {
   machineServiceStats,
   machineServiceTargetSeconds,
   machineServiceTone,
-  machineServiceVerb,
-  nextHotWaterWeightStop,
-  type HotWaterWeightStopController
+  machineServiceVerb
 } from './domain/machineService';
 import { MachineServiceController } from './controllers/machineServiceController';
 import {
-  DEFAULT_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS,
-  HOT_WATER_WEIGHT_NATIVE_VOLUME_ML,
   captureMachineServiceWorkflowRestore,
-  createHotWaterWeightStopController,
   extendedMachineServiceWorkflow,
-  hotWaterDataForNativeWorkflow,
-  hotWaterWeightStopTarget as plannedHotWaterWeightStopTarget,
   machineActionPreflight,
   machineActionStatus,
   optimisticMachineSnapshot,
   restoreMachineServiceWorkflowAfterEnd as restoreMachineServiceWorkflowAfterEndController,
   sendMachineActionCommand,
-  stopHotWaterAtWeight as stopHotWaterAtWeightController,
-  tareAndArmHotWaterWeightStop as tareAndArmHotWaterWeightStopController,
-  type HotWaterWeightStopTarget,
   type MachineServiceWorkflowRestore
 } from './controllers/machineExecutionController';
 import {
@@ -865,9 +855,6 @@ export class BeanieApp {
   private timedSteamStopTimer: number | null = null;
   private timedSteamStopScheduledForMs: number | null = null;
   private machineServiceWorkflowToRestore: MachineServiceWorkflowRestore | null = null;
-  private hotWaterWeightStop: HotWaterWeightStopController | null = null;
-  private hotWaterWeightStopTarePending = false;
-  private hotWaterWeightStopTareFailed = false;
   private sleepBrightnessTimer: number | null = null;
   private sleepBrightnessZeroed = false;
   // Brightness to restore when the user wakes the app without the machine.
@@ -1992,10 +1979,7 @@ export class BeanieApp {
       state,
       skipScaleCheck: opts.skipScaleCheck === true,
       noScaleBlocked: this.shouldPreflightBlockShotForScale(),
-      waterAlertHard: this.currentWaterAlert() === 'hard',
-      hotWaterStopMode: this.state.hotWaterStopMode,
-      scaleConnected: scaleConnected(this.state.scale),
-      hotWaterData: this.currentHotWaterData()
+      waterAlertHard: this.currentWaterAlert() === 'hard'
     });
     if (preflight.type === 'blocked-no-scale') {
       this.showNoScaleShotWarning({ busy: false });
@@ -2007,15 +1991,9 @@ export class BeanieApp {
       return false;
     }
     const service = preflight.service;
-    const hotWaterWeightStop = preflight.hotWaterWeightStop;
     this.setState({ busy: true, status: preflight.status });
     if (this.state.demo) {
       if (state !== 'espresso') this.stopSimulatedShot();
-      if (state === 'hotWater') {
-        this.hotWaterWeightStop = hotWaterWeightStop
-          ? createHotWaterWeightStopController(hotWaterWeightStop, null, Date.now())
-          : null;
-      }
       this.rememberMachineProgressReturnView(service);
       this.trackMachineServiceState(state);
       this.setState({
@@ -2030,10 +2008,8 @@ export class BeanieApp {
       if (state === 'espresso') this.startSimulatedShot();
       return true;
     }
-    if (state === 'hotWater' && hotWaterWeightStop) this.setState({ status: 'Taring scale' });
     const command = await sendMachineActionCommand({
       state,
-      hotWaterWeightStop,
       workflow: this.state.workflow,
       steamSettings: this.currentSteamSettings(),
       hotWaterData: this.currentHotWaterData(),
@@ -2041,16 +2017,13 @@ export class BeanieApp {
       twoTapSteamStop: this.usesTwoTapSteamStop()
     }, {
       updateWorkflow: (workflow) => gateway.updateWorkflow(workflow),
-      tareScale: () => gateway.tareScale(),
       requestState: (nextState) => gateway.requestState(nextState),
-      nowMs: () => Date.now(),
       isNoScaleShotBlockError
     });
     if (command.restore) this.captureMachineServiceWorkflowRestore(command.restore);
     if (command.type === 'failed') {
       console.error('[Beanie] Machine action failed', command.error);
       if (state === 'steam' && !command.restore) this.machineServiceWorkflowToRestore = null;
-      if (command.clearHotWaterWeightStop) this.hotWaterWeightStop = null;
       if (command.noScaleBlocked) {
         this.showNoScaleShotWarning({ busy: false });
         return false;
@@ -2058,7 +2031,6 @@ export class BeanieApp {
       this.setState({ busy: false, status: command.status });
       return false;
     }
-    if (state === 'hotWater') this.hotWaterWeightStop = command.hotWaterWeightStop;
     this.rememberMachineProgressReturnView(service);
     this.trackMachineServiceState(state);
     this.setState({
@@ -2303,131 +2275,6 @@ export class BeanieApp {
     return this.lastScaleFrameMs != null && tMs - this.lastScaleFrameMs <= SCALE_FRESH_WINDOW_MS;
   }
 
-  private hotWaterWeightStopTarget(): HotWaterWeightStopTarget | null {
-    return plannedHotWaterWeightStopTarget(
-      this.currentHotWaterData(),
-      this.state.hotWaterStopMode,
-      scaleConnected(this.state.scale)
-    );
-  }
-
-  private ensureHotWaterWeightStopArmed(): void {
-    if (this.hotWaterWeightStop || this.hotWaterWeightStopTarePending || this.hotWaterWeightStopTareFailed) return;
-    if (this.machineService.stopRequestedFor === 'hotWater') return;
-    if (this.state.machine?.state?.state !== 'hotWater') return;
-    const target = this.hotWaterWeightStopTarget();
-    if (!target) return;
-
-    if (this.state.demo) {
-      this.hotWaterWeightStop = createHotWaterWeightStopController(target, null, Date.now());
-      return;
-    }
-
-    this.hotWaterWeightStopTarePending = true;
-    this.setState({ status: 'Taring scale' });
-    void this.refreshHotWaterNativeTimeoutForWeightMode();
-    void this.tareAndArmHotWaterWeightStop(target);
-  }
-
-  private async refreshHotWaterNativeTimeoutForWeightMode(): Promise<void> {
-    if (this.state.demo || this.state.workflow == null) return;
-    const steamSettings = this.currentSteamSettings();
-    const hotWaterData = this.currentHotWaterData();
-    const rinseData = this.currentRinseData();
-    const nativeHotWaterData = hotWaterDataForNativeWorkflow(
-      hotWaterData,
-      this.state.hotWaterStopMode,
-      scaleConnected(this.state.scale)
-    );
-    if (nativeHotWaterData.duration === hotWaterData.duration) return;
-    try {
-      await gateway.updateWorkflow({
-        ...this.state.workflow,
-        steamSettings,
-        hotWaterData: nativeHotWaterData,
-        rinseData
-      });
-    } catch (error) {
-      console.warn('[Beanie] Hot water native timeout refresh failed', error);
-    }
-  }
-
-  private async tareAndArmHotWaterWeightStop(target: HotWaterWeightStopTarget): Promise<void> {
-    const result = await tareAndArmHotWaterWeightStopController({
-      target,
-      shouldArm: () => !this.disposed &&
-        this.state.machine?.state?.state === 'hotWater' &&
-        this.machineService.stopRequestedFor !== 'hotWater'
-    }, {
-      tareScale: () => gateway.tareScale(),
-      nowMs: () => Date.now()
-    });
-    if (result.type === 'armed') {
-      this.hotWaterWeightStop = result.controller;
-    } else if (result.type === 'failed') {
-      console.error('[Beanie] Hot water scale tare failed', result.error);
-      this.hotWaterWeightStopTareFailed = true;
-      this.setState({ status: result.status });
-    }
-    this.hotWaterWeightStopTarePending = false;
-  }
-
-  private handleHotWaterWeightStop(tMs: number): void {
-    const controller = this.hotWaterWeightStop;
-    if (!controller) return;
-
-    const scale = this.state.scale;
-    const lookahead = nonNegativeNumber(this.state.settingsBundle?.rea.volumeFlowMultiplier)
-      ?? DEFAULT_HOT_WATER_WEIGHT_LOOKAHEAD_SECONDS;
-    const decision = nextHotWaterWeightStop(controller, {
-      machineState: this.state.machine?.state?.state,
-      nowMs: Date.now(),
-      freshScale: this.hasFreshConnectedScale(tMs),
-      lastScaleFrameMs: this.lastScaleFrameMs,
-      weight: scale?.weight,
-      weightFlow: scale?.weightFlow,
-      lookaheadSeconds: lookahead
-    });
-
-    this.hotWaterWeightStop = decision.controller;
-    if (decision.action !== 'stop') return;
-
-    void this.stopHotWaterAtWeight(decision.targetWeight, decision.weight, decision.projectedWeight);
-  }
-
-  private async stopHotWaterAtWeight(targetWeight: number, weight: number, projectedWeight: number): Promise<void> {
-    this.machineService.markStopRequested('hotWater', Date.now());
-    this.setState({
-      status: `Water target ${formatNumber(targetWeight, 0)} g reached`
-    });
-    const result = await stopHotWaterAtWeightController({
-      demo: this.state.demo,
-      weight,
-      projectedWeight
-    }, {
-      requestState: (nextState) => gateway.requestState(nextState)
-    });
-    if (result.type === 'demo') {
-      this.hotWaterWeightStop = null;
-      this.trackMachineServiceState('idle');
-      this.setState({
-        machine: optimisticMachineSnapshot(this.state.machine, 'idle'),
-        view: this.consumeMachineProgressReturnView(),
-        status: result.status
-      });
-      return;
-    }
-    if (result.type === 'requested') {
-      this.setState({ status: result.status });
-      this.armMachineStopFeedbackTimer();
-      return;
-    }
-    console.error('[Beanie] Hot water weight stop failed', result.error);
-    this.clearMachineStopRequest();
-    this.hotWaterWeightStop = null;
-    this.setState({ status: result.status });
-  }
-
   private beginNoScaleBrewFlashIfNeeded(machine: MachineSnapshot, previousState: string | undefined, tMs: number): void {
     const state = machine.state?.state;
     if (!isBrewState(state) || isBrewState(previousState)) return;
@@ -2597,7 +2444,6 @@ export class BeanieApp {
       return;
     }
 
-    if (service === 'hotWater') this.hotWaterWeightStop = null;
     this.machineService.markStopRequested(service, Date.now());
     if (service === 'steam') this.clearTimedSteamStopTimer();
     this.setState({ busy: true, status: 'Stopping machine' });
@@ -2857,12 +2703,6 @@ export class BeanieApp {
         this.noScaleShotWarningUntilMs = 0;
       }
     }
-    if (frameState.scaleConnectionChanged && frameState.scaleConnected) {
-      void this.refreshHotWaterNativeTimeoutForWeightMode();
-    }
-    this.ensureHotWaterWeightStopArmed();
-    this.handleHotWaterWeightStop(tMs);
-
     const wasActive = this.state.liveActive;
     // Sample only the snapshot that actually arrived on this tick. The machine
     // (~4 Hz) and scale (~10 Hz) sockets fire independently; feeding both cached
@@ -2955,11 +2795,6 @@ export class BeanieApp {
   ): void {
     const transition = this.machineService.track(state, substate, nowMs);
 
-    if (transition.resetHotWaterWeightStop) {
-      this.hotWaterWeightStop = null;
-      this.hotWaterWeightStopTarePending = false;
-      this.hotWaterWeightStopTareFailed = false;
-    }
     if (transition.clearTimedSteamTimer) this.clearTimedSteamStopTimer();
     if (transition.restoreWorkflowAfterEnd) void this.restoreMachineServiceWorkflowAfterEnd();
     if (transition.updateTimedSteamStopTimer) this.updateTimedSteamStopTimer(nowMs);
@@ -6315,7 +6150,6 @@ export class BeanieApp {
       rinseData,
       currentMachineSettings: this.state.machineSettings,
       hotWaterStopMode: this.state.hotWaterStopMode,
-      hotWaterScaleConnected: scaleConnected(this.state.scale),
       status
     });
     this.setState({
@@ -6367,12 +6201,12 @@ export class BeanieApp {
     const values = this.state.workflow?.hotWaterData
       ? hotWaterValues(this.state.workflow, null)
       : hotWaterValues(this.state.workflow, this.state.machineSettings);
+    // Time mode zeroes the volume sent to the gateway (so the DE1 stops on time
+    // and reaprime's stop-at-weight stays inert). Restore the user's saved
+    // volume/weight target so it survives a reload and a switch back to Weight mode.
     const savedTarget = readHotWaterWeightTarget();
-    if (
-      this.state.hotWaterStopMode === 'volume' &&
-      savedTarget != null &&
-      values.volume === HOT_WATER_WEIGHT_NATIVE_VOLUME_ML
-    ) {
+    const volume = values.volume;
+    if (savedTarget != null && !(typeof volume === 'number' && volume > 0)) {
       return { ...values, volume: savedTarget };
     }
     return values;

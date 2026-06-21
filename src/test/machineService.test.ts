@@ -7,7 +7,6 @@ import {
   machineServiceTargetSeconds,
   machineServiceTone,
   machineServiceVerb,
-  nextHotWaterWeightStop,
   nextMachineServiceProgress
 } from '../domain/machineService';
 import type { HotWaterData, MachineSnapshot, RinseData, ScaleSnapshot, SteamSettings } from '../api/types';
@@ -60,7 +59,7 @@ run('steam rinse is treated as steam purging and clears the timed stop timer', (
   equal(transition.clearTimedSteamRequest, false);
 });
 
-run('leaving hot water clears progress and requests hot-water weight cleanup', () => {
+run('leaving hot water clears progress and restores the workflow', () => {
   const transition = nextMachineServiceProgress({
     service: 'hotWater',
     phase: 'active',
@@ -69,7 +68,6 @@ run('leaving hot water clears progress and requests hot-water weight cleanup', (
   }, 'idle', undefined, 2_000);
 
   equal(transition.next.service, null);
-  equal(transition.resetHotWaterWeightStop, true);
   equal(transition.restoreWorkflowAfterEnd, true);
   equal(transition.clearMachineStopRequest, true);
   equal(transition.clearTimedSteamTimer, true);
@@ -155,99 +153,6 @@ run('machine service metadata includes steam and flush readouts', () => {
   equal(JSON.stringify(machineServiceMeta('steam', steam(), water(), flush(), machine(), scale(), 'time')), '["2.0 ml/s","120 C target","118 C steam"]');
   equal(JSON.stringify(machineServiceMeta('flush', steam(), water(), flush(), machine(), scale(), 'time')), '["4.0 ml/s","88 C target","91 C group"]');
 });
-
-run('hot water weight stop marks active once hot water is seen', () => {
-  const decision = nextHotWaterWeightStop(hotWaterStop(), {
-    machineState: 'hotWater',
-    nowMs: 2_000,
-    freshScale: false,
-    lastScaleFrameMs: null,
-    weight: null,
-    weightFlow: null,
-    lookaheadSeconds: 0.3
-  });
-
-  equal(decision.action, 'wait');
-  equal(decision.controller?.activeSeen, true);
-});
-
-run('hot water weight stop clears after service ends or never starts', () => {
-  equal(nextHotWaterWeightStop({ ...hotWaterStop(), activeSeen: true }, {
-    machineState: 'idle',
-    nowMs: 2_000,
-    freshScale: false,
-    lastScaleFrameMs: null,
-    weight: null,
-    weightFlow: null,
-    lookaheadSeconds: 0.3
-  }).action, 'clear');
-
-  equal(nextHotWaterWeightStop(hotWaterStop(), {
-    machineState: 'idle',
-    nowMs: 12_000,
-    freshScale: false,
-    lastScaleFrameMs: null,
-    weight: null,
-    weightFlow: null,
-    lookaheadSeconds: 0.3
-  }).action, 'clear');
-});
-
-run('hot water weight stop waits for fresh post-tare scale data', () => {
-  const decision = nextHotWaterWeightStop({ ...hotWaterStop(), activeSeen: true, tareRequestedAtMs: 5_000 }, {
-    machineState: 'hotWater',
-    nowMs: 6_000,
-    freshScale: true,
-    lastScaleFrameMs: 4_500,
-    weight: 119,
-    weightFlow: 8,
-    lookaheadSeconds: 0.3
-  });
-
-  equal(decision.action, 'wait');
-});
-
-run('hot water weight stop requests stop when projected weight reaches target', () => {
-  const decision = nextHotWaterWeightStop({ ...hotWaterStop(), activeSeen: true }, {
-    machineState: 'hotWater',
-    nowMs: 6_000,
-    freshScale: true,
-    lastScaleFrameMs: 6_000,
-    weight: 118,
-    weightFlow: 8,
-    lookaheadSeconds: 0.3
-  });
-
-  equal(decision.action, 'stop');
-  equal(decision.controller?.stopRequested, true);
-  equal(decision.action === 'stop' ? decision.projectedWeight : 0, 120.4);
-});
-
-run('hot water weight stop uses configured flow when scale flow is unavailable', () => {
-  const decision = nextHotWaterWeightStop({ ...hotWaterStop(), activeSeen: true }, {
-    machineState: 'hotWater',
-    nowMs: 6_000,
-    freshScale: true,
-    lastScaleFrameMs: 6_000,
-    weight: 119,
-    weightFlow: null,
-    lookaheadSeconds: 0.3
-  });
-
-  equal(decision.action, 'stop');
-  equal(decision.action === 'stop' ? decision.projectedWeight : 0, 120.5);
-});
-
-function hotWaterStop() {
-  return {
-    targetWeight: 120,
-    configuredFlow: 5,
-    armedAtMs: 1_000,
-    tareRequestedAtMs: null,
-    activeSeen: false,
-    stopRequested: false
-  };
-}
 
 function steam(): SteamSettings {
   return { duration: 36, flow: 2, targetTemperature: 120, stopAtTemperature: 65 };
