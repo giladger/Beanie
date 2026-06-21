@@ -3908,9 +3908,16 @@ export class BeanieApp {
     }
   }
 
-  /** Safe to overwrite the displayed recipe: in sync, not mid-edit or applying. */
+  /** Safe to overwrite the displayed recipe: not mid-push of a local edit. */
   private canResyncRecipe(): boolean {
-    return this.state.applyState === 'idle' || this.state.applyState === 'applied';
+    // Adopt remote recipe/bean changes unless a local apply is in flight
+    // ('pending') or a debounced edit is scheduled. We must keep resyncing
+    // while 'stale'/'failed' too: a sleeping DE1 (the tablet's normal idle
+    // state) parks applyState at 'stale', and excluding it would permanently
+    // stop the tablet from picking up changes made on another device. Local
+    // unsynced draft edits aren't clobbered — resync only adopts when the
+    // gateway *workflow* differs, which a not-yet-applied draft hasn't changed.
+    return this.state.applyState !== 'pending' && this.applyTimer == null;
   }
 
   /**
@@ -3952,7 +3959,12 @@ export class BeanieApp {
     // Adopt the gateway's workflow, then re-derive the displayed recipe + bean
     // from it (display only — never applied back to the machine).
     this.state.workflow = workflow;
-    const selected = selectInitialBean(this.state.beans, workflow, lastBeanId, null);
+    // Prefer the explicitly-selected coffee (last-bean-id, written on every
+    // pick) over the workflow's bean: picking a coffee uses apply:false, so the
+    // workflow's context.beanId lags behind until a recipe is applied.
+    const selected =
+      (lastBeanId != null ? this.state.beans.find((bean) => bean.id === lastBeanId) ?? null : null) ??
+      selectInitialBean(this.state.beans, workflow, lastBeanId, null);
     if (selected) {
       await this.selectBean(selected.id, { apply: false, preferWorkflow: true });
     } else {
