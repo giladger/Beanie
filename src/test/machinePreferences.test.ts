@@ -2,10 +2,12 @@ import {
   readHotWaterStopMode,
   readHotWaterWeightTarget,
   readMachinePresetLabels,
+  readMachinePresetSelection,
   readMachinePresetValues,
   writeHotWaterStopMode,
   writeHotWaterWeightTarget,
   writeMachinePresetLabels,
+  writeMachinePresetSelection,
   writeMachinePresetValues
 } from '../domain/machinePreferences';
 import { clearSyncedCache, setSyncedItem } from '../domain/settingsStore';
@@ -47,6 +49,24 @@ run('machine preset values round-trip through local storage', () => {
   writeMachinePresetValues({ 'flush:short': { flow: 5.5, seconds: 8 } });
 
   equal(JSON.stringify(readMachinePresetValues()), '{"flush:short":{"flow":5.5,"seconds":8}}');
+});
+
+run('machine preset selection round-trips and ignores malformed/unknown entries', () => {
+  clearSyncedCache();
+  equal(JSON.stringify(readMachinePresetSelection()), '{}');
+
+  writeMachinePresetSelection({ steamPreset: 'small-jug', waterPreset: 'tea', flushPreset: 'quick' });
+  equal(
+    JSON.stringify(readMachinePresetSelection()),
+    '{"steamPreset":"small-jug","waterPreset":"tea","flushPreset":"quick"}'
+  );
+
+  setSyncedItem('beanie.machine-preset-selection', JSON.stringify({
+    steamPreset: 'medium-jug',
+    waterPreset: 7,
+    bogusSection: 'x'
+  }));
+  equal(JSON.stringify(readMachinePresetSelection()), '{"steamPreset":"medium-jug"}');
 });
 
 run('hot water stop mode defaults to volume and accepts time', () => {

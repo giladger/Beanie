@@ -28,6 +28,7 @@ export const flowCalGlobalKey = 'beanie.flow-cal.global';
 export const flowCalOverridesKey = 'beanie.flow-cal.profile-overrides';
 export const machinePresetLabelsKey = 'beanie.machine-preset-labels';
 export const machinePresetValuesKey = 'beanie.machine-preset-values';
+export const machinePresetSelectionKey = 'beanie.machine-preset-selection';
 export const hotWaterStopModeKey = 'beanie.hot-water-stop-mode';
 export const hotWaterWeightTargetKey = 'beanie.hot-water-weight-target';
 export const cleaningStateKey = 'beanie.cleaning.state';
@@ -52,6 +53,7 @@ export const SYNCED_SETTING_KEYS: readonly string[] = [
   flowCalOverridesKey,
   machinePresetLabelsKey,
   machinePresetValuesKey,
+  machinePresetSelectionKey,
   hotWaterStopModeKey,
   hotWaterWeightTargetKey,
   cleaningStateKey,

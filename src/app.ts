@@ -389,12 +389,15 @@ import {
   readHotWaterStopMode,
   readHotWaterWeightTarget,
   readMachinePresetLabels,
+  readMachinePresetSelection,
   readMachinePresetValues,
   writeHotWaterStopMode,
   writeHotWaterWeightTarget,
   writeMachinePresetLabels,
+  writeMachinePresetSelection,
   writeMachinePresetValues,
   type HotWaterStopMode,
+  type MachinePresetSelection,
   type MachinePresetValueOverrides
 } from './domain/machinePreferences';
 import {
@@ -624,6 +627,7 @@ interface AppState {
   machineLabelEdit: MachineLabelEditTarget | null;
   machinePresetLabels: Record<string, string>;
   machinePresetValues: MachinePresetValueOverrides;
+  machinePresetSelection: MachinePresetSelection;
   hotWaterStopMode: HotWaterStopMode;
   formNumbers: Record<string, string>;
   detailShotId: string | null;
@@ -761,6 +765,7 @@ export class BeanieApp {
     machineLabelEdit: null,
     machinePresetLabels: readMachinePresetLabels(),
     machinePresetValues: readMachinePresetValues(),
+    machinePresetSelection: readMachinePresetSelection(),
     hotWaterStopMode: readHotWaterStopMode(),
     formNumbers: {},
     detailShotId: null,
@@ -3874,6 +3879,7 @@ export class BeanieApp {
       favoriteBeans: readFavoriteBeans(),
       machinePresetLabels: readMachinePresetLabels(),
       machinePresetValues: readMachinePresetValues(),
+      machinePresetSelection: readMachinePresetSelection(),
       hotWaterStopMode: readHotWaterStopMode(),
       cleaning: readCleaningState(),
       cleaningProfileOverride: readCleaningProfileOverride(),
@@ -6222,6 +6228,14 @@ export class BeanieApp {
       rinseData: this.currentRinseData()
     });
     if (!plan.applied) return;
+    // Remember which button the user actually tapped, so the highlight is
+    // restored verbatim on the next load instead of being re-guessed from the
+    // machine's stored values (which drifts to 'custom'). `name` is the lane id
+    // ('steamPreset' | 'waterPreset' | 'flushPreset'), already validated by the
+    // plan above.
+    const selection = { ...this.state.machinePresetSelection, [name]: presetId };
+    writeMachinePresetSelection(selection);
+    this.setState({ machinePresetSelection: selection });
     await this.setMachineWorkflow(plan.steamSettings, plan.hotWaterData, plan.rinseData, plan.status);
   }
 
@@ -7176,9 +7190,12 @@ export class BeanieApp {
     const steamPresets = machinePresetsWithValues('steamPreset', STEAM_PRESETS, this.state.machinePresetValues);
     const waterPresets = machinePresetsWithValues('waterPreset', HOT_WATER_PRESETS, this.state.machinePresetValues);
     const flushPresets = machinePresetsWithValues('flushPreset', FLUSH_PRESETS, this.state.machinePresetValues);
-    const steamPreset = matchingPreset(steam, steamPresets);
-    const waterPreset = matchingPreset(water, waterPresets);
-    const flushPreset = matchingPreset(flush, flushPresets);
+    // Prefer the explicitly-saved button selection; fall back to value-matching
+    // only when nothing has been selected yet (legacy / first run).
+    const selection = this.state.machinePresetSelection;
+    const steamPreset = selection.steamPreset ?? matchingPreset(steam, steamPresets);
+    const waterPreset = selection.waterPreset ?? matchingPreset(water, waterPresets);
+    const flushPreset = selection.flushPreset ?? matchingPreset(flush, flushPresets);
     const waterScaleConnected = scaleConnected(this.state.scale);
     return renderMachinePageView({
       headerHtml: this.pageHeader('Steam · Water · Flush'),
