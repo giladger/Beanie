@@ -4016,7 +4016,13 @@ p {
   color: var(--teal);
 }
 
-/* Hidden-profiles section: muted rows with inline unhide/delete controls */
+/* Hidden-profiles section: revealed at the top of the list, divided from the
+   normal profiles below it. Muted rows with inline unhide/delete controls. */
+.profile-hidden-section {
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
 
 .profile-row-hidden {
   display: flex;

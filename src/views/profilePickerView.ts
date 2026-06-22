@@ -58,12 +58,12 @@ export function renderProfilesPage(model: ProfilePickerViewModel): string {
       </label>
       <section class="profile-selector-shell">
         <div class="profile-list">
+          ${cleaningMode || !model.showHidden ? '' : renderHiddenSection(model)}
           ${
             sorted.length === 0
               ? '<p class="empty">No profiles match.</p>'
               : renderProfileRows(sorted, favorites, model.selectedId, focus?.id ?? null)
           }
-          ${cleaningMode || !model.showHidden ? '' : renderHiddenSection(model)}
         </div>
         ${renderProfilePreviewPane(focus, {
           favorite: favorites.has(focus?.id ?? ''),
@@ -214,8 +214,10 @@ function renderHiddenSection(model: ProfilePickerViewModel): string {
       ? '<p class="empty">No hidden profiles.</p>'
       : hidden.map((record) => renderHiddenRow(record)).join('');
   return `
-    <div class="profile-group-header">Hidden</div>
-    ${rows}
+    <div class="profile-hidden-section">
+      <div class="profile-group-header">Hidden</div>
+      ${rows}
+    </div>
   `;
 }
 
