@@ -2321,8 +2321,19 @@ p {
   grid-template-columns: repeat(3, 1fr);
 }
 
+/* Lay the icon beside the label (the base .command stacks them in a grid). */
 .delete-profile-actions .command {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   min-height: 48px;
+}
+
+.delete-profile-actions .command .icon {
+  width: 16px;
+  height: 16px;
 }
 
 .bean-picker-backdrop {
