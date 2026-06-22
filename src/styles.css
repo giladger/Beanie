@@ -4010,11 +4010,18 @@ p {
 }
 
 /* Hidden-profiles section: muted rows with inline unhide/delete controls */
+/* Search + show-hidden toggle share the page's first (auto) grid row, so the
+   selector shell keeps the 1fr row instead of being pushed out and overlapping. */
+.profiles-page-head {
+  display: flex;
+  flex-direction: column;
+}
+
 .profile-hidden-toggle {
   display: inline-flex;
   align-items: center;
   align-self: start;
-  margin: 0 0 2px;
+  margin: 0 0 2px 9px;
   padding: 8px 14px;
   border: 1px solid var(--line);
   border-radius: 999px;

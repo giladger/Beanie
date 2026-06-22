@@ -50,15 +50,17 @@ export function renderProfilesPage(model: ProfilePickerViewModel): string {
   return `
     ${profilePageHeader(cleaningMode ? 'Cleaning profile' : 'Profiles', cleaningMode ? 'machine' : 'workbench', actions)}
     <main class="page-body profiles-page no-scroll-page">
-      <label class="search">
-        ${icon('search')}
-        <input type="search" data-action="profile-search" value="${escapeAttr(model.search)}" placeholder="Search profiles" />
-      </label>
-      ${
-        cleaningMode
-          ? ''
-          : `<button type="button" class="profile-hidden-toggle ${model.showHidden ? 'on' : ''}" data-action="toggle-show-hidden">${model.showHidden ? 'Hide hidden profiles' : 'Show hidden profiles'}</button>`
-      }
+      <div class="profiles-page-head">
+        <label class="search">
+          ${icon('search')}
+          <input type="search" data-action="profile-search" value="${escapeAttr(model.search)}" placeholder="Search profiles" />
+        </label>
+        ${
+          cleaningMode
+            ? ''
+            : `<button type="button" class="profile-hidden-toggle ${model.showHidden ? 'on' : ''}" data-action="toggle-show-hidden">${model.showHidden ? 'Hide hidden profiles' : 'Show hidden profiles'}</button>`
+        }
+      </div>
       <section class="profile-selector-shell">
         <div class="profile-list">
           ${
