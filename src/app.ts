@@ -4593,6 +4593,9 @@ export class BeanieApp {
       'confirm-delete-profile': () => {
         void this.confirmDeleteProfile();
       },
+      'hide-instead-delete': () => {
+        void this.hideInsteadOfDelete();
+      },
       'close-modal': () => {
         if (this.state.modal === 'cleaning-wizard') this.teardownUntrackedCleaningAction();
         if (this.state.modal === 'batch-storage') {
@@ -5074,6 +5077,14 @@ export class BeanieApp {
       console.error('[Beanie] Delete profile failed', err);
       this.setState({ status: 'Could not delete profile' });
     }
+  }
+
+  // Escape hatch from the delete dialog: hide (reversible) instead of deleting.
+  private async hideInsteadOfDelete(): Promise<void> {
+    const target = this.state.profileDeleteTarget;
+    if (!target) return;
+    this.setState({ modal: null, profileDeleteTarget: null });
+    await this.hideProfile(target.id);
   }
 
   // After a visibility/delete mutation, refresh the visible list (and its cache)

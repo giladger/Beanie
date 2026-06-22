@@ -2316,6 +2316,15 @@ p {
   font-size: 14px;
 }
 
+/* Delete-profile dialog: Cancel · Hide instead · Delete, side by side */
+.delete-profile-actions {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.delete-profile-actions .command {
+  min-height: 48px;
+}
+
 .bean-picker-backdrop {
   padding: 8px;
 }

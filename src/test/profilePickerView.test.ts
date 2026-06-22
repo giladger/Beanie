@@ -177,11 +177,13 @@ run('profile picker hidden section lists hidden profiles with unhide and gated d
   excludes(html, 'data-action="delete-profile" data-id="hidden-default"');
 });
 
-run('delete-profile dialog warns the action cannot be undone', () => {
+run('delete-profile dialog warns it cannot be undone and offers hide instead', () => {
   const html = renderDeleteProfileModal('My Profile');
   includes(html, 'My Profile');
   includes(html, 'undone');
   includes(html, 'data-action="confirm-delete-profile"');
+  includes(html, 'data-action="hide-instead-delete"');
+  includes(html, 'Hide instead');
   includes(html, 'data-action="close-modal"');
 });
 

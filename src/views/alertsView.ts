@@ -39,10 +39,11 @@ export function renderDeleteProfileModal(title: string): string {
           </div>
           <button type="button" class="icon-button" data-action="close-modal" aria-label="Close">${icon('x')}</button>
         </div>
-        <p class="delete-shot-detail">This can’t be undone.</p>
-        <div class="modal-actions delete-shot-actions">
-          <button type="button" class="command danger" data-action="confirm-delete-profile">${icon('trash-2')}<span>Delete</span></button>
+        <p class="delete-shot-detail">This can’t be undone. You can hide it instead.</p>
+        <div class="modal-actions delete-profile-actions">
           <button type="button" class="command" data-action="close-modal">Cancel</button>
+          <button type="button" class="command" data-action="hide-instead-delete"><span>Hide instead</span></button>
+          <button type="button" class="command danger" data-action="confirm-delete-profile">${icon('trash-2')}<span>Delete</span></button>
         </div>
       </section>
     </div>
