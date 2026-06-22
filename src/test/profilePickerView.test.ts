@@ -5,6 +5,7 @@ import {
   renderPhoneProfilesPage,
   renderProfilesPage
 } from '../views/profilePickerView';
+import { renderDeleteProfileModal } from '../views/alertsView';
 
 const profiles: ProfileRecord[] = [
   {
@@ -38,8 +39,7 @@ run('profile picker renders favorites first and groups by title prefix', () => {
     focusId: null,
     cleaningMode: false,
     showHidden: false,
-    hiddenProfiles: [],
-    pendingDeleteId: null
+    hiddenProfiles: []
   });
 
   includes(html, 'Profiles');
@@ -59,8 +59,7 @@ run('profile picker filters by search and focuses the selected profile by defaul
     focusId: null,
     cleaningMode: false,
     showHidden: false,
-    hiddenProfiles: [],
-    pendingDeleteId: null
+    hiddenProfiles: []
   });
 
   includes(html, 'Classic');
@@ -77,8 +76,7 @@ run('profile picker cleaning mode returns to machine and hides create action', (
     focusId: 'profile-pressure',
     cleaningMode: true,
     showHidden: false,
-    hiddenProfiles: [],
-    pendingDeleteId: null
+    hiddenProfiles: []
   });
 
   includes(html, 'Cleaning profile');
@@ -98,8 +96,7 @@ run('phone profile picker renders title-only tap targets', () => {
     focusId: null,
     cleaningMode: false,
     showHidden: false,
-    hiddenProfiles: [],
-    pendingDeleteId: null
+    hiddenProfiles: []
   });
 
   includes(html, 'phone-profile-title');
@@ -143,8 +140,7 @@ run('profile picker preview offers hide for all profiles and delete only for use
     selectedId: null,
     cleaningMode: false,
     showHidden: false,
-    hiddenProfiles: [] as ProfileRecord[],
-    pendingDeleteId: null
+    hiddenProfiles: [] as ProfileRecord[]
   };
 
   const userHtml = renderProfilesPage({ ...base, focusId: 'user-prof' });
@@ -156,7 +152,7 @@ run('profile picker preview offers hide for all profiles and delete only for use
   excludes(defaultHtml, 'data-action="delete-profile" data-id="default-prof"');
 });
 
-run('profile picker hidden section lists hidden profiles with unhide and a two-tap delete', () => {
+run('profile picker hidden section lists hidden profiles with unhide and gated delete', () => {
   const hidden: ProfileRecord[] = [
     { id: 'hidden-user', profile: { title: 'Old Experiment', author: 'Me', steps: [] as unknown[] } },
     { id: 'hidden-default', isDefault: true, profile: { title: 'Bundled Thing', author: 'Decent', steps: [] as unknown[] } }
@@ -169,18 +165,24 @@ run('profile picker hidden section lists hidden profiles with unhide and a two-t
     focusId: null,
     cleaningMode: false,
     showHidden: true,
-    hiddenProfiles: hidden,
-    pendingDeleteId: 'hidden-user'
+    hiddenProfiles: hidden
   });
 
   includes(html, 'Hidden');
   includes(html, 'Old Experiment');
   includes(html, 'data-action="unhide-profile" data-id="hidden-user"');
   includes(html, 'data-action="unhide-profile" data-id="hidden-default"');
-  // The armed user profile reads "Confirm"; the default offers no delete at all.
-  includes(html, 'Confirm');
+  // User profile gets a delete trigger; the default offers no delete at all.
   includes(html, 'data-action="delete-profile" data-id="hidden-user"');
   excludes(html, 'data-action="delete-profile" data-id="hidden-default"');
+});
+
+run('delete-profile dialog warns the action cannot be undone', () => {
+  const html = renderDeleteProfileModal('My Profile');
+  includes(html, 'My Profile');
+  includes(html, 'undone');
+  includes(html, 'data-action="confirm-delete-profile"');
+  includes(html, 'data-action="close-modal"');
 });
 
 run('profile picker show-hidden toggle appears when not in cleaning mode', () => {
@@ -192,8 +194,7 @@ run('profile picker show-hidden toggle appears when not in cleaning mode', () =>
     focusId: null,
     cleaningMode: false,
     showHidden: false,
-    hiddenProfiles: [],
-    pendingDeleteId: null
+    hiddenProfiles: []
   });
   includes(html, 'data-action="toggle-show-hidden"');
   includes(html, 'Show hidden');

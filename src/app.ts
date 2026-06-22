@@ -279,6 +279,7 @@ import {
 import {
   renderNoScaleShotModal as renderNoScaleShotModalView,
   renderDeleteShotModal as renderDeleteShotModalView,
+  renderDeleteProfileModal as renderDeleteProfileModalView,
   renderWaterAlert as renderWaterAlertView,
   renderWaterWarningBanner as renderWaterWarningBannerView
 } from './views/alertsView';
@@ -417,6 +418,7 @@ type Modal =
   | 'delete-shot'
   | 'cleaning-wizard'
   | 'import-profile'
+  | 'delete-profile'
   | null;
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
 interface ClickActionContext {
@@ -647,10 +649,10 @@ interface AppState {
   machineLabelEdit: MachineLabelEditTarget | null;
   profileImport: ProfileImportState | null;
   // Profile browser hide/delete: server-backed hidden list (lazy-loaded when
-  // the user reveals it), and the id armed for a two-tap delete confirm.
+  // the user reveals it), and the profile awaiting delete confirmation.
   profilesShowHidden: boolean;
   hiddenProfiles: ProfileRecord[];
-  profilePendingDeleteId: string | null;
+  profileDeleteTarget: { id: string; title: string } | null;
   machinePresetLabels: Record<string, string>;
   machinePresetValues: MachinePresetValueOverrides;
   machinePresetSelection: MachinePresetSelection;
@@ -792,7 +794,7 @@ export class BeanieApp {
     profileImport: null,
     profilesShowHidden: false,
     hiddenProfiles: [],
-    profilePendingDeleteId: null,
+    profileDeleteTarget: null,
     machinePresetLabels: readMachinePresetLabels(),
     machinePresetValues: readMachinePresetValues(),
     machinePresetSelection: readMachinePresetSelection(),
@@ -4586,7 +4588,10 @@ export class BeanieApp {
         if (id) void this.unhideProfile(id);
       },
       'delete-profile': ({ id }) => {
-        if (id) this.requestDeleteProfile(id);
+        if (id) this.openDeleteProfile(id);
+      },
+      'confirm-delete-profile': () => {
+        void this.confirmDeleteProfile();
       },
       'close-modal': () => {
         if (this.state.modal === 'cleaning-wizard') this.teardownUntrackedCleaningAction();
@@ -4630,6 +4635,7 @@ export class BeanieApp {
           numberEdit: null,
           machineLabelEdit: null,
           profileImport: null,
+          profileDeleteTarget: null,
           cleaningWizard: null
         });
       },
@@ -4805,7 +4811,6 @@ export class BeanieApp {
     this.setState({
       draft: selection.draft,
       profileFocusId: id,
-      profilePendingDeleteId: null,
       status: selection.status
     });
   }
@@ -5016,12 +5021,12 @@ export class BeanieApp {
   // lazily (a separate visibility=hidden query) so the normal list stays lean.
   private async toggleShowHidden(): Promise<void> {
     if (this.state.profilesShowHidden) {
-      this.setState({ profilesShowHidden: false, profilePendingDeleteId: null });
+      this.setState({ profilesShowHidden: false });
       return;
     }
     try {
       const hiddenProfiles = await gateway.hiddenProfiles();
-      this.setState({ profilesShowHidden: true, hiddenProfiles, profilePendingDeleteId: null });
+      this.setState({ profilesShowHidden: true, hiddenProfiles });
     } catch (err) {
       console.error('[Beanie] Load hidden profiles failed', err);
       this.setState({ status: 'Could not load hidden profiles' });
@@ -5048,28 +5053,31 @@ export class BeanieApp {
     }
   }
 
-  // Two-tap delete: the first tap arms the button (shows "Confirm"), the second
-  // performs the soft-delete. Focusing another profile or navigating clears it.
-  private requestDeleteProfile(id: string): void {
-    if (this.state.profilePendingDeleteId !== id) {
-      this.setState({ profilePendingDeleteId: id });
-      return;
-    }
-    void this.deleteProfileConfirmed(id);
+  // Delete is destructive (no in-app recovery), so confirm via a dialog. Look up
+  // the title from whichever list holds the profile (visible or hidden).
+  private openDeleteProfile(id: string): void {
+    const record =
+      this.state.profiles.find((p) => p.id === id) ??
+      this.state.hiddenProfiles.find((p) => p.id === id);
+    const title = record?.profile.title ?? 'this profile';
+    this.setState({ modal: 'delete-profile', profileDeleteTarget: { id, title } });
   }
 
-  private async deleteProfileConfirmed(id: string): Promise<void> {
+  private async confirmDeleteProfile(): Promise<void> {
+    const target = this.state.profileDeleteTarget;
+    if (!target) return;
+    this.setState({ modal: null, profileDeleteTarget: null });
     try {
-      await gateway.deleteProfile(id);
+      await gateway.deleteProfile(target.id);
       await this.reloadProfileLists('Profile deleted');
     } catch (err) {
       console.error('[Beanie] Delete profile failed', err);
-      this.setState({ status: 'Could not delete profile', profilePendingDeleteId: null });
+      this.setState({ status: 'Could not delete profile' });
     }
   }
 
   // After a visibility/delete mutation, refresh the visible list (and its cache)
-  // plus the hidden list when it's on screen, and clear any armed delete.
+  // plus the hidden list when it's on screen.
   private async reloadProfileLists(status: string): Promise<void> {
     await beanieCache.invalidateProfileMutation();
     const profiles = await gateway.profiles();
@@ -5077,7 +5085,7 @@ export class BeanieApp {
     const hiddenProfiles = this.state.profilesShowHidden
       ? await gateway.hiddenProfiles()
       : this.state.hiddenProfiles;
-    this.setState({ profiles, hiddenProfiles, profilePendingDeleteId: null, status });
+    this.setState({ profiles, hiddenProfiles, status });
   }
 
   private toggleFavoriteBean(id: string): void {
@@ -7034,8 +7042,7 @@ export class BeanieApp {
       focusId: this.state.profileFocusId,
       cleaningMode,
       showHidden: this.state.profilesShowHidden,
-      hiddenProfiles: this.state.hiddenProfiles,
-      pendingDeleteId: this.state.profilePendingDeleteId
+      hiddenProfiles: this.state.hiddenProfiles
     };
     return this.isPhoneLayout() ? renderPhoneProfilePickerPage(model) : renderProfilePickerPage(model);
   }
@@ -7076,6 +7083,7 @@ export class BeanieApp {
     if (this.state.modal === 'delete-shot') return this.renderDeleteShotModal();
     if (this.state.modal === 'cleaning-wizard') return this.renderCleaningWizardModal();
     if (this.state.modal === 'import-profile') return this.renderImportProfileModal();
+    if (this.state.modal === 'delete-profile') return this.renderDeleteProfileModal();
     return '';
   }
 
@@ -7083,6 +7091,12 @@ export class BeanieApp {
     const state = this.state.profileImport;
     if (!state) return '';
     return renderImportProfileModalView(state);
+  }
+
+  private renderDeleteProfileModal(): string {
+    const target = this.state.profileDeleteTarget;
+    if (!target) return '';
+    return renderDeleteProfileModalView(target.title);
   }
 
   private renderCleaningWizardModal(): string {

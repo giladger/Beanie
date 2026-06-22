@@ -3983,31 +3983,32 @@ p {
   font-weight: 700;
 }
 
-/* Danger affordance: outline when idle, solid once armed for the second tap */
+/* Danger affordance: red outline; deleting opens a confirmation dialog */
 .pa-delete {
   border-color: color-mix(in srgb, var(--red) 55%, transparent);
   color: var(--red);
 }
 
-.pa-delete.is-armed {
-  background: var(--red);
-  border-color: var(--red);
-  color: var(--on-accent);
-}
-
 /* Hidden-profiles section: muted rows with inline unhide/delete controls */
 .profile-hidden-toggle {
-  display: block;
-  width: 100%;
-  margin-top: 10px;
-  padding: 10px 12px;
-  border: 1px dashed var(--line);
-  border-radius: 12px;
-  background: transparent;
-  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  align-self: start;
+  margin: 0 0 2px;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--soft);
   font: inherit;
   font-weight: 700;
   cursor: pointer;
+}
+
+.profile-hidden-toggle.on {
+  background: color-mix(in srgb, var(--teal) 16%, var(--panel-2));
+  border-color: color-mix(in srgb, var(--teal) 45%, transparent);
+  color: var(--teal);
 }
 
 .profile-row-hidden {

@@ -29,6 +29,26 @@ export function renderNoScaleShotModal(blockEnabled: boolean): string {
   `;
 }
 
+export function renderDeleteProfileModal(title: string): string {
+  return `
+    <div class="modal-backdrop delete-shot-backdrop">
+      <section class="modal panel delete-shot-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-profile-title">
+        <div class="modal-head delete-shot-head">
+          <div>
+            <h2 id="delete-profile-title">Delete “${escapeHtml(title)}”?</h2>
+          </div>
+          <button type="button" class="icon-button" data-action="close-modal" aria-label="Close">${icon('x')}</button>
+        </div>
+        <p class="delete-shot-detail">This can’t be undone.</p>
+        <div class="modal-actions delete-shot-actions">
+          <button type="button" class="command danger" data-action="confirm-delete-profile">${icon('trash-2')}<span>Delete</span></button>
+          <button type="button" class="command" data-action="close-modal">Cancel</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 export function renderDeleteShotModal(
   reclaim: { dose: string; remaining: string; next: string } | null
 ): string {
