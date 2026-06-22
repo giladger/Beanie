@@ -187,19 +187,26 @@ run('delete-profile dialog warns it cannot be undone and offers hide instead', (
   includes(html, 'data-action="close-modal"');
 });
 
-run('profile picker show-hidden toggle appears when not in cleaning mode', () => {
-  const html = renderProfilesPage({
+run('profile picker show-hidden toggle is a header eye icon: crossed when hidden, uncrossed when shown', () => {
+  const base = {
     profiles,
     search: '',
-    favoriteProfileIds: [],
+    favoriteProfileIds: [] as string[],
     selectedId: null,
     focusId: null,
     cleaningMode: false,
-    showHidden: false,
-    hiddenProfiles: []
-  });
-  includes(html, 'data-action="toggle-show-hidden"');
-  includes(html, 'Show hidden');
+    hiddenProfiles: [] as ProfileRecord[]
+  };
+
+  const off = renderProfilesPage({ ...base, showHidden: false });
+  includes(off, 'data-action="toggle-show-hidden"');
+  includes(off, 'Show hidden');
+  includes(off, 'data-lucide="eye-off"');
+
+  const on = renderProfilesPage({ ...base, showHidden: true });
+  includes(on, 'Hide hidden profiles');
+  includes(on, 'data-lucide="eye"');
+  excludes(on, 'data-lucide="eye-off"');
 });
 
 run('profile picker helpers shorten folder titles and normalize profile types', () => {

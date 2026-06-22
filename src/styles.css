@@ -4009,34 +4009,14 @@ p {
   color: var(--red);
 }
 
-/* Hidden-profiles section: muted rows with inline unhide/delete controls */
-/* Search + show-hidden toggle share the page's first (auto) grid row, so the
-   selector shell keeps the 1fr row instead of being pushed out and overlapping. */
-.profiles-page-head {
-  display: flex;
-  flex-direction: column;
-}
-
-.profile-hidden-toggle {
-  display: inline-flex;
-  align-items: center;
-  align-self: start;
-  margin: 0 0 2px 9px;
-  padding: 8px 14px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--panel-2);
-  color: var(--soft);
-  font: inherit;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.profile-hidden-toggle.on {
+/* Header eye toggle: tinted teal while hidden profiles are revealed */
+.eye-toggle.on {
   background: color-mix(in srgb, var(--teal) 16%, var(--panel-2));
   border-color: color-mix(in srgb, var(--teal) 45%, transparent);
   color: var(--teal);
 }
+
+/* Hidden-profiles section: muted rows with inline unhide/delete controls */
 
 .profile-row-hidden {
   display: flex;

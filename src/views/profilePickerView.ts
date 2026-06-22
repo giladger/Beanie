@@ -42,25 +42,20 @@ export function renderProfilesPage(model: ProfilePickerViewModel): string {
     sorted.find((record) => record.id === model.selectedId) ??
     sorted[0] ??
     null;
+  const showHiddenLabel = model.showHidden ? 'Hide hidden profiles' : 'Show hidden profiles';
   const actions = cleaningMode
     ? ''
-    : `<button class="icon-button" data-action="open-import-profile" aria-label="Import from Visualizer" title="Import from Visualizer">${icon('arrow-down')}</button>` +
+    : `<button class="icon-button eye-toggle ${model.showHidden ? 'on' : ''}" data-action="toggle-show-hidden" aria-label="${showHiddenLabel}" title="${showHiddenLabel}" aria-pressed="${model.showHidden}">${icon(model.showHidden ? 'eye' : 'eye-off')}</button>` +
+      `<button class="icon-button" data-action="open-import-profile" aria-label="Import from Visualizer" title="Import from Visualizer">${icon('arrow-down')}</button>` +
       `<button class="icon-button" data-action="new-profile" aria-label="New profile" title="New profile">${icon('plus')}</button>`;
 
   return `
     ${profilePageHeader(cleaningMode ? 'Cleaning profile' : 'Profiles', cleaningMode ? 'machine' : 'workbench', actions)}
     <main class="page-body profiles-page no-scroll-page">
-      <div class="profiles-page-head">
-        <label class="search">
-          ${icon('search')}
-          <input type="search" data-action="profile-search" value="${escapeAttr(model.search)}" placeholder="Search profiles" />
-        </label>
-        ${
-          cleaningMode
-            ? ''
-            : `<button type="button" class="profile-hidden-toggle ${model.showHidden ? 'on' : ''}" data-action="toggle-show-hidden">${model.showHidden ? 'Hide hidden profiles' : 'Show hidden profiles'}</button>`
-        }
-      </div>
+      <label class="search">
+        ${icon('search')}
+        <input type="search" data-action="profile-search" value="${escapeAttr(model.search)}" placeholder="Search profiles" />
+      </label>
       <section class="profile-selector-shell">
         <div class="profile-list">
           ${
