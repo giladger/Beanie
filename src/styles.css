@@ -3974,7 +3974,67 @@ p {
   display: flex;
   align-items: center;
   justify-content: end;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+/* Secondary preview actions (hide/delete) sit a touch tighter than the pills */
+.pa-hide {
+  font-weight: 700;
+}
+
+/* Danger affordance: outline when idle, solid once armed for the second tap */
+.pa-delete {
+  border-color: color-mix(in srgb, var(--red) 55%, transparent);
+  color: var(--red);
+}
+
+.pa-delete.is-armed {
+  background: var(--red);
+  border-color: var(--red);
+  color: var(--on-accent);
+}
+
+/* Hidden-profiles section: muted rows with inline unhide/delete controls */
+.profile-hidden-toggle {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.profile-row-hidden {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  opacity: 0.72;
+}
+
+.profile-row-hidden .profile-row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.profile-row-actions .pa-edit {
+  height: 32px;
+  padding: 0 14px;
+  font-size: 13px;
 }
 
 /* Consistent action pills (match the editor's Back/Save) */

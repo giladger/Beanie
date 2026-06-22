@@ -47,6 +47,7 @@ import {
   readPlugins,
   readPluginSettings,
   readPluginVerify,
+  readVisualizerImport,
   readPresenceSettings,
   readReaSettings,
   readSkins,
@@ -60,6 +61,7 @@ import {
   type PluginInfo,
   type PluginSettings,
   type PluginVerifyResult,
+  type VisualizerImportResult,
   type PresenceSettings,
   type PresenceSettingsPatch,
   type ReaSettings,
@@ -340,6 +342,40 @@ export const gateway = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     }),
+  // Hidden profiles (declutter list). reaprime persists this across restarts.
+  hiddenProfiles: () =>
+    fetchJson<ProfileRecord[]>('profiles', '/api/v1/profiles?visibility=hidden', readProfiles),
+  // Hide / unhide a profile (works for bundled defaults too). visibility:
+  // 'visible' un-hides, 'hidden' declutters.
+  setProfileVisibility: (id: string, visibility: 'visible' | 'hidden' | 'deleted') =>
+    fetchJson<ProfileRecord>(
+      'profiles',
+      `/api/v1/profiles/${encodeURIComponent(id)}/visibility`,
+      readProfile,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visibility })
+      }
+    ),
+  // Soft-delete a profile. reaprime refuses to delete bundled defaults (it hides
+  // them instead), so the UI only offers this for user profiles.
+  deleteProfile: (id: string) =>
+    fetchEmpty('profiles', `/api/v1/profiles/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  // Import a profile from a visualizer.coffee share code via the bundled
+  // visualizer plugin, which fetches the shot, extracts its profile, and
+  // creates it through POST /api/v1/profiles (content-hash deduped).
+  importProfileFromVisualizer: (shareCode: string) =>
+    fetchJson<VisualizerImportResult>(
+      'profiles',
+      '/api/v1/plugins/visualizer.reaplugin/import',
+      readVisualizerImport,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shareCode })
+      }
+    ),
 
   // --- settings ---
   settings: () => fetchJson<ReaSettings>('settings', '/api/v1/settings', readReaSettings),

@@ -11,6 +11,9 @@ export interface ProfilePickerViewModel {
   selectedId: string | null;
   focusId: string | null;
   cleaningMode: boolean;
+  showHidden: boolean;
+  hiddenProfiles: readonly ProfileRecord[];
+  pendingDeleteId: string | null;
 }
 
 export function renderProfilesPage(model: ProfilePickerViewModel): string {
@@ -42,7 +45,8 @@ export function renderProfilesPage(model: ProfilePickerViewModel): string {
     null;
   const actions = cleaningMode
     ? ''
-    : `<button class="icon-button" data-action="new-profile" aria-label="New profile" title="New profile">${icon('plus')}</button>`;
+    : `<button class="icon-button" data-action="open-import-profile" aria-label="Import from Visualizer" title="Import from Visualizer">${icon('arrow-down')}</button>` +
+      `<button class="icon-button" data-action="new-profile" aria-label="New profile" title="New profile">${icon('plus')}</button>`;
 
   return `
     ${profilePageHeader(cleaningMode ? 'Cleaning profile' : 'Profiles', cleaningMode ? 'machine' : 'workbench', actions)}
@@ -58,8 +62,14 @@ export function renderProfilesPage(model: ProfilePickerViewModel): string {
               ? '<p class="empty">No profiles match.</p>'
               : renderProfileRows(sorted, favorites, model.selectedId, focus?.id ?? null)
           }
+          ${cleaningMode ? '' : renderHiddenSection(model)}
         </div>
-        ${renderProfilePreviewPane(focus, favorites.has(focus?.id ?? ''), focus?.id === model.selectedId)}
+        ${renderProfilePreviewPane(focus, {
+          favorite: favorites.has(focus?.id ?? ''),
+          active: focus?.id === model.selectedId,
+          cleaningMode,
+          pendingDelete: focus?.id != null && focus.id === model.pendingDeleteId
+        })}
       </section>
     </main>
   `;
@@ -142,7 +152,11 @@ function renderProfileRow(record: ProfileRecord, favorite: boolean, active: bool
   `;
 }
 
-function renderProfilePreviewPane(record: ProfileRecord | null, favorite: boolean, active: boolean): string {
+function renderProfilePreviewPane(
+  record: ProfileRecord | null,
+  options: { favorite: boolean; active: boolean; cleaningMode: boolean; pendingDelete: boolean }
+): string {
+  const { favorite, active, cleaningMode, pendingDelete } = options;
   if (!record) {
     return `
       <aside class="profile-preview-pane">
@@ -175,11 +189,55 @@ function renderProfilePreviewPane(record: ProfileRecord | null, favorite: boolea
         <p class="profile-preview-notes">${escapeHtml(record.profile.notes || 'No description.')}</p>
       </section>
       <div class="profile-preview-actions">
+        ${cleaningMode ? '' : `<button type="button" class="pa-edit pa-hide" data-action="hide-profile" data-id="${escapeAttr(record.id)}"><span>Hide</span></button>`}
+        ${cleaningMode || record.isDefault ? '' : renderDeleteButton(record.id, pendingDelete)}
         <button type="button" class="pa-edit" data-action="edit-profile" data-id="${escapeAttr(record.id)}">${icon('pencil')}<span>Edit</span></button>
         <button type="button" class="pa-select ${active ? 'is-selected' : ''}" data-action="pick-profile" data-id="${escapeAttr(record.id)}">${active ? 'Selected' : 'Select'}</button>
       </div>
     </aside>
   `;
+}
+
+// Footer affordance: a "Show hidden" toggle that, when on, lists hidden
+// profiles (defaults included) with Unhide and — for user profiles — Delete.
+function renderHiddenSection(model: ProfilePickerViewModel): string {
+  if (!model.showHidden) {
+    return `<button type="button" class="profile-hidden-toggle" data-action="toggle-show-hidden">Show hidden</button>`;
+  }
+  const hidden = [...model.hiddenProfiles].sort((a, b) =>
+    profileShortTitle(a.profile.title ?? a.id).localeCompare(
+      profileShortTitle(b.profile.title ?? b.id),
+      undefined,
+      { sensitivity: 'base' }
+    )
+  );
+  const rows =
+    hidden.length === 0
+      ? '<p class="empty">No hidden profiles.</p>'
+      : hidden.map((record) => renderHiddenRow(record, record.id === model.pendingDeleteId)).join('');
+  return `
+    <div class="profile-group-header">Hidden</div>
+    ${rows}
+    <button type="button" class="profile-hidden-toggle" data-action="toggle-show-hidden">Hide list</button>
+  `;
+}
+
+function renderHiddenRow(record: ProfileRecord, pendingDelete: boolean): string {
+  const title = profileShortTitle(record.profile.title ?? record.id);
+  return `
+    <div class="profile-row profile-row-hidden">
+      <span class="profile-row-title">${escapeHtml(title)}</span>
+      <div class="profile-row-actions">
+        <button type="button" class="pa-edit pa-unhide" data-action="unhide-profile" data-id="${escapeAttr(record.id)}"><span>Unhide</span></button>
+        ${record.isDefault ? '' : renderDeleteButton(record.id, pendingDelete)}
+      </div>
+    </div>
+  `;
+}
+
+// A two-tap delete control: armed (after the first tap) it reads "Confirm".
+function renderDeleteButton(id: string, armed: boolean): string {
+  return `<button type="button" class="pa-edit pa-delete${armed ? ' is-armed' : ''}" data-action="delete-profile" data-id="${escapeAttr(id)}">${icon('trash-2')}<span>${armed ? 'Confirm' : 'Delete'}</span></button>`;
 }
 
 function profileGroup(title: string, author?: string): string {

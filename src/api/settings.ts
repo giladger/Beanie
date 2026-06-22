@@ -496,6 +496,21 @@ export function readPluginVerify(value: unknown): PluginVerifyResult {
   return { ok, message: str(r.message, ok ? 'Credentials verified' : 'Verification failed') };
 }
 
+export interface VisualizerImportResult {
+  success: boolean;
+  profileId: string | null;
+  profileTitle: string | null;
+}
+
+export function readVisualizerImport(value: unknown): VisualizerImportResult {
+  const r = rec(value);
+  return {
+    success: r.success !== false,
+    profileId: strOrNull(r.profileId),
+    profileTitle: strOrNull(r.profileTitle)
+  };
+}
+
 export function demoPluginSettings(id: string): PluginSettings {
   if (id.replace(/\.reaplugin$/i, '').toLowerCase() === 'visualizer') {
     return {

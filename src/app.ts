@@ -301,7 +301,8 @@ import {
 import { renderCleaningWizardModal as renderCleaningWizardModalView } from './views/cleaningWizardView';
 import {
   renderGrinderEditorPage as renderGrinderEditorPageView,
-  renderMachineLabelModal as renderMachineLabelModalView
+  renderMachineLabelModal as renderMachineLabelModalView,
+  renderImportProfileModal as renderImportProfileModalView
 } from './views/formsView';
 import {
   renderLivePanel as renderLivePanelView,
@@ -415,6 +416,7 @@ type Modal =
   | 'label-scanner'
   | 'delete-shot'
   | 'cleaning-wizard'
+  | 'import-profile'
   | null;
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
 interface ClickActionContext {
@@ -479,6 +481,34 @@ interface MachineLabelEditTarget {
   presetName: string;
   presetId: string;
   label: string;
+}
+
+// State for the "Import profile from Visualizer" modal. `code` mirrors the
+// last-submitted share code so it survives the re-render after an error.
+interface ProfileImportState {
+  code: string;
+  busy: boolean;
+  error: string | null;
+}
+
+// Turn a gateway failure into a short, user-facing import error. fetchJson
+// formats HTTP errors as "POST /path returned 500: <detail>"; the plugin's
+// detail is usually a JSON body like {"error":"..."}. Pull out the useful part.
+function importErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const http = raw.match(/returned (\d+)(?::\s*([\s\S]*))?$/);
+  if (http) {
+    const detail = (http[2] ?? '').trim();
+    if (!detail) return `Import failed (HTTP ${http[1]})`;
+    try {
+      const parsed = JSON.parse(detail) as { error?: unknown };
+      if (parsed && typeof parsed.error === 'string') return parsed.error;
+    } catch {
+      // detail isn't JSON — use it verbatim
+    }
+    return detail;
+  }
+  return raw.trim() || 'Import failed';
 }
 
 interface NumberEditTarget {
@@ -615,6 +645,12 @@ interface AppState {
   machineEdit: MachineEditTarget | null;
   numberEdit: NumberEditTarget | null;
   machineLabelEdit: MachineLabelEditTarget | null;
+  profileImport: ProfileImportState | null;
+  // Profile browser hide/delete: server-backed hidden list (lazy-loaded when
+  // the user reveals it), and the id armed for a two-tap delete confirm.
+  profilesShowHidden: boolean;
+  hiddenProfiles: ProfileRecord[];
+  profilePendingDeleteId: string | null;
   machinePresetLabels: Record<string, string>;
   machinePresetValues: MachinePresetValueOverrides;
   machinePresetSelection: MachinePresetSelection;
@@ -753,6 +789,10 @@ export class BeanieApp {
     machineEdit: null,
     numberEdit: null,
     machineLabelEdit: null,
+    profileImport: null,
+    profilesShowHidden: false,
+    hiddenProfiles: [],
+    profilePendingDeleteId: null,
     machinePresetLabels: readMachinePresetLabels(),
     machinePresetValues: readMachinePresetValues(),
     machinePresetSelection: readMachinePresetSelection(),
@@ -4536,6 +4576,18 @@ export class BeanieApp {
       'toggle-favorite-profile': ({ id }) => {
         if (id) this.toggleFavoriteProfile(id);
       },
+      'toggle-show-hidden': () => {
+        void this.toggleShowHidden();
+      },
+      'hide-profile': ({ id }) => {
+        if (id) void this.hideProfile(id);
+      },
+      'unhide-profile': ({ id }) => {
+        if (id) void this.unhideProfile(id);
+      },
+      'delete-profile': ({ id }) => {
+        if (id) this.requestDeleteProfile(id);
+      },
       'close-modal': () => {
         if (this.state.modal === 'cleaning-wizard') this.teardownUntrackedCleaningAction();
         if (this.state.modal === 'batch-storage') {
@@ -4577,6 +4629,7 @@ export class BeanieApp {
           machineEdit: null,
           numberEdit: null,
           machineLabelEdit: null,
+          profileImport: null,
           cleaningWizard: null
         });
       },
@@ -4590,6 +4643,12 @@ export class BeanieApp {
       },
       'new-profile': () => {
         this.openNewProfileEditor();
+      },
+      'open-import-profile': () => {
+        this.openImportProfile();
+      },
+      'import-profile-submit': () => {
+        void this.submitImportProfile();
       },
       'edit-profile': ({ id }) => {
         if (id) this.openProfileEditor(id);
@@ -4746,6 +4805,7 @@ export class BeanieApp {
     this.setState({
       draft: selection.draft,
       profileFocusId: id,
+      profilePendingDeleteId: null,
       status: selection.status
     });
   }
@@ -4775,6 +4835,40 @@ export class BeanieApp {
     const input = newProfileEditorInput();
     if (input.type === 'missing') return;
     this.openProfileEditorInput(input.editingProfileId, input.profile);
+  }
+
+  private openImportProfile(): void {
+    this.setState({ modal: 'import-profile', profileImport: { code: '', busy: false, error: null } });
+  }
+
+  // Import a profile from a Visualizer share code via the bundled plugin, then
+  // refresh the list and focus the new profile so it shows in the preview pane.
+  // Importing does not select it onto the machine — the user presses Select.
+  private async submitImportProfile(): Promise<void> {
+    const current = this.state.profileImport;
+    if (!current || current.busy) return;
+    const input = this.root.querySelector<HTMLInputElement>('[data-action="import-profile-input"]');
+    const code = (input?.value ?? '').trim();
+    if (!code) {
+      this.setState({ profileImport: { code: '', busy: false, error: 'Enter a share code.' } });
+      return;
+    }
+    this.setState({ profileImport: { code, busy: true, error: null } });
+    try {
+      const result = await gateway.importProfileFromVisualizer(code);
+      await beanieCache.invalidateProfileMutation(result.profileId ?? undefined);
+      const profiles = await gateway.profiles();
+      await beanieCache.putProfiles(profiles);
+      this.setState({
+        profiles,
+        modal: null,
+        profileImport: null,
+        profileFocusId: result.profileId ?? this.state.profileFocusId,
+        status: result.profileTitle ? `Imported ${result.profileTitle}` : 'Profile imported'
+      });
+    } catch (err) {
+      this.setState({ profileImport: { code, busy: false, error: importErrorMessage(err) } });
+    }
   }
 
   private openProfileEditorInput(editingProfileId: string | null, profile: Profile | null): void {
@@ -4916,6 +5010,74 @@ export class BeanieApp {
       writeFavoriteProfiles: (ids) => writeFavoriteProfiles(ids)
     });
     this.setState({ favoriteProfiles });
+  }
+
+  // Reveal/collapse the hidden-profiles section. Hidden profiles are fetched
+  // lazily (a separate visibility=hidden query) so the normal list stays lean.
+  private async toggleShowHidden(): Promise<void> {
+    if (this.state.profilesShowHidden) {
+      this.setState({ profilesShowHidden: false, profilePendingDeleteId: null });
+      return;
+    }
+    try {
+      const hiddenProfiles = await gateway.hiddenProfiles();
+      this.setState({ profilesShowHidden: true, hiddenProfiles, profilePendingDeleteId: null });
+    } catch (err) {
+      console.error('[Beanie] Load hidden profiles failed', err);
+      this.setState({ status: 'Could not load hidden profiles' });
+    }
+  }
+
+  private async hideProfile(id: string): Promise<void> {
+    try {
+      await gateway.setProfileVisibility(id, 'hidden');
+      await this.reloadProfileLists('Profile hidden');
+    } catch (err) {
+      console.error('[Beanie] Hide profile failed', err);
+      this.setState({ status: 'Could not hide profile' });
+    }
+  }
+
+  private async unhideProfile(id: string): Promise<void> {
+    try {
+      await gateway.setProfileVisibility(id, 'visible');
+      await this.reloadProfileLists('Profile restored');
+    } catch (err) {
+      console.error('[Beanie] Restore profile failed', err);
+      this.setState({ status: 'Could not restore profile' });
+    }
+  }
+
+  // Two-tap delete: the first tap arms the button (shows "Confirm"), the second
+  // performs the soft-delete. Focusing another profile or navigating clears it.
+  private requestDeleteProfile(id: string): void {
+    if (this.state.profilePendingDeleteId !== id) {
+      this.setState({ profilePendingDeleteId: id });
+      return;
+    }
+    void this.deleteProfileConfirmed(id);
+  }
+
+  private async deleteProfileConfirmed(id: string): Promise<void> {
+    try {
+      await gateway.deleteProfile(id);
+      await this.reloadProfileLists('Profile deleted');
+    } catch (err) {
+      console.error('[Beanie] Delete profile failed', err);
+      this.setState({ status: 'Could not delete profile', profilePendingDeleteId: null });
+    }
+  }
+
+  // After a visibility/delete mutation, refresh the visible list (and its cache)
+  // plus the hidden list when it's on screen, and clear any armed delete.
+  private async reloadProfileLists(status: string): Promise<void> {
+    await beanieCache.invalidateProfileMutation();
+    const profiles = await gateway.profiles();
+    await beanieCache.putProfiles(profiles);
+    const hiddenProfiles = this.state.profilesShowHidden
+      ? await gateway.hiddenProfiles()
+      : this.state.hiddenProfiles;
+    this.setState({ profiles, hiddenProfiles, profilePendingDeleteId: null, status });
   }
 
   private toggleFavoriteBean(id: string): void {
@@ -6870,7 +7032,10 @@ export class BeanieApp {
       favoriteProfileIds: this.state.favoriteProfiles,
       selectedId,
       focusId: this.state.profileFocusId,
-      cleaningMode
+      cleaningMode,
+      showHidden: this.state.profilesShowHidden,
+      hiddenProfiles: this.state.hiddenProfiles,
+      pendingDeleteId: this.state.profilePendingDeleteId
     };
     return this.isPhoneLayout() ? renderPhoneProfilePickerPage(model) : renderProfilePickerPage(model);
   }
@@ -6910,7 +7075,14 @@ export class BeanieApp {
     if (this.state.modal === 'label-scanner') return this.renderLabelScannerModal();
     if (this.state.modal === 'delete-shot') return this.renderDeleteShotModal();
     if (this.state.modal === 'cleaning-wizard') return this.renderCleaningWizardModal();
+    if (this.state.modal === 'import-profile') return this.renderImportProfileModal();
     return '';
+  }
+
+  private renderImportProfileModal(): string {
+    const state = this.state.profileImport;
+    if (!state) return '';
+    return renderImportProfileModalView(state);
   }
 
   private renderCleaningWizardModal(): string {
