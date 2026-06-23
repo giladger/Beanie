@@ -4029,7 +4029,8 @@ p {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  opacity: 0.72;
+  padding: 0 8px 0 10px;
+  opacity: 0.78;
 }
 
 .profile-row-hidden .profile-row-title {
@@ -4041,14 +4042,27 @@ p {
 .profile-row-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
+/* Lighter, accent-tinted controls — the outlined pill looked heavy in the row. */
 .profile-row-actions .pa-edit {
-  height: 32px;
-  padding: 0 14px;
+  height: 30px;
+  padding: 0 12px;
   font-size: 13px;
+  border: 0;
+  border-radius: 999px;
+}
+
+.profile-row-actions .pa-unhide {
+  background: color-mix(in srgb, var(--teal) 15%, transparent);
+  color: var(--teal);
+}
+
+.profile-row-actions .pa-delete {
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+  color: var(--red);
 }
 
 /* Consistent action pills (match the editor's Back/Save) */
