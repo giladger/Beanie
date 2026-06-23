@@ -54,6 +54,8 @@ export interface ProfileEditorState {
   /** Sub-tab within the advanced editor (de1app settings_2c / settings_2c2). */
   advancedTab: AdvancedTab;
   dirty: boolean;
+  /** Why the last save attempt failed, surfaced as a banner; null when none. */
+  saveError: string | null;
   extra: Record<string, unknown>;
 }
 
@@ -127,7 +129,9 @@ export function createProfileEditorState(profile: Profile | null): ProfileEditor
       beverageType: 'espresso',
       type: 'advanced',
       legacyProfileType: 'settings_2c',
-      tankTemperature: null,
+      // The gateway rejects a profile with no tank_temperature, so prefill the
+      // canonical default (0 = tank preheat off) rather than leave it unset.
+      tankTemperature: FIELD_SPECS.tankTemperature.default,
       targetWeight: null,
       targetVolume: null,
       targetVolumeCountStart: null,
@@ -137,6 +141,7 @@ export function createProfileEditorState(profile: Profile | null): ProfileEditor
       editorMode: 'advanced',
       advancedTab: 'steps',
       dirty: false,
+      saveError: null,
       extra: {}
     };
   }
@@ -182,6 +187,7 @@ export function createProfileEditorState(profile: Profile | null): ProfileEditor
     editorMode: canEditAsBasic(finalSteps) ? 'basic' : 'advanced',
     advancedTab: 'steps',
     dirty: false,
+    saveError: null,
     extra
   };
 }
@@ -534,17 +540,30 @@ export function profileFromEditorState(state: ProfileEditorState): Profile {
   if (state.beverageType) profile.beverage_type = state.beverageType;
   if (state.type) profile.type = state.type;
   if (state.legacyProfileType) profile.legacy_profile_type = state.legacyProfileType;
-  if (state.tankTemperature != null) profile.tank_temperature = state.tankTemperature;
+  // tank_temperature is mandatory server-side (the gateway rejects a profile
+  // without it), so always emit it — falling back to the off default — instead
+  // of dropping it when the field is empty.
+  profile.tank_temperature = state.tankTemperature ?? FIELD_SPECS.tankTemperature.default;
   if (state.targetWeight != null) profile.target_weight = state.targetWeight;
   if (state.targetVolume != null) profile.target_volume = state.targetVolume;
   if (state.targetVolumeCountStart != null) profile.target_volume_count_start = state.targetVolumeCountStart;
   return profile;
 }
 
+function renderSaveError(state: ProfileEditorState): string {
+  if (!state.saveError) return '';
+  return `
+    <div class="pe-save-error" role="alert">
+      <strong>Couldn't save profile</strong>
+      <span>${escapeHtml(state.saveError)}</span>
+    </div>`;
+}
+
 export function renderProfileEditor(state: ProfileEditorState): string {
-  if (state.editorMode === 'basic') return renderSimpleProfileEditor(state);
+  if (state.editorMode === 'basic') return `${renderSaveError(state)}${renderSimpleProfileEditor(state)}`;
   return `
     <div class="profile-editor">
+      ${renderSaveError(state)}
       ${renderIdentityMeta(state)}
       ${renderAdvancedTabs(state)}
       ${state.advancedTab === 'limits'

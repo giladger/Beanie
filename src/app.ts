@@ -513,6 +513,16 @@ function importErrorMessage(err: unknown): string {
   return raw.trim() || 'Import failed';
 }
 
+// Pull the gateway's own explanation out of a failed save so the editor banner
+// can show *why* (e.g. 'Profile must have "tank_temperature"') rather than a
+// bare 'POST /api/v1/profiles returned 400'.
+function profileSaveErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const detail = raw.match(/returned \d+:\s*([\s\S]+)$/);
+  if (detail) return detail[1]!.trim();
+  return raw.trim() || 'Save failed';
+}
+
 interface NumberEditTarget {
   target:
     | 'settings-field'
@@ -4971,13 +4981,17 @@ export class BeanieApp {
     if (!pe) return;
     const problem = this.validateProfileEditor(pe);
     if (problem) {
-      this.setState({ status: problem });
+      this.setState({ status: problem, profileEditor: { ...pe, saveError: problem } });
       return;
     }
     const profile = profileFromEditorState(pe);
     const editingId = this.state.editingProfileId;
     const cloneOfDefault = Boolean(editingId) && this.state.profiles.find((item) => item.id === editingId)?.isDefault === true;
-    this.setState({ busy: true, status: cloneOfDefault ? 'Saving a copy' : 'Saving profile' });
+    this.setState({
+      busy: true,
+      status: cloneOfDefault ? 'Saving a copy' : 'Saving profile',
+      profileEditor: { ...pe, saveError: null }
+    });
 
     const result = await saveProfile({
       profiles: this.state.profiles,
@@ -4995,7 +5009,12 @@ export class BeanieApp {
 
     if (result.type === 'failed') {
       console.error('[Beanie] Save profile failed', result.error);
-      this.setState({ busy: false, status: result.status });
+      const editor = this.state.profileEditor;
+      this.setState({
+        busy: false,
+        status: result.status,
+        profileEditor: editor ? { ...editor, saveError: profileSaveErrorMessage(result.error) } : editor
+      });
       return;
     }
 

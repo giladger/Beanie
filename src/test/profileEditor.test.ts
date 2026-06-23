@@ -94,6 +94,27 @@ run('creates a usable default from null', () => {
   equal(state.steps[0].pump, 'pressure');
   equal(state.selectedStep, 0);
   equal(state.dirty, false);
+  equal(state.saveError, null);
+});
+
+run('prefills tank_temperature on a new profile so the gateway accepts it', () => {
+  // The gateway rejects a profile that has no tank_temperature; a new profile
+  // prefills the canonical off default (0) rather than leaving it unset.
+  const state = createProfileEditorState(null);
+  equal(state.tankTemperature, 0);
+
+  const profile = profileFromEditorState(state) as Record<string, unknown>;
+  equal('tank_temperature' in profile, true);
+  equal(profile.tank_temperature, 0);
+});
+
+run('always serializes tank_temperature even when the field is cleared', () => {
+  // Clearing the limits field must not drop the key and reintroduce the silent
+  // save failure — it falls back to the off default instead.
+  const state = { ...createProfileEditorState(null), tankTemperature: null };
+  const profile = profileFromEditorState(state) as Record<string, unknown>;
+  equal('tank_temperature' in profile, true);
+  equal(profile.tank_temperature, 0);
 });
 
 run('setStepField coerces numeric fields', () => {
