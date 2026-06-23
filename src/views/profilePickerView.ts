@@ -227,8 +227,8 @@ function renderHiddenRow(record: ProfileRecord): string {
     <div class="profile-row profile-row-hidden">
       <span class="profile-row-title">${escapeHtml(title)}</span>
       <div class="profile-row-actions">
-        <button type="button" class="pa-edit pa-unhide" data-action="unhide-profile" data-id="${escapeAttr(record.id)}"><span>Unhide</span></button>
         ${record.isDefault ? '' : renderDeleteButton(record.id)}
+        <button type="button" class="pa-edit pa-unhide" data-action="unhide-profile" data-id="${escapeAttr(record.id)}"><span>Unhide</span></button>
       </div>
     </div>
   `;

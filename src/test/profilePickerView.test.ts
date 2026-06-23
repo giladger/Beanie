@@ -175,6 +175,12 @@ run('profile picker hidden section lists hidden profiles with unhide and gated d
   // User profile gets a delete trigger; the default offers no delete at all.
   includes(html, 'data-action="delete-profile" data-id="hidden-user"');
   excludes(html, 'data-action="delete-profile" data-id="hidden-default"');
+  // Delete sits left of Unhide so Unhide stays anchored to the right edge.
+  equal(
+    html.indexOf('data-action="delete-profile" data-id="hidden-user"') <
+      html.indexOf('data-action="unhide-profile" data-id="hidden-user"'),
+    true
+  );
 });
 
 run('delete-profile dialog warns it cannot be undone and offers hide instead', () => {
