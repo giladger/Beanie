@@ -97,24 +97,37 @@ run('creates a usable default from null', () => {
   equal(state.saveError, null);
 });
 
-run('prefills tank_temperature on a new profile so the gateway accepts it', () => {
-  // The gateway rejects a profile that has no tank_temperature; a new profile
-  // prefills the canonical off default (0) rather than leaving it unset.
+run('prefills the reaprime-required meta fields on a new profile', () => {
+  // reaprime rejects a profile that lacks tank_temperature or
+  // target_volume_count_start; a new profile prefills their canonical defaults
+  // (0) rather than leaving them unset.
   const state = createProfileEditorState(null);
   equal(state.tankTemperature, 0);
+  equal(state.targetVolumeCountStart, 0);
 
   const profile = profileFromEditorState(state) as Record<string, unknown>;
   equal('tank_temperature' in profile, true);
   equal(profile.tank_temperature, 0);
+  equal('target_volume_count_start' in profile, true);
+  equal(profile.target_volume_count_start, 0);
 });
 
-run('always serializes tank_temperature even when the field is cleared', () => {
-  // Clearing the limits field must not drop the key and reintroduce the silent
-  // save failure — it falls back to the off default instead.
-  const state = { ...createProfileEditorState(null), tankTemperature: null };
+run('always serializes the required meta fields even when cleared', () => {
+  // Clearing the limits fields must not drop the keys and reintroduce the silent
+  // save failure — they fall back to their defaults instead. target_weight /
+  // target_volume stay optional and are omitted when unset.
+  const state = {
+    ...createProfileEditorState(null),
+    tankTemperature: null,
+    targetVolumeCountStart: null,
+    targetWeight: null,
+    targetVolume: null
+  };
   const profile = profileFromEditorState(state) as Record<string, unknown>;
-  equal('tank_temperature' in profile, true);
   equal(profile.tank_temperature, 0);
+  equal(profile.target_volume_count_start, 0);
+  equal('target_weight' in profile, false);
+  equal('target_volume' in profile, false);
 });
 
 run('setStepField coerces numeric fields', () => {

@@ -129,12 +129,13 @@ export function createProfileEditorState(profile: Profile | null): ProfileEditor
       beverageType: 'espresso',
       type: 'advanced',
       legacyProfileType: 'settings_2c',
-      // The gateway rejects a profile with no tank_temperature, so prefill the
-      // canonical default (0 = tank preheat off) rather than leave it unset.
+      // reaprime requires both tank_temperature and target_volume_count_start
+      // on every profile, so prefill their canonical defaults rather than leave
+      // them unset (target_weight / target_volume stay optional).
       tankTemperature: FIELD_SPECS.tankTemperature.default,
       targetWeight: null,
       targetVolume: null,
-      targetVolumeCountStart: null,
+      targetVolumeCountStart: FIELD_SPECS.targetVolumeCountStart.default,
       version: '2',
       steps: [defaultStep()],
       selectedStep: 0,
@@ -540,13 +541,15 @@ export function profileFromEditorState(state: ProfileEditorState): Profile {
   if (state.beverageType) profile.beverage_type = state.beverageType;
   if (state.type) profile.type = state.type;
   if (state.legacyProfileType) profile.legacy_profile_type = state.legacyProfileType;
-  // tank_temperature is mandatory server-side (the gateway rejects a profile
-  // without it), so always emit it — falling back to the off default — instead
-  // of dropping it when the field is empty.
+  // tank_temperature and target_volume_count_start are mandatory server-side
+  // (reaprime rejects a profile without either), so always emit them — falling
+  // back to their defaults — instead of dropping them when the field is empty.
+  // target_weight / target_volume stay optional and are only sent when set.
   profile.tank_temperature = state.tankTemperature ?? FIELD_SPECS.tankTemperature.default;
+  profile.target_volume_count_start =
+    state.targetVolumeCountStart ?? FIELD_SPECS.targetVolumeCountStart.default;
   if (state.targetWeight != null) profile.target_weight = state.targetWeight;
   if (state.targetVolume != null) profile.target_volume = state.targetVolume;
-  if (state.targetVolumeCountStart != null) profile.target_volume_count_start = state.targetVolumeCountStart;
   return profile;
 }
 
