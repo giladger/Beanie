@@ -94,7 +94,7 @@ run('creates a usable default from null', () => {
   equal(state.steps[0].pump, 'pressure');
   equal(state.selectedStep, 0);
   equal(state.dirty, false);
-  equal(state.saveError, null);
+  equal(state.saveNotice, null);
 });
 
 run('prefills the reaprime-required meta fields on a new profile', () => {

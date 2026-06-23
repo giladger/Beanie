@@ -15,6 +15,8 @@ export interface SaveProfileDeps {
   loadProfiles(): Promise<ProfileRecord[]>;
   invalidateProfileMutation(profileId: string): Promise<void>;
   putProfiles(profiles: ProfileRecord[]): Promise<void>;
+  /** Un-hide / un-delete a profile (PUT .../visibility {visible}). */
+  restoreProfile(id: string): Promise<void>;
 }
 
 export interface ToggleFavoriteProfileInput {
@@ -56,6 +58,13 @@ export type SaveProfileResult =
       profiles: ProfileRecord[];
       editingId: string | null;
       cloneOfDefault: boolean;
+      /**
+       * The gateway content-hash-dedupes profiles (ignoring title), so creating
+       * a profile whose brew settings match an existing one returns that
+       * existing id instead of adding a new record — true means no new profile
+       * was created and the caller should say so rather than imply success.
+       */
+      deduped: boolean;
       status: string;
     }
   | {
@@ -148,14 +157,18 @@ export async function saveProfile(
       profiles,
       editingId: null,
       cloneOfDefault: mode.cloneOfDefault,
+      deduped: false,
       status: mode.cloneOfDefault ? 'Saved a copy (demo)' : 'Profile saved (demo)'
     };
   }
 
   try {
-    const saved = mode.update
+    let saved = mode.update
       ? await deps.updateProfile(input.editingId!, { profile: input.profile })
       : await deps.createProfile({ profile: input.profile, parentId: input.editingId ?? undefined });
+    // A create that returns an id already in our (visible) list means the gateway
+    // matched an existing identical-settings profile rather than creating one.
+    let deduped = !mode.update && input.profiles.some((item) => item.id === saved.id);
     await deps.invalidateProfileMutation(saved.id).catch(() => {});
 
     let profiles: ProfileRecord[];
@@ -165,6 +178,28 @@ export async function saveProfile(
       profiles = input.profiles.some((item) => item.id === saved.id)
         ? input.profiles.map((item) => (item.id === saved.id ? saved : item))
         : [saved, ...input.profiles];
+      await deps.putProfiles(profiles).catch(() => {});
+      return {
+        type: 'saved',
+        profileId: saved.id,
+        profiles,
+        editingId: null,
+        cloneOfDefault: mode.cloneOfDefault,
+        deduped,
+        status: mode.cloneOfDefault ? 'Saved a copy' : 'Profile saved'
+      };
+    }
+
+    // The gateway content-hash-dedupes (ignoring title) and can match a hidden or
+    // soft-deleted profile, returning it 201 *without* making it visible — so the
+    // "new" profile never shows in the list. When the saved id is missing from the
+    // freshly-loaded visible list, restore it and re-apply the user's edits (their
+    // title) so the save actually appears as intended.
+    if (!mode.update && !deduped && !profiles.some((item) => item.id === saved.id)) {
+      await deps.restoreProfile(saved.id).catch(() => {});
+      saved = await deps.updateProfile(saved.id, { profile: input.profile });
+      profiles = await deps.loadProfiles().catch(() => profiles);
+      deduped = false;
     }
 
     await deps.putProfiles(profiles).catch(() => {});
@@ -174,6 +209,7 @@ export async function saveProfile(
       profiles,
       editingId: null,
       cloneOfDefault: mode.cloneOfDefault,
+      deduped,
       status: mode.cloneOfDefault ? 'Saved a copy' : 'Profile saved'
     };
   } catch (error) {

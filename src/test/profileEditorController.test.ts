@@ -134,7 +134,8 @@ await run('profile editor controller updates remote profiles and caches loaded p
       },
       putProfiles: async (profiles) => {
         cachedCount = profiles.length;
-      }
+      },
+      restoreProfile: async () => {}
     }
   );
 
@@ -163,12 +164,109 @@ await run('profile editor controller falls back to saved record when profile rel
         throw new Error('offline');
       },
       invalidateProfileMutation: async () => {},
-      putProfiles: async () => {}
+      putProfiles: async () => {},
+      restoreProfile: async () => {}
     }
   );
 
   equal(result.type, 'saved');
   equal(result.type === 'saved' ? result.profiles[0]?.profile.title : null, 'Updated');
+});
+
+await run('profile editor controller flags a content-hash-deduped create', async () => {
+  // The gateway returns an existing id when the new profile's settings match
+  // one already in the list — no new profile was created.
+  const result = await saveProfile(
+    {
+      profiles: [record('existing', 'Existing')],
+      editingId: null,
+      profile: profile('Different name, same settings'),
+      demo: false,
+      nowMs: 123
+    },
+    {
+      createProfile: async () => ({ id: 'existing', profile: profile('Existing') }),
+      updateProfile: async () => {
+        throw new Error('unexpected update');
+      },
+      loadProfiles: async () => [record('existing', 'Existing')],
+      invalidateProfileMutation: async () => {},
+      putProfiles: async () => {},
+      restoreProfile: async () => {}
+    }
+  );
+
+  equal(result.type, 'saved');
+  equal(result.type === 'saved' ? result.deduped : null, true);
+});
+
+await run('profile editor controller marks a genuinely new create as not deduped', async () => {
+  const result = await saveProfile(
+    {
+      profiles: [record('existing', 'Existing')],
+      editingId: null,
+      profile: profile('Brand new'),
+      demo: false,
+      nowMs: 123
+    },
+    {
+      createProfile: async () => ({ id: 'fresh', profile: profile('Brand new') }),
+      updateProfile: async () => {
+        throw new Error('unexpected update');
+      },
+      loadProfiles: async () => [record('fresh', 'Brand new'), record('existing', 'Existing')],
+      invalidateProfileMutation: async () => {},
+      putProfiles: async () => {},
+      restoreProfile: async () => {}
+    }
+  );
+
+  equal(result.type, 'saved');
+  equal(result.type === 'saved' ? result.deduped : null, false);
+});
+
+await run('profile editor controller restores a create that matched a hidden/deleted record', async () => {
+  // The gateway content-hash-matched a soft-deleted profile and returned it
+  // (201) without making it visible, so it's absent from the first reload. The
+  // controller must restore it and re-apply the user's title so it appears.
+  let restored: string | null = null;
+  let updatedTitle: string | null = null;
+  let loads = 0;
+  const result = await saveProfile(
+    {
+      profiles: [record('other', 'Other')],
+      editingId: null,
+      profile: profile('Resurrected'),
+      demo: false,
+      nowMs: 123
+    },
+    {
+      createProfile: async () => ({ id: 'ghost', profile: profile('Old deleted title') }),
+      updateProfile: async (id, input) => {
+        updatedTitle = input.profile.title ?? null;
+        return { id, profile: input.profile };
+      },
+      loadProfiles: async () => {
+        loads += 1;
+        // First reload: ghost still hidden/deleted. After restore+update: visible.
+        return loads === 1
+          ? [record('other', 'Other')]
+          : [record('ghost', 'Resurrected'), record('other', 'Other')];
+      },
+      invalidateProfileMutation: async () => {},
+      putProfiles: async () => {},
+      restoreProfile: async (id) => {
+        restored = id;
+      }
+    }
+  );
+
+  equal(result.type, 'saved');
+  equal(result.type === 'saved' ? result.profileId : null, 'ghost');
+  equal(restored, 'ghost');
+  equal(updatedTitle, 'Resurrected');
+  equal(result.type === 'saved' ? result.deduped : null, false);
+  equal(result.type === 'saved' ? result.profiles.some((p) => p.id === 'ghost') : null, true);
 });
 
 await run('profile editor controller reports gateway save failures', async () => {
@@ -189,7 +287,8 @@ await run('profile editor controller reports gateway save failures', async () =>
       },
       loadProfiles: async () => [],
       invalidateProfileMutation: async () => {},
-      putProfiles: async () => {}
+      putProfiles: async () => {},
+      restoreProfile: async () => {}
     }
   );
 
@@ -228,6 +327,9 @@ function failingProfileDeps() {
     },
     putProfiles: async () => {
       throw new Error('unexpected cache');
+    },
+    restoreProfile: async () => {
+      throw new Error('unexpected restore');
     }
   };
 }

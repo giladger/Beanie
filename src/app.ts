@@ -4981,7 +4981,7 @@ export class BeanieApp {
     if (!pe) return;
     const problem = this.validateProfileEditor(pe);
     if (problem) {
-      this.setState({ status: problem, profileEditor: { ...pe, saveError: problem } });
+      this.setState({ status: problem, profileEditor: { ...pe, saveNotice: { tone: 'error', message: problem } } });
       return;
     }
     const profile = profileFromEditorState(pe);
@@ -4990,7 +4990,7 @@ export class BeanieApp {
     this.setState({
       busy: true,
       status: cloneOfDefault ? 'Saving a copy' : 'Saving profile',
-      profileEditor: { ...pe, saveError: null }
+      profileEditor: { ...pe, saveNotice: null }
     });
 
     const result = await saveProfile({
@@ -5004,7 +5004,8 @@ export class BeanieApp {
       updateProfile: (id, input) => gateway.updateProfile(id, input),
       loadProfiles: () => gateway.profiles(),
       invalidateProfileMutation: (profileId) => beanieCache.invalidateProfileMutation(profileId),
-      putProfiles: (profiles) => beanieCache.putProfiles(profiles)
+      putProfiles: (profiles) => beanieCache.putProfiles(profiles),
+      restoreProfile: (id) => gateway.setProfileVisibility(id, 'visible').then(() => {})
     });
 
     if (result.type === 'failed') {
@@ -5013,20 +5014,37 @@ export class BeanieApp {
       this.setState({
         busy: false,
         status: result.status,
-        profileEditor: editor ? { ...editor, saveError: profileSaveErrorMessage(result.error) } : editor
+        profileEditor: editor
+          ? { ...editor, saveNotice: { tone: 'error', message: profileSaveErrorMessage(result.error) } }
+          : editor
       });
       return;
     }
 
+    // Saving keeps the editor open (Save is not "done") and surfaces the result
+    // in-place. The saved profile is now the one being edited, so a re-save
+    // updates it instead of creating a duplicate, and it's focused so it shows
+    // when the user returns to the list. The gateway content-hash-dedupes by
+    // brew settings (ignoring title), so a `deduped` save created nothing new —
+    // say so rather than imply a fresh profile appeared.
+    const editor = this.state.profileEditor;
+    const savedTitle = result.profiles.find((item) => item.id === result.profileId)?.profile.title;
+    const notice: { tone: 'error' | 'success'; message: string } = result.deduped
+      ? {
+          tone: 'error',
+          message: savedTitle
+            ? `These settings already match the existing profile "${savedTitle}". Change a setting to save a separate profile.`
+            : 'These settings already match an existing profile. Change a setting to save a separate profile.'
+        }
+      : { tone: 'success', message: result.status };
     this.setState({
       profiles: result.profiles,
-      view: 'workbench',
-      profileEditor: null,
-      editingProfileId: result.editingId,
+      editingProfileId: result.profileId,
+      profileFocusId: result.profileId,
       busy: false,
-      status: result.status
+      status: result.status,
+      profileEditor: editor ? { ...editor, dirty: false, saveNotice: notice } : editor
     });
-    this.pickProfile(result.profileId);
   }
 
   private toggleFavoriteProfile(id: string): void {

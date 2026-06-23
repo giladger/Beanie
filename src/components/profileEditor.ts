@@ -54,8 +54,8 @@ export interface ProfileEditorState {
   /** Sub-tab within the advanced editor (de1app settings_2c / settings_2c2). */
   advancedTab: AdvancedTab;
   dirty: boolean;
-  /** Why the last save attempt failed, surfaced as a banner; null when none. */
-  saveError: string | null;
+  /** Outcome of the last save attempt, surfaced as a banner; null when none. */
+  saveNotice: { tone: 'error' | 'success'; message: string } | null;
   extra: Record<string, unknown>;
 }
 
@@ -142,7 +142,7 @@ export function createProfileEditorState(profile: Profile | null): ProfileEditor
       editorMode: 'advanced',
       advancedTab: 'steps',
       dirty: false,
-      saveError: null,
+      saveNotice: null,
       extra: {}
     };
   }
@@ -188,7 +188,7 @@ export function createProfileEditorState(profile: Profile | null): ProfileEditor
     editorMode: canEditAsBasic(finalSteps) ? 'basic' : 'advanced',
     advancedTab: 'steps',
     dirty: false,
-    saveError: null,
+    saveNotice: null,
     extra
   };
 }
@@ -553,20 +553,31 @@ export function profileFromEditorState(state: ProfileEditorState): Profile {
   return profile;
 }
 
-function renderSaveError(state: ProfileEditorState): string {
-  if (!state.saveError) return '';
+function renderSaveNotice(state: ProfileEditorState): string {
+  const notice = state.saveNotice;
+  if (!notice) return '';
+  // A success banner is stale the moment the user edits again, so hide it once
+  // the editor is dirty; errors (validation, save failure, duplicate) persist
+  // until they're resolved.
+  if (notice.tone === 'success' && state.dirty) return '';
+  if (notice.tone === 'success') {
+    return `
+    <div class="pe-save-notice success" role="status">
+      <strong>${escapeHtml(notice.message)}</strong>
+    </div>`;
+  }
   return `
-    <div class="pe-save-error" role="alert">
+    <div class="pe-save-notice error" role="alert">
       <strong>Couldn't save profile</strong>
-      <span>${escapeHtml(state.saveError)}</span>
+      <span>${escapeHtml(notice.message)}</span>
     </div>`;
 }
 
 export function renderProfileEditor(state: ProfileEditorState): string {
-  if (state.editorMode === 'basic') return `${renderSaveError(state)}${renderSimpleProfileEditor(state)}`;
+  if (state.editorMode === 'basic') return `${renderSaveNotice(state)}${renderSimpleProfileEditor(state)}`;
   return `
     <div class="profile-editor">
-      ${renderSaveError(state)}
+      ${renderSaveNotice(state)}
       ${renderIdentityMeta(state)}
       ${renderAdvancedTabs(state)}
       ${state.advancedTab === 'limits'
