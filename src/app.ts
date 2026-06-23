@@ -4895,6 +4895,7 @@ export class BeanieApp {
       profileFocusId: id,
       status: selection.status
     });
+    this.scheduleApply();
   }
 
   private goView(view: View): void {
