@@ -52,7 +52,7 @@ export function renderHistoryView(model: HistoryViewModel): string {
           ${renderLoadMore(model)}
         </div>
         <div class="shot-detail-pane">
-          ${selected ? renderShotDetailPane(selected, compare, model, model.batchesByBean) : '<p class="empty-history">Select a shot to inspect.</p>'}
+          ${selected ? renderShotDetailPane(selected, compare, model) : '<p class="empty-history">Select a shot to inspect.</p>'}
         </div>
       </div>
     </section>
@@ -165,12 +165,10 @@ function renderSecondTapHint(
 function renderShotDetailPane(
   shot: ShotRecord,
   compare: ShotRecord | null,
-  model: HistoryViewModel,
-  batchesByBean: Record<string, BeanBatch[]>
+  model: HistoryViewModel
 ): string {
   const recipe = recipeFromShot(shot);
   const duration = shotDurationLabel(shot);
-  const freshness = shotFreshnessBadgeForShot(shot, batchForShotFreshness(shot, batchesByBean));
   const grinder = recipe.grinderModel
     ? `${recipe.grinderModel}${recipe.grinderSetting ? ` ${recipe.grinderSetting}` : ''}`
     : recipe.grinderSetting
@@ -189,9 +187,8 @@ function renderShotDetailPane(
           ${tempLabel ? `<span class="pane-stat">${escapeHtml(tempLabel)}</span>` : ''}
         </div>
         <div class="pane-facts-line pane-facts-secondary">
-          ${grinder ? `<span class="pane-stat">${escapeHtml(grinder)}</span>` : ''}
-          ${freshness ? `<span class="pane-stat">${escapeHtml(freshness)}</span>` : ''}
           <span class="pane-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
+          ${grinder ? `<span class="pane-stat">${escapeHtml(grinder)}</span>` : ''}
         </div>
       </div>
       <div class="pane-actions">

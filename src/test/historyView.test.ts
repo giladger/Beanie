@@ -95,7 +95,6 @@ run('history view computes age for shots without stored freshness metadata', () 
   });
 
   includes(html, '4d · Profile shot-a · Jun 5');
-  includes(html, '<span class="pane-stat">4d</span>');
 });
 
 run('history view marks the comparison shot and renders the compare chip', () => {

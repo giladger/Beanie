@@ -1256,10 +1256,16 @@ p {
   content: none;
 }
 
-/* The → glyph renders slightly low; nudge it onto the optical centre. */
+/* The → glyph is just a connector — dim and shrink it so the two weights pop,
+   not the arrow. */
 .io-arrow {
   position: relative;
-  top: -1px;
+  top: -2px;
+  margin: 0 1px;
+  font-size: 0.6em;
+  font-weight: 700;
+  color: var(--muted);
+  vertical-align: middle;
 }
 
 /* Supporting brew vars (ratio, time, temp): present but quieter than the hero. */
@@ -1271,21 +1277,29 @@ p {
   white-space: nowrap;
 }
 
-/* The dose → yield is the one value that carries weight; a wider gap sets it
-   apart from the supporting cluster. */
+/* The dose → yield is the headline of the shot — make it pop on size, not just
+   weight, so the eye lands here first against the chart and stats. */
 .pane-lead {
-  margin-right: 12px;
-  font-size: 15px;
+  margin-right: 14px;
+  font-size: 23px;
   font-weight: 900;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
   color: var(--ink);
 }
 
-/* Line two is context, not headline — drop it a tier quieter than line one. */
-.pane-facts-secondary .pane-stat,
-.pane-facts-secondary .pane-profile {
+/* Line two is context, not headline — drop it well under the hero. The profile
+   name leads it and stays legible; the grinder trails, quieter still. */
+.pane-facts-secondary .pane-stat {
   font-size: 11px;
   font-weight: 600;
   color: var(--muted);
+}
+
+.pane-facts-secondary .pane-profile {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--soft);
 }
 
 /* Profile trails the description and is the element that truncates. */
