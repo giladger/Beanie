@@ -66,7 +66,7 @@ export function renderBeanPickerModal(model: BeanPickerViewModel): string {
               : `<div class="bean-picker-list-panel">
                   <label class="search bean-picker-search">
                     ${icon('search')}
-                    <input type="search" data-action="search" value="${escapeAttr(model.search)}" placeholder="Search beans"${autofocus} />
+                    <input type="search" data-action="search" value="${escapeAttr(model.search)}" placeholder="Search beans" spellcheck="false" autocapitalize="none" autocorrect="off"${autofocus} />
                   </label>
                   <div class="bean-picker-list">
                     ${

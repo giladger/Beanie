@@ -219,11 +219,18 @@ function renderBeansTab(model: PhoneShellModel): string {
   return `
     <section class="phone-stack">
       <div class="phone-search-row">
-        <input class="phone-search" type="search" data-action="search" placeholder="Search beans" value="${escapeAttr(model.beanSearch)}" />
+        <input class="phone-search" type="search" data-action="search" placeholder="Search beans" value="${escapeAttr(model.beanSearch)}" spellcheck="false" autocapitalize="none" autocorrect="off" />
         <button type="button" class="phone-icon-button strong" data-action="open-add-bean" aria-label="Add bean">${icon('plus')}</button>
       </div>
       <div class="phone-list">
-        ${beans.length ? beans.map((bean) => renderBeanRow(bean, model)).join('') : '<p class="phone-empty">No beans match that search.</p>'}
+        ${
+          beans.length
+            ? beans.map((bean) => renderBeanRow(bean, model)).join('')
+            : `<div class="phone-empty-cta">
+                <p class="phone-empty">${query ? 'No beans match that search.' : 'No beans yet.'}</p>
+                <button type="button" class="phone-action primary" data-action="open-add-bean">${icon('plus')}<span>Add a coffee</span></button>
+              </div>`
+        }
       </div>
     </section>
   `;
