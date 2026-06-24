@@ -2,9 +2,7 @@ import type { BeanBatch, RecipeDraft, ShotRecord } from '../api/types';
 import {
   batchForShotFreshness,
   formatGrams,
-  formatRatio,
   profileBaseTemperature,
-  ratioFor,
   recipeFromShot,
   shotFreshnessBadgeForShot
 } from '../domain/beanWorkflow';
@@ -174,20 +172,19 @@ function renderShotDetailPane(
     : recipe.grinderSetting
       ? `grind ${recipe.grinderSetting}`
       : '';
-  const ratio = formatRatio(ratioFor(recipe.dose, recipe.yield));
   const brewTemp = profileBaseTemperature(recipe.profile);
   const tempLabel = brewTemp == null ? '' : `${brewTemp.toFixed(1)}°C`;
   return `
     <div class="pane-head">
       <div class="pane-facts">
         <div class="pane-facts-line">
-          <span class="pane-stat pane-lead">${icon('scale')}<span class="pane-recipe">${escapeHtml(shotRecipeDisplay(shot, recipe)).replace(' → ', ' <span class="io-arrow">→</span> ')}</span>${ratio === '--' ? '' : `<span class="pane-ratio">${escapeHtml(ratio)}</span>`}</span>
-          ${duration ? `<span class="pane-stat">${icon('timer')}${escapeHtml(duration)}</span>` : ''}
-          ${tempLabel ? `<span class="pane-stat">${icon('thermometer')}${escapeHtml(tempLabel)}</span>` : ''}
+          <span class="pane-stat pane-lead">${escapeHtml(shotRecipeDisplay(shot, recipe)).replace(' → ', ' <span class="io-arrow">→</span> ')}</span>
+          ${duration ? `<span class="pane-stat">${escapeHtml(duration)}</span>` : ''}
+          ${tempLabel ? `<span class="pane-stat">${escapeHtml(tempLabel)}</span>` : ''}
         </div>
         <div class="pane-facts-line pane-facts-secondary">
-          <span class="pane-stat pane-profile-fact">${icon('waves')}<span class="pane-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span></span>
-          ${grinder ? `<span class="pane-stat">${icon('sliders-horizontal')}${escapeHtml(grinder)}</span>` : ''}
+          <span class="pane-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
+          ${grinder ? `<span class="pane-stat">${escapeHtml(grinder)}</span>` : ''}
         </div>
       </div>
       <div class="pane-actions">

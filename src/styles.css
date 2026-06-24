@@ -1233,40 +1233,26 @@ p {
   min-width: 0;
 }
 
-/* Facts are spaced apart and anchored by a leading icon (below) rather than
-   middots, so each metric has a pre-attentive shape the eye can jump to. */
+/* Plain whitespace separates the facts — no glyphs, no dots — so the line stays
+   calm and the values speak for themselves. */
 .pane-facts-line {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   flex-wrap: wrap;
-  gap: 3px 14px;
+  gap: 3px 16px;
   min-width: 0;
-}
-
-/* A small muted glyph leads every fact — scale for the recipe, clock for time,
-   thermometer for temp, etc. The shape carries the cue, so the icons stay one
-   quiet colour. */
-.pane-facts .icon {
-  width: 13px;
-  height: 13px;
-  margin-right: 4px;
-  color: var(--muted);
 }
 
 /* The → glyph is just a connector between dose and yield. */
 .io-arrow {
   position: relative;
   top: -1px;
-  margin: 0 1px;
-  font-weight: 700;
   color: var(--muted);
 }
 
-/* Supporting brew vars (time, temp): present but quieter than the recipe. */
+/* Line one's supporting vars (time, temp) sit a step under the recipe. */
 .pane-stat {
   flex: none;
-  display: inline-flex;
-  align-items: center;
   font-size: 12px;
   font-weight: 650;
   color: var(--soft);
@@ -1280,36 +1266,16 @@ p {
   color: var(--ink);
 }
 
-/* Ratio rides along with the recipe as a quieter suffix. */
-.pane-ratio {
-  margin-left: 8px;
-  font-size: 12px;
-  font-weight: 650;
-  color: var(--soft);
-}
-
-/* Line two is context, not headline — drop it well under the hero. The profile
-   name leads it and stays legible; the grinder trails, quieter still. */
+/* Line two is context, not headline — quieter still. The profile name leads. */
 .pane-facts-secondary .pane-stat {
   font-size: 11px;
   font-weight: 600;
   color: var(--muted);
 }
 
-.pane-facts-secondary .pane-profile {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--soft);
-}
-
-/* The profile name leads line two; its fact can shrink so the title (the one
-   long value here) is what truncates when the line is tight. */
-.pane-profile-fact {
-  flex: 0 1 auto;
-  min-width: 0;
-}
-
+/* The profile is the one long value, so it's the element that truncates. */
 .pane-profile {
+  flex: 0 1 auto;
   min-width: 0;
   font-size: 12px;
   font-weight: 600;
