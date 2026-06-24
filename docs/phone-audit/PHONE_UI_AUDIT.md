@@ -369,3 +369,77 @@ against the live gateway, but the label combination shouldn't be representable.)
 All captures are in [`screenshots/`](screenshots/). Naming: `0x–2x` Pass 1 (portrait
 dark), `Lxx` light theme, `Rxx` landscape, `Exx` empty state, `Nxx` dialogs, `Bxx`
 bean-picker variants, `Sxx` 320px. `*-full.png` are full-scroll-height captures.
+
+---
+
+## Part F — Pass 3 (safe areas + what's still missing)
+
+### F1. 🔴 `viewport-fit=cover` is missing — all safe-area CSS is dead code
+[index.html:5](../../index.html#L5) is `width=device-width, initial-scale=1.0`. Without
+`viewport-fit=cover`, iOS/Android **never expose non-zero `env(safe-area-inset-*)`**
+and letterbox the page inside the safe area. So the three existing
+`env(safe-area-inset-*)` rules ([styles.css:8648](../../src/styles.css#L8648),
+[9167](../../src/styles.css#L9167), [9202](../../src/styles.css#L9202)) currently do
+**nothing** on real devices. This is the foundation that must be fixed first; only
+then do the inset paddings matter.
+
+### F2. 🟠 Phone profile page has no top inset
+`.phone-profiles-page` pads `env(safe-area-inset-bottom)` but its top is a flat 10px
+([styles.css:9167](../../src/styles.css#L9167)), and the page renders **outside**
+`.phone-main`, so once `viewport-fit=cover` is on, the "Back / Profiles" header lands
+under the notch.
+
+### F3. 🟠 No left/right inset handling anywhere
+`.phone-main` (12px), `.phone-tabs` (6px), modals, and overlays use fixed horizontal
+padding. In landscape on a notched phone, the notch/curved edge clips content and the
+first/last bottom-tab. No rule references `safe-area-inset-left/right`.
+
+### F4. 🟠 Modals & overlays ignore safe areas
+`.modal-backdrop` uses a flat 8px on phone ([styles.css:9247](../../src/styles.css#L9247));
+full-height modals (`max-height: 100dvh - 16px`) and their close buttons can sit under
+the notch/home-indicator. The full-screen overlays (sleep, water alert, store-error,
+wake-app-zone) are positioned `inset: 0` with no inset padding.
+
+### F5. 🔴 Reachability, refined
+The genuinely unreachable phone destinations are the **Machine page**
+("Steam · Water · Flush", which *also* hosts the cleaning bar/wizard and is the route
+to water settings), the **Flow calibrator**, and the **Profile/Grinder editors**.
+`open-machine-settings` → `view:'machine'` and `open-flow-calibrator` exist
+([app.ts:4400](../../src/app.ts#L4400), [4433](../../src/app.ts#L4433)) but no phone
+control invokes them. Making the Machine page + Flow calibrator reachable unlocks
+water, cleaning, steam, and flush in one move.
+
+---
+
+## Part G — Implementation plan (severity-ordered)
+
+Worked top-to-bottom; each item is committed separately. Checked = landed.
+
+### 🔴 Critical
+- [ ] **G1 — Safe areas, end to end.** Add `viewport-fit=cover`; introduce
+  `--sa-top/-bottom/-left/-right` vars (`env()` with `0px` fallback); apply to
+  `.phone-main`, `.phone-tabs`, `.phone-profiles-page`, `.modal-backdrop`, and the
+  full-screen overlays — all four edges. (F1–F4)
+- [ ] **G2 — Reachability.** Add a "Machine & maintenance" group to the phone Settings
+  tab linking to the Machine page (Steam·Water·Flush + cleaning) and Flow calibrator;
+  ensure Back returns to the phone shell. (A2, F5)
+- [ ] **G3 — Shot-graph labels.** Stop phase annotation labels from overprinting at
+  phone width (de-clutter / stagger / hide on narrow). (B9, E4)
+- [ ] **G4 — Bean picker phone layout.** Replace the fixed `0.42fr/0.58fr` split with a
+  single column that flows and scrolls as one. (B5, E2)
+- [ ] **G5 — Profile picker.** Add a search field and per-row metadata (type/author) to
+  the phone profiles page. (B7)
+- [ ] **G6 — Live shot on phone.** Surface live telemetry on Home while a shot is
+  active instead of omitting the live panel. (A3)
+
+### 🟠 Major
+- [ ] **G7 — Recipe/shot fields read as editable + feedback.** Give the inputs an edit
+  affordance and surface an "applied" status on phone. (B1, A4, E3)
+- [ ] **G8 — Add-coffee form.** Remove the duplicate title; move Cancel out of the top;
+  keep Save reachable. (B6)
+- [ ] **G9 — Shots filter/search.** Add a filter/search to the Shots tab. (B8)
+- [ ] **G10 — Scan tab + label scanner.** Reduce dead space; make the scanner a sheet. (B2, B3)
+
+### 🟡 Minor
+- [ ] **G11 — Polish.** Bean no-results "add this coffee" CTA; disable spellcheck on
+  search; clarify Beans-row tap zones; bump nav label legibility. (B4, E5, C)
