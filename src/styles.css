@@ -2488,6 +2488,27 @@ p {
   background: color-mix(in srgb, var(--ink) 2.5%, transparent);
 }
 
+/* Add-coffee footer: the create form had no submit button (it relied on Enter,
+   which can't submit a multi-field form), so the only way to save was luck.
+   Pin a Cancel + Add coffee row to the bottom of the scrolling form. */
+.bean-picker-form-actions {
+  position: sticky;
+  bottom: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 4px -8px -8px;
+  padding: 8px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.bean-picker-form-actions .primary-button,
+.bean-picker-form-actions .secondary-button {
+  width: 100%;
+  justify-content: center;
+}
+
 .bean-picker-bean-summary {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

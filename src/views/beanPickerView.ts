@@ -433,20 +433,16 @@ function renderBeanPickerBeanForm(
   const dataId = editing ? ` data-id="${escapeAttr(bean.id)}"` : '';
   const showHeader = options.showHeader ?? true;
   return `
-    <form class="bean-picker-bean-form" data-form="bean-picker-bean"${dataId}>
+    <form class="bean-picker-bean-form ${editing ? '' : 'bean-picker-create-form'}" data-form="bean-picker-bean"${dataId}>
       ${
-        showHeader
+        showHeader && editing
           ? `<div class="bean-picker-section-head">
               <div>
-                <span class="eyebrow">${editing ? 'Coffee' : 'New coffee'}</span>
-                <strong>${escapeHtml(editing ? beanLabel(bean) : 'Add coffee')}</strong>
+                <span class="eyebrow">Coffee</span>
+                <strong>${escapeHtml(beanLabel(bean))}</strong>
               </div>
               <div class="bean-picker-actions">
-                ${
-                  editing
-                    ? `<button type="button" class="icon-button subtle-danger bean-delete-button" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Delete coffee" title="Delete coffee">${icon('trash-2')}</button>`
-                    : `<button type="button" class="secondary-button compact" data-action="close-modal"><span>Cancel</span></button>`
-                }
+                <button type="button" class="icon-button subtle-danger bean-delete-button" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Delete coffee" title="Delete coffee">${icon('trash-2')}</button>
               </div>
             </div>`
           : ''
@@ -461,6 +457,14 @@ function renderBeanPickerBeanForm(
         <label class="bean-picker-notes">Notes<textarea data-action="bean-picker-bean-field" name="notes" rows="4" autocomplete="off">${escapeHtml(inputValue(editing ? bean.notes : ''))}</textarea></label>
       </div>
       ${editing ? '' : renderBeanPickerFirstStock(formNumbers)}
+      ${
+        editing
+          ? ''
+          : `<div class="bean-picker-form-actions">
+              <button type="button" class="secondary-button compact" data-action="close-modal"><span>Cancel</span></button>
+              <button type="submit" class="primary-button compact">${icon('check')}<span>Add coffee</span></button>
+            </div>`
+      }
     </form>
   `;
 }
