@@ -1233,59 +1233,59 @@ p {
   min-width: 0;
 }
 
+/* Facts are spaced apart and anchored by a leading icon (below) rather than
+   middots, so each metric has a pre-attentive shape the eye can jump to. */
 .pane-facts-line {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   flex-wrap: wrap;
+  gap: 3px 14px;
   min-width: 0;
 }
 
-/* A thin middot separates each fact; it lives on the element so the trailing
-   profile keeps its separator even as the title ellipsises. Kept faint so the
-   values, not the punctuation, carry the line. */
-.pane-facts-line > * + *::before {
-  content: '·';
-  margin: 0 7px;
-  color: color-mix(in srgb, var(--muted) 55%, transparent);
-  font-weight: 700;
+/* A small muted glyph leads every fact — scale for the recipe, clock for time,
+   thermometer for temp, etc. The shape carries the cue, so the icons stay one
+   quiet colour. */
+.pane-facts .icon {
+  width: 13px;
+  height: 13px;
+  margin-right: 4px;
+  color: var(--muted);
 }
 
-/* The hero stands apart from the supporting cluster with a wider gap instead
-   of a middot, so line one reads as "headline + details" not five equals. */
-.pane-facts-line > .pane-lead + *::before {
-  content: none;
-}
-
-/* The → glyph is just a connector — dim and shrink it so the two weights pop,
-   not the arrow. */
+/* The → glyph is just a connector between dose and yield. */
 .io-arrow {
   position: relative;
-  top: -2px;
+  top: -1px;
   margin: 0 1px;
-  font-size: 0.6em;
   font-weight: 700;
   color: var(--muted);
-  vertical-align: middle;
 }
 
-/* Supporting brew vars (ratio, time, temp): present but quieter than the hero. */
+/* Supporting brew vars (time, temp): present but quieter than the recipe. */
 .pane-stat {
   flex: none;
+  display: inline-flex;
+  align-items: center;
   font-size: 12px;
   font-weight: 650;
   color: var(--soft);
   white-space: nowrap;
 }
 
-/* The dose → yield is the headline of the shot — make it pop on size, not just
-   weight, so the eye lands here first against the chart and stats. */
+/* The dose → yield recipe leads the line at a normal, readable size. */
 .pane-lead {
-  margin-right: 14px;
-  font-size: 23px;
-  font-weight: 900;
-  line-height: 1.05;
-  letter-spacing: -0.01em;
+  font-size: 14px;
+  font-weight: 800;
   color: var(--ink);
+}
+
+/* Ratio rides along with the recipe as a quieter suffix. */
+.pane-ratio {
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--soft);
 }
 
 /* Line two is context, not headline — drop it well under the hero. The profile
@@ -1302,9 +1302,14 @@ p {
   color: var(--soft);
 }
 
-/* Profile trails the description and is the element that truncates. */
-.pane-profile {
+/* The profile name leads line two; its fact can shrink so the title (the one
+   long value here) is what truncates when the line is tight. */
+.pane-profile-fact {
   flex: 0 1 auto;
+  min-width: 0;
+}
+
+.pane-profile {
   min-width: 0;
   font-size: 12px;
   font-weight: 600;
