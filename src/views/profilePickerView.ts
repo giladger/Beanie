@@ -77,31 +77,53 @@ export function renderProfilesPage(model: ProfilePickerViewModel): string {
 
 export function renderPhoneProfilesPage(model: ProfilePickerViewModel): string {
   const selectedId = model.selectedId;
-  const records = [...model.profiles].sort((a, b) =>
-    profileShortTitle(a.profile.title ?? a.id).localeCompare(
+  const query = model.search.trim().toLowerCase();
+  const favorites = new Set(model.favoriteProfileIds);
+  const matches = model.profiles.filter((record) => {
+    if (!query) return true;
+    const title = (record.profile.title ?? '').toLowerCase();
+    const author = (record.profile.author ?? '').toLowerCase();
+    return title.includes(query) || author.includes(query);
+  });
+  // Favourites first, then alphabetical — same ordering intent as the tablet picker.
+  const records = matches.sort((a, b) => {
+    const fa = favorites.has(a.id) ? 0 : 1;
+    const fb = favorites.has(b.id) ? 0 : 1;
+    if (fa !== fb) return fa - fb;
+    return profileShortTitle(a.profile.title ?? a.id).localeCompare(
       profileShortTitle(b.profile.title ?? b.id),
       undefined,
       { sensitivity: 'base' }
-    )
-  );
+    );
+  });
   return `
     ${profilePageHeader(model.cleaningMode ? 'Cleaning profile' : 'Profiles', model.cleaningMode ? 'machine' : 'workbench', '')}
     <main class="page-body phone-profiles-page">
+      <label class="search phone-profile-search">
+        ${icon('search')}
+        <input type="search" data-action="profile-search" value="${escapeAttr(model.search)}" placeholder="Search profiles" spellcheck="false" autocapitalize="none" autocorrect="off" />
+      </label>
       <div class="phone-profile-list">
         ${
           records.length === 0
-            ? '<p class="empty">No profiles.</p>'
-            : records.map((record) => {
-                const title = profileShortTitle(record.profile.title ?? record.id);
-                return `
-                  <button type="button" class="phone-profile-title ${record.id === selectedId ? 'active' : ''}" data-action="pick-profile" data-id="${escapeAttr(record.id)}">
-                    ${escapeHtml(title)}
-                  </button>
-                `;
-              }).join('')
+            ? `<p class="empty">${query ? 'No profiles match.' : 'No profiles.'}</p>`
+            : records.map((record) => renderPhoneProfileRow(record, record.id === selectedId, favorites.has(record.id))).join('')
         }
       </div>
     </main>
+  `;
+}
+
+function renderPhoneProfileRow(record: ProfileRecord, active: boolean, favorite: boolean): string {
+  const title = profileShortTitle(record.profile.title ?? record.id);
+  // reaprime drops `type`, so derive the real kind from the steps (same as the preview pane).
+  const type = createProfileEditorState(record.profile).type;
+  const meta = [displayProfileType(type), record.profile.author?.trim()].filter(Boolean).join(' · ');
+  return `
+    <button type="button" class="phone-profile-title ${active ? 'active' : ''}" data-action="pick-profile" data-id="${escapeAttr(record.id)}">
+      <span class="phone-profile-name">${favorite ? '<span class="phone-row-fav">★</span> ' : ''}${escapeHtml(title)}</span>
+      ${meta ? `<span class="phone-profile-meta">${escapeHtml(meta)}</span>` : ''}
+    </button>
   `;
 }
 

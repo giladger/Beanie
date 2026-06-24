@@ -87,7 +87,7 @@ run('profile picker cleaning mode returns to machine and hides create action', (
   excludes(html, 'data-action="toggle-show-hidden"');
 });
 
-run('phone profile picker renders title-only tap targets', () => {
+run('phone profile picker renders search and metadata tap targets', () => {
   const html = renderPhoneProfilesPage({
     profiles,
     search: '',
@@ -103,12 +103,33 @@ run('phone profile picker renders title-only tap targets', () => {
   includes(html, 'data-action="pick-profile"');
   includes(html, 'Sweet');
   includes(html, 'Classic');
+  // Search and per-row metadata (type · author) are part of the phone picker now.
+  includes(html, 'data-action="profile-search"');
+  includes(html, 'phone-profile-meta');
+  includes(html, 'Bob');
+  includes(html, 'Ada');
+  // Favourites still sort to the top.
+  equal(html.indexOf('Sweet') < html.indexOf('Classic'), true);
+  // Still a lightweight list, not the tablet two-pane preview.
   excludes(html, 'profile-preview-pane');
   excludes(html, 'data-action="focus-profile"');
   excludes(html, 'Flow profile');
-  excludes(html, 'Favorites');
-  excludes(html, 'Selected');
-  excludes(html, 'data-action="profile-search"');
+});
+
+run('phone profile picker filters by search', () => {
+  const html = renderPhoneProfilesPage({
+    profiles,
+    search: 'ada',
+    favoriteProfileIds: [],
+    selectedId: 'profile-pressure',
+    focusId: null,
+    cleaningMode: false,
+    showHidden: false,
+    hiddenProfiles: []
+  });
+
+  includes(html, 'Classic');
+  excludes(html, 'Sweet');
 });
 
 run('profile picker preview offers hide for all profiles and delete only for user profiles', () => {

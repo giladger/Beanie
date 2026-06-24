@@ -9185,21 +9185,40 @@ p {
     gap: 7px;
   }
 
+  .phone-profile-search {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    margin-bottom: 8px;
+    background: var(--bg);
+  }
+
   .phone-profile-title {
     min-width: 0;
     min-height: 46px;
-    padding: 0 12px;
+    display: grid;
+    gap: 2px;
+    padding: 8px 12px;
     border: 1px solid var(--line);
     border-radius: 8px;
     background: var(--panel);
     color: var(--ink);
     font: inherit;
-    font-size: 14px;
-    font-weight: 950;
     line-height: 1.15;
     text-align: left;
     overflow-wrap: anywhere;
     cursor: pointer;
+  }
+
+  .phone-profile-name {
+    font-size: 14px;
+    font-weight: 950;
+  }
+
+  .phone-profile-meta {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
   }
 
   .phone-profile-title.active {
