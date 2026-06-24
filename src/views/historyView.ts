@@ -1,5 +1,13 @@
 import type { BeanBatch, RecipeDraft, ShotRecord } from '../api/types';
-import { batchForShotFreshness, formatGrams, recipeFromShot, shotFreshnessBadgeForShot } from '../domain/beanWorkflow';
+import {
+  batchForShotFreshness,
+  formatGrams,
+  formatRatio,
+  profileBaseTemperature,
+  ratioFor,
+  recipeFromShot,
+  shotFreshnessBadgeForShot
+} from '../domain/beanWorkflow';
 import { isServiceShot } from '../domain/shotRecord';
 import { buildShotStats, hasShotStats, type ShotStats } from '../domain/shotStats';
 import { buildShotTrends, shotDurationSeconds, type ShotTrendRow } from '../domain/shotTrends';
@@ -168,21 +176,32 @@ function renderShotDetailPane(
     : recipe.grinderSetting
       ? `grind ${recipe.grinderSetting}`
       : '';
+  const ratio = formatRatio(ratioFor(recipe.dose, recipe.yield));
+  const brewTemp = profileBaseTemperature(recipe.profile);
+  const tempLabel = brewTemp == null ? '' : `${brewTemp.toFixed(1)}°C`;
   return `
     <div class="pane-head">
-      <span class="pane-stat pane-lead">${escapeHtml(shotRecipeDisplay(shot, recipe)).replace(' → ', ' <span class="io-arrow">→</span> ')}</span>
-      ${duration ? `<span class="pane-stat">@ ${escapeHtml(duration)}</span>` : ''}
-      ${freshness ? `<span class="pane-stat">${escapeHtml(freshness)}</span>` : ''}
-      ${grinder ? `<span class="pane-stat">${escapeHtml(grinder)}</span>` : ''}
-      <span class="pane-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
-      ${shotScoreControl(shot.annotations?.enjoyment ?? null, {
-        action: 'set-shot-score',
-        shotId: shot.id,
-        variant: 'detail'
-      })}
-      <button class="icon-button shot-edit-button history-tool ${model.showTrends ? 'active' : ''}" data-action="toggle-trends" aria-pressed="${model.showTrends}" aria-label="Show shot trends" title="Show shot trends">${icon('trending-up')}</button>
-      <button class="icon-button shot-edit-button history-tool ${model.comparePicking || compare ? 'active' : ''}" data-action="toggle-compare-pick" aria-pressed="${model.comparePicking}" aria-label="Compare with another shot" title="Compare with another shot">${icon('git-compare-arrows')}</button>
-      <button class="icon-button shot-edit-button" data-action="edit-shot" aria-label="Edit shot fields" title="Edit shot fields">${icon('pencil')}</button>
+      <div class="pane-facts">
+        <span class="pane-stat pane-lead">${escapeHtml(shotRecipeDisplay(shot, recipe)).replace(' → ', ' <span class="io-arrow">→</span> ')}</span>
+        ${ratio === '--' ? '' : `<span class="pane-stat">${escapeHtml(ratio)}</span>`}
+        ${duration ? `<span class="pane-stat">${escapeHtml(duration)}</span>` : ''}
+        ${tempLabel ? `<span class="pane-stat">${escapeHtml(tempLabel)}</span>` : ''}
+        ${grinder ? `<span class="pane-stat">${escapeHtml(grinder)}</span>` : ''}
+        ${freshness ? `<span class="pane-stat">${escapeHtml(freshness)}</span>` : ''}
+        <span class="pane-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
+      </div>
+      <div class="pane-actions">
+        ${shotScoreControl(shot.annotations?.enjoyment ?? null, {
+          action: 'set-shot-score',
+          shotId: shot.id,
+          variant: 'detail'
+        })}
+        <div class="pane-tools">
+          <button class="icon-button shot-edit-button history-tool ${model.showTrends ? 'active' : ''}" data-action="toggle-trends" aria-pressed="${model.showTrends}" aria-label="Show shot trends" title="Show shot trends">${icon('trending-up')}</button>
+          <button class="icon-button shot-edit-button history-tool ${model.comparePicking || compare ? 'active' : ''}" data-action="toggle-compare-pick" aria-pressed="${model.comparePicking}" aria-label="Compare with another shot" title="Compare with another shot">${icon('git-compare-arrows')}</button>
+          <button class="icon-button shot-edit-button" data-action="edit-shot" aria-label="Edit shot fields" title="Edit shot fields">${icon('pencil')}</button>
+        </div>
+      </div>
     </div>
     <div class="detail-chart">
       ${compare ? renderCompareChip(compare) : ''}

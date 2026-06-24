@@ -115,6 +115,7 @@ export const demoProfiles: ProfileRecord[] = [
       author: 'Decent',
       beverage_type: 'espresso',
       target_weight: 40,
+      tank_temperature: 93,
       steps: [{ name: 'Preinfusion' }, { name: 'Rise' }, { name: 'Hold' }]
     }
   },
@@ -125,6 +126,7 @@ export const demoProfiles: ProfileRecord[] = [
       author: 'Decent',
       beverage_type: 'espresso',
       target_weight: 42,
+      tank_temperature: 92,
       steps: [{ name: 'Bloom' }, { name: 'Pressure' }]
     }
   },
@@ -135,6 +137,7 @@ export const demoProfiles: ProfileRecord[] = [
       author: 'Damian',
       beverage_type: 'espresso',
       target_weight: 45,
+      tank_temperature: 90.5,
       steps: [{ name: 'Ramp' }, { name: 'Lever' }, { name: 'Decline' }]
     }
   }

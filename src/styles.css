@@ -1215,11 +1215,29 @@ p {
   white-space: nowrap;
 }
 
+/* Two tiers: read-only facts on top, the score + tool controls below, so
+   neither crowds the other and the facts line can show every recipe value. */
 .pane-head {
   display: flex;
-  align-items: center;
-  gap: 7px;
+  flex-direction: column;
+  gap: 9px;
   min-width: 0;
+}
+
+.pane-facts {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* A thin middot separates each fact; it lives on the element so the trailing
+   profile keeps its separator even as the title ellipsises. */
+.pane-facts > * + *::before {
+  content: '·';
+  margin: 0 7px;
+  color: var(--muted);
+  font-weight: 700;
 }
 
 /* The → glyph renders slightly low; nudge it onto the optical centre. */
@@ -1255,9 +1273,16 @@ p {
   text-overflow: ellipsis;
 }
 
-/* Date — and with it the score + edit controls — align to the right edge. */
-/* The score + edit controls sit at the right edge of the readout. */
-.pane-head .shot-score-control {
+/* Score sits at the left of the actions tier; the tool icons pin to the right. */
+.pane-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pane-tools {
+  display: flex;
+  gap: 6px;
   margin-left: auto;
 }
 
@@ -6680,15 +6705,6 @@ p {
     max-height: 260px;
     border-right: 0;
     border-bottom: 1px solid var(--line);
-  }
-
-  .pane-head {
-    flex-wrap: wrap;
-    row-gap: 5px;
-  }
-
-  .pane-profile {
-    flex-basis: 100%;
   }
 
   .shot-edit-grid {
