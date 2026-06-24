@@ -296,10 +296,24 @@ export class LiveChart {
       ctx.textAlign = 'left';
       ctx.textBaseline = 'alphabetic';
       const limit = Math.min(labelLimit, model.markers.length);
+      // Phase labels are placed at their marker's x across two staggered rows.
+      // On narrow (phone) charts those x positions bunch up and the long names
+      // overprint into mush, so track the right edge of the last label drawn in
+      // each row and skip any label that would overlap a neighbour or run past
+      // the plot edge — legible-but-fewer beats an unreadable pile-up.
+      const gap = 6;
+      const plotRight = plot.x + plot.width;
+      const rowRight = [-Infinity, -Infinity];
       for (let i = 0; i < limit; i += 1) {
         const marker = model.markers[i]!;
-        const x = projectX(marker.t, model.maxTime, plot);
-        ctx.fillText(marker.label, x + 4, plot.y + 13 + (i % 2) * 14);
+        const x = projectX(marker.t, model.maxTime, plot) + 4;
+        const width = ctx.measureText(marker.label).width;
+        if (x + width > plotRight + 2) continue;
+        let row = i % 2;
+        if (x < rowRight[row]! + gap) row ^= 1;
+        if (x < rowRight[row]! + gap) continue;
+        ctx.fillText(marker.label, x, plot.y + 13 + row * 14);
+        rowRight[row] = x + width;
       }
     }
   }
