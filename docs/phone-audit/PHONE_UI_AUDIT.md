@@ -415,31 +415,36 @@ water, cleaning, steam, and flush in one move.
 
 Worked top-to-bottom; each item is committed separately. Checked = landed.
 
+> **Status: all 11 items landed** (G1–G11), each its own commit, verified with the
+> Chromium phone harness (including simulated safe-area insets for G1) and the full
+> test suite (582 tests green). `Gxx-*.png` / `SA*-notch.png` screenshots in
+> [`screenshots/`](screenshots/) show the after state for each.
+
 ### 🔴 Critical
-- [ ] **G1 — Safe areas, end to end.** Add `viewport-fit=cover`; introduce
+- [x] **G1 — Safe areas, end to end.** Add `viewport-fit=cover`; introduce
   `--sa-top/-bottom/-left/-right` vars (`env()` with `0px` fallback); apply to
   `.phone-main`, `.phone-tabs`, `.phone-profiles-page`, `.modal-backdrop`, and the
   full-screen overlays — all four edges. (F1–F4)
-- [ ] **G2 — Reachability.** Add a "Machine & maintenance" group to the phone Settings
+- [x] **G2 — Reachability.** Add a "Machine & maintenance" group to the phone Settings
   tab linking to the Machine page (Steam·Water·Flush + cleaning) and Flow calibrator;
   ensure Back returns to the phone shell. (A2, F5)
-- [ ] **G3 — Shot-graph labels.** Stop phase annotation labels from overprinting at
+- [x] **G3 — Shot-graph labels.** Stop phase annotation labels from overprinting at
   phone width (de-clutter / stagger / hide on narrow). (B9, E4)
-- [ ] **G4 — Bean picker phone layout.** Replace the fixed `0.42fr/0.58fr` split with a
+- [x] **G4 — Bean picker phone layout.** Replace the fixed `0.42fr/0.58fr` split with a
   single column that flows and scrolls as one. (B5, E2)
-- [ ] **G5 — Profile picker.** Add a search field and per-row metadata (type/author) to
+- [x] **G5 — Profile picker.** Add a search field and per-row metadata (type/author) to
   the phone profiles page. (B7)
-- [ ] **G6 — Live shot on phone.** Surface live telemetry on Home while a shot is
+- [x] **G6 — Live shot on phone.** Surface live telemetry on Home while a shot is
   active instead of omitting the live panel. (A3)
 
 ### 🟠 Major
-- [ ] **G7 — Recipe/shot fields read as editable + feedback.** Give the inputs an edit
+- [x] **G7 — Recipe/shot fields read as editable + feedback.** Give the inputs an edit
   affordance and surface an "applied" status on phone. (B1, A4, E3)
-- [ ] **G8 — Add-coffee form.** Remove the duplicate title; move Cancel out of the top;
+- [x] **G8 — Add-coffee form.** Remove the duplicate title; move Cancel out of the top;
   keep Save reachable. (B6)
-- [ ] **G9 — Shots filter/search.** Add a filter/search to the Shots tab. (B8)
-- [ ] **G10 — Scan tab + label scanner.** Reduce dead space; make the scanner a sheet. (B2, B3)
+- [x] **G9 — Shots filter/search.** Add a filter/search to the Shots tab. (B8)
+- [x] **G10 — Scan tab + label scanner.** Reduce dead space; make the scanner a sheet. (B2, B3)
 
 ### 🟡 Minor
-- [ ] **G11 — Polish.** Bean no-results "add this coffee" CTA; disable spellcheck on
+- [x] **G11 — Polish.** Bean no-results "add this coffee" CTA; disable spellcheck on
   search; clarify Beans-row tap zones; bump nav label legibility. (B4, E5, C)
