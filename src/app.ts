@@ -6638,7 +6638,7 @@ export class BeanieApp {
     this.root.innerHTML = `
       <div class="app-shell ${renderPhone ? 'app-shell-phone' : isPage ? 'app-shell-page' : ''}">
         ${renderPhone ? this.renderPhoneApp(bean) : isPage ? this.renderPage() : this.renderWorkbench(bean)}
-        ${renderPhone ? '' : this.renderLivePanel()}
+        ${this.renderLivePanel()}
         ${this.renderModal()}
         ${isPage ? '' : this.renderWaterAlert()}
         ${this.renderWaterWarningBanner()}

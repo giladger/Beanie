@@ -1614,7 +1614,7 @@ p {
   display: flex;
   align-items: stretch;
   justify-content: center;
-  padding: 18px;
+  padding: calc(18px + var(--sa-top)) calc(18px + var(--sa-right)) calc(18px + var(--sa-bottom)) calc(18px + var(--sa-left));
   background: var(--scrim);
   backdrop-filter: blur(2px);
 }
