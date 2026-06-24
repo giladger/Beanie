@@ -6674,7 +6674,7 @@ export class BeanieApp {
           this.state.settingsBundle,
           this.state.pluginConfig,
           this.decentAccountPanelState(),
-          ['app', 'account', 'plugins', 'connection'],
+          ['app', 'brew', 'machine', 'power', 'account', 'plugins', 'connection', 'danger'],
           { phone: true, flowCalibration: this.flowCalibrationDisplay() }
         )
       : '';

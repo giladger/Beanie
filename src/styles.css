@@ -9116,6 +9116,10 @@ p {
   .phone-settings .settings-nav {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
+    /* Override the max-width:720px rule's single scrolling row so the (now eight)
+       sections wrap into tidy rows of four instead of squishing edge to edge. */
+    grid-auto-flow: row;
+    grid-auto-columns: auto;
     gap: 8px;
     overflow: visible;
     padding-bottom: 0;

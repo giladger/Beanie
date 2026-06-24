@@ -140,8 +140,9 @@ function settingsSections(
       {
         id: 'machine',
         title: 'Machine',
-        terms: 'descale sleep routine defaults water level low tank refill warning alert',
+        terms: 'descale sleep routine defaults water level low tank refill warning alert steam flush clean flow calibration',
         html: [
+          renderPhoneMachineLinks(options),
           renderMaintenanceSection(),
           renderSection('Water level alerts', renderWaterAlertRows(model, options))
         ].join('')
@@ -286,6 +287,25 @@ function renderDeviceRow(device: SettingsBundle['devices'][number]): string {
     `${device.type} · ${connected ? 'connected' : 'available'}`,
     `<button type="button" class="text-button ${connected ? '' : 'primary'}" data-action="${action}" data-id="${escapeAttr(device.id)}">${escapeHtml(label)}</button>`
   );
+}
+
+// On phone there is no top bar, so the Steam·Water·Flush page (which also hosts the
+// cleaning wizard) and the flow calibrator are otherwise unreachable. Surface them as
+// links inside the Machine settings section. Hidden on tablet, where the top bar wins.
+function renderPhoneMachineLinks(options: SettingsRenderOptions): string {
+  if (!options.phone) return '';
+  return renderSection('Machine controls', [
+    settingControlRow(
+      'Steam · Water · Flush',
+      'Steam, hot water, flush controls and cleaning',
+      `<button type="button" class="text-button primary" data-action="open-machine-settings">${icon('droplet')}<span>Open</span></button>`
+    ),
+    settingControlRow(
+      'Flow calibration',
+      'Calibrate machine flow against a scale',
+      `<button type="button" class="text-button" data-action="open-flow-calibrator">${icon('scale')}<span>Open</span></button>`
+    )
+  ].join(''));
 }
 
 function renderMaintenanceSection(): string {
