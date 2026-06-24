@@ -9278,4 +9278,27 @@ p {
   .scan-review-fields {
     grid-template-columns: 1fr;
   }
+
+  /* Phone: collapse the bean picker's two fixed-height tablet panes into one
+     column that scrolls as a whole. The list keeps a capped, browsable height
+     and the inspector (selected coffee + bags) flows to its content below it,
+     removing the cramped-list / dead-space-below split. */
+  .bean-picker-modal {
+    height: auto;
+    max-height: 100%;
+  }
+
+  .bean-picker-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    overflow-y: auto;
+  }
+
+  .bean-picker-list {
+    max-height: 42vh;
+  }
+
+  .bean-picker-inspector {
+    overflow: visible;
+  }
 }
