@@ -8786,6 +8786,67 @@ p {
     font-size: 17px;
   }
 
+  /* Centre the single scan card so the tab no longer reads as one card stranded
+     above a screen of dead space. */
+  .phone-scan-tab {
+    min-height: 100%;
+    align-content: center;
+  }
+
+  .phone-scan-card {
+    justify-items: start;
+    gap: 14px;
+    padding: 20px 16px;
+  }
+
+  .phone-scan-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 52px;
+    height: 52px;
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--accent) 16%, var(--panel-2));
+    color: var(--accent);
+  }
+
+  .phone-scan-icon svg {
+    width: 26px;
+    height: 26px;
+  }
+
+  .phone-scan-card .phone-scan-button {
+    margin-top: 2px;
+  }
+
+  .phone-scan-tips {
+    margin: 2px 0 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 7px;
+    width: 100%;
+  }
+
+  .phone-scan-tips li {
+    position: relative;
+    padding-left: 18px;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .phone-scan-tips li::before {
+    content: '';
+    position: absolute;
+    left: 2px;
+    top: 7px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--accent) 70%, transparent);
+  }
+
   .phone-icon-button {
     width: 42px;
     height: 42px;
@@ -9364,6 +9425,13 @@ p {
   .input-dialog {
     width: min(100vw - 16px, 560px);
     max-height: calc(100dvh - 16px);
+  }
+
+  /* The label scanner floated mid-screen with dead space around it. Anchor it as
+     a bottom sheet that grows upward as photos/fields are added. */
+  .label-scanner-modal {
+    align-self: end;
+    width: 100%;
   }
 
   .scan-review-fields {

@@ -195,14 +195,19 @@ function renderRecentShots(model: PhoneShellModel): string {
 
 function renderScanTab(): string {
   return `
-    <section class="phone-stack">
+    <section class="phone-stack phone-scan-tab">
       <div class="phone-card phone-scan-card">
-        <span class="phone-card-label">Bag capture</span>
-        <h2>Scan label details</h2>
-        <p>Add a photo of your bag, review the extracted bean and roast fields, then save.</p>
+        <span class="phone-scan-icon" aria-hidden="true">${icon('camera')}</span>
+        <h2>Scan a bag label</h2>
+        <p>Snap the front — and the back if it shows the roast date or weight. Beanie reads the roaster, origin, process, and dates for you.</p>
         <button type="button" class="phone-scan-button" data-action="open-label-scanner">
           ${icon('camera')}<span>Scan bag label</span>
         </button>
+        <ul class="phone-scan-tips">
+          <li>Good light, fill the frame</li>
+          <li>Add the back for the roast date</li>
+          <li>Review the fields before saving</li>
+        </ul>
       </div>
     </section>
   `;
