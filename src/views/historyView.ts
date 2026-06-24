@@ -182,13 +182,17 @@ function renderShotDetailPane(
   return `
     <div class="pane-head">
       <div class="pane-facts">
-        <span class="pane-stat pane-lead">${escapeHtml(shotRecipeDisplay(shot, recipe)).replace(' → ', ' <span class="io-arrow">→</span> ')}</span>
-        ${ratio === '--' ? '' : `<span class="pane-stat">${escapeHtml(ratio)}</span>`}
-        ${duration ? `<span class="pane-stat">${escapeHtml(duration)}</span>` : ''}
-        ${tempLabel ? `<span class="pane-stat">${escapeHtml(tempLabel)}</span>` : ''}
-        ${grinder ? `<span class="pane-stat">${escapeHtml(grinder)}</span>` : ''}
-        ${freshness ? `<span class="pane-stat">${escapeHtml(freshness)}</span>` : ''}
-        <span class="pane-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
+        <div class="pane-facts-line">
+          <span class="pane-stat pane-lead">${escapeHtml(shotRecipeDisplay(shot, recipe)).replace(' → ', ' <span class="io-arrow">→</span> ')}</span>
+          ${ratio === '--' ? '' : `<span class="pane-stat">${escapeHtml(ratio)}</span>`}
+          ${duration ? `<span class="pane-stat">${escapeHtml(duration)}</span>` : ''}
+          ${tempLabel ? `<span class="pane-stat">${escapeHtml(tempLabel)}</span>` : ''}
+        </div>
+        <div class="pane-facts-line">
+          ${grinder ? `<span class="pane-stat">${escapeHtml(grinder)}</span>` : ''}
+          ${freshness ? `<span class="pane-stat">${escapeHtml(freshness)}</span>` : ''}
+          <span class="pane-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
+        </div>
       </div>
       <div class="pane-actions">
         ${shotScoreControl(shot.annotations?.enjoyment ?? null, {

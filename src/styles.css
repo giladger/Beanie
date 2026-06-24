@@ -1215,16 +1215,25 @@ p {
   white-space: nowrap;
 }
 
-/* Two tiers: read-only facts on top, the score + tool controls below, so
-   neither crowds the other and the facts line can show every recipe value. */
+/* Read-only facts (two stacked lines) sit on the left; the score + tool
+   controls sit on the right, so neither crowds the other and every recipe
+   value has room. */
 .pane-head {
   display: flex;
-  flex-direction: column;
-  gap: 9px;
+  align-items: center;
+  gap: 16px;
   min-width: 0;
 }
 
 .pane-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pane-facts-line {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
@@ -1233,7 +1242,7 @@ p {
 
 /* A thin middot separates each fact; it lives on the element so the trailing
    profile keeps its separator even as the title ellipsises. */
-.pane-facts > * + *::before {
+.pane-facts-line > * + *::before {
   content: '·';
   margin: 0 7px;
   color: var(--muted);
@@ -1273,17 +1282,19 @@ p {
   text-overflow: ellipsis;
 }
 
-/* Score sits at the left of the actions tier; the tool icons pin to the right. */
+/* The score + tool controls sit at the right of the header, beside the
+   two-line facts block. */
 .pane-actions {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex: none;
+  margin-left: auto;
 }
 
 .pane-tools {
   display: flex;
   gap: 6px;
-  margin-left: auto;
 }
 
 .pane-head .enjoyment-badge {
