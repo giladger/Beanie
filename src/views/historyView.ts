@@ -7,8 +7,7 @@ import {
   shotFreshnessBadgeForShot
 } from '../domain/beanWorkflow';
 import { isServiceShot } from '../domain/shotRecord';
-import { buildShotStats, hasShotStats, type ShotStats } from '../domain/shotStats';
-import { buildShotTrends, shotDurationSeconds, type ShotTrendRow } from '../domain/shotTrends';
+import { buildShotStats, hasShotStats, shotDurationSeconds, type ShotStats } from '../domain/shotStats';
 import { icon } from '../components/icons';
 import { enjoymentBadge, shotScoreControl } from '../components/shotScore';
 import { escapeAttr, escapeHtml } from '../components/html';
@@ -20,7 +19,6 @@ export interface HistoryViewModel {
   compareShotId: string | null;
   /** The next list tap picks the comparison shot instead of selecting. */
   comparePicking: boolean;
-  showTrends: boolean;
   demo: boolean;
   shotsTotal: number;
   shotsLoadingMore: boolean;
@@ -33,8 +31,7 @@ export function renderHistoryView(model: HistoryViewModel): string {
   const selected = selectedHistoryShot(model.shots, model.detailShotId);
   const compare = compareHistoryShot(model.shots, model.detailShotId, model.compareShotId);
   return `
-    <section class="history-panel panel ${model.showTrends ? 'with-trends' : ''}">
-      ${model.showTrends ? renderTrendStrip(model.shots) : ''}
+    <section class="history-panel panel">
       <div class="history-split">
         <div class="shot-list">
           ${model.comparePicking ? '<p class="compare-hint">Tap a shot to overlay it on the chart.</p>' : ''}
@@ -194,7 +191,6 @@ function renderShotDetailPane(
           variant: 'detail'
         })}
         <div class="pane-tools">
-          <button class="icon-button shot-edit-button history-tool ${model.showTrends ? 'active' : ''}" data-action="toggle-trends" aria-pressed="${model.showTrends}" aria-label="Show shot trends" title="Show shot trends">${icon('trending-up')}</button>
           <button class="icon-button shot-edit-button history-tool ${model.comparePicking || compare ? 'active' : ''}" data-action="toggle-compare-pick" aria-pressed="${model.comparePicking}" aria-label="Compare with another shot" title="Compare with another shot">${icon('git-compare-arrows')}</button>
           <button class="icon-button shot-edit-button" data-action="edit-shot" aria-label="Edit shot fields" title="Edit shot fields">${icon('pencil')}</button>
         </div>
@@ -258,79 +254,6 @@ function renderCompareChip(compare: ShotRecord): string {
       <button class="compare-chip-clear" data-action="clear-compare-shot" aria-label="Stop comparing" title="Stop comparing">${icon('x')}</button>
     </span>
   `;
-}
-
-// The strip only changes when the shots array is replaced; trend extraction
-// walks every loaded shot, so cache the rendered strip by array identity.
-let trendStripCache: { source: ShotRecord[]; html: string } | null = null;
-
-function renderTrendStrip(shots: ShotRecord[]): string {
-  if (trendStripCache?.source === shots) return trendStripCache.html;
-  const rows = buildShotTrends(shots);
-  const html =
-    rows.length === 0
-      ? '<div class="shot-trends"><p class="trend-note">Not enough recorded shots to chart trends.</p></div>'
-      : `
-    <div class="shot-trends">
-      <div class="trend-grid">${rows.map(renderTrendRow).join('')}</div>
-      <p class="trend-note">Oldest → newest · ${trendShotCount(rows)} loaded shot${trendShotCount(rows) === 1 ? '' : 's'}</p>
-    </div>
-  `;
-  trendStripCache = { source: shots, html };
-  return html;
-}
-
-function trendShotCount(rows: ShotTrendRow[]): number {
-  return Math.max(...rows.map((row) => row.points.length));
-}
-
-function renderTrendRow(row: ShotTrendRow): string {
-  const range =
-    row.min === row.max
-      ? `${trendValue(row.min, row.decimals)}${row.unit}`
-      : `${trendValue(row.min, row.decimals)}–${trendValue(row.max, row.decimals)}${row.unit}`;
-  return `
-    <div class="trend-row">
-      <span class="trend-label">${escapeHtml(row.label)}</span>
-      ${trendSparkline(row)}
-      <span class="trend-values">
-        <strong class="trend-latest">${escapeHtml(`${trendValue(row.latest, row.decimals)}${row.unit}`)}</strong>
-        <span class="trend-range">${escapeHtml(range)}</span>
-      </span>
-    </div>
-  `;
-}
-
-const SPARK_WIDTH = 120;
-const SPARK_HEIGHT = 30;
-const SPARK_PAD = 3;
-
-function trendSparkline(row: ShotTrendRow): string {
-  const span = row.max - row.min;
-  const innerWidth = SPARK_WIDTH - SPARK_PAD * 2;
-  const innerHeight = SPARK_HEIGHT - SPARK_PAD * 2;
-  const points = row.points
-    .map((point, index) => {
-      const x = SPARK_PAD + (row.points.length === 1 ? innerWidth / 2 : (index * innerWidth) / (row.points.length - 1));
-      const y =
-        span === 0 ? SPARK_HEIGHT / 2 : SPARK_PAD + innerHeight - ((point.value - row.min) / span) * innerHeight;
-      return `${round1(x)},${round1(y)}`;
-    })
-    .join(' ');
-  return `
-    <svg class="trend-spark" viewBox="0 0 ${SPARK_WIDTH} ${SPARK_HEIGHT}" preserveAspectRatio="none" aria-hidden="true">
-      <polyline points="${points}" vector-effect="non-scaling-stroke" />
-    </svg>
-  `;
-}
-
-function trendValue(value: number, decimals: number): string {
-  const text = value.toFixed(decimals);
-  return text.includes('.') ? text.replace(/\.?0+$/, '') : text;
-}
-
-function round1(value: number): number {
-  return Math.round(value * 10) / 10;
 }
 
 function renderLoadMore(model: HistoryViewModel): string {

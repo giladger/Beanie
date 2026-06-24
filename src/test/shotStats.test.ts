@@ -1,5 +1,5 @@
 import type { ShotMeasurement, ShotRecord } from '../api/types';
-import { buildShotStats, hasShotStats } from '../domain/shotStats';
+import { buildShotStats, hasShotStats, shotDurationSeconds } from '../domain/shotStats';
 
 run('shot stats compute peaks, means, first drops, and post-stop drip from the pour window', () => {
   const shot = record(
@@ -47,6 +47,24 @@ run('shot stats are empty for a shot without measurements', () => {
 run('shot stats are memoized by record identity', () => {
   const shot = record([frame(0, { pressure: 7 })], {});
   equal(buildShotStats(shot), buildShotStats(shot));
+});
+
+run('shot duration spans the pour window from its measurement timestamps', () => {
+  const shot = record(
+    [
+      // Heating frame before the pour — excluded from the window.
+      frame(0, { substate: 'heating' }),
+      frame(2, { substate: 'preinfusion' }),
+      frame(30, { substate: 'pouring' })
+    ],
+    {}
+  );
+  equal(shotDurationSeconds(shot), 28); // t=2 → t=30
+});
+
+run('shot duration is null without two parsable measurements', () => {
+  equal(shotDurationSeconds(record([], {})), null);
+  equal(shotDurationSeconds(record([frame(0, { substate: 'pouring' })], {})), null);
 });
 
 interface FrameSpec {

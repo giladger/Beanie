@@ -46,7 +46,6 @@ import {
   Thermometer,
   Trash2,
   Timer,
-  TrendingUp,
   Upload,
   Waves,
   X,
@@ -101,7 +100,6 @@ const ICONS = {
   Thermometer,
   Trash2,
   Timer,
-  TrendingUp,
   Upload,
   Waves,
   X

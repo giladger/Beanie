@@ -7,7 +7,6 @@ run('history view hides service shots while keeping pagination based on raw shot
     detailShotId: null,
     compareShotId: null,
     comparePicking: false,
-    showTrends: false,
     demo: false,
     shotsTotal: 3,
     shotsLoadingMore: false,
@@ -26,7 +25,6 @@ run('history view selects the requested shot and renders score controls', () => 
     detailShotId: 'shot-b',
     compareShotId: null,
     comparePicking: false,
-    showTrends: false,
     demo: false,
     shotsTotal: 2,
     shotsLoadingMore: false,
@@ -45,7 +43,6 @@ run('history view suppresses load more in demo or when all raw shots are loaded'
     detailShotId: null,
     compareShotId: null,
     comparePicking: false,
-    showTrends: false,
     shotsTotal: 1,
     shotsLoadingMore: false,
     secondTapHint: null,
@@ -63,7 +60,6 @@ run('history view renders second tap hint for the matching shot only', () => {
     detailShotId: null,
     compareShotId: null,
     comparePicking: false,
-    showTrends: false,
     demo: false,
     shotsTotal: 2,
     shotsLoadingMore: false,
@@ -86,7 +82,6 @@ run('history view computes age for shots without stored freshness metadata', () 
     detailShotId: 'shot-a',
     compareShotId: null,
     comparePicking: false,
-    showTrends: false,
     demo: false,
     shotsTotal: 1,
     shotsLoadingMore: false,
@@ -103,7 +98,6 @@ run('history view marks the comparison shot and renders the compare chip', () =>
     detailShotId: 'shot-a',
     compareShotId: 'shot-b',
     comparePicking: false,
-    showTrends: false,
     demo: false,
     shotsTotal: 2,
     shotsLoadingMore: false,
@@ -123,7 +117,6 @@ run('history view shows the compare picking hint and no chip while picking', () 
     detailShotId: 'shot-a',
     compareShotId: null,
     comparePicking: true,
-    showTrends: false,
     demo: false,
     shotsTotal: 2,
     shotsLoadingMore: false,
@@ -141,7 +134,6 @@ run('history view ignores a comparison id that matches the selected shot', () =>
     detailShotId: 'shot-a',
     compareShotId: 'shot-a',
     comparePicking: false,
-    showTrends: false,
     demo: false,
     shotsTotal: 1,
     shotsLoadingMore: false,
@@ -153,30 +145,6 @@ run('history view ignores a comparison id that matches the selected shot', () =>
   excludes(html, 'compare-badge');
 });
 
-run('history view renders the trend strip only when enabled', () => {
-  const model = {
-    shots: [shot('shot-a', 'espresso', 80), shot('shot-b', 'espresso', 20)],
-    detailShotId: null,
-    compareShotId: null,
-    comparePicking: false,
-    showTrends: true,
-    demo: false,
-    shotsTotal: 2,
-    shotsLoadingMore: false,
-    secondTapHint: null,
-    batchesByBean: {}
-  };
-
-  const withTrends = renderHistoryView(model);
-  includes(withTrends, 'shot-trends');
-  includes(withTrends, 'trend-spark');
-  includes(withTrends, 'Oldest → newest · 2 loaded shots');
-  includes(withTrends, 'with-trends');
-
-  const withoutTrends = renderHistoryView({ ...model, showTrends: false });
-  excludes(withoutTrends, 'shot-trends');
-});
-
 run('history view re-renders memoized rows when selection or compare flags change', () => {
   const shots = [shot('shot-a', 'espresso'), shot('shot-b', 'espresso')];
   const base = {
@@ -184,7 +152,6 @@ run('history view re-renders memoized rows when selection or compare flags chang
     detailShotId: 'shot-a',
     compareShotId: null as string | null,
     comparePicking: false,
-    showTrends: false,
     demo: false,
     shotsTotal: 2,
     shotsLoadingMore: false,
@@ -230,7 +197,6 @@ run('history view renders raw shot stats under the chart, with compare values wh
     detailShotId: 'shot-a',
     compareShotId: null as string | null,
     comparePicking: false,
-    showTrends: false,
     demo: false,
     shotsTotal: 2,
     shotsLoadingMore: false,

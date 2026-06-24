@@ -39,6 +39,36 @@ export function hasShotStats(stats: ShotStats): boolean {
   return Object.values(stats).some((value) => value != null);
 }
 
+// Same memoization rationale as buildShotStats: records are replaced, never
+// mutated, and computing a duration walks the whole measurement array.
+const durationCache = new WeakMap<ShotRecord, number | null>();
+
+/**
+ * Shot duration in seconds from its measurement timestamps, preferring the
+ * espresso pour (preinfusion/pouring) window when substates are recorded —
+ * the same window the shot charts plot.
+ */
+export function shotDurationSeconds(shot: ShotRecord): number | null {
+  if (durationCache.has(shot)) return durationCache.get(shot)!;
+  const duration = computeShotDurationSeconds(shot);
+  durationCache.set(shot, duration);
+  return duration;
+}
+
+function computeShotDurationSeconds(shot: ShotRecord): number | null {
+  const all = Array.isArray(shot.measurements) ? shot.measurements : [];
+  if (all.length < 2) return null;
+  const pour = all.filter((measurement) => {
+    const sub = substate(measurement);
+    return sub != null && ESPRESSO_SUBSTATES.has(sub);
+  });
+  const series = pour.length > 1 ? pour : all;
+  const first = timestampFor(series[0]!.machine.timestamp);
+  const last = timestampFor(series[series.length - 1]!.machine.timestamp);
+  if (first == null || last == null || last <= first) return null;
+  return (last - first) / 1000;
+}
+
 function computeShotStats(shot: ShotRecord): ShotStats {
   const all = Array.isArray(shot.measurements) ? shot.measurements : [];
   const window = pourWindow(all);

@@ -674,8 +674,6 @@ interface AppState {
   compareShotId: string | null;
   /** Armed by the compare button: the next history tap picks the overlay shot. */
   comparePicking: boolean;
-  /** Show the per-bean raw trend strip above the shot history. */
-  showTrends: boolean;
   machineInfo: MachineInfo | null;
   machineCapabilities: MachineCapabilities | null;
   machineSettings: De1MachineSettings | null;
@@ -815,7 +813,6 @@ export class BeanieApp {
     detailShotId: null,
     compareShotId: null,
     comparePicking: false,
-    showTrends: false,
     machineInfo: null,
     machineCapabilities: null,
     machineSettings: null,
@@ -4302,9 +4299,6 @@ export class BeanieApp {
       'load-more-shots': async () => {
         await this.loadMoreShots();
       },
-      'toggle-trends': () => {
-        this.setHistoryState({ showTrends: !this.state.showTrends });
-      },
       'toggle-compare-pick': () => {
         this.setHistoryState({
           comparePicking: !this.state.comparePicking,
@@ -7114,7 +7108,6 @@ export class BeanieApp {
       detailShotId: this.state.detailShotId,
       compareShotId: this.state.compareShotId,
       comparePicking: this.state.comparePicking,
-      showTrends: this.state.showTrends,
       demo: this.state.demo,
       shotsTotal: this.state.shotsTotal,
       shotsLoadingMore: this.state.shotsLoadingMore,
@@ -8223,7 +8216,7 @@ export class BeanieApp {
   }
 
   // State changes whose visible effect is confined to the workbench history
-  // panel (shot selection, compare mode, trends, pagination) re-render only
+  // panel (shot selection, compare mode, pagination) re-render only
   // that panel. A full innerHTML rebuild costs O(whole app) and resets scroll
   // and focus everywhere, which a list tap shouldn't pay for. Falls back to a
   // full render whenever the panel isn't on screen (phone layout shows status
