@@ -125,6 +125,7 @@ function model(): PhoneShellModel {
     beanSearch: '',
     favoriteBeanIds: [bean.id],
     averageDoseIn: 18,
+    applyState: 'idle',
     shots: [shot('shot-1', 'espresso', batch.id), shot('flush-1', 'flush')],
     selectedShot: shot('shot-1', 'espresso', batch.id),
     selectedShotDraft: {

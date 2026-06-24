@@ -6690,6 +6690,7 @@ export class BeanieApp {
       beanSearch: this.state.search,
       favoriteBeanIds: this.state.favoriteBeans,
       averageDoseIn: this.averageDoseIn(),
+      applyState: this.state.applyState,
       shots: this.state.shots,
       selectedShot,
       selectedShotDraft,

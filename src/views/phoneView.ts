@@ -31,6 +31,7 @@ export interface PhoneShellModel {
   beanSearch: string;
   favoriteBeanIds: readonly string[];
   averageDoseIn: number | null;
+  applyState: 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
   shots: ShotRecord[];
   selectedShot: ShotRecord | null;
   selectedShotDraft: ShotEditDraft | null;
@@ -128,12 +129,27 @@ function renderHomeTab(model: PhoneShellModel): string {
   `;
 }
 
+const APPLY_CHIP: Record<string, { cls: string; text: string }> = {
+  pending: { cls: 'pending', text: 'Applying…' },
+  applied: { cls: 'ok', text: 'Applied' },
+  failed: { cls: 'alert', text: 'Apply failed' },
+  stale: { cls: 'stale', text: 'Not applied' }
+};
+
+function applyChip(state: PhoneShellModel['applyState']): string {
+  const info = APPLY_CHIP[state];
+  return info ? `<span class="phone-apply-chip ${info.cls}" role="status">${info.text}</span>` : '';
+}
+
 function renderPhoneRecipe(model: PhoneShellModel): string {
   const draft = model.draft;
   return `
     <div class="phone-card phone-recipe">
       <div class="phone-card-head">
-        <span class="phone-card-label">Edit recipe</span>
+        <span class="phone-recipe-head-left">
+          <span class="phone-card-label">Edit recipe</span>
+          ${applyChip(model.applyState)}
+        </span>
         <button type="button" class="phone-icon-button" data-action="open-profile-picker" aria-label="Choose profile">${icon('sliders-horizontal')}</button>
       </div>
       <div class="phone-recipe-grid">

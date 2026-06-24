@@ -8857,8 +8857,12 @@ p {
   .phone-input-wrap input {
     width: 100%;
     min-width: 0;
-    padding: 0;
+    padding: 0 0 2px;
     border: 0;
+    /* A dotted underline marks these as editable — without it the values read as
+       static stat tiles and nobody taps them. */
+    border-bottom: 1.5px dashed color-mix(in srgb, var(--accent) 38%, var(--line-strong));
+    border-radius: 0;
     outline: 0;
     background: transparent;
     color: var(--ink);
@@ -8870,6 +8874,43 @@ p {
 
   .phone-input-wrap input:focus {
     color: var(--accent);
+    border-bottom-style: solid;
+    border-bottom-color: var(--accent);
+  }
+
+  .phone-recipe-head-left {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .phone-apply-chip {
+    flex: 0 0 auto;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--line-strong);
+    background: var(--panel-2);
+    color: var(--muted);
+    font-size: 10.5px;
+    font-weight: 900;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+
+  .phone-apply-chip.pending {
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+    color: var(--accent);
+  }
+
+  .phone-apply-chip.ok {
+    border-color: color-mix(in srgb, var(--green) 45%, var(--line));
+    color: color-mix(in srgb, var(--green) 80%, var(--ink));
+  }
+
+  .phone-apply-chip.alert {
+    border-color: color-mix(in srgb, var(--red) 55%, var(--line));
+    color: var(--red);
   }
 
   .phone-input-wrap em {
@@ -9046,8 +9087,10 @@ p {
   .phone-shot-input textarea {
     width: 100%;
     min-width: 0;
-    padding: 0;
+    padding: 0 0 2px;
     border: 0;
+    border-bottom: 1.5px dashed color-mix(in srgb, var(--accent) 32%, var(--line-strong));
+    border-radius: 0;
     outline: 0;
     background: transparent;
     color: var(--ink);
@@ -9057,9 +9100,17 @@ p {
     line-height: 1.2;
   }
 
+  .phone-shot-input textarea {
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+    padding: 6px 8px;
+  }
+
   .phone-shot-input input:focus,
   .phone-shot-input textarea:focus {
     color: var(--accent);
+    border-bottom-style: solid;
+    border-color: var(--accent);
   }
 
   .phone-shot-notes {
