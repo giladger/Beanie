@@ -29,6 +29,7 @@ export interface PhoneShellModel {
   batchesByBean: Record<string, BeanBatch[]>;
   beans: Bean[];
   beanSearch: string;
+  shotSearch: string;
   favoriteBeanIds: readonly string[];
   averageDoseIn: number | null;
   applyState: 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
@@ -265,14 +266,19 @@ function beanRowDetail(bean: Bean, model: PhoneShellModel, selected: boolean): s
 }
 
 function renderShotsTab(model: PhoneShellModel): string {
-  const shots = visibleShots(model.shots);
+  const all = visibleShots(model.shots);
+  const query = model.shotSearch.trim().toLowerCase();
+  const shots = query ? all.filter((shot) => shotMatchesQuery(shot, query)) : all;
   const selected = model.selectedShot;
   const draft = selected && model.selectedShotDraft?.shotId === selected.id ? model.selectedShotDraft : null;
   return `
     <section class="phone-shots-layout">
+      <div class="phone-search-row">
+        <input class="phone-search" type="search" data-action="shot-search" placeholder="Search shots" value="${escapeAttr(model.shotSearch)}" spellcheck="false" autocapitalize="none" autocorrect="off" />
+      </div>
       <div class="phone-section-title">
         <span>History</span>
-        <small>${shots.length} shown</small>
+        <small>${shots.length} shown${query && all.length !== shots.length ? ` of ${all.length}` : ''}</small>
       </div>
       <div class="phone-list phone-shot-list">
         ${
@@ -281,12 +287,33 @@ function renderShotsTab(model: PhoneShellModel): string {
                 const active = shot.id === selected?.id;
                 return `${renderShotRow(shot, active, model.batchesByBean)}${active ? renderShotDetail(shot, draft, model.selectedShotDirty, model.batchesByBean) : ''}`;
               }).join('')
-            : '<p class="phone-empty">No espresso shots found.</p>'
+            : `<p class="phone-empty">${query ? 'No shots match that search.' : 'No espresso shots found.'}</p>`
         }
-        ${renderLoadMore(model, shots.length)}
+        ${query ? '' : renderLoadMore(model, shots.length)}
       </div>
     </section>
   `;
+}
+
+// Match the visible row text plus the people/coffee context behind it, so a
+// search finds shots by profile, drink, barista, drinker, bean, or grind.
+function shotMatchesQuery(shot: ShotRecord, query: string): boolean {
+  const recipe = recipeFromShot(shot);
+  const ctx = shot.workflow?.context ?? {};
+  const haystack = [
+    recipe.profileTitle,
+    ctx.finalBeverageType,
+    ctx.baristaName,
+    ctx.drinkerName,
+    ctx.coffeeRoaster,
+    ctx.coffeeName,
+    ctx.grinderSetting,
+    shotDate(shot.timestamp)
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return haystack.includes(query);
 }
 
 function renderShotRow(shot: ShotRecord, active: boolean, batchesByBean: Record<string, BeanBatch[]>): string {

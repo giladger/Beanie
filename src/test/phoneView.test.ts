@@ -123,6 +123,7 @@ function model(): PhoneShellModel {
     batchesByBean: { [bean.id]: [batch] },
     beans: [bean],
     beanSearch: '',
+    shotSearch: '',
     favoriteBeanIds: [bean.id],
     averageDoseIn: 18,
     applyState: 'idle',

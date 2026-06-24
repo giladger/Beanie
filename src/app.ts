@@ -446,7 +446,7 @@ type View =
 
 const initialSettingsPreferences = readSettingsPreferences();
 
-const FOCUSABLE_SEARCH = new Set(['search', 'profile-search', 'settings-search']);
+const FOCUSABLE_SEARCH = new Set(['search', 'shot-search', 'profile-search', 'settings-search']);
 
 // Scrollable containers whose scroll position must survive a re-render.
 const SCROLL_SELECTORS = ['.bean-picker-list', '.bean-picker-batch-list', '.shot-list', '.shot-bean-list', '.profile-list', '.page-body', '.settings-detail', '.phone-main', '.phone-list'];
@@ -604,6 +604,7 @@ interface AppState {
   beanUsageAt: Record<string, number>;
   draft: RecipeDraft;
   search: string;
+  shotSearch: string;
   profileSearch: string;
   profilePage: number;
   profileFocusId: string | null;
@@ -751,6 +752,7 @@ export class BeanieApp {
     beanUsageAt: {},
     draft: emptyRecipe(),
     search: '',
+    shotSearch: '',
     profileSearch: '',
     profilePage: 0,
     profileFocusId: null,
@@ -4784,6 +4786,9 @@ export class BeanieApp {
     if (target.dataset.action === 'search') {
       this.setState({ search: target.value });
     }
+    if (target.dataset.action === 'shot-search') {
+      this.setState({ shotSearch: target.value });
+    }
     if (target.dataset.action === 'settings-search') {
       this.setState({ settingsSearch: target.value });
     }
@@ -6688,6 +6693,7 @@ export class BeanieApp {
       batchesByBean: this.state.batchesByBean,
       beans: this.sortedBeansForPicker(),
       beanSearch: this.state.search,
+      shotSearch: this.state.shotSearch,
       favoriteBeanIds: this.state.favoriteBeans,
       averageDoseIn: this.averageDoseIn(),
       applyState: this.state.applyState,
