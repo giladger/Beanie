@@ -8939,12 +8939,8 @@ p {
   .phone-input-wrap input {
     width: 100%;
     min-width: 0;
-    padding: 0 0 2px;
+    padding: 0;
     border: 0;
-    /* A dotted underline marks these as editable — without it the values read as
-       static stat tiles and nobody taps them. */
-    border-bottom: 1.5px dashed color-mix(in srgb, var(--accent) 38%, var(--line-strong));
-    border-radius: 0;
     outline: 0;
     background: transparent;
     color: var(--ink);
@@ -8956,8 +8952,6 @@ p {
 
   .phone-input-wrap input:focus {
     color: var(--accent);
-    border-bottom-style: solid;
-    border-bottom-color: var(--accent);
   }
 
   .phone-recipe-head-left {
@@ -9172,10 +9166,8 @@ p {
   .phone-shot-input textarea {
     width: 100%;
     min-width: 0;
-    padding: 0 0 2px;
+    padding: 0;
     border: 0;
-    border-bottom: 1.5px dashed color-mix(in srgb, var(--accent) 32%, var(--line-strong));
-    border-radius: 0;
     outline: 0;
     background: transparent;
     color: var(--ink);
@@ -9191,10 +9183,12 @@ p {
     padding: 6px 8px;
   }
 
-  .phone-shot-input input:focus,
+  .phone-shot-input input:focus {
+    color: var(--accent);
+  }
+
   .phone-shot-input textarea:focus {
     color: var(--accent);
-    border-bottom-style: solid;
     border-color: var(--accent);
   }
 
@@ -9463,10 +9457,11 @@ p {
   /* Phone: collapse the bean picker's two fixed-height tablet panes into one
      column that scrolls as a whole. The list keeps a capped, browsable height
      and the inspector (selected coffee + bags) flows to its content below it,
-     removing the cramped-list / dead-space-below split. */
+     removing the cramped-list / dead-space-below split. The modal fills the
+     available height (rather than sizing to content) so it stays the same size
+     when switching between beans with and without bags. */
   .bean-picker-modal {
-    height: auto;
-    max-height: 100%;
+    height: calc(100dvh - 16px - var(--sa-top) - var(--sa-bottom));
   }
 
   .bean-picker-body {
