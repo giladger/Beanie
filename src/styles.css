@@ -1186,7 +1186,7 @@ p {
 
 .detail-stat strong {
   font-size: 14px;
-  font-weight: 900;
+  font-weight: 700;
   color: var(--ink);
   white-space: nowrap;
 }
@@ -1241,12 +1241,19 @@ p {
 }
 
 /* A thin middot separates each fact; it lives on the element so the trailing
-   profile keeps its separator even as the title ellipsises. */
+   profile keeps its separator even as the title ellipsises. Kept faint so the
+   values, not the punctuation, carry the line. */
 .pane-facts-line > * + *::before {
   content: '·';
   margin: 0 7px;
-  color: var(--muted);
+  color: color-mix(in srgb, var(--muted) 55%, transparent);
   font-weight: 700;
+}
+
+/* The hero stands apart from the supporting cluster with a wider gap instead
+   of a middot, so line one reads as "headline + details" not five equals. */
+.pane-facts-line > .pane-lead + *::before {
+  content: none;
 }
 
 /* The → glyph renders slightly low; nudge it onto the optical centre. */
@@ -1255,19 +1262,30 @@ p {
   top: -1px;
 }
 
+/* Supporting brew vars (ratio, time, temp): present but quieter than the hero. */
 .pane-stat {
   flex: none;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 650;
   color: var(--soft);
   white-space: nowrap;
 }
 
-/* The dose → yield leads the description. */
+/* The dose → yield is the one value that carries weight; a wider gap sets it
+   apart from the supporting cluster. */
 .pane-lead {
-  font-size: 14px;
+  margin-right: 12px;
+  font-size: 15px;
   font-weight: 900;
   color: var(--ink);
+}
+
+/* Line two is context, not headline — drop it a tier quieter than line one. */
+.pane-facts-secondary .pane-stat,
+.pane-facts-secondary .pane-profile {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
 }
 
 /* Profile trails the description and is the element that truncates. */
@@ -1275,7 +1293,7 @@ p {
   flex: 0 1 auto;
   min-width: 0;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 600;
   color: var(--soft);
   white-space: nowrap;
   overflow: hidden;

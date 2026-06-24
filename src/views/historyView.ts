@@ -188,7 +188,7 @@ function renderShotDetailPane(
           ${duration ? `<span class="pane-stat">${escapeHtml(duration)}</span>` : ''}
           ${tempLabel ? `<span class="pane-stat">${escapeHtml(tempLabel)}</span>` : ''}
         </div>
-        <div class="pane-facts-line">
+        <div class="pane-facts-line pane-facts-secondary">
           ${grinder ? `<span class="pane-stat">${escapeHtml(grinder)}</span>` : ''}
           ${freshness ? `<span class="pane-stat">${escapeHtml(freshness)}</span>` : ''}
           <span class="pane-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
