@@ -65,9 +65,9 @@ run('page header escapes the title and back value while preserving action html',
 });
 
 run('live panel renders inactive, active, and finalizing states', () => {
-  equal(renderLivePanel({ active: false, finalizing: false, busy: false, ghost: null }), '');
+  equal(renderLivePanel({ active: false, finalizing: false, busy: false, ghost: null, stage: null }), '');
 
-  const active = renderLivePanel({ active: true, finalizing: false, busy: true, ghost: { enabled: true, title: 'Hide reference overlay (18g → 36g)' } });
+  const active = renderLivePanel({ active: true, finalizing: false, busy: true, ghost: { enabled: true, title: 'Hide reference overlay (18g → 36g)' }, stage: { label: 'Pour', step: '2/4' } });
   includes(active, 'Live shot');
   includes(active, 'data-action="stop"');
   includes(active, 'disabled');
@@ -77,10 +77,22 @@ run('live panel renders inactive, active, and finalizing states', () => {
   includes(active, 'live-ghost-button active');
   includes(active, 'Hide reference overlay (18g → 36g)');
 
-  const finalizing = renderLivePanel({ active: false, finalizing: true, busy: false, ghost: null });
+  // Current stage chip is populated and visible.
+  includes(active, 'id="live-stage-name"');
+  includes(active, '>Pour<');
+  includes(active, '>2/4<');
+
+  // No stage known: the chip is still present (for live patching) but hidden.
+  const noStage = renderLivePanel({ active: true, finalizing: false, busy: false, ghost: null, stage: null });
+  includes(noStage, 'id="live-stage"');
+  includes(noStage, 'hidden');
+
+  const finalizing = renderLivePanel({ active: false, finalizing: true, busy: false, ghost: null, stage: { label: 'Pour', step: '2/4' } });
   includes(finalizing, 'Saving shot');
   includes(finalizing, 'Saving…');
   excludes(finalizing, 'data-action="stop"');
+  // The stage chip is suppressed while finalizing.
+  excludes(finalizing, '>Pour<');
 });
 
 function model(overrides: Partial<WorkbenchViewModel> = {}): WorkbenchViewModel {
