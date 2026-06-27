@@ -5618,6 +5618,8 @@ export class BeanieApp {
     };
     if (name === 'weight') batchInput.weight = nextValue;
     if (name === 'weightRemaining') batchInput.weightRemaining = nextValue;
+    // Keep "left" within the bag size whether the bag or the remaining changed.
+    batchInput.weightRemaining = clampRemainingToWeight(batchInput.weightRemaining ?? null, batchInput.weight ?? null);
     const optimistic = this.beanWorkflow.beginBatchUpdate({
       bean,
       batchesByBean: this.state.batchesByBean,
@@ -8560,17 +8562,27 @@ function normalizeBeanField(value: unknown): string {
 function batchFieldsFromForm(data: FormData, beanId: string, fallback?: BeanBatch): Partial<BeanBatch> {
   const frozen = data.has('frozen') ? data.get('frozen') === 'on' : fallback?.frozen ?? false;
   const storageEvents = fallback?.storageEvents ?? (frozen ? [{ type: 'frozen' as const, at: new Date().toISOString() }] : null);
+  const weight = data.has('weight') ? numberOrNullInput(data.get('weight')) : fallback?.weight ?? null;
+  const weightRemaining = data.has('weightRemaining')
+    ? numberOrNullInput(data.get('weightRemaining'))
+    : fallback?.weightRemaining ?? null;
   return {
     beanId,
     roastDate: textOrNull(data.get('roastDate')),
     roastLevel: textOrNull(data.get('roastLevel')),
-    weight: data.has('weight') ? numberOrNullInput(data.get('weight')) : fallback?.weight ?? null,
-    weightRemaining: data.has('weightRemaining')
-      ? numberOrNullInput(data.get('weightRemaining'))
-      : fallback?.weightRemaining ?? null,
+    weight,
+    // A bag can't hold more than its size, so "left" is capped at the bag weight.
+    weightRemaining: clampRemainingToWeight(weightRemaining, weight),
     storageEvents,
     frozen
   };
+}
+
+// "Grams left" can never exceed the bag's size. When both are known numbers,
+// pull a too-high remaining down to the bag weight; otherwise leave it as-is.
+function clampRemainingToWeight(remaining: number | null, weight: number | null): number | null {
+  if (typeof remaining === 'number' && typeof weight === 'number' && remaining > weight) return weight;
+  return remaining;
 }
 
 function isFinishedBatch(batch: BeanBatch): boolean {

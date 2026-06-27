@@ -388,6 +388,8 @@ function batchNumberField(
   label: string,
   value: number | null | undefined
 ): string {
+  // "Left" can't exceed the bag size, so cap its stepper at the bag weight.
+  const max = name === 'weightRemaining' ? bagSizeMax(batch.weight) : 5000;
   return `
     <label>${escapeHtml(label)}
       <input type="hidden" name="${name}" value="${escapeAttr(inputValue(value))}" />
@@ -402,7 +404,7 @@ function batchNumberField(
         data-title="${escapeAttr(label)}"
         data-value="${escapeAttr(inputValue(value))}"
         data-min="0"
-        data-max="5000"
+        data-max="${max}"
         data-step="0.1"
         data-unit="g"
         data-return-modal="bean-picker"
@@ -486,7 +488,7 @@ function renderBeanPickerFirstStock(formNumbers: Record<string, string>): string
         <label>Roast date<input type="date" name="roastDate" value="${escapeAttr(todayDateInputValue())}" /></label>
         <label>Roast<input name="roastLevel" autocomplete="off" /></label>
         ${draftNumber(weightKey, 'weight', 'Bag', weightValue)}
-        ${draftNumber(remainingKey, 'weightRemaining', 'Left', remainingValue)}
+        ${draftNumber(remainingKey, 'weightRemaining', 'Left', remainingValue, bagSizeMax(weightValue))}
       </div>
     </div>
   `;
@@ -511,7 +513,7 @@ function renderBeanPickerBatchDraft(
         <label>Roast date<input data-action="bean-picker-batch-field-draft" type="date" name="roastDate" value="${escapeAttr(todayDateInputValue())}" /></label>
         <label>Roast<input data-action="bean-picker-batch-field-draft" name="roastLevel" autocomplete="off" value="${escapeAttr(inputValue(latest?.roastLevel))}" /></label>
         ${draftNumber(weightKey, 'weight', 'Bag', weightValue)}
-        ${draftNumber(remainingKey, 'weightRemaining', 'Left', remainingValue)}
+        ${draftNumber(remainingKey, 'weightRemaining', 'Left', remainingValue, bagSizeMax(weightValue))}
       </div>
       <div class="stock-draft-actions">
         <button type="button" class="secondary-button compact" data-action="cancel-batch-draft"><span>Cancel</span></button>
@@ -521,7 +523,19 @@ function renderBeanPickerBatchDraft(
   `;
 }
 
-function draftNumber(formKey: string, name: 'weight' | 'weightRemaining', label: string, value: string): string {
+// The bag size is the ceiling for "left"; fall back to 5000 g when it's unknown.
+function bagSizeMax(weight: number | string | null | undefined): number {
+  const size = typeof weight === 'string' ? Number(weight) : weight;
+  return typeof size === 'number' && Number.isFinite(size) && size > 0 ? size : 5000;
+}
+
+function draftNumber(
+  formKey: string,
+  name: 'weight' | 'weightRemaining',
+  label: string,
+  value: string,
+  max = 5000
+): string {
   return `
     <label>${escapeHtml(label)}
       <input type="hidden" name="${name}" value="${escapeAttr(value)}" />
@@ -534,7 +548,7 @@ function draftNumber(formKey: string, name: 'weight' | 'weightRemaining', label:
         data-title="${escapeAttr(label)}"
         data-value="${escapeAttr(value)}"
         data-min="0"
-        data-max="5000"
+        data-max="${max}"
         data-step="0.1"
         data-unit="g"
         data-return-modal="bean-picker"
