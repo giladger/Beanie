@@ -2509,11 +2509,17 @@ p {
   justify-content: center;
 }
 
-/* Delete sits beside the pencil/favourite in the detail head, not in a row. */
-.bean-picker-detail-head > .bean-delete-button {
+/* Delete and pencil are always-visible icon buttons in the detail head, delete
+   to the left of the pencil, with the favourite trailing. */
+.bean-picker-detail-head {
+  gap: 4px;
+}
+
+.bean-picker-detail-head > .icon-button {
   flex: none;
   align-self: center;
-  margin-left: 4px;
+  width: 36px;
+  height: 36px;
 }
 
 .bean-picker-bean-summary {
@@ -2532,7 +2538,7 @@ p {
   flex: 1 1 auto;
   min-height: 58px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 36px;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   padding: 8px;
   border: 0;

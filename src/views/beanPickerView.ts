@@ -169,9 +169,9 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
           <div class="bean-picker-detail-head">
             <button type="button" class="bean-picker-bean-summary" data-action="toggle-bean-details" data-id="${escapeAttr(bean.id)}" aria-expanded="${editingDetails ? 'true' : 'false'}" title="Edit coffee">
               ${renderBeanPickerSummary(bean, focusedBatch ?? latest)}
-              <span class="icon-button bean-picker-edit-icon" aria-hidden="true">${icon('pencil')}</span>
             </button>
-            ${editingDetails ? `<button type="button" class="icon-button subtle-danger bean-delete-button" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Delete coffee" title="Delete coffee">${icon('trash-2')}</button>` : ''}
+            <button type="button" class="icon-button subtle-danger bean-delete-button" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Delete coffee" title="Delete coffee">${icon('trash-2')}</button>
+            <button type="button" class="icon-button bean-picker-edit-icon" data-action="toggle-bean-details" data-id="${escapeAttr(bean.id)}" aria-expanded="${editingDetails ? 'true' : 'false'}" aria-label="Edit coffee" title="Edit coffee">${icon('pencil')}</button>
             <button type="button" class="bean-fav ${favorite ? 'on' : ''}" data-action="toggle-favorite-bean" data-id="${escapeAttr(bean.id)}" aria-pressed="${favorite}" aria-label="${favorite ? 'Unfavorite' : 'Favorite'} ${escapeAttr(beanLabel(bean))}" title="${favorite ? 'Remove from favorites' : 'Add to favorites'}">${favorite ? '★' : '☆'}</button>
           </div>
           ${editingDetails ? renderBeanPickerBeanForm(bean, model.prefillBeans, model.formNumbers ?? {}, { showHeader: false }) : ''}
