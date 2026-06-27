@@ -290,12 +290,16 @@ function dateInputToIso(value: string, previousIso: string, fallback: Date): str
   const dateText = value.trim();
   if (!dateText) return previousIso || fallback.toISOString();
   const previous = parseDate(previousIso) ?? fallback;
-  const parsed = new Date(`${dateText}T${timePart(previous)}`);
+  // Work entirely in UTC: the date control reads back an event's UTC calendar
+  // date (dateInputValue), so we must rebuild the instant in the same frame.
+  // Mixing the local time-of-day with a UTC date readback drifts the day by one
+  // on every save whenever local time sits across the UTC midnight boundary.
+  const parsed = new Date(`${dateText}T${timePart(previous)}Z`);
   return Number.isNaN(parsed.valueOf()) ? previousIso : parsed.toISOString();
 }
 
 function timePart(date: Date): string {
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.000`;
+  return `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}.000`;
 }
 
 function pad(value: number): string {

@@ -10,6 +10,7 @@ import {
   shotFreshnessBadgeLabel,
   storageStatusLabel
 } from '../domain/beanFreshness';
+import { dateInputValue } from '../domain/beanDisplay';
 
 const ROAST = '2026-01-01T00:00:00.000Z';
 const NOW = new Date('2026-01-31T00:00:00.000Z'); // 30 days off roast
@@ -168,17 +169,28 @@ await run('append batch storage event collapses repeated event types', () => {
 });
 
 await run('edit last batch storage event date keeps the event type and time of day', () => {
-  const source = batch({ storageEvents: [frozen('2026-01-11T00:00:00.000Z')] });
+  const source = batch({ storageEvents: [frozen('2026-01-11T08:30:00.000Z')] });
   const edited = editLastBatchStorageEventDate(source, '2026-01-05');
 
   equal(edited.frozen, true);
   equal(edited.storageEvents?.length, 1);
-  const at = new Date(edited.storageEvents![0]!.at);
-  equal(at.getFullYear(), 2026);
-  equal(at.getMonth(), 0);
-  equal(at.getDate(), 5);
+  // The typed day is applied in UTC and the original UTC time of day is kept,
+  // so the stored instant's calendar date matches exactly what was typed.
+  equal(edited.storageEvents![0]!.at, '2026-01-05T08:30:00.000Z');
 
   equal(Object.keys(editLastBatchStorageEventDate(batch(), '2026-01-05')).length, 0);
+});
+
+await run('re-saving a storage date without changing it does not drift the day', () => {
+  // A late-UTC time of day is the case the old local/UTC mismatch shifted by a
+  // day on each save. Re-save the same shown date repeatedly; it must stay put.
+  let current = batch({ storageEvents: [frozen('2026-06-27T21:30:00.000Z')] });
+  for (let i = 0; i < 5; i++) {
+    const shown = dateInputValue(current.storageEvents![0]!.at);
+    const next = editLastBatchStorageEventDate(current, shown);
+    current = batch({ storageEvents: next.storageEvents });
+  }
+  equal(dateInputValue(current.storageEvents![0]!.at), '2026-06-27');
 });
 
 await run('freshness snapshot for shot drops the date text and uses the shot timestamp', () => {
