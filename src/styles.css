@@ -2510,9 +2510,16 @@ p {
 }
 
 /* Delete and pencil are always-visible icon buttons in the detail head, delete
-   to the left of the pencil, with the favourite trailing. */
+   to the left of the pencil, with the favourite trailing. The head is a plain
+   strip on the card's surface — no inner box — so the panel shade runs edge to
+   edge. Pad the right so the favourite isn't jammed against the border. */
 .bean-picker-detail-head {
-  gap: 4px;
+  gap: 8px;
+  padding-right: 8px;
+}
+
+.bean-picker-detail-head > .bean-picker-bean-summary {
+  background: transparent;
 }
 
 .bean-picker-detail-head > .icon-button {
@@ -2598,7 +2605,9 @@ p {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: color-mix(in srgb, var(--ink) 2.5%, transparent);
+  /* The whole card carries the panel shade now that the summary is transparent,
+     so it reads as one continuous surface from edge to edge. */
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
 }
 
 .bean-picker-details .bean-picker-bean-summary .icon {
