@@ -85,10 +85,12 @@ import {
   readFavoriteProfiles,
   readGeminiApiKey,
   readLastBeanId,
+  readScanOnThisDevice,
   writeFavoriteBeans,
   writeFavoriteProfiles,
   writeGeminiApiKey,
-  writeLastBeanId
+  writeLastBeanId,
+  writeScanOnThisDevice
 } from './domain/storage';
 import {
   demoBatches,
@@ -3628,9 +3630,14 @@ export class BeanieApp {
         await this.openLabelScanner();
       },
       'scanner-setup-here': () => {
+        // Remember the choice so this device scans on-device next time without
+        // showing the hand-off screen (it only takes effect once a key exists).
+        writeScanOnThisDevice(true);
         this.setScanner({ handoff: false });
       },
       'scanner-use-phone': () => {
+        // Going back to the phone hand-off clears the per-device preference.
+        writeScanOnThisDevice(false);
         this.setScanner({ handoff: true });
       },
       'scanner-verify-key': async ({ el }) => {
@@ -3890,7 +3897,10 @@ export class BeanieApp {
     // The Gemini key lives in the store; make sure settings have loaded.
     await this.loadSettings();
     const hasKey = readGeminiApiKey() != null;
-    const handoff = isDecentAppWebView() && options.fromHandoff !== true && !this.state.demo;
+    // A tablet that has chosen "Set up on this device" (and has a key) skips the
+    // hand-off entirely and scans on-device from then on.
+    const scanHere = hasKey && readScanOnThisDevice();
+    const handoff = isDecentAppWebView() && options.fromHandoff !== true && !this.state.demo && !scanHere;
     // Build the QR from the gateway's LAN IP (the tablet webview is on localhost).
     const handoffUrl = handoff ? buildHandoffUrl(location.href, await gateway.lanAddress()) : null;
     this.setState({

@@ -62,3 +62,28 @@ export function writeGeminiApiKey(key: string): void {
 export function clearGeminiApiKey(): void {
   removeSyncedItem(geminiApiKeyKey);
 }
+
+// Whether this device should skip the phone hand-off and scan on-device. It's a
+// per-device choice (a tablet the user has set up to scan its own labels), so it
+// lives in localStorage rather than the synced store — every device keeps its
+// own answer, like the theme.
+const scanOnThisDeviceKey = 'beanie:scan-on-this-device';
+
+export function readScanOnThisDevice(): boolean {
+  try {
+    if (typeof localStorage === 'undefined') return false;
+    return localStorage.getItem(scanOnThisDeviceKey) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function writeScanOnThisDevice(on: boolean): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (on) localStorage.setItem(scanOnThisDeviceKey, '1');
+    else localStorage.removeItem(scanOnThisDeviceKey);
+  } catch {
+    // Best-effort; on failure the hand-off screen simply shows again next time.
+  }
+}
