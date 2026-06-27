@@ -2,7 +2,9 @@ import type { BeanBatch, RecipeDraft, ShotRecord } from '../api/types';
 import {
   batchForShotFreshness,
   formatGrams,
+  formatRatio,
   profileBaseTemperature,
+  ratioFor,
   recipeFromShot,
   shotFreshnessBadgeForShot
 } from '../domain/beanWorkflow';
@@ -171,11 +173,13 @@ function renderShotDetailPane(
       : '';
   const brewTemp = profileBaseTemperature(recipe.profile);
   const tempLabel = brewTemp == null ? '' : `${brewTemp.toFixed(1)}°C`;
+  const ratio = formatRatio(ratioFor(recipe.dose, recipe.yield));
   return `
     <div class="pane-head">
       <div class="pane-facts">
         <div class="pane-facts-line">
           <span class="pane-stat pane-lead">${escapeHtml(shotRecipeDisplay(shot, recipe)).replace(' → ', ' <span class="io-arrow">→</span> ')}</span>
+          ${ratio === '--' ? '' : `<span class="pane-stat">${escapeHtml(ratio)}</span>`}
           ${duration ? `<span class="pane-stat">${escapeHtml(duration)}</span>` : ''}
           ${tempLabel ? `<span class="pane-stat">${escapeHtml(tempLabel)}</span>` : ''}
         </div>
