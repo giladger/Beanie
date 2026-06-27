@@ -169,7 +169,7 @@ export function waterControlCapabilities(options: {
     hardware: options.capabilities?.capabilities ?? [],
     source,
     steam: {
-      targetTemperature: spec(0, 160, 1, 'C', true, machineReason),
+      targetTemperature: spec(135, 170, 1, 'C', true, machineReason),
       duration: spec(0, 180, 1, 's', true),
       flow: spec(0.1, 2, 0.05, 'ml/s', true, machineReason),
       stopAtTemperature: spec(0, 80, 0.5, 'C', steamStopSupported, STOP_AT_TEMP_UNSUPPORTED)
