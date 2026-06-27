@@ -1610,6 +1610,38 @@ p {
   flex-wrap: wrap;
 }
 
+/* Current shot stage, patched live next to the "Live shot" label. */
+.live-stage {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid color-mix(in srgb, var(--teal) 42%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--teal) 12%, var(--panel-2));
+}
+
+.live-stage[hidden] {
+  display: none;
+}
+
+.live-stage-step {
+  font-size: 11px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.live-stage-step:empty {
+  display: none;
+}
+
+.live-stage-name {
+  font-size: 13px;
+  font-weight: 900;
+  color: var(--soft);
+}
+
 .live-stop-button {
   height: 30px;
   min-width: 62px;
@@ -2477,13 +2509,11 @@ p {
   justify-content: center;
 }
 
-/* The edit form's only footer action is delete, so it spans the full width. */
-.bean-picker-edit-actions {
-  grid-template-columns: 1fr;
-}
-
-.bean-picker-edit-actions .bean-delete-button {
-  margin-left: 0;
+/* Delete sits beside the pencil/favourite in the detail head, not in a row. */
+.bean-picker-detail-head > .bean-delete-button {
+  flex: none;
+  align-self: center;
+  margin-left: 4px;
 }
 
 .bean-picker-bean-summary {

@@ -171,6 +171,7 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
               ${renderBeanPickerSummary(bean, focusedBatch ?? latest)}
               <span class="icon-button bean-picker-edit-icon" aria-hidden="true">${icon('pencil')}</span>
             </button>
+            ${editingDetails ? `<button type="button" class="icon-button subtle-danger bean-delete-button" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Delete coffee" title="Delete coffee">${icon('trash-2')}</button>` : ''}
             <button type="button" class="bean-fav ${favorite ? 'on' : ''}" data-action="toggle-favorite-bean" data-id="${escapeAttr(bean.id)}" aria-pressed="${favorite}" aria-label="${favorite ? 'Unfavorite' : 'Favorite'} ${escapeAttr(beanLabel(bean))}" title="${favorite ? 'Remove from favorites' : 'Add to favorites'}">${favorite ? '★' : '☆'}</button>
           </div>
           ${editingDetails ? renderBeanPickerBeanForm(bean, model.prefillBeans, model.formNumbers ?? {}, { showHeader: false }) : ''}
@@ -461,9 +462,7 @@ function renderBeanPickerBeanForm(
       ${editing ? '' : renderBeanPickerFirstStock(formNumbers)}
       ${
         editing
-          ? `<div class="bean-picker-form-actions bean-picker-edit-actions">
-              <button type="button" class="secondary-button compact subtle-danger bean-delete-button" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Delete coffee" title="Delete coffee">${icon('trash-2')}<span>Delete coffee</span></button>
-            </div>`
+          ? ''
           : `<div class="bean-picker-form-actions">
               <button type="button" class="secondary-button compact" data-action="close-modal"><span>Cancel</span></button>
               <button type="submit" class="primary-button compact">${icon('check')}<span>Add coffee</span></button>

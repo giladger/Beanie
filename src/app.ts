@@ -311,6 +311,7 @@ import {
   renderLivePanel as renderLivePanelView,
   renderPageHeader,
   renderWorkbench as renderWorkbenchView,
+  type LiveStageView,
   type WorkbenchHeroViewModel
 } from './views/workbenchView';
 import { renderPhoneShell, type PhoneTab } from './views/phoneView';
@@ -722,6 +723,21 @@ interface LiveReadoutEls {
   pressure: HTMLElement | null;
   flow: HTMLElement | null;
   temp: HTMLElement | null;
+  stage: HTMLElement | null;
+  stageStep: HTMLElement | null;
+  stageName: HTMLElement | null;
+}
+
+// Step names from a profile's raw steps[], for the live stage chip. Mirrors the
+// historical shot graph's profileSteps naming (name -> title -> "Step N").
+function profileStepNames(profile: Profile | null): string[] {
+  if (!Array.isArray(profile?.steps)) return [];
+  return profile.steps.map((step, index) => {
+    const record = step as Record<string, unknown> | null;
+    const name = typeof record?.name === 'string' ? record.name.trim() : '';
+    const title = typeof record?.title === 'string' ? record.title.trim() : '';
+    return name || title || `Step ${index + 1}`;
+  });
 }
 
 function accountLoginErrorMessage(error: GatewayRequestError): string {
@@ -3123,7 +3139,10 @@ export class BeanieApp {
       weight: this.root.querySelector<HTMLElement>('#live-weight'),
       pressure: this.root.querySelector<HTMLElement>('#live-pressure'),
       flow: this.root.querySelector<HTMLElement>('#live-flow'),
-      temp: this.root.querySelector<HTMLElement>('#live-temp')
+      temp: this.root.querySelector<HTMLElement>('#live-temp'),
+      stage: this.root.querySelector<HTMLElement>('#live-stage'),
+      stageStep: this.root.querySelector<HTMLElement>('#live-stage-step'),
+      stageName: this.root.querySelector<HTMLElement>('#live-stage-name')
     };
     this.drawLiveChart();
   }
@@ -3140,6 +3159,31 @@ export class BeanieApp {
       els.temp.textContent =
         latest.scaledTemperature == null ? '--' : (latest.scaledTemperature * 10).toFixed(1);
     }
+    if (els.stage) {
+      const stage = this.liveStageView();
+      els.stage.hidden = stage == null;
+      if (els.stageStep) els.stageStep.textContent = stage?.step ?? '';
+      if (els.stageName) els.stageName.textContent = stage?.label ?? '';
+    }
+  }
+
+  // The shot's current stage: the active profile's step name at the machine's
+  // reported profileFrame, with a "n/total" counter. Falls back to the espresso
+  // substate (preinfusion/pouring) when the profile's steps aren't available,
+  // and null when nothing is known so the chip stays hidden.
+  private liveStageView(): LiveStageView | null {
+    const machine = this.state.machine;
+    if (!machine) return null;
+    const steps = profileStepNames(this.state.draft?.profile ?? null);
+    const frame = machine.profileFrame;
+    if (Number.isInteger(frame) && frame >= 0 && frame < steps.length) {
+      return { label: steps[frame]!, step: `${frame + 1}/${steps.length}` };
+    }
+    const substate = machine.state?.substate;
+    if (typeof substate === 'string' && substate.trim()) {
+      return { label: substate.charAt(0).toUpperCase() + substate.slice(1), step: null };
+    }
+    return null;
   }
 
   private onShotEnded(): void {
@@ -5487,10 +5531,21 @@ export class BeanieApp {
       return;
     }
 
+    // Deleting from the bean picker should leave the user in the picker, landing
+    // on a neighbouring coffee, rather than dropping back to the workbench.
+    const inPicker = this.state.modal === 'bean-picker';
+    const prevIndex = this.state.beans.findIndex((bean) => bean.id === id);
+    const nextFocusId = inPicker
+      ? result.beans[prevIndex]?.id ?? result.beans[prevIndex - 1]?.id ?? result.beans[0]?.id ?? null
+      : this.state.beanPickerBeanId;
     this.setState({
       beans: result.beans,
-      view: 'workbench',
-      modal: this.state.modal === 'bean-picker' ? null : this.state.modal,
+      view: inPicker ? this.state.view : 'workbench',
+      modal: inPicker ? 'bean-picker' : this.state.modal === 'bean-picker' ? null : this.state.modal,
+      beanPickerBeanId: inPicker ? nextFocusId : this.state.beanPickerBeanId,
+      beanPickerMode: inPicker && !nextFocusId ? 'create' : this.state.beanPickerMode,
+      beanPickerEditingBeanId: null,
+      beanPickerEditingBatchId: null,
       busy: false,
       status: result.status
     });
@@ -7037,7 +7092,8 @@ export class BeanieApp {
       active: this.state.liveActive,
       finalizing: this.state.liveFinalizing,
       busy: this.state.busy,
-      ghost: this.liveGhostPanelModel()
+      ghost: this.liveGhostPanelModel(),
+      stage: this.liveStageView()
     });
   }
 

@@ -50,12 +50,21 @@ export interface WorkbenchViewModel {
   historyHtml: string;
 }
 
+export interface LiveStageView {
+  /** Current profile step name (e.g. "Preinfusion", "Pour"). */
+  label: string;
+  /** "2/4"-style step counter, or null when the step count is unknown. */
+  step: string | null;
+}
+
 export interface LivePanelViewModel {
   active: boolean;
   finalizing: boolean;
   busy: boolean;
   /** Reference-shot overlay: null when no usable reference shot exists. */
   ghost: { enabled: boolean; title: string } | null;
+  /** Current shot stage, patched live; null when no stage is known. */
+  stage: LiveStageView | null;
 }
 
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
@@ -93,6 +102,7 @@ export function renderLivePanel(model: LivePanelViewModel): string {
         <div class="live-head">
           <div class="live-title-row">
             <span class="eyebrow">${model.finalizing ? 'Saving shot' : 'Live shot'}</span>
+            ${liveStageChip(model.finalizing ? null : model.stage)}
             ${
               model.ghost
                 ? `<button
@@ -312,4 +322,13 @@ function topStatButton(label: string, value: string, title: string, action: stri
 function liveReadout(label: string, id: string, value: string, unit = ''): string {
   const suffix = unit ? `<em>${escapeHtml(unit)}</em>` : '';
   return `<div class="live-readout"><label>${escapeHtml(label)}</label><strong id="${id}">${escapeHtml(value)}</strong>${suffix}</div>`;
+}
+
+// Stage chip in the live title row. The element is always present (so the app
+// can patch it by reference each frame) and starts hidden when no stage is known.
+function liveStageChip(stage: LiveStageView | null): string {
+  return `<span class="live-stage" id="live-stage" ${stage ? '' : 'hidden'}>
+    <span class="live-stage-step" id="live-stage-step">${escapeHtml(stage?.step ?? '')}</span>
+    <span class="live-stage-name" id="live-stage-name">${escapeHtml(stage?.label ?? '')}</span>
+  </span>`;
 }

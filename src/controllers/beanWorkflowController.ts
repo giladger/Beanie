@@ -115,7 +115,7 @@ export type ArchiveBeanResult =
       beans: Bean[];
       nextSelectedBeanId: string | null;
       archivedSelectedBean: boolean;
-      status: 'Bag deleted';
+      status: 'Coffee deleted';
     }
   | {
       type: 'failed';
@@ -394,7 +394,7 @@ export class BeanWorkflowController {
       beans,
       nextSelectedBeanId: archivedSelectedBean ? beans[0]?.id ?? null : input.selectedBeanId,
       archivedSelectedBean,
-      status: 'Bag deleted'
+      status: 'Coffee deleted'
     };
   }
 
