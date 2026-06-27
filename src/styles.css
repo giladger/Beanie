@@ -2529,6 +2529,22 @@ p {
   height: 36px;
 }
 
+/* The favourite shares the trash/pencil footprint so the three sit in an even
+   row — same 36px circle, glyph centred, no stray padding throwing it off. */
+.bean-picker-detail-head > .bean-fav {
+  flex: none;
+  align-self: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  font-size: 18px;
+}
+
 .bean-picker-bean-summary {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
