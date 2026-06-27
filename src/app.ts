@@ -5468,8 +5468,8 @@ export class BeanieApp {
   }
 
   private async archiveBean(id: string): Promise<void> {
-    if (!window.confirm('Delete this bag? It will be hidden from the bean list.')) return;
-    this.setState({ busy: true, status: 'Deleting bag' });
+    if (!window.confirm('Delete this coffee? It will be hidden from the bean list.')) return;
+    this.setState({ busy: true, status: 'Deleting coffee' });
     const result = await this.beanWorkflow.archiveBean({
       beans: this.state.beans,
       id,

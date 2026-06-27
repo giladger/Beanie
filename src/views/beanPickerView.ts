@@ -461,7 +461,9 @@ function renderBeanPickerBeanForm(
       ${editing ? '' : renderBeanPickerFirstStock(formNumbers)}
       ${
         editing
-          ? ''
+          ? `<div class="bean-picker-form-actions bean-picker-edit-actions">
+              <button type="button" class="secondary-button compact subtle-danger bean-delete-button" data-action="archive-bean" data-id="${escapeAttr(bean.id)}" aria-label="Delete coffee" title="Delete coffee">${icon('trash-2')}<span>Delete coffee</span></button>
+            </div>`
           : `<div class="bean-picker-form-actions">
               <button type="button" class="secondary-button compact" data-action="close-modal"><span>Cancel</span></button>
               <button type="submit" class="primary-button compact">${icon('check')}<span>Add coffee</span></button>

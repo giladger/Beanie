@@ -171,6 +171,13 @@ run('bean picker opens edit fields from the bean line without duplicating the ti
   equals(countOccurrences(html, '<strong>Dak Milky Cake</strong>'), 1);
 });
 
+run('bean picker edit fields offer a delete button for the coffee', () => {
+  const html = renderBeanPickerModal(model({ editingBeanDetailsId: 'bean-1' }));
+
+  includes(html, 'data-action="archive-bean" data-id="bean-1"');
+  includes(html, 'Delete coffee');
+});
+
 run('bean picker shows every bag on hand after adding beyond two bags', () => {
   const third: BeanBatch = {
     id: 'batch-new',

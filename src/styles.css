@@ -2477,6 +2477,15 @@ p {
   justify-content: center;
 }
 
+/* The edit form's only footer action is delete, so it spans the full width. */
+.bean-picker-edit-actions {
+  grid-template-columns: 1fr;
+}
+
+.bean-picker-edit-actions .bean-delete-button {
+  margin-left: 0;
+}
+
 .bean-picker-bean-summary {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
