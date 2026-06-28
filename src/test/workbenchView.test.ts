@@ -68,7 +68,8 @@ run('live panel renders inactive, active, and finalizing states', () => {
   equal(renderLivePanel({ active: false, finalizing: false, busy: false, ghost: null, stages: null }), '');
 
   const active = renderLivePanel({ active: true, finalizing: false, busy: true, ghost: { enabled: true, title: 'Hide reference overlay (18g → 36g)' }, stages: { names: ['Preinfusion', 'Pour', 'Decline'], currentIndex: 1 } });
-  includes(active, 'Live shot');
+  // The "Live shot" eyebrow was removed; the stage rail names the shot now.
+  excludes(active, 'Live shot');
   includes(active, 'data-action="stop"');
   includes(active, 'disabled');
   includes(active, 'id="live-pressure"');

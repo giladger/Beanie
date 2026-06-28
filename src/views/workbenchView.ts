@@ -101,7 +101,7 @@ export function renderLivePanel(model: LivePanelViewModel): string {
       <div class="live-card panel ${model.finalizing ? 'live-finalizing' : ''}">
         <div class="live-head">
           <div class="live-title-row">
-            <span class="eyebrow">${model.finalizing ? 'Saving shot' : 'Live shot'}</span>
+            ${model.finalizing ? '<span class="eyebrow">Saving shot</span>' : ''}
             ${
               model.ghost
                 ? `<button
