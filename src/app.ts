@@ -1142,9 +1142,17 @@ export class BeanieApp {
     // screen-off; once it's no longer awake-over-asleep, drop a stale timer.
     if (this.state.appAwake) this.armWakeAppIdleTimer();
     else this.clearWakeAppIdleTimer();
-    const now = Date.now();
-    if (now - this.lastPresenceHeartbeatMs < PRESENCE_HEARTBEAT_INTERVAL_MS) return;
-    this.lastPresenceHeartbeatMs = now;
+    if (Date.now() - this.lastPresenceHeartbeatMs < PRESENCE_HEARTBEAT_INTERVAL_MS) return;
+    this.sendPresenceHeartbeat();
+  }
+
+  // Force a presence heartbeat now, bypassing the interaction throttle. Pulling a
+  // shot is hands-off, so without this no heartbeat goes out during the pour and
+  // reaprime's idle-sleep timeout fires right after the shot. We ping it at the
+  // shot's start and end so the sleep window counts from the end of the pull.
+  private sendPresenceHeartbeat(): void {
+    if (this.state.demo) return;
+    this.lastPresenceHeartbeatMs = Date.now();
     void gateway.heartbeat().catch((error) => {
       console.warn('[Beanie] Presence heartbeat failed', error);
     });
@@ -2782,12 +2790,17 @@ export class BeanieApp {
     const panelDecision = liveShotPanelDecision(wasActive, active);
     if (panelDecision === 'started') {
       this.captureLiveGhost();
+      // A pull is hands-off, so heartbeat at the start to keep the machine awake.
+      this.sendPresenceHeartbeat();
       // First active frame: render once to mount the live panel + canvas, then draw.
       // Clear any leftover finalizing from a just-prior shot so this one takes over.
       this.setState({ liveActive: true, liveFinalizing: false, status: 'Live shot' });
       return;
     }
     if (panelDecision === 'ended') {
+      // And again at the end, so reaprime's sleep timeout counts from the pour's
+      // end rather than firing immediately after a touch-free shot.
+      this.sendPresenceHeartbeat();
       this.onShotEnded();
       return;
     }
