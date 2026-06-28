@@ -1,5 +1,10 @@
 import type { MachineSnapshot, ScaleSnapshot } from '../api/types';
-import type { LiveChartModel, LiveChartSeries, LiveChartPoint } from './liveChartModel';
+import type {
+  LiveChartModel,
+  LiveChartSeries,
+  LiveChartPoint,
+  LiveChartMarker
+} from './liveChartModel';
 import { LIVE_SERIES } from './liveChartModel';
 
 // Pure live-shot data layer. Ingests live machine + scale WebSocket snapshots,
@@ -45,6 +50,18 @@ export interface LiveShotState {
   completionReason: LiveShotCompletionReason | null;
   // Latest readouts (by-value snapshots for the DOM readouts the app shows).
   latest: LiveShotReadouts;
+  // One entry per stage transition: the elapsed time a new profileFrame first
+  // appeared. Labels are resolved against the profile when the chart is built.
+  stageMarkers: LiveStageMarker[];
+  // The last profileFrame folded in, so we only record a marker on a change.
+  lastFrame: number | null;
+}
+
+export interface LiveStageMarker {
+  // Elapsed seconds from shot start when this stage began.
+  t: number;
+  // 0-based profile step index the machine entered.
+  frame: number;
 }
 
 export interface LiveShotReadouts {
@@ -72,6 +89,9 @@ export interface LiveChartModelOptions {
   // Keeps the chart window at least this wide from shot start. The model still
   // expands if a shot runs longer, so plotted points never clip off the right.
   minTime?: number;
+  // Profile step names, used to label the stage-start markers. Markers are
+  // omitted when this is absent or empty (nothing meaningful to label them).
+  stageNames?: string[];
 }
 
 export function createLiveShotState(): LiveShotState {
@@ -82,7 +102,9 @@ export function createLiveShotState(): LiveShotState {
     series: emptySeries(),
     maxScaledValue: 0,
     completionReason: null,
-    latest: emptyReadouts()
+    latest: emptyReadouts(),
+    stageMarkers: [],
+    lastFrame: null
   };
 }
 
@@ -144,7 +166,9 @@ function startSession(frame: LiveFrame): LiveShotState {
     series: emptySeries(),
     maxScaledValue: 0,
     completionReason: null,
-    latest: emptyReadouts()
+    latest: emptyReadouts(),
+    stageMarkers: [],
+    lastFrame: null
   };
 }
 
@@ -164,6 +188,15 @@ function accumulate(state: LiveShotState, frame: LiveFrame): LiveShotState {
     return { ...accumulator, points: [...accumulator.points, { t, value }] };
   });
 
+  // Record a marker the first time each profile step appears. Scale-only frames
+  // carry no machine, so they never move the stage. The first stage is marked at
+  // its start too, giving every step a labelled line on the chart.
+  const frameIndex = machine != null ? integerFrame(machine.profileFrame) : null;
+  const stageChanged = frameIndex != null && frameIndex !== state.lastFrame;
+  const stageMarkers = stageChanged
+    ? [...state.stageMarkers, { t, frame: frameIndex }]
+    : state.stageMarkers;
+
   return {
     ...state,
     phase: 'active',
@@ -172,8 +205,14 @@ function accumulate(state: LiveShotState, frame: LiveFrame): LiveShotState {
     series,
     maxScaledValue,
     completionReason: null,
-    latest: readoutsFor(machine, scale, state.latest)
+    latest: readoutsFor(machine, scale, state.latest),
+    stageMarkers,
+    lastFrame: frameIndex ?? state.lastFrame
   };
+}
+
+function integerFrame(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
 }
 
 function endSession(state: LiveShotState, options?: LiveShotOptions): LiveShotState {
@@ -253,10 +292,18 @@ export function buildLiveChartModel(
 
   return {
     series: presentSeries,
-    markers: [],
+    markers: stageMarkersFor(state, options.stageNames),
     maxTime,
     maxY: Math.max(10, Math.ceil(maxScaled / 2) * 2)
   };
+}
+
+function stageMarkersFor(state: LiveShotState, stageNames?: string[]): LiveChartMarker[] {
+  if (!stageNames || stageNames.length === 0) return [];
+  return state.stageMarkers.map((marker) => ({
+    t: marker.t,
+    label: stageNames[marker.frame] ?? `Step ${marker.frame + 1}`
+  }));
 }
 
 function elapsedSecondsFor(state: LiveShotState): number {

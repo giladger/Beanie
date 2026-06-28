@@ -198,6 +198,33 @@ run('a scale-only frame never starts or ends a shot', () => {
   equal(session.model().series.find((s) => s.key === 'weightFlow')!.points.length, 1);
 });
 
+run('stage markers record each new profileFrame, labelled from the profile', () => {
+  const session = new LiveShotSession();
+  const stageNames = ['Preinfusion', 'Pour', 'Decline'];
+  session.ingest(stageFrame(0, 0)); // start in stage 0
+  session.ingest(stageFrame(1000, 0)); // same stage: no new marker
+  session.ingest(scaleFrame(1500, { weightFlow: 1 })); // scale-only: never moves the stage
+  session.ingest(stageFrame(2000, 1)); // enters stage 1
+  session.ingest(stageFrame(3000, 2)); // enters stage 2
+
+  const markers = session.model({ stageNames }).markers;
+  equal(markers.length, 3);
+  equal(markers[0]!.t, 0);
+  equal(markers[0]!.label, 'Preinfusion');
+  equal(markers[1]!.t, 2);
+  equal(markers[1]!.label, 'Pour');
+  equal(markers[2]!.t, 3);
+  equal(markers[2]!.label, 'Decline');
+
+  // A frame index past the supplied names still marks the line, just generically.
+  session.ingest(stageFrame(4000, 7));
+  const extended = session.model({ stageNames }).markers;
+  equal(extended[3]!.label, 'Step 8');
+
+  // Without stage names there is nothing to label, so no markers are emitted.
+  equal(session.model().markers.length, 0);
+});
+
 function machineSnapshot(overrides: Partial<MachineSnapshot>): MachineSnapshot {
   return {
     timestamp: '2026-06-01T10:00:00.000Z',
@@ -245,6 +272,18 @@ function pourFrame(
       groupTemperature: values.groupTemperature ?? 92
     }),
     scale: scaleSnapshot({ weight: values.weight ?? 0, weightFlow: values.weightFlow ?? 0 })
+  };
+}
+
+function stageFrame(tMs: number, frame: number): LiveFrame {
+  return {
+    tMs,
+    machine: machineSnapshot({
+      state: { state: 'espresso', substate: 'pouring' },
+      pressure: 6,
+      profileFrame: frame
+    }),
+    scale: scaleSnapshot({ weight: 0 })
   };
 }
 

@@ -1750,7 +1750,7 @@ p {
 
 .live-stage-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 6px 8px;
   border: 1px solid transparent;
@@ -1773,11 +1773,11 @@ p {
 }
 
 .live-stage-label {
+  /* Wrap long step names across lines rather than truncating with an ellipsis. */
   font-size: 12px;
   font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 18px;
+  overflow-wrap: anywhere;
 }
 
 /* The stage the machine is currently in: highlighted, patched live by the app. */

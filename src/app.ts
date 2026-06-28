@@ -3081,7 +3081,10 @@ export class BeanieApp {
     this.liveDirty = false;
     this.liveChart.resize();
     const ghost = this.state.liveGhost ? this.liveGhostModel : null;
-    const model = this.liveShot.model(liveChartModelOptions(this.state.liveChartMode, ghost?.maxTime));
+    const model = this.liveShot.model({
+      ...liveChartModelOptions(this.state.liveChartMode, ghost?.maxTime),
+      stageNames: profileStepNames(this.state.draft?.profile ?? null)
+    });
     this.liveChart.setOptions({
       hideMaxTimeLabel: liveChartHideMaxTimeLabel(this.state.liveChartMode, model.maxTime)
     });
