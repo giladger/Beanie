@@ -50,11 +50,11 @@ export interface WorkbenchViewModel {
   historyHtml: string;
 }
 
-export interface LiveStageView {
-  /** Current profile step name (e.g. "Preinfusion", "Pour"). */
-  label: string;
-  /** "2/4"-style step counter, or null when the step count is unknown. */
-  step: string | null;
+export interface LiveStagesView {
+  /** Every profile step name, in order (e.g. "Preinfusion", "Pour", "Decline"). */
+  names: string[];
+  /** Index of the stage the machine is currently in, or null when unknown. */
+  currentIndex: number | null;
 }
 
 export interface LivePanelViewModel {
@@ -63,8 +63,8 @@ export interface LivePanelViewModel {
   busy: boolean;
   /** Reference-shot overlay: null when no usable reference shot exists. */
   ghost: { enabled: boolean; title: string } | null;
-  /** Current shot stage, patched live; null when no stage is known. */
-  stage: LiveStageView | null;
+  /** The profile's stages for the rail beside the chart; null when unknown. */
+  stages: LiveStagesView | null;
 }
 
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
@@ -102,7 +102,6 @@ export function renderLivePanel(model: LivePanelViewModel): string {
         <div class="live-head">
           <div class="live-title-row">
             <span class="eyebrow">${model.finalizing ? 'Saving shot' : 'Live shot'}</span>
-            ${liveStageChip(model.finalizing ? null : model.stage)}
             ${
               model.ghost
                 ? `<button
@@ -137,8 +136,11 @@ export function renderLivePanel(model: LivePanelViewModel): string {
             ${liveReadout('Temp', 'live-temp', '--', 'C')}
           </div>
         </div>
-        <div class="live-canvas-wrap">
-          <canvas id="live-canvas" class="live-canvas"></canvas>
+        <div class="live-body">
+          ${liveStageRail(model.finalizing ? null : model.stages)}
+          <div class="live-canvas-wrap">
+            <canvas id="live-canvas" class="live-canvas"></canvas>
+          </div>
         </div>
       </div>
     </div>
@@ -324,11 +326,21 @@ function liveReadout(label: string, id: string, value: string, unit = ''): strin
   return `<div class="live-readout"><label>${escapeHtml(label)}</label><strong id="${id}">${escapeHtml(value)}</strong>${suffix}</div>`;
 }
 
-// Stage chip in the live title row. The element is always present (so the app
-// can patch it by reference each frame) and starts hidden when no stage is known.
-function liveStageChip(stage: LiveStageView | null): string {
-  return `<span class="live-stage" id="live-stage" ${stage ? '' : 'hidden'}>
-    <span class="live-stage-step" id="live-stage-step">${escapeHtml(stage?.step ?? '')}</span>
-    <span class="live-stage-name" id="live-stage-name">${escapeHtml(stage?.label ?? '')}</span>
-  </span>`;
+// Fixed vertical rail of every profile stage, rendered once beside the chart;
+// the app highlights the current one by toggling `.current` per frame. Hidden
+// (but kept in the DOM for patching) when the profile's steps aren't known.
+function liveStageRail(stages: LiveStagesView | null): string {
+  if (!stages || stages.names.length === 0) {
+    return '<ol class="live-stage-rail" id="live-stage-rail" hidden></ol>';
+  }
+  const items = stages.names
+    .map(
+      (name, index) => `
+      <li class="live-stage-item ${index === stages.currentIndex ? 'current' : ''}" data-index="${index}">
+        <span class="live-stage-num">${index + 1}</span>
+        <span class="live-stage-label">${escapeHtml(name)}</span>
+      </li>`
+    )
+    .join('');
+  return `<ol class="live-stage-rail" id="live-stage-rail">${items}</ol>`;
 }

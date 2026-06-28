@@ -1610,37 +1610,6 @@ p {
   flex-wrap: wrap;
 }
 
-/* Current shot stage, patched live next to the "Live shot" label. */
-.live-stage {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 3px 9px;
-  border: 1px solid color-mix(in srgb, var(--teal) 42%, var(--line));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--teal) 12%, var(--panel-2));
-}
-
-.live-stage[hidden] {
-  display: none;
-}
-
-.live-stage-step {
-  font-size: 11px;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
-}
-
-.live-stage-step:empty {
-  display: none;
-}
-
-.live-stage-name {
-  font-size: 13px;
-  font-weight: 900;
-  color: var(--soft);
-}
 
 .live-stop-button {
   height: 30px;
@@ -1753,10 +1722,81 @@ p {
   color: var(--muted);
 }
 
-.live-canvas-wrap {
+/* Row holding the stage rail (fixed width) and the chart (fills the rest). The
+   rail eats horizontal space — which we have on the wide M50 Mini — not height. */
+.live-body {
   flex: 1;
   min-height: 0;
   height: clamp(280px, 56vh, 520px);
+  display: flex;
+  gap: 14px;
+}
+
+.live-stage-rail {
+  flex: 0 0 auto;
+  width: 148px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.live-stage-rail[hidden] {
+  display: none;
+}
+
+.live-stage-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--muted);
+}
+
+.live-stage-num {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--panel-2);
+  font-size: 10px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.live-stage-label {
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The stage the machine is currently in: highlighted, patched live by the app. */
+.live-stage-item.current {
+  border-color: color-mix(in srgb, var(--teal) 50%, var(--line));
+  background: color-mix(in srgb, var(--teal) 14%, var(--panel-2));
+  color: var(--ink);
+}
+
+.live-stage-item.current .live-stage-num {
+  background: var(--teal);
+  color: var(--bg);
+}
+
+.live-canvas-wrap {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
   background-color: transparent;
 }
 

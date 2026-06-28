@@ -311,7 +311,7 @@ import {
   renderLivePanel as renderLivePanelView,
   renderPageHeader,
   renderWorkbench as renderWorkbenchView,
-  type LiveStageView,
+  type LiveStagesView,
   type WorkbenchHeroViewModel
 } from './views/workbenchView';
 import { renderPhoneShell, type PhoneTab } from './views/phoneView';
@@ -723,9 +723,7 @@ interface LiveReadoutEls {
   pressure: HTMLElement | null;
   flow: HTMLElement | null;
   temp: HTMLElement | null;
-  stage: HTMLElement | null;
-  stageStep: HTMLElement | null;
-  stageName: HTMLElement | null;
+  stageRail: HTMLElement | null;
 }
 
 // Step names from a profile's raw steps[], for the live stage chip. Mirrors the
@@ -3140,9 +3138,7 @@ export class BeanieApp {
       pressure: this.root.querySelector<HTMLElement>('#live-pressure'),
       flow: this.root.querySelector<HTMLElement>('#live-flow'),
       temp: this.root.querySelector<HTMLElement>('#live-temp'),
-      stage: this.root.querySelector<HTMLElement>('#live-stage'),
-      stageStep: this.root.querySelector<HTMLElement>('#live-stage-step'),
-      stageName: this.root.querySelector<HTMLElement>('#live-stage-name')
+      stageRail: this.root.querySelector<HTMLElement>('#live-stage-rail')
     };
     this.drawLiveChart();
   }
@@ -3159,30 +3155,31 @@ export class BeanieApp {
       els.temp.textContent =
         latest.scaledTemperature == null ? '--' : (latest.scaledTemperature * 10).toFixed(1);
     }
-    if (els.stage) {
-      const stage = this.liveStageView();
-      els.stage.hidden = stage == null;
-      if (els.stageStep) els.stageStep.textContent = stage?.step ?? '';
-      if (els.stageName) els.stageName.textContent = stage?.label ?? '';
+    if (els.stageRail) {
+      // The rail's items are static for the shot; only the highlight moves, so we
+      // just toggle `.current` on the item matching the machine's profileFrame.
+      const current = this.currentStageIndex();
+      els.stageRail.querySelectorAll<HTMLElement>('.live-stage-item').forEach((item) => {
+        item.classList.toggle('current', Number(item.dataset.index) === current);
+      });
     }
   }
 
-  // The shot's current stage: the active profile's step name at the machine's
-  // reported profileFrame, with a "n/total" counter. Falls back to the espresso
-  // substate (preinfusion/pouring) when the profile's steps aren't available,
-  // and null when nothing is known so the chip stays hidden.
-  private liveStageView(): LiveStageView | null {
-    const machine = this.state.machine;
-    if (!machine) return null;
-    const steps = profileStepNames(this.state.draft?.profile ?? null);
-    const frame = machine.profileFrame;
-    if (Number.isInteger(frame) && frame >= 0 && frame < steps.length) {
-      return { label: steps[frame]!, step: `${frame + 1}/${steps.length}` };
-    }
-    const substate = machine.state?.substate;
-    if (typeof substate === 'string' && substate.trim()) {
-      return { label: substate.charAt(0).toUpperCase() + substate.slice(1), step: null };
-    }
+  // The active profile's stage names plus the index the machine is currently in,
+  // for the rail beside the live chart. Null when the profile has no usable steps
+  // (then there is nothing to list, so the rail stays hidden).
+  private liveStagesView(): LiveStagesView | null {
+    const names = profileStepNames(this.state.draft?.profile ?? null);
+    if (names.length === 0) return null;
+    return { names, currentIndex: this.currentStageIndex() };
+  }
+
+  // The machine's reported profileFrame, validated against the active profile's
+  // step count; null when no frame is known or it falls outside the steps.
+  private currentStageIndex(): number | null {
+    const frame = this.state.machine?.profileFrame;
+    const count = profileStepNames(this.state.draft?.profile ?? null).length;
+    if (Number.isInteger(frame) && frame! >= 0 && frame! < count) return frame!;
     return null;
   }
 
@@ -7093,7 +7090,7 @@ export class BeanieApp {
       finalizing: this.state.liveFinalizing,
       busy: this.state.busy,
       ghost: this.liveGhostPanelModel(),
-      stage: this.liveStageView()
+      stages: this.liveStagesView()
     });
   }
 
