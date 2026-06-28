@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.9 - 2026-06-28
+
+- Allow editing of all freeze/thaw dates.
+
 ## v0.2.8 - 2026-06-28
 
 - Added live shot stage tracking: the live panel now shows a fixed vertical rail beside the chart listing every step of the running profile with the current one highlighted, and marks each stage's start with a labelled line on the chart so you can see where one phase hands off to the next.
