@@ -19,6 +19,7 @@ export {
   batchStorageState,
   computeBeanFreshness,
   editLastBatchStorageEventDate,
+  setBatchStorageEventDates,
   freshnessBadgeLabel,
   freshnessSnapshotForShot,
   roastAgeLabel,

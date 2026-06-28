@@ -62,6 +62,29 @@ export function editLastBatchStorageEventDate(
   };
 }
 
+// Re-date every freeze/thaw event at once from a list of date-input strings (one
+// per event, in the same chronological order `batchStorageEvents` returns). An
+// empty string leaves that event's date untouched. Events are re-sorted after
+// editing so a corrected date that moves an event earlier/later keeps the
+// timeline ordered, and `frozen` is recomputed from whichever event ends up
+// last. Returns {} when the inputs don't line up with the stored events.
+export function setBatchStorageEventDates(
+  batch: BeanBatch,
+  atDates: readonly string[],
+  fallback: Date = new Date()
+): Partial<BeanBatch> {
+  const events = batchStorageEvents(batch);
+  if (events.length === 0 || atDates.length !== events.length) return {};
+  const nextEvents = events
+    .map((event, index) => ({ ...event, at: dateInputToIso(atDates[index] ?? '', event.at, fallback) }))
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  const last = nextEvents[nextEvents.length - 1];
+  return {
+    storageEvents: nextEvents,
+    frozen: last?.type === 'frozen'
+  };
+}
+
 export function computeBeanFreshness(
   batch: BeanBatch | null | undefined,
   now: Date = new Date()

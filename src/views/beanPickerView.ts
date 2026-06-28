@@ -1,5 +1,6 @@
-import type { Bean, BeanBatch, BeanBatchStorageEvent } from '../api/types';
+import type { Bean, BeanBatch } from '../api/types';
 import {
+  batchStorageEvents,
   batchStorageState,
   beanLabel,
   computeBeanFreshness,
@@ -12,8 +13,7 @@ import {
   isNearlyEmptyBatch,
   recentBatches,
   stockLocationLabel,
-  stockOptionLabel,
-  storageTimeline
+  stockOptionLabel
 } from '../domain/beanDisplay';
 import { icon } from '../components/icons';
 import { escapeAttr, escapeHtml } from '../components/html';
@@ -562,7 +562,6 @@ export function renderBatchStorageModal(bean: Bean, batch: BeanBatch): string {
   const state = batchStorageState(batch);
   const location = stockLocationLabel(batch);
   const freshnessDetail = computeBeanFreshness(batch);
-  const latest = [...(batch.storageEvents ?? [])].reverse().find((event) => event?.at);
   const freshnessChips = renderBatchFreshnessChips(freshnessDetail);
   const move = state === 'frozen'
     ? { type: 'thawed' as const, label: 'Move to shelf', detail: 'Active age resumes from today.', icon: 'sun' }
@@ -593,8 +592,7 @@ export function renderBatchStorageModal(bean: Bean, batch: BeanBatch): string {
             </div>
             <button type="button" class="secondary-button" data-action="batch-storage-event" data-type="${move.type}">${icon(move.icon)}<span>${escapeHtml(move.label)}</span></button>
           </div>
-          ${renderStorageTimeline(batch)}
-          ${renderBatchStorageDateControl(latest, state)}
+          ${renderBatchDatesEditor(batch, state)}
         </div>
       </section>
     </div>
@@ -613,62 +611,57 @@ export function freezeAmountFormKey(batchId: string): string {
   return `freeze-amount:${batchId}`;
 }
 
-function renderBatchStorageDateControl(
-  latest: BeanBatchStorageEvent | undefined,
+// One form covering every date on the batch — roast plus each freeze/thaw event
+// — so any of them can be corrected, not just the most recent. Each row is a
+// labelled date input; one "Save dates" button writes them all in a single
+// patch. When there's no history yet, fall back to adding the first freeze date.
+function renderBatchDatesEditor(
+  batch: BeanBatch,
   state: ReturnType<typeof batchStorageState>
 ): string {
-  const fallbackFrozen = !latest && state === 'frozen';
-  if (!latest && !fallbackFrozen) {
-    return `
-      <div class="batch-storage-card batch-storage-date muted">
-        <div>
-          <span class="batch-storage-label">Correct dates</span>
-          <strong>No freeze dates yet</strong>
-          <p>Use a location action first, or add the first freezer date here.</p>
+  const events = batchStorageEvents(batch);
+  const rows: string[] = [];
+
+  if (batch.roastDate) {
+    rows.push(dateRow('Roasted', 'roast', dateInputValue(batch.roastDate)));
+  }
+  events.forEach((event, index) => {
+    const label = event.type === 'frozen' ? 'Moved to freezer' : 'Moved to shelf';
+    rows.push(dateRow(label, `event-${index}`, dateInputValue(event.at)));
+  });
+
+  if (events.length === 0) {
+    if (state === 'frozen') {
+      // Frozen by flag but with no recorded history — let the user backfill it.
+      rows.push(dateRow('Frozen on', 'event-new', dateInputValue(new Date().toISOString())));
+    } else if (rows.length === 0) {
+      return `
+        <div class="batch-storage-card batch-storage-dates muted">
+          <div>
+            <span class="batch-storage-label">Correct dates</span>
+            <strong>No dates to correct yet</strong>
+            <p>Add a roast date, or use a location action to start the freeze history.</p>
+          </div>
         </div>
-      </div>
-    `;
+      `;
+    }
   }
 
-  const type = latest?.type ?? 'frozen';
-  const label = type === 'frozen' ? 'Frozen on' : 'Thawed on';
-  const title = latest
-    ? type === 'frozen' ? 'Correct freeze date' : 'Correct thaw date'
-    : 'Add freeze date';
-  const detail = latest
-    ? type === 'frozen'
-      ? 'Use the day this batch actually went into the freezer.'
-      : 'Use the day this batch actually came out of the freezer.'
-    : 'Backfill when this batch first went into the freezer.';
-  const dateValue = dateInputValue(latest?.at ?? new Date().toISOString());
   return `
-    <form class="batch-storage-card batch-storage-date" data-form="batch-storage-date">
+    <form class="batch-storage-card batch-storage-dates" data-form="batch-storage-dates">
       <div>
         <span class="batch-storage-label">Correct dates</span>
-        <strong>${escapeHtml(title)}</strong>
-        <p>${escapeHtml(detail)}</p>
+        <strong>Edit any date</strong>
+        <p>Fix a roast or freeze/thaw date that was recorded wrong.</p>
       </div>
-      <input type="hidden" name="type" value="${escapeAttr(type)}" />
-      <label>${escapeHtml(label)}<input type="date" name="at" value="${escapeAttr(dateValue)}" /></label>
-      <button type="submit" class="secondary-button compact">${icon('check')}<span>Save date</span></button>
+      ${rows.join('')}
+      <button type="submit" class="secondary-button compact">${icon('check')}<span>Save dates</span></button>
     </form>
   `;
 }
 
-function renderStorageTimeline(batch: BeanBatch): string {
-  const entries = storageTimeline(batch);
-  if (entries.length === 0) return '';
-  return `
-    <div class="batch-storage-card storage-timeline-card">
-      <div>
-        <span class="batch-storage-label">History</span>
-        <strong>Storage timeline</strong>
-      </div>
-      <ol class="storage-timeline">
-        ${entries.map((entry) => `<li><span>${escapeHtml(entry.label)}</span><strong>${escapeHtml(shortDate(entry.at))}</strong></li>`).join('')}
-      </ol>
-    </div>
-  `;
+function dateRow(label: string, name: string, value: string): string {
+  return `<label class="batch-storage-date-row">${escapeHtml(label)}<input type="date" name="${escapeAttr(name)}" value="${escapeAttr(value)}" /></label>`;
 }
 
 function renderBatchFreshnessChips(freshness: ReturnType<typeof computeBeanFreshness>): string {
@@ -719,11 +712,6 @@ function inputValue(value: unknown): string {
 
 function todayDateInputValue(): string {
   return new Date().toISOString().slice(0, 10);
-}
-
-function shortDate(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf()) ? value : date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
 function round(value: number, digits: number): number {

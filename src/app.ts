@@ -65,7 +65,7 @@ import {
   buildWorkflowUpdate,
   compareBeansForPicker,
   emptyRecipe,
-  editLastBatchStorageEventDate,
+  setBatchStorageEventDates,
   formatGrams,
   formatRatio,
   latestBatch,
@@ -79,7 +79,7 @@ import {
   shotFilterForBean,
   yieldForRatio
 } from './domain/beanWorkflow';
-import { batchOptionLabel } from './domain/beanDisplay';
+import { batchOptionLabel, dateInputValue } from './domain/beanDisplay';
 import {
   markStorageEventsMigrated,
   readFavoriteBeans,
@@ -5392,9 +5392,9 @@ export class BeanieApp {
       await this.submitBeanPickerBatch(form);
       return;
     }
-    if (form.dataset.form === 'batch-storage-date') {
+    if (form.dataset.form === 'batch-storage-dates') {
       event.preventDefault();
-      await this.saveBatchStorageDate(form);
+      await this.saveBatchStorageDates(form);
       return;
     }
     if (form.dataset.form === 'grinder-editor') {
@@ -5774,32 +5774,49 @@ export class BeanieApp {
     return bean && batch ? { bean, batch } : null;
   }
 
-  private async saveBatchStorageDate(form: HTMLFormElement): Promise<void> {
+  private async saveBatchStorageDates(form: HTMLFormElement): Promise<void> {
     const selection = this.batchStorageSelection();
     if (!selection) return;
     const data = new FormData(form);
-    const eventType = data.get('type') === 'thawed' ? 'thawed' : 'frozen';
-    const existingEvents = batchStorageEvents(selection.batch);
-    const atValue = String(data.get('at') ?? '');
-    if (existingEvents.length === 0) {
-      const at = new Date(atValue);
-      if (Number.isNaN(at.valueOf())) {
-        this.setState({ status: 'Choose a valid date' });
-        return;
+    const events = batchStorageEvents(selection.batch);
+    const patch: Partial<BeanBatch> = { beanId: selection.bean.id };
+    let changed = false;
+
+    // Roast date — only when the row is shown, and only if it actually moved.
+    if (form.elements.namedItem('roast')) {
+      const roastValue = String(data.get('roast') ?? '').trim();
+      if (roastValue && roastValue !== dateInputValue(selection.batch.roastDate)) {
+        patch.roastDate = roastValue;
+        changed = true;
       }
-      const batchInput = {
-        beanId: selection.bean.id,
-        ...appendBatchStorageEvent(selection.batch, eventType, at)
-      };
-      await this.saveBatchStoragePatch(selection.bean, selection.batch.id, batchInput, eventType === 'frozen' ? 'Freeze date saved' : 'Thaw date saved');
+    }
+
+    if (events.length === 0) {
+      // Empty history: the form may offer a single "first freeze date" to backfill.
+      const addValue = String(data.get('event-new') ?? '').trim();
+      if (addValue) {
+        const at = new Date(addValue);
+        if (Number.isNaN(at.valueOf())) {
+          this.setState({ status: 'Choose a valid date' });
+          return;
+        }
+        Object.assign(patch, appendBatchStorageEvent(selection.batch, 'frozen', at));
+        changed = true;
+      }
+    } else {
+      const atDates = events.map((_, index) => String(data.get(`event-${index}`) ?? ''));
+      const rebuilt = setBatchStorageEventDates(selection.batch, atDates, new Date());
+      if (rebuilt.storageEvents) {
+        Object.assign(patch, rebuilt);
+        changed = true;
+      }
+    }
+
+    if (!changed) {
+      this.setState({ status: 'No date changes' });
       return;
     }
-    const batchInput = {
-      beanId: selection.bean.id,
-      ...editLastBatchStorageEventDate(selection.batch, atValue, new Date())
-    };
-    if (!batchInput.storageEvents) return;
-    await this.saveBatchStoragePatch(selection.bean, selection.batch.id, batchInput, eventType === 'frozen' ? 'Freeze date saved' : 'Thaw date saved');
+    await this.saveBatchStoragePatch(selection.bean, selection.batch.id, patch, 'Dates saved');
   }
 
   private async freezeStock(beanId: string, batchId: string): Promise<void> {

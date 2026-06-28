@@ -348,7 +348,7 @@ run('bean picker renders second tap hint for matching bean only', () => {
   includes(html, 'has-second-tap-hint');
 });
 
-run('batch storage modal shows bag details with history and a single move action', () => {
+run('batch storage modal shows bag details with an editable date for every event', () => {
   const html = renderBatchStorageModal(beans[0]!, batches[0]!);
 
   includes(html, 'Bag details');
@@ -356,12 +356,16 @@ run('batch storage modal shows bag details with history and a single move action
   includes(html, 'Move stock');
   includes(html, 'Move to shelf');
   includes(html, 'data-type="thawed"');
-  includes(html, 'Correct freeze date');
-  includes(html, 'Frozen on');
   includes(html, 'Roast age');
   includes(html, 'Active age');
-  includes(html, 'Storage timeline');
-  includes(html, 'data-form="batch-storage-date"');
+  // Every date is editable in one form: the roast date and each freeze/thaw event.
+  includes(html, 'Correct dates');
+  includes(html, 'Edit any date');
+  includes(html, 'data-form="batch-storage-dates"');
+  includes(html, 'name="roast"');
+  includes(html, 'Moved to freezer');
+  includes(html, 'name="event-0"');
+  includes(html, 'Save dates');
   notIncludes(html, 'Mark thawed');
   notIncludes(html, 'data-form="batch-freeze-portion"');
   notIncludes(html, 'Preview split');
@@ -385,9 +389,12 @@ run('batch storage modal backfills the freeze date for legacy frozen batches', (
     frozen: true
   });
 
-  includes(html, 'Add freeze date');
+  // No recorded history, but the flag says frozen — offer a first freeze date.
+  includes(html, 'Edit any date');
   includes(html, 'Frozen on');
-  includes(html, 'name="type" value="frozen"');
+  includes(html, 'name="event-new"');
+  // The roast date is still editable alongside it.
+  includes(html, 'name="roast"');
 });
 
 function model(overrides: Partial<BeanPickerViewModel> = {}): BeanPickerViewModel {

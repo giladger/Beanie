@@ -5,6 +5,7 @@ import {
   batchStorageState,
   computeBeanFreshness,
   editLastBatchStorageEventDate,
+  setBatchStorageEventDates,
   freshnessBadgeLabel,
   freshnessSnapshotForShot,
   shotFreshnessBadgeLabel,
@@ -179,6 +180,37 @@ await run('edit last batch storage event date keeps the event type and time of d
   equal(edited.storageEvents![0]!.at, '2026-01-05T08:30:00.000Z');
 
   equal(Object.keys(editLastBatchStorageEventDate(batch(), '2026-01-05')).length, 0);
+});
+
+await run('set storage event dates can correct an earlier event, not just the last', () => {
+  const source = batch({
+    storageEvents: [frozen('2026-01-11T08:00:00.000Z'), thawed('2026-01-21T09:00:00.000Z')]
+  });
+  // Correct only the first (freeze) event; leave the second untouched ('').
+  const edited = setBatchStorageEventDates(source, ['2026-01-05', '']);
+
+  equal(edited.storageEvents?.length, 2);
+  equal(edited.storageEvents![0]!.at, '2026-01-05T08:00:00.000Z');
+  equal(edited.storageEvents![1]!.at, '2026-01-21T09:00:00.000Z');
+  // The last event is still the thaw, so the batch reads as thawed.
+  equal(edited.frozen, false);
+});
+
+await run('set storage event dates re-sorts and recomputes frozen when an edit reorders events', () => {
+  const source = batch({
+    storageEvents: [frozen('2026-01-11T00:00:00.000Z'), thawed('2026-01-21T00:00:00.000Z')]
+  });
+  // Drag the thaw before the freeze; after sorting, the freeze becomes last.
+  const edited = setBatchStorageEventDates(source, ['2026-01-15', '2026-01-05']);
+
+  equal(edited.storageEvents![0]!.type, 'thawed');
+  equal(edited.storageEvents![1]!.type, 'frozen');
+  equal(edited.frozen, true);
+});
+
+await run('set storage event dates is a no-op when the inputs do not match the events', () => {
+  equal(Object.keys(setBatchStorageEventDates(batch(), [])).length, 0);
+  equal(Object.keys(setBatchStorageEventDates(batch({ storageEvents: [frozen('2026-01-11T00:00:00.000Z')] }), ['a', 'b'])).length, 0);
 });
 
 await run('re-saving a storage date without changing it does not drift the day', () => {
