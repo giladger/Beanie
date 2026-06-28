@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.8 - 2026-06-28
+
+- Added live shot stage tracking: the live panel now shows a fixed vertical rail beside the chart listing every step of the running profile with the current one highlighted, and marks each stage's start with a labelled line on the chart so you can see where one phase hands off to the next.
+- Overhauled the phone companion: safe-area insets are honored across the shell, pages, and overlays; machine, brew, power, and maintenance settings are reachable; the bean picker collapses into a single scrolling column; the profile picker gains search and per-row metadata; recipe and shot fields read as editable and show their apply state; the Shots tab gets a search box; the label scanner opens as a bottom sheet; and the live shot is shown rather than hidden.
+- Improved the profile browser: import profiles from Visualizer, hide or delete profiles, toggle hidden profiles from a header eye button, and confirm deletes through a dialog that also offers to hide instead.
+- Redesigned the shot detail header into facts and controls tiers with a clearer visual hierarchy — a prominent dose → yield, the brew ratio and brew temperature, and a small icon anchoring each fact.
+- Removed the per-bean shot trends (sparkline) strip and its button.
+- Remembered the tablet's "Set up on this device" scanner choice across reloads.
+
 ## v0.2.7 - 2026-06-20
 
 - Added a cleaning wizard
