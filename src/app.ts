@@ -81,11 +81,13 @@ import {
 } from './domain/beanWorkflow';
 import { batchOptionLabel } from './domain/beanDisplay';
 import {
+  markStorageEventsMigrated,
   readFavoriteBeans,
   readFavoriteProfiles,
   readGeminiApiKey,
   readLastBeanId,
   readScanOnThisDevice,
+  readStorageEventsMigrated,
   writeFavoriteBeans,
   writeFavoriteProfiles,
   writeGeminiApiKey,
@@ -267,6 +269,7 @@ import {
   loadLatestShotCandidates as loadLatestShotCandidatesFromRepository
 } from './data/shotRepository';
 import { loadBeanBatches } from './data/beanRepository';
+import { migrateStorageEventsToGateway } from './data/storageEventsMigration';
 import {
   renderPhoneProfilesPage as renderPhoneProfilePickerPage,
   renderProfilesPage as renderProfilePickerPage
@@ -1228,6 +1231,7 @@ export class BeanieApp {
       this.connectDisplaySocket();
       this.startShotRefreshTimer();
       this.startBeanRefreshTimer();
+      void this.migrateStorageEventsOnce();
     } catch (error) {
       if (this.disposed) return;
       console.warn('[Beanie] Gateway unavailable; using demo data', error);
@@ -1331,6 +1335,24 @@ export class BeanieApp {
   private async loadBatches(bean: Bean): Promise<BeanBatch[]> {
     if (this.state.demo) return this.state.batchesByBean[bean.id] ?? [];
     return loadBeanBatches(bean.id, { gateway, cache: beanieCache });
+  }
+
+  // First open of this version: copy every cached batch's freeze/thaw history up
+  // to the gateway so it stops being browser-only. Runs once per device (gated by
+  // a localStorage flag), best-effort and off the critical path. The flag is only
+  // set on a clean pass, so an offline launch retries on the next open.
+  private async migrateStorageEventsOnce(): Promise<void> {
+    if (this.state.demo || readStorageEventsMigrated()) return;
+    try {
+      const { migrated, completed } = await migrateStorageEventsToGateway({
+        gateway,
+        cache: beanieCache
+      });
+      if (completed) markStorageEventsMigrated();
+      if (migrated > 0) console.info(`[Beanie] Migrated freeze/thaw history for ${migrated} batch(es)`);
+    } catch (error) {
+      console.warn('[Beanie] Freeze/thaw migration failed; will retry next open', error);
+    }
   }
 
   private async openBeanPicker(

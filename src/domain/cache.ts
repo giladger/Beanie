@@ -180,6 +180,13 @@ export class BeanieIndexedDbCache {
     return orderByIds(batches, ids);
   }
 
+  // Every cached batch across all beans, in no particular order. Used by the
+  // one-time freeze/thaw migration to find history that only exists locally.
+  async getAllBeanBatches(): Promise<BeanBatch[]> {
+    const entries = await this.getAllEntries<BeanBatchCacheEntry>(storeNames.beanBatches);
+    return entries.map((entry) => entry.item);
+  }
+
   async putGrinders(grinders: readonly Grinder[]): Promise<void> {
     await this.putCollection(storeNames.grinders, 'collection:grinders:ids', grinders);
   }

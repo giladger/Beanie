@@ -87,3 +87,28 @@ export function writeScanOnThisDevice(on: boolean): void {
     // Best-effort; on failure the hand-off screen simply shows again next time.
   }
 }
+
+// One-time, per-device bookkeeping for the freeze/thaw history migration. The
+// history used to live only in this device's IndexedDB cache, so each device has
+// to copy its OWN cache up to the gateway exactly once — hence localStorage, not
+// the synced store. Until the copy completes cleanly the flag stays unset, so an
+// offline first launch simply retries on the next open.
+const storageEventsMigratedKey = 'beanie:migrated:storage-events-v1';
+
+export function readStorageEventsMigrated(): boolean {
+  try {
+    if (typeof localStorage === 'undefined') return false;
+    return localStorage.getItem(storageEventsMigratedKey) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function markStorageEventsMigrated(): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(storageEventsMigratedKey, '1');
+  } catch {
+    // Best-effort; on failure the migration just runs again next open.
+  }
+}
