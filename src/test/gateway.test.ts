@@ -352,28 +352,37 @@ await run('scale tare calls Reaprime tare endpoint', async () => {
   equal(calls[0]!.init?.method, 'PUT');
 });
 
-await run('updateBatch keeps the storageEvents we sent when the gateway strips them', async () => {
+await run('updateBatch nests storageEvents under extras and lifts them back from the response', async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
-  // The live gateway persists `frozen` but always echoes `storageEvents: null`.
-  const restore = installFetchStub(calls, { id: 'batch-1', beanId: 'bean-1', frozen: true, storageEvents: null });
   const events: BeanBatchStorageEvent[] = [{ type: 'frozen', at: '2026-05-22T08:00:00.000Z' }];
+  // reaprime has no top-level storageEvents column, so it round-trips them inside `extras`.
+  const restore = installFetchStub(calls, { id: 'batch-1', beanId: 'bean-1', frozen: true, extras: { storageEvents: events } });
   try {
     const saved = await gateway.updateBatch('batch-1', { beanId: 'bean-1', frozen: true, storageEvents: events });
     equal(calls[0]!.init?.method, 'PUT');
+    // The request nests the events under extras, not at the top level.
+    const sent = JSON.parse(calls[0]!.init?.body as string) as { storageEvents?: unknown; extras?: { storageEvents?: BeanBatchStorageEvent[] } };
+    equal(sent.storageEvents, undefined);
+    equal(sent.extras?.storageEvents?.[0]?.at, '2026-05-22T08:00:00.000Z');
+    // The response's nested events are lifted back to the top-level field.
     equal(saved.storageEvents?.length, 1);
     equal(saved.storageEvents?.[0]?.at, '2026-05-22T08:00:00.000Z');
+    equal((saved as { extras?: unknown }).extras, undefined);
     equal(saved.frozen, true);
   } finally {
     restore();
   }
 });
 
-await run('createBatch keeps the storageEvents we sent when the gateway strips them', async () => {
+await run('createBatch nests storageEvents under extras and lifts them back from the response', async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
-  const restore = installFetchStub(calls, { id: 'batch-2', beanId: 'bean-1', weightRemaining: 120, frozen: false, storageEvents: null });
   const events: BeanBatchStorageEvent[] = [{ type: 'frozen', at: '2026-05-30T08:00:00.000Z' }];
+  const restore = installFetchStub(calls, { id: 'batch-2', beanId: 'bean-1', weightRemaining: 120, frozen: true, extras: { storageEvents: events } });
   try {
     const saved = await gateway.createBatch('bean-1', { beanId: 'bean-1', weightRemaining: 120, frozen: true, storageEvents: events });
+    const sent = JSON.parse(calls[0]!.init?.body as string) as { storageEvents?: unknown; extras?: { storageEvents?: BeanBatchStorageEvent[] } };
+    equal(sent.storageEvents, undefined);
+    equal(sent.extras?.storageEvents?.[0]?.at, '2026-05-30T08:00:00.000Z');
     equal(saved.storageEvents?.[0]?.at, '2026-05-30T08:00:00.000Z');
     equal(saved.frozen, true);
   } finally {

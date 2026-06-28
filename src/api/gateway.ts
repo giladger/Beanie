@@ -4,6 +4,7 @@ import type {
   ApiResourceName,
   Bean,
   BeanBatch,
+  BeanBatchStorageEvent,
   De1MachineSettings,
   GatewayStartupSnapshot,
   Grinder,
@@ -242,18 +243,25 @@ function jsonPost(body: unknown): RequestInit {
   };
 }
 
-// The gateway persists a batch's `frozen` flag but never stores its
-// `storageEvents` array — a PUT/POST always echoes back `storageEvents: null`
-// (verified against the live gateway). Since the server can't round-trip the
-// freeze/thaw dates, we keep the client authoritative: merge what we just sent
-// back into the parsed response so the stripped reply doesn't clobber the dates
-// in state and the local cache. Without this, editing a freeze/thaw date silently
-// reverts the moment the save completes.
-function withSentStorage(saved: BeanBatch, sent: Partial<BeanBatch>): BeanBatch {
-  const next = { ...saved };
-  if ('storageEvents' in sent) next.storageEvents = sent.storageEvents ?? null;
-  if (typeof sent.frozen === 'boolean') next.frozen = sent.frozen;
-  return next;
+// reaprime has no first-class `storageEvents` column, but every batch carries a
+// general-purpose `extras` JSON map that the server does durably persist and
+// round-trip. So we stash the freeze/thaw history under `extras.storageEvents`
+// on the way out and lift it back to the top-level field the app reads on the
+// way in. This keeps the dates on the gateway — surviving a browser cache wipe
+// and syncing across devices — with no reaprime schema change. Beanie is the
+// only writer of `extras` here, so owning it wholesale is safe.
+function toGatewayBatchBody(batch: Partial<BeanBatch>): Record<string, unknown> {
+  const { storageEvents, ...rest } = batch;
+  if (storageEvents === undefined) return rest;
+  return { ...rest, extras: { storageEvents: storageEvents ?? null } };
+}
+
+function fromGatewayBatch(batch: BeanBatch): BeanBatch {
+  const { extras, ...rest } = batch as BeanBatch & { extras?: unknown };
+  if (!extras || typeof extras !== 'object' || Array.isArray(extras)) return batch;
+  const events = (extras as Record<string, unknown>).storageEvents;
+  if (events === undefined) return batch;
+  return { ...rest, storageEvents: (events as BeanBatchStorageEvent[] | null) ?? null };
 }
 
 function withSkinProxyToken(init: RequestInit): RequestInit {
@@ -293,7 +301,7 @@ export const gateway = {
       'batches',
       `/api/v1/beans/${encodeURIComponent(beanId)}/batches?includeArchived=false`,
       readBatches
-    ),
+    ).then((list) => list.map(fromGatewayBatch)),
   createBatch: (beanId: string, batch: Partial<BeanBatch>) =>
     fetchJson<BeanBatch>(
       'batches',
@@ -302,15 +310,15 @@ export const gateway = {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(batch)
+        body: JSON.stringify(toGatewayBatchBody(batch))
       }
-    ).then((saved) => withSentStorage(saved, batch)),
+    ).then(fromGatewayBatch),
   updateBatch: (id: string, batch: Partial<BeanBatch>) =>
     fetchJson<BeanBatch>('batches', `/api/v1/bean-batches/${encodeURIComponent(id)}`, readBatch, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(batch)
-    }).then((saved) => withSentStorage(saved, batch)),
+      body: JSON.stringify(toGatewayBatchBody(batch))
+    }).then(fromGatewayBatch),
   deleteBatch: (id: string) =>
     fetchEmpty('batches', `/api/v1/bean-batches/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   grinders: () =>
