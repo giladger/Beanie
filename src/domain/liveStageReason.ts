@@ -21,7 +21,10 @@ export function liveStageAdvanceReason(
   const cap = step?.seconds ?? 0;
   const advancedEarly = cap <= 0 || elapsed < cap - 0.6;
   if (advancedEarly && step) {
-    if (step.exit) {
+    // A profile stores a placeholder exit (e.g. `flow under 0`, which can never
+    // fire) for a step whose real move-on is weight/volume/time. Only treat the
+    // exit as the trigger when it's a genuine condition (positive threshold).
+    if (step.exit && step.exit.value > 0) {
       const measured = step.exit.type === 'flow' ? at.flow : at.pressure;
       const unit = step.exit.type === 'flow' ? 'ml/s' : 'bar';
       const sensor = step.exit.type === 'flow' ? 'flow' : 'pressure';

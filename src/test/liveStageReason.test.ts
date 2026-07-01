@@ -32,6 +32,16 @@ run('a flow-exit step reports the measured flow', () => {
   );
 });
 
+run('a placeholder exit (value 0) is ignored so a weight step reports weight', () => {
+  // How a profile stores a "stop at weight" step: a disabled `flow under 0` exit
+  // that can never fire, plus the real weight goal.
+  const step = makeStep({ seconds: 80, weight: 5, exit: { type: 'flow', condition: 'under', value: 0 } });
+  equal(
+    liveStageAdvanceReason(step, 6, { pressure: 9, flow: 4.8, weight: 5.1 }),
+    'weight 5.1 g'
+  );
+});
+
 run('an exit takes precedence over a weight goal on the same step', () => {
   const step = makeStep({ seconds: 30, weight: 8, exit: { type: 'pressure', condition: 'over', value: 4 } });
   equal(
