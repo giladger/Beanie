@@ -1786,7 +1786,7 @@ p {
   overflow-wrap: anywhere;
 }
 
-/* The exit/time rule that advances a stage — the reason it hands off to the next. */
+/* The actual reason a stage advanced, filled in live once it hands off. */
 .live-stage-reason {
   font-size: 10px;
   font-weight: 700;
@@ -1794,6 +1794,11 @@ p {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
+}
+
+/* Stages that haven't advanced yet carry an empty reason — take up no space. */
+.live-stage-reason:empty {
+  display: none;
 }
 
 /* The stage the machine is currently in: highlighted, patched live by the app. */

@@ -225,6 +225,21 @@ run('stage markers record each new profileFrame, labelled from the profile', () 
   equal(session.model().markers.length, 0);
 });
 
+run('stage markers capture the ending stage telemetry at the moment of advance', () => {
+  const session = new LiveShotSession();
+  session.ingest(stageFrame(0, 0, 2)); // stage 0 begins, pressure 2
+  session.ingest(stageFrame(1000, 0, 4.2)); // still stage 0, pressure risen to 4.2
+  session.ingest(stageFrame(2000, 1, 9)); // enters stage 1 — captures stage 0's last reading
+
+  const markers = session.snapshot.stageMarkers;
+  equal(markers.length, 2);
+  // The first marker has no stage before it, so no advance telemetry.
+  equal(markers[0]!.atPressure, null);
+  // The second marker carries stage 0's LAST pressure (4.2), not stage 1's (9),
+  // so the app can report the value that actually crossed the exit threshold.
+  equal(markers[1]!.atPressure, 4.2);
+});
+
 function machineSnapshot(overrides: Partial<MachineSnapshot>): MachineSnapshot {
   return {
     timestamp: '2026-06-01T10:00:00.000Z',
@@ -275,12 +290,12 @@ function pourFrame(
   };
 }
 
-function stageFrame(tMs: number, frame: number): LiveFrame {
+function stageFrame(tMs: number, frame: number, pressure = 6): LiveFrame {
   return {
     tMs,
     machine: machineSnapshot({
       state: { state: 'espresso', substate: 'pouring' },
-      pressure: 6,
+      pressure,
       profileFrame: frame
     }),
     scale: scaleSnapshot({ weight: 0 })

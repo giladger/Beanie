@@ -741,18 +741,28 @@ function profileStepNames(profile: Profile | null): string[] {
   });
 }
 
-// Why a step hands off to the next: it advances when its early-exit condition is
-// met, or when its time cap elapses — whichever comes first. Returns a compact
-// label like "≥ 4 bar or 10s", or null when the profile defines neither.
-function stageAdvanceReason(step: EditorStep): string | null {
-  const parts: string[] = [];
-  if (step.exit) {
-    const unit = step.exit.type === 'flow' ? 'ml/s' : 'bar';
-    const op = step.exit.condition === 'under' ? '≤' : '≥';
-    parts.push(`${op} ${formatStepNumber(step.exit.value)} ${unit}`);
+// The ACTUAL reason a stage advanced, inferred from telemetry at the transition
+// (the DE1 doesn't report the trigger). A DE1 step advances when its early-exit
+// condition fires or its time cap elapses, whichever comes first — so if the
+// stage ended well before its cap it exited early, and we name the measured
+// pressure/flow that crossed the threshold; otherwise it ran out its time.
+function liveStageAdvanceReason(
+  step: EditorStep | undefined,
+  elapsed: number,
+  at: { pressure: number | null; flow: number | null }
+): string {
+  const cap = step?.seconds ?? 0;
+  const exit = step?.exit ?? null;
+  const advancedEarly = exit != null && (cap <= 0 || elapsed < cap - 0.6);
+  if (advancedEarly) {
+    const measured = exit!.type === 'flow' ? at.flow : at.pressure;
+    const unit = exit!.type === 'flow' ? 'ml/s' : 'bar';
+    const sensor = exit!.type === 'flow' ? 'flow' : 'pressure';
+    return measured != null
+      ? `${sensor} ${formatStepNumber(measured)} ${unit}`
+      : `${sensor} exit`;
   }
-  if (step.seconds > 0) parts.push(`${formatStepNumber(step.seconds)}s`);
-  return parts.length > 0 ? parts.join(' or ') : null;
+  return `${formatStepNumber(elapsed)}s elapsed`;
 }
 
 function formatStepNumber(value: number): string {
@@ -915,6 +925,12 @@ export class BeanieApp {
   private liveReadoutEls: LiveReadoutEls | null = null;
   private liveRaf: number | null = null;
   private liveDirty = false;
+  // Memoised parse of the active profile's steps for live stage-reason lookups.
+  private cachedStepsProfile: Profile | null = null;
+  private cachedSteps: EditorStep[] = [];
+  // Stage-marker count at the last rail reason patch, so the DOM is only touched
+  // when a stage actually advances rather than on every telemetry frame.
+  private lastStageReasonCount = -1;
   // Cached chart model for the selected history/calibrator shot. Building the
   // model walks the shot's full measurement array, which is too expensive to
   // repeat on every setState re-render. Measurements are immutable once saved,
@@ -3196,6 +3212,9 @@ export class BeanieApp {
       temp: this.root.querySelector<HTMLElement>('#live-temp'),
       stageRail: this.root.querySelector<HTMLElement>('#live-stage-rail')
     };
+    // The rail DOM was just (re)built, so force the next readout tick to repopulate
+    // every stage reason regardless of the current marker count.
+    this.lastStageReasonCount = -1;
     this.drawLiveChart();
   }
 
@@ -3212,29 +3231,63 @@ export class BeanieApp {
         latest.scaledTemperature == null ? '--' : (latest.scaledTemperature * 10).toFixed(1);
     }
     if (els.stageRail) {
-      // The rail's items are static for the shot; only the highlight moves, so we
-      // just toggle `.current` on the item matching the machine's profileFrame.
+      // Item names are static for the shot; the highlight moves each frame, and a
+      // stage's actual advance reason fills in the moment the next stage begins.
       const current = this.currentStageIndex();
       els.stageRail.querySelectorAll<HTMLElement>('.live-stage-item').forEach((item) => {
         item.classList.toggle('current', Number(item.dataset.index) === current);
       });
+      const markerCount = this.liveShot.snapshot.stageMarkers.length;
+      if (markerCount !== this.lastStageReasonCount) {
+        this.lastStageReasonCount = markerCount;
+        const reasons = this.liveStageReasons();
+        els.stageRail.querySelectorAll<HTMLElement>('.live-stage-reason').forEach((span) => {
+          span.textContent = reasons[Number(span.dataset.index)] ?? '';
+        });
+      }
     }
   }
 
-  // The active profile's stages — name plus the reason each hands off to the
-  // next — and the index the machine is currently in, for the rail beside the
-  // live chart. Null when the profile has no usable steps (rail stays hidden).
+  // The active profile's stages — name plus, once a stage has advanced, the
+  // actual reason it did — and the index the machine is currently in, for the
+  // rail beside the live chart. Null when the profile has no usable steps.
   private liveStagesView(): LiveStagesView | null {
     const names = profileStepNames(this.state.draft?.profile ?? null);
     if (names.length === 0) return null;
-    // Parse the full steps once (at render, not per frame) to read exit/time
-    // rules; readStep maps profile.steps 1:1, so indices line up with `names`.
-    const parsed = createProfileEditorState(this.state.draft?.profile ?? null).steps;
-    const steps = names.map((name, index) => ({
-      name,
-      reason: parsed[index] ? stageAdvanceReason(parsed[index]!) : null
-    }));
+    const reasons = this.liveStageReasons();
+    const steps = names.map((name, index) => ({ name, reason: reasons[index] ?? null }));
     return { steps, currentIndex: this.currentStageIndex() };
+  }
+
+  // The actual advance reason for each stage that has already handed off, indexed
+  // by step. A stage's reason is known only once the NEXT stage begins (that
+  // transition carries the telemetry at the moment of advance); stages not yet
+  // reached stay null. Cheap enough to call per frame — parsing is memoized.
+  private liveStageReasons(): (string | null)[] {
+    const steps = this.parsedLiveSteps();
+    const markers = this.liveShot.snapshot.stageMarkers;
+    const reasons: (string | null)[] = new Array(steps.length).fill(null);
+    for (let i = 1; i < markers.length; i += 1) {
+      const endedFrame = markers[i - 1]!.frame;
+      if (endedFrame < 0 || endedFrame >= steps.length) continue;
+      const elapsed = Math.max(0, markers[i]!.t - markers[i - 1]!.t);
+      reasons[endedFrame] = liveStageAdvanceReason(steps[endedFrame], elapsed, {
+        pressure: markers[i]!.atPressure,
+        flow: markers[i]!.atFlow
+      });
+    }
+    return reasons;
+  }
+
+  // Parsed steps of the active profile, memoized by profile reference so the
+  // per-frame reason lookup doesn't re-parse the whole profile each tick.
+  private parsedLiveSteps(): EditorStep[] {
+    const profile = this.state.draft?.profile ?? null;
+    if (profile !== this.cachedStepsProfile) {
+      this.cachedStepsProfile = profile;
+      this.cachedSteps = profile ? createProfileEditorState(profile).steps : [];
+    }
+    return this.cachedSteps;
   }
 
   // The machine's reported profileFrame, validated against the active profile's

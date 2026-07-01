@@ -69,8 +69,8 @@ run('live panel renders inactive, active, and finalizing states', () => {
 
   const stages = {
     steps: [
-      { name: 'Preinfusion', reason: '≥ 4 bar or 10s' },
-      { name: 'Pour', reason: '30s' },
+      { name: 'Preinfusion', reason: 'pressure 4.2 bar' },
+      { name: 'Pour', reason: '9.8s elapsed' },
       { name: 'Decline', reason: null }
     ],
     currentIndex: 1
@@ -93,10 +93,12 @@ run('live panel renders inactive, active, and finalizing states', () => {
   includes(active, 'Decline');
   includes(active, 'live-stage-item current" data-index="1"');
 
-  // Each stage shows the reason it hands off to the next; a null reason renders no chip.
+  // Each advanced stage shows the actual reason it advanced; a null reason renders
+  // an empty span (kept for live patching, hidden by :empty CSS).
   includes(active, 'live-stage-reason');
-  includes(active, '≥ 4 bar or 10s');
-  includes(active, '>30s<');
+  includes(active, 'pressure 4.2 bar');
+  includes(active, '>9.8s elapsed<');
+  includes(active, 'live-stage-reason" data-index="2"></span>');
 
   // No stages known: the rail is still present (for live patching) but hidden.
   const noStages = renderLivePanel({ active: true, finalizing: false, busy: false, ghost: null, stages: null });

@@ -54,8 +54,8 @@ export interface LiveStageView {
   /** Step name, e.g. "Preinfusion", "Pour", "Decline". */
   name: string;
   /**
-   * Why this stage hands off to the next: its exit condition and/or time cap
-   * (e.g. "≥ 4 bar or 10s"). Null when the profile defines no advance rule.
+   * The actual reason this stage advanced, inferred at the transition (e.g.
+   * "pressure 4.2 bar" or "9.8s elapsed"). Null until the stage has handed off.
    */
   reason: string | null;
 }
@@ -350,7 +350,7 @@ function liveStageRail(stages: LiveStagesView | null): string {
         <span class="live-stage-num">${index + 1}</span>
         <span class="live-stage-text">
           <span class="live-stage-label">${escapeHtml(step.name)}</span>
-          ${step.reason ? `<span class="live-stage-reason">${escapeHtml(step.reason)}</span>` : ''}
+          <span class="live-stage-reason" data-index="${index}">${escapeHtml(step.reason ?? '')}</span>
         </span>
       </li>`
     )

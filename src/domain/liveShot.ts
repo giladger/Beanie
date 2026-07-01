@@ -62,6 +62,13 @@ export interface LiveStageMarker {
   t: number;
   // 0-based profile step index the machine entered.
   frame: number;
+  // Telemetry captured at the instant this stage began — i.e. the last readouts
+  // of the stage that just ended. Lets the app infer the *actual* trigger that
+  // advanced the previous stage (measured pressure/flow), not its programmed
+  // condition. Null on the first marker (no stage ended before it).
+  atPressure: number | null;
+  atFlow: number | null;
+  atWeight: number | null;
 }
 
 export interface LiveShotReadouts {
@@ -190,11 +197,22 @@ function accumulate(state: LiveShotState, frame: LiveFrame): LiveShotState {
 
   // Record a marker the first time each profile step appears. Scale-only frames
   // carry no machine, so they never move the stage. The first stage is marked at
-  // its start too, giving every step a labelled line on the chart.
+  // its start too, giving every step a labelled line on the chart. `state.latest`
+  // still holds the ENDING stage's last readouts here (this frame isn't folded in
+  // yet), so we snapshot them as the telemetry at the moment of advance.
   const frameIndex = machine != null ? integerFrame(machine.profileFrame) : null;
   const stageChanged = frameIndex != null && frameIndex !== state.lastFrame;
   const stageMarkers = stageChanged
-    ? [...state.stageMarkers, { t, frame: frameIndex }]
+    ? [
+        ...state.stageMarkers,
+        {
+          t,
+          frame: frameIndex,
+          atPressure: state.latest.pressure,
+          atFlow: state.latest.flow,
+          atWeight: state.latest.weight
+        }
+      ]
     : state.stageMarkers;
 
   return {
