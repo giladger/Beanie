@@ -80,6 +80,24 @@ run('leaving espresso ends the session and sets a completion reason', () => {
   equal(session.completionReason, 'manual-stop');
 });
 
+run('a mid-shot substate leaving pouring does not end the shot', () => {
+  const session = new LiveShotSession();
+  session.ingest(pourFrame(0, { weight: 5 }));
+  // A weight-target step reaching its goal briefly reports `pouringDone`, and the
+  // machine may restabilise as `preparingForShot` between steps — both are still
+  // the espresso state, so the shot must stay active, not finalise and restart.
+  session.ingest(stageSubstateFrame(1000, 0, 'pouringDone'));
+  session.ingest(stageSubstateFrame(1500, 1, 'preparingForShot'));
+  session.ingest(pourFrame(2000, { weight: 20 }));
+
+  equal(session.isActive, true);
+  equal(session.phase, 'active');
+
+  // Only leaving espresso entirely ends it.
+  session.ingest(idleFrame(3000));
+  equal(session.phase, 'ended');
+});
+
 run('live shot duration spans the active brewing window', () => {
   const session = new LiveShotSession();
   session.ingest(pourFrame(5000, { pressure: 2 }));
@@ -296,6 +314,20 @@ function stageFrame(tMs: number, frame: number, pressure = 6): LiveFrame {
     machine: machineSnapshot({
       state: { state: 'espresso', substate: 'pouring' },
       pressure,
+      profileFrame: frame
+    }),
+    scale: scaleSnapshot({ weight: 0 })
+  };
+}
+
+// An espresso frame with a specific (non-pour) substate, e.g. a between-steps
+// `preparingForShot` or a target-hit `pouringDone`.
+function stageSubstateFrame(tMs: number, frame: number, substate: string): LiveFrame {
+  return {
+    tMs,
+    machine: machineSnapshot({
+      state: { state: 'espresso', substate },
+      pressure: 6,
       profileFrame: frame
     }),
     scale: scaleSnapshot({ weight: 0 })

@@ -230,6 +230,7 @@ import {
   type SimpleProfileField
 } from './components/profileEditor';
 import type { EditorStep, ProfileMetaKey, StepFieldKey } from './domain/profileModel';
+import { liveStageAdvanceReason } from './domain/liveStageReason';
 import { LiveChart } from './components/LiveChart';
 import { chartModelFromShot, overlayComparisonModel } from './components/liveChartModel';
 import type { LiveChartModel } from './domain/liveChartModel';
@@ -741,33 +742,6 @@ function profileStepNames(profile: Profile | null): string[] {
   });
 }
 
-// The ACTUAL reason a stage advanced, inferred from telemetry at the transition
-// (the DE1 doesn't report the trigger). A DE1 step advances when its early-exit
-// condition fires or its time cap elapses, whichever comes first — so if the
-// stage ended well before its cap it exited early, and we name the measured
-// pressure/flow that crossed the threshold; otherwise it ran out its time.
-function liveStageAdvanceReason(
-  step: EditorStep | undefined,
-  elapsed: number,
-  at: { pressure: number | null; flow: number | null }
-): string {
-  const cap = step?.seconds ?? 0;
-  const exit = step?.exit ?? null;
-  const advancedEarly = exit != null && (cap <= 0 || elapsed < cap - 0.6);
-  if (advancedEarly) {
-    const measured = exit!.type === 'flow' ? at.flow : at.pressure;
-    const unit = exit!.type === 'flow' ? 'ml/s' : 'bar';
-    const sensor = exit!.type === 'flow' ? 'flow' : 'pressure';
-    return measured != null
-      ? `${sensor} ${formatStepNumber(measured)} ${unit}`
-      : `${sensor} exit`;
-  }
-  return `${formatStepNumber(elapsed)}s elapsed`;
-}
-
-function formatStepNumber(value: number): string {
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
-}
 
 function accountLoginErrorMessage(error: GatewayRequestError): string {
   if (error.issue.statusCode === 401) return 'Invalid Decent account email or password.';
@@ -3273,7 +3247,8 @@ export class BeanieApp {
       const elapsed = Math.max(0, markers[i]!.t - markers[i - 1]!.t);
       reasons[endedFrame] = liveStageAdvanceReason(steps[endedFrame], elapsed, {
         pressure: markers[i]!.atPressure,
-        flow: markers[i]!.atFlow
+        flow: markers[i]!.atFlow,
+        weight: markers[i]!.atWeight
       });
     }
     return reasons;
