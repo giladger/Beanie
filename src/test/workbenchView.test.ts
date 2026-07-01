@@ -67,7 +67,15 @@ run('page header escapes the title and back value while preserving action html',
 run('live panel renders inactive, active, and finalizing states', () => {
   equal(renderLivePanel({ active: false, finalizing: false, busy: false, ghost: null, stages: null }), '');
 
-  const active = renderLivePanel({ active: true, finalizing: false, busy: true, ghost: { enabled: true, title: 'Hide reference overlay (18g → 36g)' }, stages: { names: ['Preinfusion', 'Pour', 'Decline'], currentIndex: 1 } });
+  const stages = {
+    steps: [
+      { name: 'Preinfusion', reason: '≥ 4 bar or 10s' },
+      { name: 'Pour', reason: '30s' },
+      { name: 'Decline', reason: null }
+    ],
+    currentIndex: 1
+  };
+  const active = renderLivePanel({ active: true, finalizing: false, busy: true, ghost: { enabled: true, title: 'Hide reference overlay (18g → 36g)' }, stages });
   // The "Live shot" eyebrow was removed; the stage rail names the shot now.
   excludes(active, 'Live shot');
   includes(active, 'data-action="stop"');
@@ -85,12 +93,17 @@ run('live panel renders inactive, active, and finalizing states', () => {
   includes(active, 'Decline');
   includes(active, 'live-stage-item current" data-index="1"');
 
+  // Each stage shows the reason it hands off to the next; a null reason renders no chip.
+  includes(active, 'live-stage-reason');
+  includes(active, '≥ 4 bar or 10s');
+  includes(active, '>30s<');
+
   // No stages known: the rail is still present (for live patching) but hidden.
   const noStages = renderLivePanel({ active: true, finalizing: false, busy: false, ghost: null, stages: null });
   includes(noStages, 'id="live-stage-rail"');
   includes(noStages, 'hidden');
 
-  const finalizing = renderLivePanel({ active: false, finalizing: true, busy: false, ghost: null, stages: { names: ['Preinfusion', 'Pour', 'Decline'], currentIndex: 1 } });
+  const finalizing = renderLivePanel({ active: false, finalizing: true, busy: false, ghost: null, stages });
   includes(finalizing, 'Saving shot');
   includes(finalizing, 'Saving…');
   excludes(finalizing, 'data-action="stop"');

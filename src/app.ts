@@ -229,7 +229,7 @@ import {
   type ProfileEditorState,
   type SimpleProfileField
 } from './components/profileEditor';
-import type { ProfileMetaKey, StepFieldKey } from './domain/profileModel';
+import type { EditorStep, ProfileMetaKey, StepFieldKey } from './domain/profileModel';
 import { LiveChart } from './components/LiveChart';
 import { chartModelFromShot, overlayComparisonModel } from './components/liveChartModel';
 import type { LiveChartModel } from './domain/liveChartModel';
@@ -739,6 +739,24 @@ function profileStepNames(profile: Profile | null): string[] {
     const title = typeof record?.title === 'string' ? record.title.trim() : '';
     return name || title || `Step ${index + 1}`;
   });
+}
+
+// Why a step hands off to the next: it advances when its early-exit condition is
+// met, or when its time cap elapses — whichever comes first. Returns a compact
+// label like "≥ 4 bar or 10s", or null when the profile defines neither.
+function stageAdvanceReason(step: EditorStep): string | null {
+  const parts: string[] = [];
+  if (step.exit) {
+    const unit = step.exit.type === 'flow' ? 'ml/s' : 'bar';
+    const op = step.exit.condition === 'under' ? '≤' : '≥';
+    parts.push(`${op} ${formatStepNumber(step.exit.value)} ${unit}`);
+  }
+  if (step.seconds > 0) parts.push(`${formatStepNumber(step.seconds)}s`);
+  return parts.length > 0 ? parts.join(' or ') : null;
+}
+
+function formatStepNumber(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
 function accountLoginErrorMessage(error: GatewayRequestError): string {
@@ -3203,13 +3221,20 @@ export class BeanieApp {
     }
   }
 
-  // The active profile's stage names plus the index the machine is currently in,
-  // for the rail beside the live chart. Null when the profile has no usable steps
-  // (then there is nothing to list, so the rail stays hidden).
+  // The active profile's stages — name plus the reason each hands off to the
+  // next — and the index the machine is currently in, for the rail beside the
+  // live chart. Null when the profile has no usable steps (rail stays hidden).
   private liveStagesView(): LiveStagesView | null {
     const names = profileStepNames(this.state.draft?.profile ?? null);
     if (names.length === 0) return null;
-    return { names, currentIndex: this.currentStageIndex() };
+    // Parse the full steps once (at render, not per frame) to read exit/time
+    // rules; readStep maps profile.steps 1:1, so indices line up with `names`.
+    const parsed = createProfileEditorState(this.state.draft?.profile ?? null).steps;
+    const steps = names.map((name, index) => ({
+      name,
+      reason: parsed[index] ? stageAdvanceReason(parsed[index]!) : null
+    }));
+    return { steps, currentIndex: this.currentStageIndex() };
   }
 
   // The machine's reported profileFrame, validated against the active profile's

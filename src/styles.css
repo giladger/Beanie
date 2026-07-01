@@ -1772,11 +1772,27 @@ p {
   font-variant-numeric: tabular-nums;
 }
 
+.live-stage-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 .live-stage-label {
   /* Wrap long step names across lines rather than truncating with an ellipsis. */
   font-size: 12px;
   font-weight: 700;
   line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+/* The exit/time rule that advances a stage — the reason it hands off to the next. */
+.live-stage-reason {
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
 
@@ -1790,6 +1806,10 @@ p {
 .live-stage-item.current .live-stage-num {
   background: var(--teal);
   color: var(--bg);
+}
+
+.live-stage-item.current .live-stage-reason {
+  color: var(--soft);
 }
 
 .live-canvas-wrap {

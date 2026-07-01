@@ -50,9 +50,19 @@ export interface WorkbenchViewModel {
   historyHtml: string;
 }
 
+export interface LiveStageView {
+  /** Step name, e.g. "Preinfusion", "Pour", "Decline". */
+  name: string;
+  /**
+   * Why this stage hands off to the next: its exit condition and/or time cap
+   * (e.g. "≥ 4 bar or 10s"). Null when the profile defines no advance rule.
+   */
+  reason: string | null;
+}
+
 export interface LiveStagesView {
-  /** Every profile step name, in order (e.g. "Preinfusion", "Pour", "Decline"). */
-  names: string[];
+  /** Every profile step, in order. */
+  steps: LiveStageView[];
   /** Index of the stage the machine is currently in, or null when unknown. */
   currentIndex: number | null;
 }
@@ -330,15 +340,18 @@ function liveReadout(label: string, id: string, value: string, unit = ''): strin
 // the app highlights the current one by toggling `.current` per frame. Hidden
 // (but kept in the DOM for patching) when the profile's steps aren't known.
 function liveStageRail(stages: LiveStagesView | null): string {
-  if (!stages || stages.names.length === 0) {
+  if (!stages || stages.steps.length === 0) {
     return '<ol class="live-stage-rail" id="live-stage-rail" hidden></ol>';
   }
-  const items = stages.names
+  const items = stages.steps
     .map(
-      (name, index) => `
+      (step, index) => `
       <li class="live-stage-item ${index === stages.currentIndex ? 'current' : ''}" data-index="${index}">
         <span class="live-stage-num">${index + 1}</span>
-        <span class="live-stage-label">${escapeHtml(name)}</span>
+        <span class="live-stage-text">
+          <span class="live-stage-label">${escapeHtml(step.name)}</span>
+          ${step.reason ? `<span class="live-stage-reason">${escapeHtml(step.reason)}</span>` : ''}
+        </span>
       </li>`
     )
     .join('');
