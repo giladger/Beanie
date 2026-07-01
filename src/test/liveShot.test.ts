@@ -80,20 +80,20 @@ run('leaving espresso ends the session and sets a completion reason', () => {
   equal(session.completionReason, 'manual-stop');
 });
 
-run('a mid-shot substate leaving pouring does not end the shot', () => {
+run('a mid-shot step advance does not end the shot', () => {
   const session = new LiveShotSession();
   session.ingest(pourFrame(0, { weight: 5 }));
-  // A weight-target step reaching its goal briefly reports `pouringDone`, and the
-  // machine may restabilise as `preparingForShot` between steps — both are still
-  // the espresso state, so the shot must stay active, not finalise and restart.
-  session.ingest(stageSubstateFrame(1000, 0, 'pouringDone'));
+  // A per-step weight exit advances via requestState(skipStep), so the DE1 briefly
+  // reports the `skipStep` top-state; the next step may restabilise temperature as
+  // an `espresso`/`preparingForShot` substate. Neither means the pull is over.
+  session.ingest(skipStepFrame(1000, 0));
   session.ingest(stageSubstateFrame(1500, 1, 'preparingForShot'));
   session.ingest(pourFrame(2000, { weight: 20 }));
 
   equal(session.isActive, true);
   equal(session.phase, 'active');
 
-  // Only leaving espresso entirely ends it.
+  // Only settling into a genuinely non-brew state (idle) ends it.
   session.ingest(idleFrame(3000));
   equal(session.phase, 'ended');
 });
@@ -321,12 +321,25 @@ function stageFrame(tMs: number, frame: number, pressure = 6): LiveFrame {
 }
 
 // An espresso frame with a specific (non-pour) substate, e.g. a between-steps
-// `preparingForShot` or a target-hit `pouringDone`.
+// `preparingForShot`.
 function stageSubstateFrame(tMs: number, frame: number, substate: string): LiveFrame {
   return {
     tMs,
     machine: machineSnapshot({
       state: { state: 'espresso', substate },
+      pressure: 6,
+      profileFrame: frame
+    }),
+    scale: scaleSnapshot({ weight: 0 })
+  };
+}
+
+// The transient `skipStep` top-state the DE1 reports while advancing between steps.
+function skipStepFrame(tMs: number, frame: number): LiveFrame {
+  return {
+    tMs,
+    machine: machineSnapshot({
+      state: { state: 'skipStep', substate: 'pouring' },
       pressure: 6,
       profileFrame: frame
     }),

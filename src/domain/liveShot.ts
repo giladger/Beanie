@@ -153,11 +153,11 @@ export function nextLiveShotState(
   }
 
   if (state.phase === 'active') {
-    // Stay active as long as the machine is still brewing. Ending on a substate
-    // flicker (a weight/volume-target step reporting `pouringDone`, or a between-
-    // steps `preparingForShot`) would falsely finalise the shot mid-pull and then
-    // restart it as a new session — the bug this guards against.
-    if (isEspressoState(frame.machine)) return accumulate(state, frame);
+    // Stay active as long as the machine is still mid-shot. Ending on a transient
+    // step-advance (`skipStep`) or a substate flicker (`preparingForShot` between
+    // steps) would falsely finalise the shot mid-pull and then restart it as a new
+    // session — the bug this guards against.
+    if (isBrewingState(frame.machine)) return accumulate(state, frame);
     return endSession(state, options);
   }
 
@@ -280,21 +280,26 @@ function readoutsFor(
   };
 }
 
-// True whenever the machine is in the espresso/brewing top-state, regardless of
-// substate. Used to keep an already-running shot alive: the substate legitimately
-// leaves preinfusion/pouring mid-shot (e.g. `preparingForShot` while temperature
-// restabilises between steps, or `pouringDone` at a step's weight/volume target),
-// and none of those mean the pull is over — only leaving espresso entirely does.
-function isEspressoState(machine: MachineSnapshot | null | undefined): boolean {
+// True whenever the machine is still mid-shot. Used to keep an already-running
+// shot alive: the top-state briefly leaves `espresso` when the DE1 advances
+// between profile steps — a per-step weight/volume exit is driven app-side via
+// requestState(skipStep) (reaprime ShotSequencer), and the DE1 reports the
+// transient `skipStep` state — and the substate leaves preinfusion/pouring
+// (e.g. `preparingForShot` while temperature restabilises). None of those mean
+// the pull is over; only settling into a genuinely non-brew state does.
+function isBrewingState(machine: MachineSnapshot | null | undefined): boolean {
   const topState = machine?.state?.state;
-  return topState === 'espresso' || topState === 'brewing';
+  return topState === 'espresso' || topState === 'brewing' || topState === 'skipStep';
 }
 
-// Stricter check used to START a shot: require an actual pour/preinfusion substate
-// so we don't begin while the machine is still heating (`preparingForShot`).
+// Stricter check used to START a shot: require a real espresso/brewing pour (not a
+// transient `skipStep`) with a pour/preinfusion substate, so we don't begin while
+// the machine is still heating (`preparingForShot`).
 function isEspressoPour(machine: MachineSnapshot | null | undefined): boolean {
-  if (!isEspressoState(machine)) return false;
-  const substate = stringValue(machine!.state?.substate);
+  if (!machine) return false;
+  const topState = machine.state?.state;
+  if (topState !== 'espresso' && topState !== 'brewing') return false;
+  const substate = stringValue(machine.state?.substate);
   if (substate != null && ESPRESSO_SUBSTATES.has(substate)) return true;
   // Treat a bare espresso/brewing state without an explicit non-pour substate
   // as pouring so the chart appears on the first brew transition.
