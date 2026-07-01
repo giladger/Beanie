@@ -98,6 +98,22 @@ run('a mid-shot step advance does not end the shot', () => {
   equal(session.phase, 'ended');
 });
 
+run('the pouringDone substate ends the shot even while still in espresso', () => {
+  const session = new LiveShotSession();
+  session.ingest(pourFrame(0, { pressure: 6, weight: 10 }));
+  session.ingest(pourFrame(1000, { pressure: 6, weight: 34 }));
+  equal(session.isActive, true);
+
+  // The DE1 signals the end of the pull with `espresso`/`pouringDone` a few
+  // frames before it settles to idle — that must end the live shot, not keep
+  // plotting the post-stop pressure/flow decay.
+  const before = session.model().series.find((s) => s.key === 'pressure')!.points.length;
+  session.ingest(stageSubstateFrame(2000, 1, 'pouringDone'));
+  equal(session.phase, 'ended');
+  // No new point was accumulated from the pouringDone (post-stop) frame.
+  equal(session.model().series.find((s) => s.key === 'pressure')!.points.length, before);
+});
+
 run('live shot duration spans the active brewing window', () => {
   const session = new LiveShotSession();
   session.ingest(pourFrame(5000, { pressure: 2 }));

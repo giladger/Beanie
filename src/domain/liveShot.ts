@@ -286,10 +286,17 @@ function readoutsFor(
 // requestState(skipStep) (reaprime ShotSequencer), and the DE1 reports the
 // transient `skipStep` state — and the substate leaves preinfusion/pouring
 // (e.g. `preparingForShot` while temperature restabilises). None of those mean
-// the pull is over; only settling into a genuinely non-brew state does.
+// the pull is over. The exception is `pouringDone`: that is the DE1's own
+// end-of-shot signal (reaprime's ShotSequencer stops the shot on it), so it must
+// end the live shot even though the top-state is still `espresso` for a few
+// frames before it settles to idle — otherwise the chart keeps plotting the
+// post-stop pressure/flow decay.
 function isBrewingState(machine: MachineSnapshot | null | undefined): boolean {
   const topState = machine?.state?.state;
-  return topState === 'espresso' || topState === 'brewing' || topState === 'skipStep';
+  if (topState !== 'espresso' && topState !== 'brewing' && topState !== 'skipStep') {
+    return false;
+  }
+  return stringValue(machine?.state?.substate) !== 'pouringDone';
 }
 
 // Stricter check used to START a shot: require a real espresso/brewing pour (not a
