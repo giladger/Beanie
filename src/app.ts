@@ -258,6 +258,7 @@ import {
 } from './domain/flowCalibration';
 import {
   LiveShotSession,
+  lastReachedFrame,
   liveShotDurationMs,
   simulateShotFrames,
   type LiveFrame,
@@ -2821,6 +2822,15 @@ export class BeanieApp {
         // patched the rail (two sockets, no ordering guarantee) — force the
         // next readout tick to repopulate the stage reasons.
         this.lastStageReasonCount = -1;
+        // Once the pour has ended those ticks stop, so a stop decision landing
+        // a beat after the snapshot socket ended the shot must repaint the
+        // frozen panel itself (the final stage's reason comes from it).
+        if (
+          !this.liveShot.isActive &&
+          (this.state.liveActive || this.state.liveFinalizing)
+        ) {
+          this.setState({});
+        }
       } catch (error) {
         console.warn('[Beanie] Bad shotState frame', error);
       }
@@ -3316,6 +3326,28 @@ export class BeanieApp {
         }
       );
     }
+
+    // The final stage has no successor marker, so the loop never labels it.
+    // Once the pour has ended its reason is the shot's stop decision — or the
+    // app's weight skip of that same frame, when skipping the last step is
+    // what ended the shot.
+    if (this.liveShot.phase === 'ended') {
+      const frame = lastReachedFrame(this.liveShot.snapshot);
+      if (frame != null && frame >= 0 && frame < steps.length && reasons[frame] == null) {
+        const skip = this.decisionLog.advances.get(frame);
+        if (skip) {
+          const lastMarker = markers[markers.length - 1]!;
+          const elapsed = Math.max(0, this.liveShot.elapsedSeconds - lastMarker.t);
+          reasons[frame] = liveStageAdvanceReason(skip, steps[frame], elapsed, {
+            pressure: this.liveShot.latest.pressure,
+            flow: this.liveShot.latest.flow,
+            weight: this.liveShot.latest.weight
+          });
+        } else {
+          reasons[frame] = stopReasonLabel(this.decisionLog.stop);
+        }
+      }
+    }
     return reasons;
   }
 
@@ -3330,12 +3362,20 @@ export class BeanieApp {
     return this.cachedSteps;
   }
 
-  // The machine's reported profileFrame, validated against the active profile's
-  // step count; null when no frame is known or it falls outside the steps.
+  // The stage to highlight in the rail: the machine's reported profileFrame
+  // while the pour is active, frozen at the last stage the pour reached once
+  // it ends — the machine resets its frame to 0 on stop, which would snap the
+  // highlight back to the first step while the ended panel is still up.
+  // Validated against the active profile's step count; null when no frame is
+  // known or it falls outside the steps.
   private currentStageIndex(): number | null {
-    const frame = this.state.machine?.profileFrame;
+    const frame = this.liveShot.isActive
+      ? this.state.machine?.profileFrame
+      : lastReachedFrame(this.liveShot.snapshot);
     const count = profileStepNames(this.state.draft?.profile ?? null).length;
-    if (Number.isInteger(frame) && frame! >= 0 && frame! < count) return frame!;
+    if (frame != null && Number.isInteger(frame) && frame >= 0 && frame < count) {
+      return frame;
+    }
     return null;
   }
 

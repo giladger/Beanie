@@ -1,6 +1,7 @@
 import type { MachineSnapshot, ScaleSnapshot } from '../api/types';
 import {
   LiveShotSession,
+  lastReachedFrame,
   liveShotDurationMs,
   simulateShotFrames,
   type LiveFrame
@@ -272,6 +273,21 @@ run('stage markers capture the ending stage telemetry at the moment of advance',
   // The second marker carries stage 0's LAST pressure (4.2), not stage 1's (9),
   // so the app can report the value that actually crossed the exit threshold.
   equal(markers[1]!.atPressure, 4.2);
+});
+
+run('lastReachedFrame holds the final stage across the shot end', () => {
+  const session = new LiveShotSession();
+  equal(lastReachedFrame(session.snapshot), null);
+
+  session.ingest(stageFrame(0, 0, 2));
+  session.ingest(stageFrame(1000, 1, 9));
+  session.ingest(stageFrame(2000, 2, 8));
+  // The machine resets its reported profileFrame to 0 on stop; the ending
+  // idle frame must not drag the last-reached stage back to the first step.
+  session.ingest(idleFrame(3000));
+
+  equal(session.phase, 'ended');
+  equal(lastReachedFrame(session.snapshot), 2);
 });
 
 function machineSnapshot(overrides: Partial<MachineSnapshot>): MachineSnapshot {

@@ -263,6 +263,15 @@ export function liveShotDurationMs(state: LiveShotState): number | null {
   return Math.max(0, state.lastActiveMs - state.startMs);
 }
 
+// The profile frame of the stage the pour was most recently in — i.e. the
+// stage that was current when the shot ended. The machine resets its reported
+// profileFrame to 0 on stop, so post-shot displays must use this instead of
+// the live frame. Null before the first stage marker.
+export function lastReachedFrame(state: LiveShotState): number | null {
+  const last = state.stageMarkers[state.stageMarkers.length - 1];
+  return last ? last.frame : null;
+}
+
 function readoutsFor(
   machine: MachineSnapshot | null,
   scale: ScaleSnapshot | null,
