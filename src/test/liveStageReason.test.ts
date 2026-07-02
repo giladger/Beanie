@@ -1,63 +1,91 @@
 import { liveStageAdvanceReason } from '../domain/liveStageReason';
+import type { StageAdvanceDecision } from '../domain/shotDecisions';
 import type { EditorStep } from '../domain/profileModel';
 
 const NO_TELEMETRY = { pressure: null, flow: null, weight: null };
 
-run('a weight-target step reports the measured weight it advanced at', () => {
+const SKIP = (weight: number | null): StageAdvanceDecision => ({
+  reason: 'profileSkip',
+  weight
+});
+const FIRMWARE: StageAdvanceDecision = { reason: 'profileAdvance', weight: null };
+
+run('an app-issued weight skip reports the projected weight from the decision', () => {
   const step = makeStep({ seconds: 30, weight: 8 });
   equal(
-    liveStageAdvanceReason(step, 6, { pressure: 9, flow: 2, weight: 8.3 }),
+    liveStageAdvanceReason(SKIP(8.3), step, 6, { pressure: 9, flow: 2, weight: 8.1 }),
     'weight 8.3 g'
   );
 });
 
-run('a weight-target step falls back to the goal when no weight was captured', () => {
+run('a weight skip without a decision value falls back to measured weight', () => {
   const step = makeStep({ seconds: 30, weight: 8 });
-  equal(liveStageAdvanceReason(step, 6, NO_TELEMETRY), 'weight 8 g');
+  equal(
+    liveStageAdvanceReason(SKIP(null), step, 6, { pressure: 9, flow: 2, weight: 8.1 }),
+    'weight 8.1 g'
+  );
 });
 
-run('a pressure-exit step reports the measured pressure, not the threshold', () => {
+run('a weight skip with no telemetry falls back to the step goal', () => {
+  const step = makeStep({ seconds: 30, weight: 8 });
+  equal(liveStageAdvanceReason(SKIP(null), step, 6, NO_TELEMETRY), 'weight 8 g');
+});
+
+run('a firmware advance on a pressure-exit step reports the measured pressure', () => {
   const step = makeStep({ seconds: 30, exit: { type: 'pressure', condition: 'over', value: 4 } });
   equal(
-    liveStageAdvanceReason(step, 8, { pressure: 4.2, flow: 1, weight: 5 }),
+    liveStageAdvanceReason(FIRMWARE, step, 8, { pressure: 4.2, flow: 1, weight: 5 }),
     'pressure 4.2 bar'
   );
 });
 
-run('a flow-exit step reports the measured flow', () => {
+run('a firmware advance on a flow-exit step reports the measured flow', () => {
   const step = makeStep({ seconds: 30, exit: { type: 'flow', condition: 'under', value: 2 } });
   equal(
-    liveStageAdvanceReason(step, 8, { pressure: 6, flow: 1.8, weight: 5 }),
+    liveStageAdvanceReason(FIRMWARE, step, 8, { pressure: 6, flow: 1.8, weight: 5 }),
     'flow 1.8 ml/s'
   );
 });
 
-run('a placeholder exit (value 0) is ignored so a weight step reports weight', () => {
-  // How a profile stores a "stop at weight" step: a disabled `flow under 0` exit
-  // that can never fire, plus the real weight goal.
-  const step = makeStep({ seconds: 80, weight: 5, exit: { type: 'flow', condition: 'under', value: 0 } });
+run('a firmware advance ignores a placeholder exit and reports the volume goal', () => {
+  // A "stop at weight" step stores a disabled `flow under 0` exit that can
+  // never fire; when the FIRMWARE advanced such a step, the trigger cannot be
+  // the app's weight skip (that would be profileSkip) — describe the volume.
+  const step = makeStep({
+    seconds: 80,
+    volume: 40,
+    exit: { type: 'flow', condition: 'under', value: 0 }
+  });
   equal(
-    liveStageAdvanceReason(step, 6, { pressure: 9, flow: 4.8, weight: 5.1 }),
-    'weight 5.1 g'
+    liveStageAdvanceReason(FIRMWARE, step, 6, { pressure: 9, flow: 4.8, weight: 5.1 }),
+    'volume 40 ml'
   );
 });
 
-run('an exit takes precedence over a weight goal on the same step', () => {
-  const step = makeStep({ seconds: 30, weight: 8, exit: { type: 'pressure', condition: 'over', value: 4 } });
+run('a firmware advance at the time cap reports elapsed time', () => {
+  const step = makeStep({ seconds: 10, exit: { type: 'pressure', condition: 'over', value: 9 } });
+  equal(liveStageAdvanceReason(FIRMWARE, step, 9.8, NO_TELEMETRY), '9.8s elapsed');
+});
+
+run('a missing decision (transient socket gap) uses the firmware description', () => {
+  const step = makeStep({ seconds: 30, exit: { type: 'pressure', condition: 'over', value: 4 } });
   equal(
-    liveStageAdvanceReason(step, 8, { pressure: 4.5, flow: 1, weight: 8.3 }),
-    'pressure 4.5 bar'
+    liveStageAdvanceReason(null, step, 8, { pressure: 4.2, flow: 1, weight: 5 }),
+    'pressure 4.2 bar'
   );
 });
 
-run('a step that ran to its time cap reports the elapsed time', () => {
-  const step = makeStep({ seconds: 30, exit: { type: 'pressure', condition: 'over', value: 9 } });
-  equal(liveStageAdvanceReason(step, 30.2, { pressure: 8, flow: 1, weight: 5 }), '30.2s elapsed');
-});
-
-run('a volume-target step names the volume goal', () => {
+run('an unknown future advance reason falls back to the firmware description', () => {
   const step = makeStep({ seconds: 40, volume: 36 });
-  equal(liveStageAdvanceReason(step, 12, NO_TELEMETRY), 'volume 36 ml');
+  equal(
+    liveStageAdvanceReason(
+      { reason: 'someFutureReason', weight: null },
+      step,
+      12,
+      NO_TELEMETRY
+    ),
+    'volume 36 ml'
+  );
 });
 
 function makeStep(overrides: Partial<EditorStep>): EditorStep {

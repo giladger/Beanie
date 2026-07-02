@@ -11,6 +11,8 @@ import type {
   ProfileRecord,
   ScaleSnapshot,
   ShotRecord,
+  ShotStateDecision,
+  ShotStateEvent,
   ShotSummary,
   Workflow
 } from './types';
@@ -155,6 +157,62 @@ export function readScaleSnapshot(value: unknown): ScaleSnapshot {
   }
   if (obj.status === 'connected' || obj.status === 'disconnected') snapshot.status = obj.status;
   return snapshot;
+}
+
+const SHOT_STATE_EVENTS = new Set(['state', 'decision', 'terminal']);
+const SHOT_STATES = new Set(['idle', 'preheating', 'pouring', 'stopping', 'finished']);
+const SHOT_DECISION_KINDS = new Set(['advance', 'stop', 'abort', 'terminal', 'finalize']);
+
+// Lenient shotState frame reader: runs per frame on the live-shot hot path,
+// mirroring readScaleSnapshot. The envelope fields behavior keys on
+// (event/state/decision.kind) are validated against their closed sets;
+// decision.reason is an OPEN set and passes through untouched.
+export function readShotStateEvent(value: unknown): ShotStateEvent {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ApiValidationError('ShotStateEvent', [{ path: '$', message: 'Expected an object' }]);
+  }
+  const obj = value as Record<string, unknown>;
+  const event = typeof obj.event === 'string' && SHOT_STATE_EVENTS.has(obj.event) ? obj.event : null;
+  const state = typeof obj.state === 'string' && SHOT_STATES.has(obj.state) ? obj.state : null;
+  if (!event || !state) {
+    throw new ApiValidationError('ShotStateEvent', [
+      { path: '$', message: 'Expected event (state|decision|terminal) and a shot state' }
+    ]);
+  }
+  return {
+    event: event as ShotStateEvent['event'],
+    timestamp: typeof obj.timestamp === 'string' ? obj.timestamp : new Date().toISOString(),
+    shotId: typeof obj.shotId === 'string' && obj.shotId ? obj.shotId : null,
+    state: state as ShotStateEvent['state'],
+    machineState: typeof obj.machineState === 'string' ? obj.machineState : null,
+    machineSubstate: typeof obj.machineSubstate === 'string' ? obj.machineSubstate : null,
+    profileFrame:
+      typeof obj.profileFrame === 'number' && Number.isFinite(obj.profileFrame)
+        ? obj.profileFrame
+        : null,
+    scaleConnected: obj.scaleConnected === true,
+    scaleLost: obj.scaleLost === true,
+    machineHasAutonomousSAW: obj.machineHasAutonomousSAW === true,
+    decision: readShotStateDecision(obj.decision)
+  };
+}
+
+function readShotStateDecision(value: unknown): ShotStateDecision | null {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const obj = value as Record<string, unknown>;
+  const kind = typeof obj.kind === 'string' && SHOT_DECISION_KINDS.has(obj.kind) ? obj.kind : null;
+  const reason = typeof obj.reason === 'string' && obj.reason ? obj.reason : null;
+  if (!kind || !reason) return null;
+  const data =
+    obj.data != null && typeof obj.data === 'object' && !Array.isArray(obj.data)
+      ? (obj.data as Record<string, unknown>)
+      : null;
+  return {
+    kind: kind as ShotStateDecision['kind'],
+    reason,
+    details: typeof obj.details === 'string' ? obj.details : null,
+    data
+  };
 }
 
 export function readPaginatedShots(value: unknown): PaginatedShots {

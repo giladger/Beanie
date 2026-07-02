@@ -54,8 +54,10 @@ export interface LiveStageView {
   /** Step name, e.g. "Preinfusion", "Pour", "Decline". */
   name: string;
   /**
-   * The actual reason this stage advanced, inferred at the transition (e.g.
-   * "pressure 4.2 bar" or "9.8s elapsed"). Null until the stage has handed off.
+   * The actual reason this stage advanced (e.g. "weight 18.2 g",
+   * "pressure 4.2 bar", "9.8s elapsed") — from the gateway's shotState
+   * decision, described with handoff telemetry for firmware-side exits.
+   * Null until the stage has handed off.
    */
   reason: string | null;
 }

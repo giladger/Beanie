@@ -37,6 +37,41 @@ export interface MachineSnapshot {
   steamTemperature: number;
 }
 
+export type ShotDecisionKind = 'advance' | 'stop' | 'abort' | 'terminal' | 'finalize';
+
+export interface ShotStateDecision {
+  kind: ShotDecisionKind;
+  /**
+   * Why the sequencer decided (e.g. `targetWeight`, `profileSkip`,
+   * `machineEnded`). OPEN SET — newer gateways may send reasons this build
+   * doesn't know; pass them through rather than dropping them.
+   */
+  reason: string;
+  details: string | null;
+  data: Record<string, unknown> | null;
+}
+
+/**
+ * One frame on `/ws/v1/machine/shotState` — the gateway shot sequencer's
+ * state + decision feed. Every frame carries the current shot phase and
+ * machine context; `decision` is non-null only on decision/terminal frames.
+ */
+export interface ShotStateEvent {
+  event: 'state' | 'decision' | 'terminal';
+  timestamp: string;
+  /** Equals the persisted ShotRecord id once saved; null between shots. */
+  shotId: string | null;
+  state: 'idle' | 'preheating' | 'pouring' | 'stopping' | 'finished';
+  machineState: string | null;
+  machineSubstate: string | null;
+  profileFrame: number | null;
+  scaleConnected: boolean;
+  /** Sticky once the scale drops mid-shot, even if it reconnects. */
+  scaleLost: boolean;
+  machineHasAutonomousSAW: boolean;
+  decision: ShotStateDecision | null;
+}
+
 export interface MachineCapabilities {
   capabilities: string[];
 }

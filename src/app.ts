@@ -27,7 +27,13 @@ import {
   gatewayHttpOrigin,
   gatewayWsOrigin
 } from './api/gateway';
-import { readMachineSnapshot, readScaleSnapshot } from './api/guards';
+import { readMachineSnapshot, readScaleSnapshot, readShotStateEvent } from './api/guards';
+import {
+  emptyDecisionLog,
+  nextDecisionLog,
+  stopReasonLabel,
+  type ShotDecisionLog
+} from './domain/shotDecisions';
 import {
   capitalize,
   defaultExitValueForApp,
@@ -868,17 +874,23 @@ export class BeanieApp {
   private scaleRetryTimer: number | null = null;
   private waterRetryTimer: number | null = null;
   private displayRetryTimer: number | null = null;
+  private shotStateRetryTimer: number | null = null;
   // Consecutive failed (re)connect attempts per socket, for backoff pacing.
   private machineSocketAttempts = 0;
   private scaleSocketAttempts = 0;
   private waterSocketAttempts = 0;
   private displaySocketAttempts = 0;
+  private shotStateSocketAttempts = 0;
   private shotRefreshTimer: number | null = null;
   private beanRefreshTimer: number | null = null;
   private machineSocket: WebSocket | null = null;
   private scaleSocket: WebSocket | null = null;
   private waterSocket: WebSocket | null = null;
   private displaySocket: WebSocket | null = null;
+  private shotStateSocket: WebSocket | null = null;
+  // The gateway sequencer's decisions for the current shot (why each stage
+  // advanced, why the pour stopped), accumulated off /ws/v1/machine/shotState.
+  private decisionLog: ShotDecisionLog = emptyDecisionLog();
   private disposed = false;
   // Memoised so the boot settings load runs once; the scanner awaits it too.
   private settingsLoadPromise: Promise<void> | null = null;
@@ -1046,6 +1058,7 @@ export class BeanieApp {
     if (this.scaleRetryTimer != null) window.clearTimeout(this.scaleRetryTimer);
     if (this.waterRetryTimer != null) window.clearTimeout(this.waterRetryTimer);
     if (this.displayRetryTimer != null) window.clearTimeout(this.displayRetryTimer);
+    if (this.shotStateRetryTimer != null) window.clearTimeout(this.shotStateRetryTimer);
     if (this.shotRefreshTimer != null) window.clearInterval(this.shotRefreshTimer);
     if (this.beanRefreshTimer != null) window.clearInterval(this.beanRefreshTimer);
     if (this.simTimer != null) window.clearTimeout(this.simTimer);
@@ -1237,6 +1250,7 @@ export class BeanieApp {
       this.connectScaleSocket();
       this.connectWaterLevelSocket();
       this.connectDisplaySocket();
+      this.connectShotStateSocket();
       this.startShotRefreshTimer();
       this.startBeanRefreshTimer();
       void this.migrateStorageEventsOnce();
@@ -2581,18 +2595,22 @@ export class BeanieApp {
     const scaleSocket = this.scaleSocket;
     const waterSocket = this.waterSocket;
     const displaySocket = this.displaySocket;
+    const shotStateSocket = this.shotStateSocket;
     this.machineSocket = null;
     this.scaleSocket = null;
     this.waterSocket = null;
     this.displaySocket = null;
+    this.shotStateSocket = null;
     this.closeSocket(machineSocket);
     this.closeSocket(scaleSocket);
     this.closeSocket(waterSocket);
     this.closeSocket(displaySocket);
+    this.closeSocket(shotStateSocket);
     this.machineSocketAttempts = 0;
     this.scaleSocketAttempts = 0;
     this.waterSocketAttempts = 0;
     this.displaySocketAttempts = 0;
+    this.shotStateSocketAttempts = 0;
   }
 
   private closeSocket(socket: WebSocket | null): void {
@@ -2774,6 +2792,47 @@ export class BeanieApp {
         this.displayRetryTimer = null;
         this.connectDisplaySocket();
       }, reconnectDelayMs(this.displaySocketAttempts++));
+    };
+  }
+
+  // The gateway sequencer's shot state + decision feed. This is the authority
+  // on WHY things happened during a pull — which stage advances were app-issued
+  // weight skips vs firmware exits, and what stopped the shot — replacing the
+  // telemetry guesswork the rail and completion status used before. The chart
+  // lifecycle stays on the snapshot socket (same source as the plotted data),
+  // so this socket only feeds the decision log.
+  private connectShotStateSocket(): void {
+    if (this.disposed || this.state.demo) return;
+    const previous = this.shotStateSocket;
+    this.shotStateSocket = null;
+    this.closeSocket(previous);
+    const ws = new WebSocket(`${gatewayWsOrigin()}/ws/v1/machine/shotState`);
+    this.shotStateSocket = ws;
+    ws.onopen = () => {
+      if (this.shotStateSocket === ws) this.shotStateSocketAttempts = 0;
+    };
+    ws.onmessage = (event) => {
+      try {
+        const frame = readShotStateEvent(JSON.parse(event.data));
+        const next = nextDecisionLog(this.decisionLog, frame);
+        if (next === this.decisionLog) return;
+        this.decisionLog = next;
+        // An advance decision can land just after the frame change already
+        // patched the rail (two sockets, no ordering guarantee) — force the
+        // next readout tick to repopulate the stage reasons.
+        this.lastStageReasonCount = -1;
+      } catch (error) {
+        console.warn('[Beanie] Bad shotState frame', error);
+      }
+    };
+    ws.onclose = () => {
+      if (this.disposed) return;
+      if (this.shotStateSocket !== ws) return;
+      if (this.shotStateRetryTimer != null) window.clearTimeout(this.shotStateRetryTimer);
+      this.shotStateRetryTimer = window.setTimeout(() => {
+        this.shotStateRetryTimer = null;
+        this.connectShotStateSocket();
+      }, reconnectDelayMs(this.shotStateSocketAttempts++));
     };
   }
 
@@ -3234,9 +3293,10 @@ export class BeanieApp {
   }
 
   // The actual advance reason for each stage that has already handed off, indexed
-  // by step. A stage's reason is known only once the NEXT stage begins (that
-  // transition carries the telemetry at the moment of advance); stages not yet
-  // reached stay null. Cheap enough to call per frame — parsing is memoized.
+  // by step. A stage's reason renders once the NEXT stage begins (its marker
+  // carries the telemetry at the moment of advance); the gateway's shotState
+  // decision for the vacated frame says WHAT advanced it (app weight skip vs
+  // firmware exit). Cheap enough to call per frame — parsing is memoized.
   private liveStageReasons(): (string | null)[] {
     const steps = this.parsedLiveSteps();
     const markers = this.liveShot.snapshot.stageMarkers;
@@ -3245,11 +3305,16 @@ export class BeanieApp {
       const endedFrame = markers[i - 1]!.frame;
       if (endedFrame < 0 || endedFrame >= steps.length) continue;
       const elapsed = Math.max(0, markers[i]!.t - markers[i - 1]!.t);
-      reasons[endedFrame] = liveStageAdvanceReason(steps[endedFrame], elapsed, {
-        pressure: markers[i]!.atPressure,
-        flow: markers[i]!.atFlow,
-        weight: markers[i]!.atWeight
-      });
+      reasons[endedFrame] = liveStageAdvanceReason(
+        this.decisionLog.advances.get(endedFrame) ?? null,
+        steps[endedFrame],
+        elapsed,
+        {
+          pressure: markers[i]!.atPressure,
+          flow: markers[i]!.atFlow,
+          weight: markers[i]!.atWeight
+        }
+      );
     }
     return reasons;
   }
@@ -3276,7 +3341,13 @@ export class BeanieApp {
 
   private onShotEnded(): void {
     const shotWindow = this.liveShot.snapshot;
-    const noScaleBlockedAbort = !this.cleaningInProgress && this.isNoScaleBlockedLiveAbort(shotWindow);
+    // The gateway reports a blockOnNoScale abort explicitly on the shotState
+    // feed; the local duration/scale heuristic remains as the tiebreaker for
+    // the moments the decision hasn't landed yet (two sockets, no ordering).
+    const noScaleBlockedAbort =
+      !this.cleaningInProgress &&
+      (this.decisionLog.stop?.reason === 'noScale' ||
+        this.isNoScaleBlockedLiveAbort(shotWindow));
     const bean = this.selectedBean();
     const batch = this.selectedBatch();
     const optimisticShot = !this.cleaningInProgress && !noScaleBlockedAbort && bean
@@ -3297,7 +3368,11 @@ export class BeanieApp {
       currentShots: this.state.shots,
       shotWindow,
       optimisticShot,
-      completionReason: this.liveShot.completionReason,
+      // The gateway's stop decision is authoritative (target weight vs API vs
+      // app vs machine stop); the local weight heuristic covers only the
+      // transient where the decision frame hasn't landed yet.
+      completionReason:
+        stopReasonLabel(this.decisionLog.stop) ?? this.liveShot.completionReason,
       nowMs: Date.now()
     });
 
