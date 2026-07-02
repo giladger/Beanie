@@ -1748,7 +1748,10 @@ p {
   display: none;
 }
 
+/* The rail is a vertical timeline: done stages tick off with a check and a
+   tinted connector, the current stage glows, upcoming stages sit dimmed. */
 .live-stage-item {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -1758,7 +1761,25 @@ p {
   color: var(--muted);
 }
 
+/* Connector segment from this stage's badge down to the next one. */
+.live-stage-item:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 16px;
+  top: 27px;
+  bottom: -7px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--line-soft);
+}
+
+/* A completed stage's connector carries the accent — the pour has been here. */
+.live-stage-item.done:not(:last-child)::before {
+  background: color-mix(in srgb, var(--teal) 45%, var(--line-soft));
+}
+
 .live-stage-num {
+  position: relative;
   flex: 0 0 auto;
   width: 18px;
   height: 18px;
@@ -1775,6 +1796,7 @@ p {
 .live-stage-text {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   min-width: 0;
 }
 
@@ -1786,19 +1808,104 @@ p {
   overflow-wrap: anywhere;
 }
 
-/* The actual reason a stage advanced, filled in live once it hands off. */
+/* The reason a stage ended, as a chip tinted with the color of the chart
+   series that caused it (pressure/flow/weight), so the rail speaks the same
+   color language as the graph. Filled in live the moment the stage hands off. */
 .live-stage-reason {
+  margin-top: 2px;
+  padding: 1px 6px;
+  border: 1px solid transparent;
+  border-radius: 999px;
   font-size: 10px;
   font-weight: 700;
-  line-height: 1.3;
+  line-height: 1.4;
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
+  animation: live-stage-reason-in 180ms ease-out;
+}
+
+@keyframes live-stage-reason-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Advance chips, tinted like the chart series that triggered them. */
+.live-stage-reason[data-kind='pressure'] {
+  background: color-mix(in srgb, #50c17b 18%, transparent);
+  color: color-mix(in srgb, #50c17b 60%, var(--ink));
+}
+
+.live-stage-reason[data-kind='flow'] {
+  background: color-mix(in srgb, #7ca8ff 18%, transparent);
+  color: color-mix(in srgb, #7ca8ff 60%, var(--ink));
+}
+
+.live-stage-reason[data-kind='volume'] {
+  background: color-mix(in srgb, #a9c6ff 18%, transparent);
+  color: color-mix(in srgb, #a9c6ff 60%, var(--ink));
+}
+
+.live-stage-reason[data-kind='weight'] {
+  background: color-mix(in srgb, #8a6d1c 26%, transparent);
+  color: color-mix(in srgb, #b8952f 55%, var(--ink));
+}
+
+/* Stop chips on the final stage — the shot's epitaph gets a visible border.
+   A met target reads as a small win; abnormal endings warn. */
+.live-stage-reason[data-kind='goal'] {
+  background: color-mix(in srgb, var(--teal) 18%, transparent);
+  border-color: color-mix(in srgb, var(--teal) 45%, transparent);
+  color: color-mix(in srgb, var(--teal) 65%, var(--ink));
+}
+
+.live-stage-reason[data-kind='stop'] {
+  border-color: color-mix(in srgb, var(--muted) 45%, transparent);
+  color: var(--soft);
+}
+
+.live-stage-reason[data-kind='warn'] {
+  background: color-mix(in srgb, var(--amber) 18%, transparent);
+  border-color: color-mix(in srgb, var(--amber) 50%, transparent);
+  color: color-mix(in srgb, var(--amber) 65%, var(--ink));
 }
 
 /* Stages that haven't advanced yet carry an empty reason — take up no space. */
 .live-stage-reason:empty {
   display: none;
+}
+
+/* Completed stages: the number becomes a check, the name settles. */
+.live-stage-item.done {
+  color: var(--soft);
+}
+
+.live-stage-item.done .live-stage-num {
+  color: transparent;
+  background: color-mix(in srgb, var(--teal) 22%, var(--panel-2));
+}
+
+.live-stage-item.done .live-stage-num::after {
+  content: '✓';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--teal);
+}
+
+/* Stages the pour hasn't reached yet recede. */
+.live-stage-item.upcoming {
+  opacity: 0.55;
 }
 
 /* The stage the machine is currently in: highlighted, patched live by the app. */
@@ -1811,10 +1918,6 @@ p {
 .live-stage-item.current .live-stage-num {
   background: var(--teal);
   color: var(--bg);
-}
-
-.live-stage-item.current .live-stage-reason {
-  color: var(--soft);
 }
 
 .live-canvas-wrap {

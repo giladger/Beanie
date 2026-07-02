@@ -69,8 +69,8 @@ run('live panel renders inactive, active, and finalizing states', () => {
 
   const stages = {
     steps: [
-      { name: 'Preinfusion', reason: 'pressure 4.2 bar' },
-      { name: 'Pour', reason: '9.8s elapsed' },
+      { name: 'Preinfusion', reason: { text: 'pressure 4.2 bar', kind: 'pressure' as const } },
+      { name: 'Pour', reason: { text: '9.8s elapsed', kind: 'time' as const } },
       { name: 'Decline', reason: null }
     ],
     currentIndex: 1
@@ -86,18 +86,20 @@ run('live panel renders inactive, active, and finalizing states', () => {
   includes(active, 'live-ghost-button active');
   includes(active, 'Hide reference overlay (18g → 36g)');
 
-  // Stage rail lists every stage, with the current one highlighted.
+  // Stage rail is a timeline: stages before the current one are done, the
+  // current one highlighted, later ones upcoming.
   includes(active, 'id="live-stage-rail"');
   includes(active, 'Preinfusion');
   includes(active, 'Pour');
   includes(active, 'Decline');
+  includes(active, 'live-stage-item done" data-index="0"');
   includes(active, 'live-stage-item current" data-index="1"');
+  includes(active, 'live-stage-item upcoming" data-index="2"');
 
-  // Each advanced stage shows the actual reason it advanced; a null reason renders
-  // an empty span (kept for live patching, hidden by :empty CSS).
-  includes(active, 'live-stage-reason');
-  includes(active, 'pressure 4.2 bar');
-  includes(active, '>9.8s elapsed<');
+  // Each advanced stage shows its reason as a chip tinted by kind; a null
+  // reason renders an empty span (kept for live patching, hidden by :empty).
+  includes(active, 'data-kind="pressure">pressure 4.2 bar<');
+  includes(active, 'data-kind="time">9.8s elapsed<');
   includes(active, 'live-stage-reason" data-index="2"></span>');
 
   // No stages known: the rail is still present (for live patching) but hidden.

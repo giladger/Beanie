@@ -1,5 +1,6 @@
 import type { EditorStep } from './profileModel';
-import type { StageAdvanceDecision } from './shotDecisions';
+import type { StageAdvanceDecision, StopDecision } from './shotDecisions';
+import { stopReasonLabel } from './shotDecisions';
 
 // Telemetry captured at the instant a stage handed off (the ending stage's last
 // readouts), used to report the measured value behind a firmware-side advance.
@@ -7,6 +8,26 @@ export interface StageAdvanceTelemetry {
   pressure: number | null;
   flow: number | null;
   weight: number | null;
+}
+
+// What caused a stage to end, as a visual category. The advance kinds mirror
+// the chart's series colors (a pressure exit tints like the pressure curve),
+// so the rail speaks the same color language as the graph; the stop kinds are
+// semantic — `goal` for a target met, `warn` for an abnormal ending, `stop`
+// for a plain manual/machine stop.
+export type StageReasonKind =
+  | 'weight'
+  | 'pressure'
+  | 'flow'
+  | 'volume'
+  | 'time'
+  | 'goal'
+  | 'stop'
+  | 'warn';
+
+export interface StageReason {
+  text: string;
+  kind: StageReasonKind;
 }
 
 // The reason a stage advanced, for the live rail.
@@ -25,12 +46,16 @@ export function liveStageAdvanceReason(
   step: EditorStep | undefined,
   elapsed: number,
   at: StageAdvanceTelemetry
-): string {
+): StageReason {
   if (decision?.reason === 'profileSkip') {
     const weight = decision.weight ?? at.weight ?? step?.weight ?? null;
-    return weight != null && weight > 0
-      ? `weight ${formatStageNumber(weight)} g`
-      : 'weight target';
+    return {
+      text:
+        weight != null && weight > 0
+          ? `weight ${formatStageNumber(weight)} g`
+          : 'weight target',
+      kind: 'weight'
+    };
   }
 
   const cap = step?.seconds ?? 0;
@@ -40,16 +65,43 @@ export function liveStageAdvanceReason(
     // fire) for a step whose real move-on lives elsewhere. Only treat the exit
     // as the trigger when it's a genuine condition (positive threshold).
     if (step.exit && step.exit.value > 0) {
-      const measured = step.exit.type === 'flow' ? at.flow : at.pressure;
-      const unit = step.exit.type === 'flow' ? 'ml/s' : 'bar';
-      const sensor = step.exit.type === 'flow' ? 'flow' : 'pressure';
-      return measured != null
-        ? `${sensor} ${formatStageNumber(measured)} ${unit}`
-        : `${sensor} exit`;
+      const isFlow = step.exit.type === 'flow';
+      const measured = isFlow ? at.flow : at.pressure;
+      const unit = isFlow ? 'ml/s' : 'bar';
+      const sensor = isFlow ? 'flow' : 'pressure';
+      return {
+        text:
+          measured != null
+            ? `${sensor} ${formatStageNumber(measured)} ${unit}`
+            : `${sensor} exit`,
+        kind: isFlow ? 'flow' : 'pressure'
+      };
     }
-    if (step.volume > 0) return `volume ${formatStageNumber(step.volume)} ml`;
+    if (step.volume > 0) {
+      return { text: `volume ${formatStageNumber(step.volume)} ml`, kind: 'volume' };
+    }
   }
-  return `${formatStageNumber(elapsed)}s elapsed`;
+  return { text: `${formatStageNumber(elapsed)}s elapsed`, kind: 'time' };
+}
+
+// The reason chip for the FINAL stage: the shot's stop decision. Targets met
+// read as a small win (`goal`); abnormal endings warn; everything else — a
+// plain stop, whoever commanded it — stays neutral. Unknown reasons (open
+// set) pass through as neutral stops.
+export function stageStopReason(stop: StopDecision | null): StageReason | null {
+  const text = stopReasonLabel(stop);
+  if (!stop || text == null) return null;
+  switch (stop.reason) {
+    case 'targetWeight':
+    case 'targetVolume':
+      return { text, kind: 'goal' };
+    case 'error':
+    case 'disconnected':
+    case 'noScale':
+      return { text, kind: 'warn' };
+    default:
+      return { text, kind: 'stop' };
+  }
 }
 
 export function formatStageNumber(value: number): string {

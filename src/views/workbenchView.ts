@@ -1,4 +1,5 @@
 import type { MachineState, RecipeDraft } from '../api/types';
+import type { StageReason } from '../domain/liveStageReason';
 import { icon } from '../components/icons';
 import { escapeAttr, escapeHtml } from '../components/html';
 
@@ -57,9 +58,10 @@ export interface LiveStageView {
    * The actual reason this stage advanced (e.g. "weight 18.2 g",
    * "pressure 4.2 bar", "9.8s elapsed") — from the gateway's shotState
    * decision, described with handoff telemetry for firmware-side exits.
-   * Null until the stage has handed off.
+   * The kind picks the chip tint (series colors for advances, semantic
+   * goal/stop/warn for the final stop). Null until the stage has handed off.
    */
-  reason: string | null;
+  reason: StageReason | null;
 }
 
 export interface LiveStagesView {
@@ -339,7 +341,7 @@ function liveReadout(label: string, id: string, value: string, unit = ''): strin
 }
 
 // Fixed vertical rail of every profile stage, rendered once beside the chart;
-// the app highlights the current one by toggling `.current` per frame. Hidden
+// the app patches the done/current/upcoming states per frame. Hidden
 // (but kept in the DOM for patching) when the profile's steps aren't known.
 function liveStageRail(stages: LiveStagesView | null): string {
   if (!stages || stages.steps.length === 0) {
@@ -348,14 +350,25 @@ function liveStageRail(stages: LiveStagesView | null): string {
   const items = stages.steps
     .map(
       (step, index) => `
-      <li class="live-stage-item ${index === stages.currentIndex ? 'current' : ''}" data-index="${index}">
+      <li class="live-stage-item ${stageStateClass(index, stages.currentIndex)}" data-index="${index}">
         <span class="live-stage-num">${index + 1}</span>
         <span class="live-stage-text">
           <span class="live-stage-label">${escapeHtml(step.name)}</span>
-          <span class="live-stage-reason" data-index="${index}">${escapeHtml(step.reason ?? '')}</span>
+          <span class="live-stage-reason" data-index="${index}"${
+            step.reason ? ` data-kind="${step.reason.kind}"` : ''
+          }>${escapeHtml(step.reason?.text ?? '')}</span>
         </span>
       </li>`
     )
     .join('');
   return `<ol class="live-stage-rail" id="live-stage-rail">${items}</ol>`;
+}
+
+// Timeline state for a rail item: stages before the current one are done,
+// stages after it upcoming. No classes when the current stage is unknown.
+function stageStateClass(index: number, currentIndex: number | null): string {
+  if (currentIndex == null) return '';
+  if (index < currentIndex) return 'done';
+  if (index === currentIndex) return 'current';
+  return 'upcoming';
 }

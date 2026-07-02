@@ -236,7 +236,11 @@ import {
   type SimpleProfileField
 } from './components/profileEditor';
 import type { EditorStep, ProfileMetaKey, StepFieldKey } from './domain/profileModel';
-import { liveStageAdvanceReason } from './domain/liveStageReason';
+import {
+  liveStageAdvanceReason,
+  stageStopReason,
+  type StageReason
+} from './domain/liveStageReason';
 import { LiveChart } from './components/LiveChart';
 import { chartModelFromShot, overlayComparisonModel } from './components/liveChartModel';
 import type { LiveChartModel } from './domain/liveChartModel';
@@ -3274,18 +3278,25 @@ export class BeanieApp {
         latest.scaledTemperature == null ? '--' : (latest.scaledTemperature * 10).toFixed(1);
     }
     if (els.stageRail) {
-      // Item names are static for the shot; the highlight moves each frame, and a
-      // stage's actual advance reason fills in the moment the next stage begins.
+      // Item names are static for the shot; the timeline states (done/current/
+      // upcoming) move each frame, and a stage's actual advance reason fills
+      // in as a tinted chip the moment the next stage begins.
       const current = this.currentStageIndex();
       els.stageRail.querySelectorAll<HTMLElement>('.live-stage-item').forEach((item) => {
-        item.classList.toggle('current', Number(item.dataset.index) === current);
+        const index = Number(item.dataset.index);
+        item.classList.toggle('done', current != null && index < current);
+        item.classList.toggle('current', current != null && index === current);
+        item.classList.toggle('upcoming', current != null && index > current);
       });
       const markerCount = this.liveShot.snapshot.stageMarkers.length;
       if (markerCount !== this.lastStageReasonCount) {
         this.lastStageReasonCount = markerCount;
         const reasons = this.liveStageReasons();
         els.stageRail.querySelectorAll<HTMLElement>('.live-stage-reason').forEach((span) => {
-          span.textContent = reasons[Number(span.dataset.index)] ?? '';
+          const reason = reasons[Number(span.dataset.index)] ?? null;
+          span.textContent = reason?.text ?? '';
+          if (reason) span.dataset.kind = reason.kind;
+          else delete span.dataset.kind;
         });
       }
     }
@@ -3307,10 +3318,10 @@ export class BeanieApp {
   // carries the telemetry at the moment of advance); the gateway's shotState
   // decision for the vacated frame says WHAT advanced it (app weight skip vs
   // firmware exit). Cheap enough to call per frame — parsing is memoized.
-  private liveStageReasons(): (string | null)[] {
+  private liveStageReasons(): (StageReason | null)[] {
     const steps = this.parsedLiveSteps();
     const markers = this.liveShot.snapshot.stageMarkers;
-    const reasons: (string | null)[] = new Array(steps.length).fill(null);
+    const reasons: (StageReason | null)[] = new Array(steps.length).fill(null);
     for (let i = 1; i < markers.length; i += 1) {
       const endedFrame = markers[i - 1]!.frame;
       if (endedFrame < 0 || endedFrame >= steps.length) continue;
@@ -3344,7 +3355,7 @@ export class BeanieApp {
             weight: this.liveShot.latest.weight
           });
         } else {
-          reasons[frame] = stopReasonLabel(this.decisionLog.stop);
+          reasons[frame] = stageStopReason(this.decisionLog.stop);
         }
       }
     }

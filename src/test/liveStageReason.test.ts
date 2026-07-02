@@ -1,4 +1,8 @@
-import { liveStageAdvanceReason } from '../domain/liveStageReason';
+import {
+  liveStageAdvanceReason,
+  stageStopReason,
+  type StageReason
+} from '../domain/liveStageReason';
 import type { StageAdvanceDecision } from '../domain/shotDecisions';
 import type { EditorStep } from '../domain/profileModel';
 
@@ -12,38 +16,42 @@ const FIRMWARE: StageAdvanceDecision = { reason: 'profileAdvance', weight: null 
 
 run('an app-issued weight skip reports the projected weight from the decision', () => {
   const step = makeStep({ seconds: 30, weight: 8 });
-  equal(
+  reasonEqual(
     liveStageAdvanceReason(SKIP(8.3), step, 6, { pressure: 9, flow: 2, weight: 8.1 }),
-    'weight 8.3 g'
+    'weight 8.3 g',
+    'weight'
   );
 });
 
 run('a weight skip without a decision value falls back to measured weight', () => {
   const step = makeStep({ seconds: 30, weight: 8 });
-  equal(
+  reasonEqual(
     liveStageAdvanceReason(SKIP(null), step, 6, { pressure: 9, flow: 2, weight: 8.1 }),
-    'weight 8.1 g'
+    'weight 8.1 g',
+    'weight'
   );
 });
 
 run('a weight skip with no telemetry falls back to the step goal', () => {
   const step = makeStep({ seconds: 30, weight: 8 });
-  equal(liveStageAdvanceReason(SKIP(null), step, 6, NO_TELEMETRY), 'weight 8 g');
+  reasonEqual(liveStageAdvanceReason(SKIP(null), step, 6, NO_TELEMETRY), 'weight 8 g', 'weight');
 });
 
 run('a firmware advance on a pressure-exit step reports the measured pressure', () => {
   const step = makeStep({ seconds: 30, exit: { type: 'pressure', condition: 'over', value: 4 } });
-  equal(
+  reasonEqual(
     liveStageAdvanceReason(FIRMWARE, step, 8, { pressure: 4.2, flow: 1, weight: 5 }),
-    'pressure 4.2 bar'
+    'pressure 4.2 bar',
+    'pressure'
   );
 });
 
 run('a firmware advance on a flow-exit step reports the measured flow', () => {
   const step = makeStep({ seconds: 30, exit: { type: 'flow', condition: 'under', value: 2 } });
-  equal(
+  reasonEqual(
     liveStageAdvanceReason(FIRMWARE, step, 8, { pressure: 6, flow: 1.8, weight: 5 }),
-    'flow 1.8 ml/s'
+    'flow 1.8 ml/s',
+    'flow'
   );
 });
 
@@ -56,36 +64,59 @@ run('a firmware advance ignores a placeholder exit and reports the volume goal',
     volume: 40,
     exit: { type: 'flow', condition: 'under', value: 0 }
   });
-  equal(
+  reasonEqual(
     liveStageAdvanceReason(FIRMWARE, step, 6, { pressure: 9, flow: 4.8, weight: 5.1 }),
-    'volume 40 ml'
+    'volume 40 ml',
+    'volume'
   );
 });
 
 run('a firmware advance at the time cap reports elapsed time', () => {
   const step = makeStep({ seconds: 10, exit: { type: 'pressure', condition: 'over', value: 9 } });
-  equal(liveStageAdvanceReason(FIRMWARE, step, 9.8, NO_TELEMETRY), '9.8s elapsed');
+  reasonEqual(liveStageAdvanceReason(FIRMWARE, step, 9.8, NO_TELEMETRY), '9.8s elapsed', 'time');
 });
 
 run('a missing decision (transient socket gap) uses the firmware description', () => {
   const step = makeStep({ seconds: 30, exit: { type: 'pressure', condition: 'over', value: 4 } });
-  equal(
+  reasonEqual(
     liveStageAdvanceReason(null, step, 8, { pressure: 4.2, flow: 1, weight: 5 }),
-    'pressure 4.2 bar'
+    'pressure 4.2 bar',
+    'pressure'
   );
 });
 
 run('an unknown future advance reason falls back to the firmware description', () => {
   const step = makeStep({ seconds: 40, volume: 36 });
-  equal(
-    liveStageAdvanceReason(
-      { reason: 'someFutureReason', weight: null },
-      step,
-      12,
-      NO_TELEMETRY
-    ),
-    'volume 36 ml'
+  reasonEqual(
+    liveStageAdvanceReason({ reason: 'someFutureReason', weight: null }, step, 12, NO_TELEMETRY),
+    'volume 36 ml',
+    'volume'
   );
+});
+
+run('a met target stop reads as a goal chip', () => {
+  reasonEqual(stageStopReason({ kind: 'stop', reason: 'targetWeight' }), 'target weight', 'goal');
+  reasonEqual(stageStopReason({ kind: 'stop', reason: 'targetVolume' }), 'target volume', 'goal');
+});
+
+run('commanded and machine stops read as neutral stop chips', () => {
+  reasonEqual(stageStopReason({ kind: 'stop', reason: 'apiStop' }), 'stopped via API', 'stop');
+  reasonEqual(stageStopReason({ kind: 'stop', reason: 'appStop' }), 'stopped from app', 'stop');
+  reasonEqual(stageStopReason({ kind: 'stop', reason: 'machineEnded' }), 'machine stop', 'stop');
+});
+
+run('abnormal endings warn', () => {
+  reasonEqual(stageStopReason({ kind: 'terminal', reason: 'error' }), 'machine error', 'warn');
+  reasonEqual(
+    stageStopReason({ kind: 'terminal', reason: 'disconnected' }),
+    'machine disconnected',
+    'warn'
+  );
+});
+
+run('an unknown stop reason passes through as a neutral chip; null stays null', () => {
+  reasonEqual(stageStopReason({ kind: 'stop', reason: 'someFutureReason' }), 'someFutureReason', 'stop');
+  equal(stageStopReason(null), null);
 });
 
 function makeStep(overrides: Partial<EditorStep>): EditorStep {
@@ -105,6 +136,15 @@ function makeStep(overrides: Partial<EditorStep>): EditorStep {
     extra: {},
     ...overrides
   };
+}
+
+function reasonEqual(actual: StageReason | null, text: string, kind: string): void {
+  if (!actual) throw new Error(`Expected "${text}" (${kind}), received null`);
+  if (actual.text !== text || actual.kind !== kind) {
+    throw new Error(
+      `Expected "${text}" (${kind}), received "${actual.text}" (${actual.kind})`
+    );
+  }
 }
 
 function run(name: string, fn: () => void): void {
