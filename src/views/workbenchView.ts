@@ -149,7 +149,7 @@ export function renderLivePanel(model: LivePanelViewModel): string {
           </div>
         </div>
         <div class="live-body">
-          ${liveStageRail(model.finalizing ? null : model.stages)}
+          ${liveStageRail(model.stages)}
           <div class="live-canvas-wrap">
             <canvas id="live-canvas" class="live-canvas"></canvas>
           </div>

@@ -109,8 +109,10 @@ run('live panel renders inactive, active, and finalizing states', () => {
   includes(finalizing, 'Saving shot');
   includes(finalizing, 'Saving…');
   excludes(finalizing, 'data-action="stop"');
-  // The stage rail is suppressed while finalizing.
-  excludes(finalizing, 'Decline');
+  // The stage rail stays visible while finalizing so the steps don't disappear
+  // out from under the "Saving…" state.
+  includes(finalizing, 'id="live-stage-rail"');
+  includes(finalizing, 'Decline');
 });
 
 function model(overrides: Partial<WorkbenchViewModel> = {}): WorkbenchViewModel {
