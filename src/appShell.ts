@@ -126,6 +126,11 @@ export function machineStatus(machine: MachineSnapshot | null, loading: boolean)
   }
 }
 
+/** Topbar clock: locale-formatted hours and minutes (e.g. "14:05"). */
+export function clockLabel(date: Date): string {
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 export function formatNumber(value: number | null | undefined, digits: number): string {
   return value == null || Number.isNaN(value) ? '--' : value.toFixed(digits);
 }

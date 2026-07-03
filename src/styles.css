@@ -501,12 +501,17 @@ p {
   gap: 7px;
 }
 
-.top-machine-actions {
+.top-clock {
   flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
+  /* Digits carry unused descender space below the baseline, so a centered
+     line box reads ~2px high; pad the top to optically center the time. */
+  padding: 2px 12px 0;
+  color: var(--ink);
+  font-size: 27px;
+  font-weight: 750;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
 }
 
 .machine-command {
@@ -6865,7 +6870,7 @@ p {
   }
 
   /* Keep the action labels (the whole point of the buttons) but tighten the
-     spacing so they still fit once the Shot/Steam/Flush/Water commands appear. */
+     spacing so they still fit once the fallback Shot command appears. */
   .icon-tool-labeled {
     gap: 6px;
     padding: 0 11px;
@@ -7375,6 +7380,27 @@ p {
   align-items: start;
   justify-content: space-between;
   gap: 10px;
+}
+
+.machine-lane-start {
+  flex: 0 0 auto;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.machine-lane-start .icon {
+  width: 15px;
+  height: 15px;
 }
 
 .machine-lane-title h2 {

@@ -36,6 +36,7 @@ import {
 } from './domain/shotDecisions';
 import {
   capitalize,
+  clockLabel,
   defaultExitValueForApp,
   draftSignature,
   formatNumber,
@@ -890,6 +891,7 @@ export class BeanieApp {
   private displaySocketAttempts = 0;
   private shotStateSocketAttempts = 0;
   private shotRefreshTimer: number | null = null;
+  private clockTimer: number | null = null;
   private beanRefreshTimer: number | null = null;
   private machineSocket: WebSocket | null = null;
   private scaleSocket: WebSocket | null = null;
@@ -1044,6 +1046,7 @@ export class BeanieApp {
     // Live settings sync: re-poll the store whenever this device regains focus.
     window.addEventListener('focus', this.handleWindowFocus);
     this.render();
+    this.armClockTimer();
     void this.load();
     if (isHandoffArrival(location.search)) {
       history.replaceState(null, '', location.pathname);
@@ -1073,6 +1076,7 @@ export class BeanieApp {
     if (this.displayRetryTimer != null) window.clearTimeout(this.displayRetryTimer);
     if (this.shotStateRetryTimer != null) window.clearTimeout(this.shotStateRetryTimer);
     if (this.shotRefreshTimer != null) window.clearInterval(this.shotRefreshTimer);
+    if (this.clockTimer != null) window.clearTimeout(this.clockTimer);
     if (this.beanRefreshTimer != null) window.clearInterval(this.beanRefreshTimer);
     if (this.simTimer != null) window.clearTimeout(this.simTimer);
     if (this.timedSteamStopTimer != null) window.clearTimeout(this.timedSteamStopTimer);
@@ -1087,6 +1091,7 @@ export class BeanieApp {
     this.waterRetryTimer = null;
     this.displayRetryTimer = null;
     this.shotRefreshTimer = null;
+    this.clockTimer = null;
     this.beanRefreshTimer = null;
     this.simTimer = null;
     this.timedSteamStopTimer = null;
@@ -1506,6 +1511,19 @@ export class BeanieApp {
     this.shotRefreshTimer = window.setInterval(() => {
       void this.refreshVisibleShots();
     }, SHOT_REFRESH_INTERVAL_MS);
+  }
+
+  // Patch the topbar clock in place on each minute boundary (no re-render).
+  // A timeout chain rather than a 1s interval, so an idle tablet stays idle.
+  private armClockTimer(): void {
+    if (this.clockTimer != null) window.clearTimeout(this.clockTimer);
+    const msToNextMinute = 60_000 - (Date.now() % 60_000);
+    this.clockTimer = window.setTimeout(() => {
+      this.clockTimer = null;
+      const el = this.root.querySelector<HTMLElement>('#top-clock');
+      if (el) el.textContent = clockLabel(new Date());
+      this.armClockTimer();
+    }, msToNextMinute + 250);
   }
 
   private startBeanRefreshTimer(): void {
@@ -7089,6 +7107,7 @@ export class BeanieApp {
           current: this.state.machine?.state?.state ?? 'idle',
           busy: this.state.busy
         },
+        clock: clockLabel(new Date()),
         cleaningDue: cleaningDueNow,
         asleep: this.state.asleep
       },
@@ -7645,6 +7664,12 @@ export class BeanieApp {
     const waterPreset = selection.waterPreset ?? matchingPreset(water, waterPresets);
     const flushPreset = selection.flushPreset ?? matchingPreset(flush, flushPresets);
     const waterScaleConnected = scaleConnected(this.state.scale);
+    // App-side start buttons stand in for the physical GHC buttons where those
+    // are absent (simulator/demo and GHC-less machines).
+    const laneStart = (state: 'steam' | 'hotWater' | 'flush') =>
+      machineCommandsAvailable(this.state.demo, this.state.machineInfo)
+        ? { state, busy: this.state.busy }
+        : null;
     return renderMachinePageView({
       headerHtml: this.pageHeader('Steam · Water · Flush'),
       lanes: [
@@ -7656,6 +7681,7 @@ export class BeanieApp {
             presets: steamPresets,
             selectedPreset: steamPreset,
             labelOverrides: this.state.machinePresetLabels,
+            start: laneStart('steam'),
             values: [
               machineValueTile('steamFlow', 'Flow', steam.flow, capabilities.steam.flow),
               machineValueTile('steamTemp', 'Temp', steam.targetTemperature, capabilities.steam.targetTemperature),
@@ -7671,6 +7697,7 @@ export class BeanieApp {
             presets: waterPresets,
             selectedPreset: waterPreset,
             labelOverrides: this.state.machinePresetLabels,
+            start: laneStart('hotWater'),
             values: [
               machineValueTile('waterTemp', 'Temp', water.targetTemperature, capabilities.hotWater.targetTemperature),
               machineValueTile('waterFlow', 'Flow', water.flow, capabilities.hotWater.flow),
@@ -7693,6 +7720,7 @@ export class BeanieApp {
             presets: flushPresets,
             selectedPreset: flushPreset,
             labelOverrides: this.state.machinePresetLabels,
+            start: laneStart('flush'),
             values: [
               machineValueTile('flushDuration', 'Time', flush.duration, capabilities.flush.duration),
               machineValueTile('flushFlow', 'Flow', flush.flow, capabilities.flush.flow),

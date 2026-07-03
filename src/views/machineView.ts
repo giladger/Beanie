@@ -47,6 +47,11 @@ export interface MachineLaneOptions {
   selectedPreset: string;
   labelOverrides: Record<string, string>;
   values: MachineValueTile[];
+  /**
+   * App-side start command for machines without a GHC (and the simulator/demo);
+   * null hides the button where the physical GHC buttons do this job.
+   */
+  start: { state: 'steam' | 'hotWater' | 'flush'; busy: boolean } | null;
 }
 
 export interface MachineValueTile {
@@ -165,6 +170,18 @@ function cleaningDateLabel(iso: string): string {
 }
 
 function renderMachineLane(options: MachineLaneOptions): string {
+  const startLabel = `Start ${options.eyebrow.toLowerCase()}`;
+  const start = options.start
+    ? `<button
+        type="button"
+        class="machine-lane-start"
+        data-action="machine-command"
+        data-value="${escapeAttr(options.start.state)}"
+        aria-label="${escapeAttr(startLabel)}"
+        title="${escapeAttr(startLabel)}"
+        ${options.start.busy ? 'disabled' : ''}
+      >${icon('play')}<span>Start</span></button>`
+    : '';
   return `
     <section class="machine-lane ${options.tone}">
       <div class="machine-lane-title">
@@ -172,6 +189,7 @@ function renderMachineLane(options: MachineLaneOptions): string {
           <span class="eyebrow">${escapeHtml(options.eyebrow)}</span>
           <h2>${escapeHtml(options.title)}</h2>
         </div>
+        ${start}
       </div>
       <div class="machine-graphic" aria-hidden="true">
         ${machineGraphicIcon(options.tone)}

@@ -3,8 +3,6 @@ import type { StageReason } from '../domain/liveStageReason';
 import { icon } from '../components/icons';
 import { escapeAttr, escapeHtml } from '../components/html';
 
-export type WorkbenchMachineCommandState = Extract<MachineState, 'espresso' | 'steam' | 'flush' | 'hotWater'>;
-
 export interface WorkbenchTopbarViewModel {
   machineStatus: string;
   /** Alert styling for the status stat (e.g. when the gateway link is down). */
@@ -24,6 +22,8 @@ export interface WorkbenchTopbarViewModel {
     current: MachineState;
     busy: boolean;
   };
+  /** Wall-clock label (e.g. "14:05"); the app patches #top-clock each minute. */
+  clock: string;
   cleaningDue: boolean;
   asleep: boolean;
 }
@@ -177,7 +177,8 @@ export function renderTopbar(model: WorkbenchTopbarViewModel): string {
           ${topStat('Water', model.water, 'stat-water', model.waterTone)}
           ${topStatButton('Scale', model.scale.label, model.scale.title, 'scale-stat', 'stat-scale', model.scale.tone)}
         </div>
-        ${renderMachineCommands(model.machineCommands)}
+        ${renderShotCommand(model.machineCommands)}
+        <div class="top-clock" id="top-clock" aria-label="Clock">${escapeHtml(model.clock)}</div>
         <div class="top-icons" role="toolbar" aria-label="Skin actions">
           <button class="icon-tool icon-tool-labeled ${model.cleaningDue ? 'has-badge' : ''}" data-action="open-machine-settings" aria-label="${escapeAttr(machineSettingsLabel)}" title="${escapeAttr(machineSettingsLabel)}">${icon('droplet')}<span class="icon-tool-label">Water</span>${model.cleaningDue ? '<span class="icon-tool-badge" aria-hidden="true"></span>' : ''}</button>
           <button class="icon-tool icon-tool-labeled" data-action="open-settings" aria-label="Settings" title="Settings">${icon('settings')}<span class="icon-tool-label">Settings</span></button>
@@ -220,38 +221,26 @@ export function renderRecipeEditor(model: WorkbenchRecipeViewModel): string {
   `;
 }
 
-function renderMachineCommands(model: WorkbenchTopbarViewModel['machineCommands']): string {
+// Fallback shot trigger for machines without a GHC (and the simulator/demo).
+// The steam/flush/hot-water fallbacks live on the machine page's lanes; the
+// shot stays up here because brewing is the workbench's own live view.
+function renderShotCommand(model: WorkbenchTopbarViewModel['machineCommands']): string {
   if (!model.available) return '';
-  const commands: Array<{ state: WorkbenchMachineCommandState; label: string; icon: string }> = [
-    { state: 'espresso', label: 'Shot', icon: 'coffee' },
-    { state: 'steam', label: 'Steam', icon: 'waves' },
-    { state: 'flush', label: 'Flush', icon: 'refresh-cw' },
-    { state: 'hotWater', label: 'Water', icon: 'droplets' }
-  ];
+  const active = model.current === 'espresso';
+  const title = active ? 'Stop shot' : 'Shot';
   return `
-    <div class="top-machine-actions" role="toolbar" aria-label="Machine commands">
-      ${commands
-        .map(({ state, label, icon: iconName }) => {
-          const active = model.current === state;
-          const disabled = model.busy ? ' disabled' : '';
-          const title = active ? `Stop ${label.toLowerCase()}` : label;
-          return `
-            <button
-              class="machine-command ${active ? 'active' : ''}"
-              data-action="machine-command"
-              data-value="${escapeAttr(state)}"
-              aria-pressed="${active ? 'true' : 'false'}"
-              aria-label="${escapeAttr(title)}"
-              title="${escapeAttr(title)}"
-              ${disabled}
-            >
-              ${icon(iconName)}
-              <span>${escapeHtml(label)}</span>
-            </button>
-          `;
-        })
-        .join('')}
-    </div>
+    <button
+      class="machine-command ${active ? 'active' : ''}"
+      data-action="machine-command"
+      data-value="espresso"
+      aria-pressed="${active ? 'true' : 'false'}"
+      aria-label="${escapeAttr(title)}"
+      title="${escapeAttr(title)}"
+      ${model.busy ? 'disabled' : ''}
+    >
+      ${icon('coffee')}
+      <span>Shot</span>
+    </button>
   `;
 }
 

@@ -1,5 +1,6 @@
 import type { MachineInfo, MachineSnapshot, RecipeDraft, Workflow } from '../api/types';
 import {
+  clockLabel,
   detectDecentAppWebView,
   draftSignature,
   formatNumber,
@@ -30,6 +31,14 @@ run('app shell status helpers format machine water scale and numbers', () => {
   equal(formatNumber(null, 1), '--');
   equal(scaleConnected({ status: 'connected', weight: 1, weightFlow: 0, timestamp: 'now' }), true);
   equal(scaleConnected({ status: 'disconnected', weight: 1, weightFlow: 0, timestamp: 'now' }), false);
+});
+
+run('clock label formats hours and minutes for the current locale', () => {
+  const label = clockLabel(new Date(2026, 6, 3, 14, 5));
+  // Locale decides 24h vs AM/PM; either way both fields are present.
+  if (!/\b(14|02|2)\D?05\b/.test(label.normalize('NFKC'))) {
+    throw new Error(`Unexpected clock label: ${label}`);
+  }
 });
 
 run('scale battery normalizes fractions and surfaces only when low', () => {

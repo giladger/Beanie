@@ -12,9 +12,13 @@ run('workbench renders topbar metrics, hero bean actions, recipe controls, and h
   includes(html, 'id="stat-machine">Ready</strong>');
   includes(html, 'class="top-stat stat-warn"');
   includes(html, 'data-action="scale-stat"');
+  // Only the fallback Shot command lives in the topbar; steam/flush/hot-water
+  // start from the machine page's lanes.
   includes(html, 'data-action="machine-command"');
-  includes(html, 'data-value="steam"');
+  includes(html, 'data-value="espresso"');
+  excludes(html, 'data-value="steam"');
   includes(html, 'aria-pressed="true"');
+  includes(html, 'id="top-clock" aria-label="Clock">14:05</div>');
   includes(html, 'Water - steam, water, flush (cleaning due)');
   includes(html, 'Milky &amp; Cake');
   includes(html, 'Dak &lt;Roasters&gt;');
@@ -133,9 +137,10 @@ function model(overrides: Partial<WorkbenchViewModel> = {}): WorkbenchViewModel 
       },
       machineCommands: {
         available: true,
-        current: 'steam',
+        current: 'espresso',
         busy: false
       },
+      clock: '14:05',
       cleaningDue: true,
       asleep: false
     },

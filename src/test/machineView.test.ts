@@ -28,7 +28,8 @@ run('machine page renders lane presets, rename actions, graphics, and value tile
           machineValueTile('steamDuration', 'Time', 35, enabledSpec),
           machineValueTile('steamFlow', 'Flow', undefined, disabledSpec),
           machineSteamPurgeTile(1)
-        ]
+        ],
+        start: { state: 'steam', busy: false }
       }
     ]
   });
@@ -41,6 +42,33 @@ run('machine page renders lane presets, rename actions, graphics, and value tile
   includes(html, 'data-action="machine-edit-value"');
   includes(html, 'Missing hardware');
   includes(html, 'Two tap stop');
+  includes(html, 'machine-lane-start');
+  includes(html, 'data-action="machine-command"');
+  includes(html, 'data-value="steam"');
+  includes(html, 'aria-label="Start steam"');
+});
+
+run('machine page hides lane start buttons when the GHC does that job', () => {
+  const html = renderMachinePage({
+    headerHtml: '<header>Machine</header>',
+    cleaningBarHtml: '',
+    lanes: [
+      {
+        tone: 'flush',
+        eyebrow: 'Flush',
+        title: 'Clean',
+        presetName: 'flushPreset',
+        presets: [{ id: 'quick', label: 'Quick' }],
+        selectedPreset: 'quick',
+        labelOverrides: {},
+        values: [machineValueTile('flushDuration', 'Time', 5, enabledSpec)],
+        start: null
+      }
+    ]
+  });
+
+  excludes(html, 'machine-lane-start');
+  excludes(html, 'data-action="machine-command"');
 });
 
 run('machine value helpers adapt hot-water weight mode and stop mode tiles', () => {
