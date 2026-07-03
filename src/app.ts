@@ -3203,7 +3203,7 @@ export class BeanieApp {
     const ghost = this.state.liveGhost ? this.liveGhostModel : null;
     const model = this.liveShot.model({
       ...liveChartModelOptions(this.state.liveChartMode, ghost?.maxTime),
-      stageNames: profileStepNames(this.state.draft?.profile ?? null)
+      stageNames: profileStepNames(this.liveProfile())
     });
     this.liveChart.setOptions({
       hideMaxTimeLabel: liveChartHideMaxTimeLabel(this.state.liveChartMode, model.maxTime)
@@ -3329,7 +3329,7 @@ export class BeanieApp {
   // actual reason it did — and the index the machine is currently in, for the
   // rail beside the live chart. Null when the profile has no usable steps.
   private liveStagesView(): LiveStagesView | null {
-    const names = profileStepNames(this.state.draft?.profile ?? null);
+    const names = profileStepNames(this.liveProfile());
     if (names.length === 0) return null;
     const reasons = this.liveStageReasons();
     const steps = names.map((name, index) => ({ name, reason: reasons[index] ?? null }));
@@ -3385,10 +3385,20 @@ export class BeanieApp {
     return reasons;
   }
 
+  // The profile the machine is actually running for the live pull. A cleaning
+  // cycle loads the cleaning profile onto the machine WITHOUT touching the
+  // recipe draft (the draft must survive to be restored afterwards), so while
+  // one is in progress the rail/chart must describe the cleaning workflow's
+  // steps, not the recipe's.
+  private liveProfile(): Profile | null {
+    if (this.cleaningInProgress) return this.state.workflow?.profile ?? null;
+    return this.state.draft?.profile ?? null;
+  }
+
   // Parsed steps of the active profile, memoized by profile reference so the
   // per-frame reason lookup doesn't re-parse the whole profile each tick.
   private parsedLiveSteps(): EditorStep[] {
-    const profile = this.state.draft?.profile ?? null;
+    const profile = this.liveProfile();
     if (profile !== this.cachedStepsProfile) {
       this.cachedStepsProfile = profile;
       this.cachedSteps = profile ? createProfileEditorState(profile).steps : [];
@@ -3406,7 +3416,7 @@ export class BeanieApp {
     const frame = this.liveShot.isActive
       ? this.state.machine?.profileFrame
       : lastReachedFrame(this.liveShot.snapshot);
-    const count = profileStepNames(this.state.draft?.profile ?? null).length;
+    const count = profileStepNames(this.liveProfile()).length;
     if (frame != null && Number.isInteger(frame) && frame >= 0 && frame < count) {
       return frame;
     }
