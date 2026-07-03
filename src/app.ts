@@ -50,7 +50,7 @@ import {
   liveChartModelOptions,
   hasGroupHeadController,
   machineCommandsAvailable,
-  machineStatus,
+  machineStatusView,
   nonNegativeNumber,
   positiveNumber,
   round,
@@ -63,7 +63,8 @@ import {
   temp,
   water,
   workflowSignature,
-  type LiveChartMode
+  type LiveChartMode,
+  type MachineStatusView
 } from './appShell';
 import {
   appendBatchStorageEvent,
@@ -2455,10 +2456,14 @@ export class BeanieApp {
     this.setState({ ...next, modal: 'no-scale-shot', status: NO_SCALE_SHOT_MESSAGE });
   }
 
+  private machineStatusStat(): MachineStatusView {
+    if (this.state.gatewayLinkDown && !this.state.demo) return { label: 'Offline', tone: 'alert' };
+    if (Date.now() < this.noScaleShotWarningUntilMs) return { label: NO_SCALE_MACHINE_STATUS, tone: 'alert' };
+    return machineStatusView(this.state.machine, this.state.loading);
+  }
+
   private machineStatusLabel(): string {
-    if (this.state.gatewayLinkDown && !this.state.demo) return 'Offline';
-    if (Date.now() < this.noScaleShotWarningUntilMs) return NO_SCALE_MACHINE_STATUS;
-    return machineStatus(this.state.machine, this.state.loading);
+    return this.machineStatusStat().label;
   }
 
   private async toggleMachineCommand(state: MachineState): Promise<void> {
@@ -3162,7 +3167,14 @@ export class BeanieApp {
       const el = this.root.querySelector<HTMLElement>(`#${id}`);
       if (el) el.textContent = value;
     };
-    set('stat-machine', this.machineStatusLabel());
+    const status = this.machineStatusStat();
+    set('stat-machine', status.label);
+    // The tone class lives on the stat container; keep it in sync with the
+    // label so e.g. Heating→Ready recolors without a full render.
+    const statusEl = this.root.querySelector<HTMLElement>('#stat-machine');
+    if (statusEl?.parentElement) {
+      statusEl.parentElement.className = `top-stat${status.tone ? ` stat-tone-${status.tone}` : ''}`;
+    }
     set('stat-group', temp(machine?.groupTemperature));
     set('stat-steam', temp(machine?.steamTemperature));
     set('stat-water', water(this.state.waterLevel));
@@ -4693,6 +4705,14 @@ export class BeanieApp {
       'scale-stat': async () => {
         await this.handleScaleStatTap();
       },
+      // Topbar stat taps: the group temp opens the recipe temp editor, the
+      // water level jumps to its alert/refill settings (Settings → Machine).
+      'group-stat': () => {
+        this.openEditDialog('temperature');
+      },
+      'water-stat': () => {
+        this.openSettingsPage('machine');
+      },
       'live-ghost-toggle': () => {
         this.setState({ liveGhost: !this.state.liveGhost });
         this.scheduleLiveDraw();
@@ -4736,22 +4756,7 @@ export class BeanieApp {
         this.dismissStoreError();
       },
       'open-settings': () => {
-        if (this.isPhoneLayout()) {
-          this.setState({ phoneTab: 'settings', view: 'workbench' });
-          this.openSettingsForPhone();
-          return;
-        }
-        this.setState({
-          view: 'settings',
-          settingsBundle: this.state.settingsBundle ?? demoSettingsBundle(),
-          settingsSource: this.state.settingsBundle
-            ? this.state.settingsSource
-            : this.state.demo
-              ? 'demo'
-              : 'loading'
-        });
-        void this.loadReaSettings();
-        void this.loadDecentAccount();
+        this.openSettingsPage();
       },
       'open-flow-calibrator': () => {
         this.openFlowCalibrator();
@@ -4849,6 +4854,30 @@ export class BeanieApp {
         await this.resetLocalCache();
       },
     };
+  }
+
+  private openSettingsPage(section?: string): void {
+    if (this.isPhoneLayout()) {
+      this.setState({
+        phoneTab: 'settings',
+        view: 'workbench',
+        ...(section ? { settingsSection: section } : {})
+      });
+      this.openSettingsForPhone();
+      return;
+    }
+    this.setState({
+      view: 'settings',
+      ...(section ? { settingsSection: section } : {}),
+      settingsBundle: this.state.settingsBundle ?? demoSettingsBundle(),
+      settingsSource: this.state.settingsBundle
+        ? this.state.settingsSource
+        : this.state.demo
+          ? 'demo'
+          : 'loading'
+    });
+    void this.loadReaSettings();
+    void this.loadDecentAccount();
   }
 
   private openSettingsForPhone(): void {
@@ -7091,8 +7120,7 @@ export class BeanieApp {
     const scale = this.state.scale;
     return renderWorkbenchView({
       topbar: {
-        machineStatus: this.machineStatusLabel(),
-        machineTone: this.state.gatewayLinkDown && !this.state.demo ? 'stat-alert' : '',
+        machineStatus: this.machineStatusStat(),
         groupTemperature: temp(this.state.machine?.groupTemperature),
         steamTemperature: temp(this.state.machine?.steamTemperature),
         water: water(this.state.waterLevel),

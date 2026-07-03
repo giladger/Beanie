@@ -494,6 +494,14 @@ p {
   font-size: 15px;
   line-height: 1;
   align-self: end;
+  /* Fixed-width digits so ticking temperatures/weights don't jiggle the row. */
+  font-variant-numeric: tabular-nums;
+}
+
+/* Stronger divider in front of the scale: machine truth on the left,
+   peripherals from here on. */
+.top-stat.top-stat-divide {
+  border-left: 1px solid var(--line-strong);
 }
 
 .top-icons {
@@ -8457,6 +8465,27 @@ p {
 }
 
 .top-stat.stat-alert strong {
+  color: var(--red);
+}
+
+/* Status stat tones: read the machine state by color at a distance. */
+.top-stat.stat-tone-ready strong {
+  color: var(--green);
+}
+
+.top-stat.stat-tone-heating strong {
+  color: var(--amber);
+}
+
+.top-stat.stat-tone-active strong {
+  color: var(--teal);
+}
+
+.top-stat.stat-tone-asleep strong {
+  color: var(--muted);
+}
+
+.top-stat.stat-tone-alert strong {
   color: var(--red);
 }
 

@@ -9,6 +9,7 @@ import {
   liveChartModelOptions,
   machineCommandsAvailable,
   machineStatus,
+  machineStatusView,
   scaleBatteryLow,
   scaleBatteryPercent,
   scaleConnected,
@@ -31,6 +32,32 @@ run('app shell status helpers format machine water scale and numbers', () => {
   equal(formatNumber(null, 1), '--');
   equal(scaleConnected({ status: 'connected', weight: 1, weightFlow: 0, timestamp: 'now' }), true);
   equal(scaleConnected({ status: 'disconnected', weight: 1, weightFlow: 0, timestamp: 'now' }), false);
+});
+
+run('machine status view tones the label and details heating with current→target', () => {
+  deepEqual(machineStatusView(machine({ groupTemperature: 93, targetGroupTemperature: 93 }), false), {
+    label: 'Ready',
+    tone: 'ready'
+  });
+  deepEqual(
+    machineStatusView(machine({ state: { state: 'heating' }, groupTemperature: 82.4, targetGroupTemperature: 93 }), false),
+    { label: 'Heating 82→93°', tone: 'heating' }
+  );
+  // Implied heating (idle but below target) gets the same detail.
+  deepEqual(machineStatusView(machine({ groupTemperature: 82, targetGroupTemperature: 93 }), false), {
+    label: 'Heating 82→93°',
+    tone: 'heating'
+  });
+  // Already at (rounded) target: plain Heating rather than "93→93°".
+  deepEqual(machineStatusView(machine({ state: { state: 'preheating' } }), false), {
+    label: 'Heating',
+    tone: 'heating'
+  });
+  deepEqual(machineStatusView(machine({ state: { state: 'espresso' } }), false), { label: 'Brewing', tone: 'active' });
+  deepEqual(machineStatusView(machine({ state: { state: 'sleeping' } }), false), { label: 'Asleep', tone: 'asleep' });
+  deepEqual(machineStatusView(machine({ state: { state: 'needsWater' } }), false), { label: 'Add water', tone: 'alert' });
+  deepEqual(machineStatusView(null, false), { label: 'Offline', tone: 'alert' });
+  deepEqual(machineStatusView(null, true), { label: 'Connecting…', tone: '' });
 });
 
 run('clock label formats hours and minutes for the current locale', () => {
@@ -58,8 +85,9 @@ run('scale battery normalizes fractions and surfaces only when low', () => {
 
   equal(scaleStatLabel(scale(0.12)), '18.2 g · 12%');
   equal(scaleStatLabel(scale(85)), '18.2 g');
-  equal(scaleStatLabel(scale(0.12, 'disconnected')), 'offline');
-  equal(scaleStatLabel(null), '-- g');
+  // No scale = the stat is a connect affordance, not a dead reading.
+  equal(scaleStatLabel(scale(0.12, 'disconnected')), 'Connect');
+  equal(scaleStatLabel(null), 'Connect');
 
   equal(scaleBatteryLow(scale(0.12)), true);
   equal(scaleBatteryLow(scale(85)), false);
@@ -211,4 +239,8 @@ function equal<T>(actual: T, expected: T): void {
   if (actual !== expected) {
     throw new Error(`Expected ${JSON.stringify(actual)} to equal ${JSON.stringify(expected)}`);
   }
+}
+
+function deepEqual<T>(actual: T, expected: T): void {
+  equal(JSON.stringify(actual), JSON.stringify(expected));
 }

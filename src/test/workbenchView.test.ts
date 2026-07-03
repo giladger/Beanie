@@ -10,8 +10,13 @@ run('workbench renders topbar metrics, hero bean actions, recipe controls, and h
 
   includes(html, 'class="topbar"');
   includes(html, 'id="stat-machine">Ready</strong>');
-  includes(html, 'class="top-stat stat-warn"');
+  includes(html, 'class="top-stat stat-tone-ready"');
+  // Water carries its alert tone and, like group/steam/scale, is tappable.
+  includes(html, 'top-stat-button stat-warn');
+  includes(html, 'data-action="group-stat"');
+  includes(html, 'data-action="water-stat"');
   includes(html, 'data-action="scale-stat"');
+  includes(html, 'top-stat-divide');
   // Only the fallback Shot command lives in the topbar; steam/flush/hot-water
   // start from the machine page's lanes.
   includes(html, 'data-action="machine-command"');
@@ -19,7 +24,7 @@ run('workbench renders topbar metrics, hero bean actions, recipe controls, and h
   excludes(html, 'data-value="steam"');
   includes(html, 'aria-pressed="true"');
   includes(html, 'id="top-clock" aria-label="Clock">14:05</div>');
-  includes(html, 'Water - steam, water, flush (cleaning due)');
+  includes(html, 'Machine - steam, water, flush (cleaning due)');
   includes(html, 'Milky &amp; Cake');
   includes(html, 'Dak &lt;Roasters&gt;');
   includes(html, 'data-action="open-bean-picker"');
@@ -34,11 +39,11 @@ run('workbench renders topbar metrics, hero bean actions, recipe controls, and h
 
 run('workbench marks the status stat with the alert tone when the gateway link is down', () => {
   const html = renderWorkbench(
-    model({ topbar: { ...model().topbar, machineStatus: 'Offline', machineTone: 'stat-alert' } })
+    model({ topbar: { ...model().topbar, machineStatus: { label: 'Offline', tone: 'alert' } } })
   );
 
   includes(html, 'id="stat-machine">Offline</strong>');
-  includes(html, 'class="top-stat stat-alert"');
+  includes(html, 'class="top-stat stat-tone-alert"');
 });
 
 run('workbench hides remaining/age chips and machine commands when model says unavailable', () => {
@@ -124,8 +129,7 @@ run('live panel renders inactive, active, and finalizing states', () => {
 function model(overrides: Partial<WorkbenchViewModel> = {}): WorkbenchViewModel {
   const base: WorkbenchViewModel = {
     topbar: {
-      machineStatus: 'Ready',
-      machineTone: '' as const,
+      machineStatus: { label: 'Ready', tone: 'ready' as const },
       groupTemperature: '93°C',
       steamTemperature: '140°C',
       water: '820 ml',

@@ -54,9 +54,13 @@ export function scaleBatteryPercent(scale: ScaleSnapshot | null): number | null 
   return Math.min(100, Math.round(percent));
 }
 
-/** Topbar scale readout: weight, plus the battery while it is running low. */
+/**
+ * Topbar scale readout: weight, plus the battery while it is running low.
+ * With no scale attached the stat is a connect affordance, so say that
+ * instead of a dead "-- g" reading.
+ */
 export function scaleStatLabel(scale: ScaleSnapshot | null): string {
-  if (scale?.status === 'disconnected') return 'offline';
+  if (!scaleConnected(scale)) return 'Connect';
   const weight = `${formatNumber(scale?.weight, 1)} g`;
   const battery = scaleBatteryPercent(scale);
   if (battery != null && battery <= SCALE_BATTERY_LOW_PERCENT) return `${weight} · ${battery}%`;
@@ -129,6 +133,48 @@ export function machineStatus(machine: MachineSnapshot | null, loading: boolean)
 /** Topbar clock: locale-formatted hours and minutes (e.g. "14:05"). */
 export function clockLabel(date: Date): string {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+export type MachineStatusTone = 'ready' | 'heating' | 'active' | 'asleep' | 'alert' | '';
+
+export interface MachineStatusView {
+  label: string;
+  /** Glanceable color band for the status value; '' renders untinted. */
+  tone: MachineStatusTone;
+}
+
+const ACTIVE_STATUS_LABELS = new Set([
+  'Brewing',
+  'Steaming',
+  'Steam rinse',
+  'Hot water',
+  'Flushing',
+  'Cleaning',
+  'Descaling'
+]);
+
+/**
+ * Status readout for the topbar: the machineStatus label plus a tone so the
+ * state reads by color at a distance. While warming up the label carries the
+ * raw current→target group temperature (e.g. "Heating 82→93°").
+ */
+export function machineStatusView(machine: MachineSnapshot | null, loading: boolean): MachineStatusView {
+  const label = machineStatus(machine, loading);
+  if (label === 'Heating') {
+    const current = machine?.groupTemperature;
+    const target = machine?.targetGroupTemperature;
+    // Rounded-equal temps would read "93→93°"; keep the plain label then.
+    const detail =
+      current != null && target != null && target > 0 && Math.round(current) < Math.round(target)
+        ? `Heating ${Math.round(current)}→${Math.round(target)}°`
+        : label;
+    return { label: detail, tone: 'heating' };
+  }
+  if (label === 'Ready') return { label, tone: 'ready' };
+  if (ACTIVE_STATUS_LABELS.has(label)) return { label, tone: 'active' };
+  if (label === 'Asleep' || label === 'Scheduled') return { label, tone: 'asleep' };
+  if (label === 'Error' || label === 'Add water' || label === 'Offline') return { label, tone: 'alert' };
+  return { label, tone: '' };
 }
 
 export function formatNumber(value: number | null | undefined, digits: number): string {
