@@ -7553,7 +7553,7 @@ export class BeanieApp {
     const profile = shot.workflow?.profile ?? null;
     const steps = profile ? createProfileEditorState(profile).steps : [];
     return renderShotStagesModalView({
-      title: profile?.title ?? 'Shot stages',
+      shot,
       stages: historicShotStages(shot, steps)
     });
   }

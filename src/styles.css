@@ -6736,6 +6736,13 @@ p {
   width: min(960px, calc(100vw - 24px));
 }
 
+/* The head carries the shot's two-line facts tier; pin the close button to
+   the first line rather than centering it across both. */
+.shot-stages-head {
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+
 .shot-stages-body {
   display: flex;
   gap: 12px;

@@ -160,11 +160,10 @@ function renderSecondTapHint(
   return '<span class="second-tap-tooltip">Tap again to load</span>';
 }
 
-function renderShotDetailPane(
-  shot: ShotRecord,
-  compare: ShotRecord | null,
-  model: HistoryViewModel
-): string {
+// The shot facts tier: dose → yield, ratio, duration, brew temperature, then
+// profile + grinder. Shared between the detail pane head and the shot-stages
+// overlay so both describe a shot identically.
+function renderShotFacts(shot: ShotRecord): string {
   const recipe = recipeFromShot(shot);
   const duration = shotDurationLabel(shot);
   const grinder = recipe.grinderModel
@@ -176,7 +175,6 @@ function renderShotDetailPane(
   const tempLabel = brewTemp == null ? '' : `${brewTemp.toFixed(1)}°C`;
   const ratio = formatRatio(ratioFor(recipe.dose, recipe.yield));
   return `
-    <div class="pane-head">
       <div class="pane-facts">
         <div class="pane-facts-line">
           <span class="pane-stat pane-lead">${escapeHtml(shotRecipeDisplay(shot, recipe)).replace(' → ', ' <span class="io-arrow">→</span> ')}</span>
@@ -188,7 +186,17 @@ function renderShotDetailPane(
           <span class="pane-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
           ${grinder ? `<span class="pane-stat">${escapeHtml(grinder)}</span>` : ''}
         </div>
-      </div>
+      </div>`;
+}
+
+function renderShotDetailPane(
+  shot: ShotRecord,
+  compare: ShotRecord | null,
+  model: HistoryViewModel
+): string {
+  return `
+    <div class="pane-head">
+      ${renderShotFacts(shot)}
       <div class="pane-actions">
         ${shotScoreControl(shot.annotations?.enjoyment ?? null, {
           action: 'set-shot-score',
@@ -306,18 +314,19 @@ function shotDateShortLabel(timestamp: string): string | null {
   return date.toLocaleString([], { month: 'short', day: 'numeric' });
 }
 
-// Full-size replay of a saved shot in the live-shot layout: the stage rail
-// (steps + the reasons they advanced, rebuilt from the shot's trace) beside
-// the chart. Opened by pressing the detail chart.
+// Full-size replay of a saved shot in the live-shot layout: the shot's facts
+// tier up top, then the stage rail (steps + the reasons they advanced,
+// rebuilt from the shot's trace) beside the chart. Opened by pressing the
+// detail chart.
 export function renderShotStagesModal(input: {
-  title: string;
+  shot: ShotRecord;
   stages: LiveStagesView | null;
 }): string {
   return `
     <div class="modal-backdrop shot-stages-backdrop">
-      <section class="modal panel shot-stages-modal" role="dialog" aria-modal="true" aria-labelledby="shot-stages-title">
-        <div class="modal-head">
-          <h2 id="shot-stages-title">${escapeHtml(input.title)}</h2>
+      <section class="modal panel shot-stages-modal" role="dialog" aria-modal="true" aria-label="Shot stages">
+        <div class="modal-head shot-stages-head">
+          ${renderShotFacts(input.shot)}
           <button type="button" class="icon-button" data-action="close-modal" aria-label="Close">${icon('x')}</button>
         </div>
         <div class="shot-stages-body">
