@@ -61,10 +61,19 @@ run('machine status view tones the label and details heating with current→targ
 });
 
 run('clock label formats hours and minutes for the current locale', () => {
-  const label = clockLabel(new Date(2026, 6, 3, 14, 5));
-  // Locale decides 24h vs AM/PM; either way both fields are present.
+  const date = new Date(2026, 6, 3, 14, 5);
+  const label = clockLabel(date);
+  // Auto: locale decides 24h vs AM/PM; either way both fields are present.
   if (!/\b(14|02|2)\D?05\b/.test(label.normalize('NFKC'))) {
     throw new Error(`Unexpected clock label: ${label}`);
+  }
+  // Explicit overrides pin the hour cycle regardless of locale (Android
+  // webviews don't surface the system's 24-hour switch, so users pick one).
+  if (!/14\D05/.test(clockLabel(date, '24h').normalize('NFKC'))) {
+    throw new Error(`Expected a 24h label, received: ${clockLabel(date, '24h')}`);
+  }
+  if (!/\b0?2\D05\b/.test(clockLabel(date, '12h').normalize('NFKC'))) {
+    throw new Error(`Expected a 12h label, received: ${clockLabel(date, '12h')}`);
   }
 });
 

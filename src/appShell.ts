@@ -10,6 +10,7 @@ import type {
 import { GatewayRequestError } from './api/gateway';
 import {
   THEME_PREFERENCES,
+  type ClockFormat,
   type ThemePreference,
   type UIScalePreference,
   type WakeAppZonePosition
@@ -130,8 +131,18 @@ export function machineStatus(machine: MachineSnapshot | null, loading: boolean)
   }
 }
 
-/** Topbar clock: locale-formatted hours and minutes (e.g. "14:05"). */
-export function clockLabel(date: Date): string {
+/**
+ * Topbar/screensaver clock: hours and minutes (e.g. "14:05"). 'auto' follows
+ * the browser locale; the explicit 12h/24h overrides exist because Android
+ * webviews don't surface the system's 24-hour switch to the locale.
+ */
+export function clockLabel(date: Date, format: ClockFormat = 'auto'): string {
+  if (format === '24h') {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  }
+  if (format === '12h') {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+  }
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 

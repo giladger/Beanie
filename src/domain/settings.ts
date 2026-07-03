@@ -1,6 +1,7 @@
 import type { MachineSnapshot, ScaleSnapshot } from '../api/types';
 import { FLOW_CALIBRATION_STORAGE_KEYS } from './flowCalibration';
 import {
+  clockFormatKey,
   getSyncedItem,
   removeSyncedItem,
   screensaverBrightnessKey,
@@ -33,6 +34,19 @@ export type ThemePreference =
   | 'rosepine'
   | 'contrast';
 export type UIScalePreference = 'compact' | 'standard' | 'large';
+
+/**
+ * Clock display format. 'auto' follows the browser locale — which on Android
+ * webviews does NOT track the system's 24-hour switch, hence the explicit
+ * overrides.
+ */
+export type ClockFormat = 'auto' | '12h' | '24h';
+
+export const CLOCK_FORMATS: ClockFormat[] = ['auto', '12h', '24h'];
+
+export function isClockFormat(value: string | undefined): value is ClockFormat {
+  return value === 'auto' || value === '12h' || value === '24h';
+}
 
 /** Edge the sleep-screen "wake app only" tap zone sits on. */
 export type WakeAppZonePosition = 'top' | 'bottom' | 'left' | 'right';
@@ -75,6 +89,8 @@ export interface SettingsPreferences {
   wakeAppZonePosition: WakeAppZonePosition;
   /** Show the wall clock in the workbench topbar. */
   topbarClock: boolean;
+  /** 12h/24h override for the topbar and screensaver clocks ('auto' = locale). */
+  clockFormat: ClockFormat;
   /** What the sleep screensaver shows (black stays a fully dark screen). */
   screensaverMode: ScreensaverMode;
   /** Backlight percent while a clock/photos screensaver shows (black is always 0). */
@@ -132,6 +148,7 @@ const preservedResetKeys = new Set([
   wakeAppZoneEnabledKey,
   wakeAppZonePositionKey,
   topbarClockKey,
+  clockFormatKey,
   screensaverModeKey,
   screensaverBrightnessKey,
   // Per-profile/global flow calibration is hardware-tuning config — a reset
@@ -147,6 +164,7 @@ export function readSettingsPreferences(): SettingsPreferences {
     wakeAppZoneEnabled: readBoolean(wakeAppZoneEnabledKey, false),
     wakeAppZonePosition: readEnum(wakeAppZonePositionKey, WAKE_APP_ZONE_POSITIONS, 'top'),
     topbarClock: readBoolean(topbarClockKey, true),
+    clockFormat: readEnum(clockFormatKey, CLOCK_FORMATS, 'auto'),
     screensaverMode: readEnum(screensaverModeKey, SCREENSAVER_MODES, 'black'),
     screensaverBrightness: readNonNegativeNumber(screensaverBrightnessKey, DEFAULT_SCREENSAVER_BRIGHTNESS)
   };
@@ -160,6 +178,7 @@ export function writeSettingsPreferences(next: SettingsPreferences): void {
   setSyncedItem(wakeAppZoneEnabledKey, String(next.wakeAppZoneEnabled));
   setSyncedItem(wakeAppZonePositionKey, next.wakeAppZonePosition);
   setSyncedItem(topbarClockKey, String(next.topbarClock));
+  setSyncedItem(clockFormatKey, next.clockFormat);
   setSyncedItem(screensaverModeKey, next.screensaverMode);
   setSyncedItem(screensaverBrightnessKey, String(next.screensaverBrightness));
 }

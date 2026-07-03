@@ -340,6 +340,7 @@ import { isServiceShot } from './domain/shotRecord';
 import {
   applySettingsPreferences,
   buildSettingsShellModel,
+  isClockFormat,
   isWakeAppZonePosition,
   readSettingsPreferences,
   resetBeanieCache,
@@ -1560,7 +1561,7 @@ export class BeanieApp {
     const msToNextMinute = 60_000 - (Date.now() % 60_000);
     this.clockTimer = window.setTimeout(() => {
       this.clockTimer = null;
-      const label = clockLabel(new Date());
+      const label = clockLabel(new Date(), this.state.settingsPreferences.clockFormat);
       const el = this.root.querySelector<HTMLElement>('#top-clock');
       if (el) el.textContent = label;
       const saverClock = this.root.querySelector<HTMLElement>('#saver-clock');
@@ -5030,6 +5031,11 @@ export class BeanieApp {
           this.previewWakeAppZone(el.dataset.value);
         }
       },
+      'settings-clock-format': ({ el }) => {
+        if (isClockFormat(el.dataset.value)) {
+          this.updateSettingsPreferences({ clockFormat: el.dataset.value });
+        }
+      },
       'settings-screensaver-mode': ({ el }) => {
         if (isScreensaverMode(el.dataset.value)) {
           this.updateSettingsPreferences({ screensaverMode: el.dataset.value });
@@ -7347,7 +7353,9 @@ export class BeanieApp {
           current: this.state.machine?.state?.state ?? 'idle',
           busy: this.state.busy
         },
-        clock: this.state.settingsPreferences.topbarClock ? clockLabel(new Date()) : null,
+        clock: this.state.settingsPreferences.topbarClock
+          ? clockLabel(new Date(), this.state.settingsPreferences.clockFormat)
+          : null,
         cleaningDue: cleaningDueNow,
         asleep: this.state.asleep
       },
@@ -7639,7 +7647,7 @@ export class BeanieApp {
          <img id="saver-photo-b" class="saver-photo" alt="" />`
       : '';
     const clock = showClock
-      ? `<span id="saver-clock" class="saver-clock ${showPhotos ? 'on-photo' : ''}" style="left: ${this.saverClockPos.leftPct}%; top: ${this.saverClockPos.topPct}%;">${escapeHtml(clockLabel(new Date()))}</span>`
+      ? `<span id="saver-clock" class="saver-clock ${showPhotos ? 'on-photo' : ''}" style="left: ${this.saverClockPos.leftPct}%; top: ${this.saverClockPos.topPct}%;">${escapeHtml(clockLabel(new Date(), prefs.clockFormat))}</span>`
       : '';
     return `${photoLayers}${clock}`;
   }

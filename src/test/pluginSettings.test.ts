@@ -188,6 +188,7 @@ function settingsModel(): SettingsShellModel {
       wakeAppZoneEnabled: false,
       wakeAppZonePosition: 'top',
       topbarClock: true,
+      clockFormat: 'auto',
       screensaverMode: 'black',
       screensaverBrightness: 25
     },

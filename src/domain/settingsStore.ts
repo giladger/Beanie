@@ -22,6 +22,7 @@ export const waterSoftKey = 'beanie.settings.water-soft-ml';
 export const wakeAppZoneEnabledKey = 'beanie.settings.wake-app-zone';
 export const wakeAppZonePositionKey = 'beanie.settings.wake-app-zone-position';
 export const topbarClockKey = 'beanie.settings.topbar-clock';
+export const clockFormatKey = 'beanie.settings.clock-format';
 export const screensaverModeKey = 'beanie.settings.screensaver-mode';
 export const screensaverBrightnessKey = 'beanie.settings.screensaver-brightness';
 export const favoriteProfilesKey = 'beanie.favorite-profiles';
@@ -50,6 +51,7 @@ export const SYNCED_SETTING_KEYS: readonly string[] = [
   wakeAppZoneEnabledKey,
   wakeAppZonePositionKey,
   topbarClockKey,
+  clockFormatKey,
   screensaverModeKey,
   screensaverBrightnessKey,
   favoriteProfilesKey,

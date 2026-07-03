@@ -36,17 +36,20 @@ await run('clock and screensaver preferences default sensibly and round-trip', (
   setStorePushHandler(null);
   const defaults = readSettingsPreferences();
   equal(defaults.topbarClock, true);
+  equal(defaults.clockFormat, 'auto');
   equal(defaults.screensaverMode, 'black');
   equal(defaults.screensaverBrightness, 25);
 
   writeSettingsPreferences({
     ...defaults,
     topbarClock: false,
+    clockFormat: '24h',
     screensaverMode: 'photos-clock',
     screensaverBrightness: 60
   });
   const next = readSettingsPreferences();
   equal(next.topbarClock, false);
+  equal(next.clockFormat, '24h');
   equal(next.screensaverMode, 'photos-clock');
   equal(next.screensaverBrightness, 60);
 });

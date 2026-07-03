@@ -1,5 +1,6 @@
 import {
   WAKE_APP_ZONE_POSITIONS,
+  type ClockFormat,
   type SettingsPreferences,
   type SettingsShellModel,
   type ThemePreference,
@@ -611,6 +612,16 @@ function renderAppearanceRows(preferences: SettingsPreferences): string {
       'Topbar clock',
       'Show the wall clock in the top bar',
       `<label class="settings-toggle"><input type="checkbox" data-action="settings-topbar-clock" ${preferences.topbarClock ? 'checked' : ''} /><span></span></label>`
+    )}
+    ${settingControlRow(
+      'Clock format',
+      'Auto follows the tablet locale, which may ignore the Android 24-hour switch',
+      segmentedControl('settings-clock-format', preferences.clockFormat, [
+        ['auto', 'Auto'],
+        ['12h', '12h'],
+        ['24h', '24h']
+      ] satisfies Array<[ClockFormat, string]>),
+      'settings-line-wrap'
     )}
   `;
 }
