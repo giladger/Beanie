@@ -348,6 +348,7 @@ import {
   writeSettingsPreferences
 } from './domain/settings';
 import {
+  SCREENSAVER_CLOCK_MOVE_INTERVAL_MS,
   SCREENSAVER_PHOTOS_CACHE_KEY,
   SCREENSAVER_PHOTO_INTERVAL_MS,
   SCREENSAVER_PHOTO_JPEG_QUALITY,
@@ -920,6 +921,7 @@ export class BeanieApp {
   // patch the overlay DOM in place instead of re-rendering the app.
   private saverPhotoIndex = 0;
   private saverClockPos = screensaverClockPosition(0.5, 0.5);
+  private saverClockMovedAtMs = Date.now();
   private beanRefreshTimer: number | null = null;
   private machineSocket: WebSocket | null = null;
   private scaleSocket: WebSocket | null = null;
@@ -1563,11 +1565,15 @@ export class BeanieApp {
       if (el) el.textContent = label;
       const saverClock = this.root.querySelector<HTMLElement>('#saver-clock');
       if (saverClock) {
-        // Wander like de1app's saver clock so the time never burns in.
         saverClock.textContent = label;
-        this.saverClockPos = screensaverClockPosition(Math.random(), Math.random());
-        saverClock.style.left = `${this.saverClockPos.leftPct}%`;
-        saverClock.style.top = `${this.saverClockPos.topPct}%`;
+        // Wander to a fresh spot on a slow cadence so the time never burns in
+        // (persistence stress builds over hours, not minutes).
+        if (Date.now() - this.saverClockMovedAtMs >= SCREENSAVER_CLOCK_MOVE_INTERVAL_MS) {
+          this.saverClockMovedAtMs = Date.now();
+          this.saverClockPos = screensaverClockPosition(Math.random(), Math.random());
+          saverClock.style.left = `${this.saverClockPos.leftPct}%`;
+          saverClock.style.top = `${this.saverClockPos.topPct}%`;
+        }
       }
       this.armClockTimer();
     }, msToNextMinute + 250);

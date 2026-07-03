@@ -13,6 +13,13 @@ export const DEFAULT_SCREENSAVER_BRIGHTNESS = 25;
 /** How often the photo slideshow advances. */
 export const SCREENSAVER_PHOTO_INTERVAL_MS = 60_000;
 
+/**
+ * How often the saver clock wanders to a new spot. Burn-in / image-persistence
+ * stress builds on an hours scale, so a slow drift protects just as well as
+ * de1app's per-minute hop without the fidgety motion.
+ */
+export const SCREENSAVER_CLOCK_MOVE_INTERVAL_MS = 30 * 60_000;
+
 export function isScreensaverMode(value: string | undefined): value is ScreensaverMode {
   return (SCREENSAVER_MODES as string[]).includes(value ?? '');
 }
