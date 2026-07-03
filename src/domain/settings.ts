@@ -5,7 +5,6 @@ import {
   removeSyncedItem,
   screensaverBrightnessKey,
   screensaverModeKey,
-  screensaverPhotoUrlsKey,
   setSyncedItem,
   syncedCacheKeys,
   topbarClockKey,
@@ -80,8 +79,6 @@ export interface SettingsPreferences {
   screensaverMode: ScreensaverMode;
   /** Backlight percent while a clock/photos screensaver shows (black is always 0). */
   screensaverBrightness: number;
-  /** Photo slideshow sources, one image URL per line. */
-  screensaverPhotoUrls: string;
 }
 
 export interface GatewayStatusModel {
@@ -108,6 +105,8 @@ export interface SettingsShellModel {
   cacheKeyCount: number;
   /** The machine's own low-water refill threshold (mm), or null if unknown. */
   machineRefillLevelMm: number | null;
+  /** Photos stored on this device for the screensaver slideshow. */
+  screensaverPhotoCount: number;
 }
 
 export interface BuildSettingsShellModelOptions {
@@ -120,6 +119,7 @@ export interface BuildSettingsShellModelOptions {
   machine: MachineSnapshot | null;
   scale: ScaleSnapshot | null;
   machineRefillLevelMm: number | null;
+  screensaverPhotoCount: number;
 }
 
 // Theme stays per-browser: it lives in localStorage (not the gateway store) and
@@ -134,7 +134,6 @@ const preservedResetKeys = new Set([
   topbarClockKey,
   screensaverModeKey,
   screensaverBrightnessKey,
-  screensaverPhotoUrlsKey,
   // Per-profile/global flow calibration is hardware-tuning config — a reset
   // must not wipe it.
   ...FLOW_CALIBRATION_STORAGE_KEYS
@@ -149,8 +148,7 @@ export function readSettingsPreferences(): SettingsPreferences {
     wakeAppZonePosition: readEnum(wakeAppZonePositionKey, WAKE_APP_ZONE_POSITIONS, 'top'),
     topbarClock: readBoolean(topbarClockKey, true),
     screensaverMode: readEnum(screensaverModeKey, SCREENSAVER_MODES, 'black'),
-    screensaverBrightness: readNonNegativeNumber(screensaverBrightnessKey, DEFAULT_SCREENSAVER_BRIGHTNESS),
-    screensaverPhotoUrls: getSyncedItem(screensaverPhotoUrlsKey) ?? ''
+    screensaverBrightness: readNonNegativeNumber(screensaverBrightnessKey, DEFAULT_SCREENSAVER_BRIGHTNESS)
   };
 }
 
@@ -164,7 +162,6 @@ export function writeSettingsPreferences(next: SettingsPreferences): void {
   setSyncedItem(topbarClockKey, String(next.topbarClock));
   setSyncedItem(screensaverModeKey, next.screensaverMode);
   setSyncedItem(screensaverBrightnessKey, String(next.screensaverBrightness));
-  setSyncedItem(screensaverPhotoUrlsKey, next.screensaverPhotoUrls);
 }
 
 export function applySettingsPreferences(preferences: SettingsPreferences): void {
@@ -186,7 +183,8 @@ export function buildSettingsShellModel(
       defaultSkinStatus: 'Not checked by Beanie yet'
     },
     cacheKeyCount: listResettableBeanieKeys().length,
-    machineRefillLevelMm: options.machineRefillLevelMm
+    machineRefillLevelMm: options.machineRefillLevelMm,
+    screensaverPhotoCount: options.screensaverPhotoCount
   };
 }
 

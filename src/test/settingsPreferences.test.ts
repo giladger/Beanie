@@ -38,20 +38,17 @@ await run('clock and screensaver preferences default sensibly and round-trip', (
   equal(defaults.topbarClock, true);
   equal(defaults.screensaverMode, 'black');
   equal(defaults.screensaverBrightness, 25);
-  equal(defaults.screensaverPhotoUrls, '');
 
   writeSettingsPreferences({
     ...defaults,
     topbarClock: false,
     screensaverMode: 'photos-clock',
-    screensaverBrightness: 60,
-    screensaverPhotoUrls: 'https://a.example/1.jpg\nhttps://a.example/2.jpg'
+    screensaverBrightness: 60
   });
   const next = readSettingsPreferences();
   equal(next.topbarClock, false);
   equal(next.screensaverMode, 'photos-clock');
   equal(next.screensaverBrightness, 60);
-  equal(next.screensaverPhotoUrls, 'https://a.example/1.jpg\nhttps://a.example/2.jpg');
 });
 
 await run('isWakeAppZonePosition accepts the four edges and rejects others', () => {

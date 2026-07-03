@@ -6045,15 +6045,33 @@ p {
   text-align: right;
 }
 
-/* Multiline settings value (screensaver photo URLs). */
-textarea.settings-textarea {
+/* Screensaver mode row: segmented control and Preview side by side on the
+   full-width stacked line, so "Photos + clock" never wraps. (Qualified with
+   .settings-line to outrank its generic `span { display: block }` rule.) */
+.settings-line .settings-saver-mode {
   width: 100%;
-  min-height: 72px;
-  resize: vertical;
-  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: visible;
+}
+
+.settings-line .settings-saver-mode .settings-segmented {
+  flex: 1 1 auto;
+}
+
+.settings-line .settings-saver-mode .settings-segmented button {
+  white-space: nowrap;
+}
+
+.settings-line .settings-saver-mode .text-button {
+  height: 34px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
   font-size: 12px;
-  line-height: 1.5;
-  white-space: pre;
 }
 
 .settings-number-button {

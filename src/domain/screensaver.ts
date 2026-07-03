@@ -41,13 +41,17 @@ export function screensaverDimBrightness(mode: ScreensaverMode, configured: numb
   return Math.max(0, Math.min(100, Math.round(configured)));
 }
 
-/** Parse the photo-URL setting: one http(s) URL per line, blanks ignored. */
-export function parseScreensaverPhotoUrls(text: string | null | undefined): string[] {
-  if (!text) return [];
-  return text
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => /^https?:\/\//i.test(line));
+// Photos are stored on this device (IndexedDB) as compressed JPEG data URLs —
+// no network dependency while the tablet sleeps. The cap and target size keep
+// the store bounded: ~100 photos at ≤1600px/0.8 quality is tens of MB.
+export const SCREENSAVER_PHOTOS_CACHE_KEY = 'screensaver:photos';
+export const MAX_SCREENSAVER_PHOTOS = 100;
+export const SCREENSAVER_PHOTO_MAX_DIMENSION = 1600;
+export const SCREENSAVER_PHOTO_JPEG_QUALITY = 0.8;
+
+/** Merge newly imported photos onto the stored list, oldest dropped at the cap. */
+export function mergeScreensaverPhotos(existing: readonly string[], added: readonly string[]): string[] {
+  return [...existing, ...added].slice(-MAX_SCREENSAVER_PHOTOS);
 }
 
 export function nextScreensaverPhotoIndex(current: number, photoCount: number): number {

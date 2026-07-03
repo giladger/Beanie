@@ -29,11 +29,7 @@ import {
   WATER_SOFT_STEP_ML,
   waterLevelMl
 } from '../domain/waterAlert';
-import {
-  parseScreensaverPhotoUrls,
-  screensaverShowsPhotos,
-  type ScreensaverMode
-} from '../domain/screensaver';
+import { MAX_SCREENSAVER_PHOTOS, screensaverShowsPhotos, type ScreensaverMode } from '../domain/screensaver';
 import type { PluginInfo } from '../api/settings';
 import type { DecentAccountStatus } from '../api/settings';
 import { escapeAttr, escapeHtml } from './html';
@@ -125,7 +121,7 @@ function settingsSections(
       terms: 'appearance theme ui skin update diagnostics about version brightness screen display sleep wake tap zone area machine asleep screensaver saver clock photos slideshow',
       html: [
         renderSection('Beanie display', renderAppearanceRows(model.preferences)),
-        renderSection('Sleep screen', renderSleepScreenRows(model.preferences)),
+        renderSection('Sleep screen', renderSleepScreenRows(model)),
         renderSection('Bean scanner', renderScannerKeyRows()),
         bundle ? renderDisplayRuntimeSection(bundle, options) : '',
         bundle ? renderSpecSectionById('app-skin', bundle, options) : '',
@@ -626,7 +622,8 @@ const WAKE_APP_ZONE_LABELS: Record<WakeAppZonePosition, string> = {
   right: 'Right'
 };
 
-function renderSleepScreenRows(preferences: SettingsPreferences): string {
+function renderSleepScreenRows(model: SettingsShellModel): string {
+  const preferences = model.preferences;
   const enabled = preferences.wakeAppZoneEnabled;
   const toggle = `<label class="settings-toggle"><input type="checkbox" data-action="settings-wake-app-zone" ${enabled ? 'checked' : ''} /><span></span></label>`;
   const positionRow = enabled
@@ -642,7 +639,7 @@ function renderSleepScreenRows(preferences: SettingsPreferences): string {
       )
     : '';
   return `
-    ${renderScreensaverRows(preferences)}
+    ${renderScreensaverRows(model)}
     ${settingControlRow(
       'Wake app without the machine',
       'Adds a tap zone to the tablet sleep screen that opens Beanie while the machine stays asleep',
@@ -660,7 +657,8 @@ const SCREENSAVER_MODE_LABELS: Array<[ScreensaverMode, string]> = [
   ['photos-clock', 'Photos + clock']
 ];
 
-function renderScreensaverRows(preferences: SettingsPreferences): string {
+function renderScreensaverRows(model: SettingsShellModel): string {
+  const preferences = model.preferences;
   const mode = preferences.screensaverMode;
   const black = mode === 'black';
   const brightnessRow = settingControlRow(
@@ -678,24 +676,30 @@ function renderScreensaverRows(preferences: SettingsPreferences): string {
       disabled: black
     })
   );
-  const photoCount = parseScreensaverPhotoUrls(preferences.screensaverPhotoUrls).length;
+  const count = model.screensaverPhotoCount;
   const photosRow = screensaverShowsPhotos(mode)
     ? settingControlRow(
         'Screensaver photos',
-        photoCount > 0
-          ? `${photoCount} photo${photoCount === 1 ? '' : 's'} in the slideshow, changing every minute`
-          : 'One image URL per line; with none configured the screensaver falls back to the clock',
-        `<textarea class="settings-input settings-textarea" data-action="settings-screensaver-photos" rows="3" placeholder="https://… (one image URL per line)">${escapeHtml(preferences.screensaverPhotoUrls)}</textarea>`,
-        'settings-line-stack'
+        count > 0
+          ? `${count} photo${count === 1 ? '' : 's'} stored on this device, changing every minute (up to ${MAX_SCREENSAVER_PHOTOS})`
+          : 'Pick a folder or photos to store on this device; with none, the screensaver falls back to the clock',
+        `<span class="settings-inline-actions">
+          <label class="text-button"><input type="file" accept="image/*" multiple webkitdirectory data-action="settings-screensaver-add-photos" hidden />${icon('upload')}<span>Add folder…</span></label>
+          <label class="text-button"><input type="file" accept="image/*" multiple data-action="settings-screensaver-add-photos" hidden />${icon('plus')}<span>Add photos…</span></label>
+          ${count > 0 ? `<button type="button" class="text-button" data-action="settings-screensaver-clear-photos">${icon('trash-2')}<span>Clear</span></button>` : ''}
+        </span>`,
+        'settings-line-wrap'
       )
     : '';
   return `
     ${settingControlRow(
       'Screensaver',
       'What the tablet shows while the machine sleeps (tap the screen to wake)',
-      `${segmentedControl('settings-screensaver-mode', mode, SCREENSAVER_MODE_LABELS)}
-       <button type="button" class="text-button" data-action="screensaver-preview">${icon('eye')}<span>Preview</span></button>`,
-      'settings-line-wrap'
+      `<span class="settings-saver-mode">
+        ${segmentedControl('settings-screensaver-mode', mode, SCREENSAVER_MODE_LABELS)}
+        <button type="button" class="text-button" data-action="screensaver-preview">${icon('eye')}<span>Preview</span></button>
+      </span>`,
+      'settings-line-stack'
     )}
     ${brightnessRow}
     ${photosRow}

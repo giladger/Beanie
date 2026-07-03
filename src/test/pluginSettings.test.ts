@@ -189,10 +189,10 @@ function settingsModel(): SettingsShellModel {
       wakeAppZonePosition: 'top',
       topbarClock: true,
       screensaverMode: 'black',
-      screensaverBrightness: 25,
-      screensaverPhotoUrls: ''
+      screensaverBrightness: 25
     },
     machineRefillLevelMm: null,
+    screensaverPhotoCount: 0,
     gateway: {
       label: 'Connected',
       detail: 'Test gateway',

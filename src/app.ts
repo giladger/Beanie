@@ -348,10 +348,13 @@ import {
   writeSettingsPreferences
 } from './domain/settings';
 import {
+  SCREENSAVER_PHOTOS_CACHE_KEY,
   SCREENSAVER_PHOTO_INTERVAL_MS,
+  SCREENSAVER_PHOTO_JPEG_QUALITY,
+  SCREENSAVER_PHOTO_MAX_DIMENSION,
   isScreensaverMode,
+  mergeScreensaverPhotos,
   nextScreensaverPhotoIndex,
-  parseScreensaverPhotoUrls,
   screensaverClockPosition,
   screensaverDimBrightness,
   screensaverShowsClock,
@@ -729,6 +732,8 @@ interface AppState {
   /** Settings "Preview" is showing the screensaver overlay; a tap dismisses it
    * (no machine command, no brightness change). */
   saverPreview: boolean;
+  /** This device's screensaver slideshow (compressed JPEG data URLs from IndexedDB). */
+  screensaverPhotos: string[];
   applyState: ApplyState;
   appliedSignature: string | null;
   flowCalDraft: number | null;
@@ -878,6 +883,7 @@ export class BeanieApp {
     appAwake: false,
     wakeZonePreview: null,
     saverPreview: false,
+    screensaverPhotos: [],
     applyState: 'idle',
     appliedSignature: null,
     flowCalDraft: null,
@@ -984,6 +990,9 @@ export class BeanieApp {
   private machineServiceWorkflowToRestore: MachineServiceWorkflowRestore | null = null;
   private sleepBrightnessTimer: number | null = null;
   private sleepBrightnessDimmed = false;
+  /** Backlight level the sleep dim last applied; used to detect a missing restore. */
+  private lastSleepDimLevel: number | null = null;
+  private sleepWakeRestoreTimer: number | null = null;
   // Brightness to restore when the user wakes the app without the machine.
   // Kept current off the live display socket; falls back to 100.
   private wakeAppRestoreBrightness = 100;
@@ -1070,6 +1079,7 @@ export class BeanieApp {
     this.render();
     this.armClockTimer();
     this.armSaverPhotoTimer();
+    void this.loadScreensaverPhotos();
     void this.load();
     if (isHandoffArrival(location.search)) {
       history.replaceState(null, '', location.pathname);
@@ -1105,6 +1115,7 @@ export class BeanieApp {
     if (this.simTimer != null) window.clearTimeout(this.simTimer);
     if (this.timedSteamStopTimer != null) window.clearTimeout(this.timedSteamStopTimer);
     if (this.sleepBrightnessTimer != null) window.clearTimeout(this.sleepBrightnessTimer);
+    if (this.sleepWakeRestoreTimer != null) window.clearTimeout(this.sleepWakeRestoreTimer);
     if (this.wakeZonePreviewTimer != null) window.clearTimeout(this.wakeZonePreviewTimer);
     if (this.wakeAppIdleTimer != null) window.clearTimeout(this.wakeAppIdleTimer);
     if (this.liveRaf != null) window.cancelAnimationFrame(this.liveRaf);
@@ -1121,6 +1132,7 @@ export class BeanieApp {
     this.simTimer = null;
     this.timedSteamStopTimer = null;
     this.sleepBrightnessTimer = null;
+    this.sleepWakeRestoreTimer = null;
     this.liveRaf = null;
     this.closeLiveSockets();
   }
@@ -1573,11 +1585,70 @@ export class BeanieApp {
     }, SCREENSAVER_PHOTO_INTERVAL_MS);
   }
 
+  private async loadScreensaverPhotos(): Promise<void> {
+    const photos = await beanieCache.getObject<string[]>(SCREENSAVER_PHOTOS_CACHE_KEY, []);
+    if (this.disposed || photos.length === 0) return;
+    this.setState({ screensaverPhotos: photos });
+  }
+
+  // Import picked files (a folder or a multi-select) into the device-local
+  // slideshow: images only, downscaled and recompressed so ~100 photos stay
+  // tens of MB in IndexedDB rather than gigabytes of camera originals.
+  private async addScreensaverPhotos(files: File[]): Promise<void> {
+    const images = files.filter((file) => file.type.startsWith('image/'));
+    if (images.length === 0) {
+      this.setState({ status: 'No images in the selection' });
+      return;
+    }
+    this.setState({ status: `Importing ${images.length} photo${images.length === 1 ? '' : 's'}…` });
+    const added: string[] = [];
+    for (const file of images) {
+      const compressed = await this.compressScreensaverPhoto(file);
+      if (compressed) added.push(compressed);
+    }
+    if (this.disposed) return;
+    if (added.length === 0) {
+      this.setState({ status: 'Could not read those images' });
+      return;
+    }
+    const screensaverPhotos = mergeScreensaverPhotos(this.state.screensaverPhotos, added);
+    await beanieCache.putObject(SCREENSAVER_PHOTOS_CACHE_KEY, screensaverPhotos);
+    this.saverPhotoIndex = 0;
+    this.setState({
+      screensaverPhotos,
+      status: `${screensaverPhotos.length} screensaver photo${screensaverPhotos.length === 1 ? '' : 's'} stored`
+    });
+  }
+
+  private async clearScreensaverPhotos(): Promise<void> {
+    await beanieCache.deleteObject(SCREENSAVER_PHOTOS_CACHE_KEY);
+    this.saverPhotoIndex = 0;
+    this.setState({ screensaverPhotos: [], status: 'Screensaver photos cleared' });
+  }
+
+  private async compressScreensaverPhoto(file: File): Promise<string | null> {
+    try {
+      const bitmap = await createImageBitmap(file);
+      const scale = Math.min(1, SCREENSAVER_PHOTO_MAX_DIMENSION / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      bitmap.close();
+      return canvas.toDataURL('image/jpeg', SCREENSAVER_PHOTO_JPEG_QUALITY);
+    } catch (error) {
+      console.warn('[Beanie] Could not import screensaver photo', file.name, error);
+      return null;
+    }
+  }
+
   private advanceSaverPhoto(): void {
     const a = this.root.querySelector<HTMLImageElement>('#saver-photo-a');
     const b = this.root.querySelector<HTMLImageElement>('#saver-photo-b');
     if (!a || !b) return;
-    const photos = parseScreensaverPhotoUrls(this.state.settingsPreferences.screensaverPhotoUrls);
+    const photos = this.state.screensaverPhotos;
     if (photos.length < 2) return;
     this.saverPhotoIndex = nextScreensaverPhotoIndex(this.saverPhotoIndex, photos.length);
     const incoming = a.classList.contains('active') ? b : a;
@@ -2544,7 +2615,40 @@ export class BeanieApp {
     const hadSleepDim = this.sleepBrightnessDimmed || this.sleepBrightnessTimer != null;
     this.clearSleepBrightnessTimer();
     this.sleepBrightnessDimmed = false;
-    if (hadSleepDim) void this.refreshDisplayStateSilently();
+    if (hadSleepDim) this.verifySleepBrightnessRestored();
+  }
+
+  // reaprime restores the tablet brightness on a real machine wake, but that
+  // was tuned for the old dim-to-zero. Shortly after a wake, check whether the
+  // screen is still stuck at the saver's dim level (e.g. the clock/photos
+  // percent) and restore it ourselves if so — without racing a restore that
+  // did happen.
+  private verifySleepBrightnessRestored(): void {
+    const dimLevel = this.lastSleepDimLevel;
+    this.lastSleepDimLevel = null;
+    if (this.state.demo || dimLevel == null) {
+      void this.refreshDisplayStateSilently();
+      return;
+    }
+    if (this.sleepWakeRestoreTimer != null) window.clearTimeout(this.sleepWakeRestoreTimer);
+    this.sleepWakeRestoreTimer = window.setTimeout(() => {
+      this.sleepWakeRestoreTimer = null;
+      void (async () => {
+        try {
+          // Wait out a dim PUT still in flight so we observe its result.
+          if (this.sleepDimPromise) await this.sleepDimPromise;
+          const display = await gateway.displayState();
+          if (display.requestedBrightness > dimLevel) {
+            this.patchBundle({ display });
+            return;
+          }
+          const restored = await gateway.setDisplayBrightness(this.wakeAppRestoreBrightness);
+          this.patchBundle({ display: restored });
+        } catch (error) {
+          console.warn('[Beanie] Wake brightness restore check failed', error);
+        }
+      })();
+    }, 1500);
   }
 
   private scheduleSleepBrightnessDim(delayMs: number): void {
@@ -2575,6 +2679,7 @@ export class BeanieApp {
     // photo savers keep the configured backlight so their content is visible.
     const prefs = this.state.settingsPreferences;
     const level = screensaverDimBrightness(prefs.screensaverMode, prefs.screensaverBrightness);
+    this.lastSleepDimLevel = level;
     // Publish the PUT so a concurrent wake-app tap restores brightness only
     // after this dim lands — otherwise the two writes race and the dim can win last.
     const dim = (async () => {
@@ -2608,6 +2713,7 @@ export class BeanieApp {
     const wasDimmed = this.sleepBrightnessDimmed;
     this.clearSleepBrightnessTimer();
     this.sleepBrightnessDimmed = false;
+    this.lastSleepDimLevel = null;
     this.setState({ appAwake: true, status: 'App awake — machine still asleep' });
     this.armWakeAppIdleTimer();
     if (this.state.demo || !wasDimmed) return;
@@ -2865,9 +2971,14 @@ export class BeanieApp {
       try {
         const display = readDisplayState(JSON.parse(event.data));
         // Keep the wake-app restore target current off the live socket so it's
-        // right even before the settings bundle loads. Ignore the sleep dim's own
-        // 0 (and any low-battery cap, which leaves requestedBrightness intact).
-        if (display.requestedBrightness > 0) this.wakeAppRestoreBrightness = display.requestedBrightness;
+        // right even before the settings bundle loads. Ignore frames while the
+        // screensaver dim is armed or applied — those echo the saver's own level
+        // (0 for black, the configured percent for clock/photos), which must not
+        // become the value we "restore" to.
+        const sleepDimActive = this.sleepBrightnessDimmed || this.sleepBrightnessTimer != null;
+        if (display.requestedBrightness > 0 && !sleepDimActive) {
+          this.wakeAppRestoreBrightness = display.requestedBrightness;
+        }
         const current = this.state.settingsBundle?.display;
         if (
           current &&
@@ -4924,6 +5035,9 @@ export class BeanieApp {
       'saver-preview-end': () => {
         this.setState({ saverPreview: false });
       },
+      'settings-screensaver-clear-photos': async () => {
+        await this.clearScreensaverPhotos();
+      },
       'settings-reset-cache': async () => {
         await this.resetLocalCache();
       },
@@ -5619,8 +5733,11 @@ export class BeanieApp {
       this.updateSettingsPreferences({ topbarClock: (target as HTMLInputElement).checked });
       return;
     }
-    if (target.dataset.action === 'settings-screensaver-photos') {
-      this.updateSettingsPreferences({ screensaverPhotoUrls: target.value });
+    if (target.dataset.action === 'settings-screensaver-add-photos') {
+      const input = target as HTMLInputElement;
+      const files = Array.from(input.files ?? []);
+      input.value = '';
+      if (files.length > 0) await this.addScreensaverPhotos(files);
       return;
     }
     if (target.dataset.action === 'settings-machine-refill') {
@@ -7506,7 +7623,7 @@ export class BeanieApp {
   // slideshow timer) and an optional clock that wanders to avoid burn-in.
   private renderScreensaverContent(): string {
     const prefs = this.state.settingsPreferences;
-    const photos = parseScreensaverPhotoUrls(prefs.screensaverPhotoUrls);
+    const photos = this.state.screensaverPhotos;
     const showPhotos = screensaverShowsPhotos(prefs.screensaverMode) && photos.length > 0;
     const showClock = screensaverShowsClock(prefs.screensaverMode, photos.length);
     if (!showPhotos && !showClock) return '';
@@ -8018,7 +8135,8 @@ export class BeanieApp {
       gatewayHost: gatewayHttpOrigin() || location.origin,
       machine: this.state.machine,
       scale: this.state.scale,
-      machineRefillLevelMm: this.state.machineRefillLevel
+      machineRefillLevelMm: this.state.machineRefillLevel,
+      screensaverPhotoCount: this.state.screensaverPhotos.length
     });
   }
 
@@ -8754,6 +8872,11 @@ export class BeanieApp {
   private async resetLocalCache(): Promise<void> {
     const cleared = resetBeanieCache();
     await beanieCache.clear();
+    // The cache reset targets synced/demo data; the user's screensaver photos
+    // are device content, so put them back.
+    if (this.state.screensaverPhotos.length > 0) {
+      await beanieCache.putObject(SCREENSAVER_PHOTOS_CACHE_KEY, this.state.screensaverPhotos);
+    }
     this.setState({
       status: cleared === 0 ? 'Cache reset' : `Reset ${cleared} local item${cleared === 1 ? '' : 's'}`
     });

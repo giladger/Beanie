@@ -1,7 +1,8 @@
 import {
+  MAX_SCREENSAVER_PHOTOS,
   isScreensaverMode,
+  mergeScreensaverPhotos,
   nextScreensaverPhotoIndex,
-  parseScreensaverPhotoUrls,
   screensaverClockPosition,
   screensaverDimBrightness,
   screensaverShowsClock,
@@ -40,13 +41,15 @@ run('dim brightness: black always turns the screen off, others use the clamped s
   equal(screensaverDimBrightness('clock', Number.NaN), 25);
 });
 
-run('photo URL parsing keeps one http(s) URL per line and drops the rest', () => {
-  const urls = parseScreensaverPhotoUrls('https://a.example/1.jpg\n  http://b.example/2.png  \n\nnot-a-url\nftp://c.example/3.gif');
-  equal(urls.length, 2);
-  equal(urls[0], 'https://a.example/1.jpg');
-  equal(urls[1], 'http://b.example/2.png');
-  equal(parseScreensaverPhotoUrls('').length, 0);
-  equal(parseScreensaverPhotoUrls(null).length, 0);
+run('photo merge appends new imports and drops the oldest past the cap', () => {
+  const merged = mergeScreensaverPhotos(['a', 'b'], ['c']);
+  equal(merged.join(','), 'a,b,c');
+
+  const full = Array.from({ length: MAX_SCREENSAVER_PHOTOS }, (_, i) => `p${i}`);
+  const capped = mergeScreensaverPhotos(full, ['new']);
+  equal(capped.length, MAX_SCREENSAVER_PHOTOS);
+  equal(capped[capped.length - 1], 'new');
+  equal(capped[0], 'p1');
 });
 
 run('slideshow index wraps around and survives an empty list', () => {

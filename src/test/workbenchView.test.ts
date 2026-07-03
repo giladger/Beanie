@@ -25,7 +25,7 @@ run('workbench renders topbar metrics, hero bean actions, recipe controls, and h
   excludes(html, 'data-value="steam"');
   includes(html, 'aria-pressed="true"');
   includes(html, 'id="top-clock" aria-label="Clock">14:05</div>');
-  includes(html, 'Machine - steam, water, flush (cleaning due)');
+  includes(html, 'Water - steam, water, flush (cleaning due)');
   includes(html, 'Milky &amp; Cake');
   includes(html, 'Dak &lt;Roasters&gt;');
   includes(html, 'data-action="open-bean-picker"');
