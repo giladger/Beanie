@@ -381,7 +381,14 @@ function renderShotDetail(
         ${shotNotesInput(shot.id, edit.espressoNotes)}
       </div>
       <div class="phone-chart">
-        <canvas id="detail-canvas" class="live-canvas detail-canvas"></canvas>
+        <canvas
+          id="detail-canvas"
+          class="live-canvas detail-canvas"
+          data-action="shot-stages"
+          role="button"
+          aria-label="Show shot stages"
+          title="Show shot stages"
+        ></canvas>
       </div>
     </article>
   `;

@@ -10,6 +10,7 @@ import {
 } from '../domain/beanWorkflow';
 import { isServiceShot } from '../domain/shotRecord';
 import { buildShotStats, hasShotStats, shotDurationSeconds, type ShotStats } from '../domain/shotStats';
+import { renderStageRail, type LiveStagesView } from './workbenchView';
 import { icon } from '../components/icons';
 import { enjoymentBadge, shotScoreControl } from '../components/shotScore';
 import { escapeAttr, escapeHtml } from '../components/html';
@@ -202,7 +203,14 @@ function renderShotDetailPane(
     </div>
     <div class="detail-chart">
       ${compare ? renderCompareChip(compare) : ''}
-      <canvas id="detail-canvas" class="live-canvas detail-canvas"></canvas>
+      <canvas
+        id="detail-canvas"
+        class="live-canvas detail-canvas"
+        data-action="shot-stages"
+        role="button"
+        aria-label="Show shot stages"
+        title="Show shot stages"
+      ></canvas>
     </div>
     ${renderShotStats(shot, compare)}
   `;
@@ -296,4 +304,29 @@ function shotDateShortLabel(timestamp: string): string | null {
   const date = new Date(timestamp);
   if (Number.isNaN(date.valueOf())) return null;
   return date.toLocaleString([], { month: 'short', day: 'numeric' });
+}
+
+// Full-size replay of a saved shot in the live-shot layout: the stage rail
+// (steps + the reasons they advanced, rebuilt from the shot's trace) beside
+// the chart. Opened by pressing the detail chart.
+export function renderShotStagesModal(input: {
+  title: string;
+  stages: LiveStagesView | null;
+}): string {
+  return `
+    <div class="modal-backdrop shot-stages-backdrop">
+      <section class="modal panel shot-stages-modal" role="dialog" aria-modal="true" aria-labelledby="shot-stages-title">
+        <div class="modal-head">
+          <h2 id="shot-stages-title">${escapeHtml(input.title)}</h2>
+          <button type="button" class="icon-button" data-action="close-modal" aria-label="Close">${icon('x')}</button>
+        </div>
+        <div class="shot-stages-body">
+          ${renderStageRail(input.stages, 'shot-stages-rail')}
+          <div class="live-canvas-wrap shot-stages-canvas-wrap">
+            <canvas id="shot-stages-canvas" class="live-canvas"></canvas>
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
 }

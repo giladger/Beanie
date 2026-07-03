@@ -151,7 +151,7 @@ export function renderLivePanel(model: LivePanelViewModel): string {
           </div>
         </div>
         <div class="live-body">
-          ${liveStageRail(model.stages)}
+          ${renderStageRail(model.stages)}
           <div class="live-canvas-wrap">
             <canvas id="live-canvas" class="live-canvas"></canvas>
           </div>
@@ -343,9 +343,13 @@ function liveReadout(label: string, id: string, value: string, unit = ''): strin
 // Fixed vertical rail of every profile stage, rendered once beside the chart;
 // the app patches the done/current/upcoming states per frame. Hidden
 // (but kept in the DOM for patching) when the profile's steps aren't known.
-function liveStageRail(stages: LiveStagesView | null): string {
+// Also reused by the historic shot-stages overlay, which passes its own id.
+export function renderStageRail(
+  stages: LiveStagesView | null,
+  id = 'live-stage-rail'
+): string {
   if (!stages || stages.steps.length === 0) {
-    return '<ol class="live-stage-rail" id="live-stage-rail" hidden></ol>';
+    return `<ol class="live-stage-rail" id="${id}" hidden></ol>`;
   }
   const items = stages.steps
     .map(
@@ -361,7 +365,7 @@ function liveStageRail(stages: LiveStagesView | null): string {
       </li>`
     )
     .join('');
-  return `<ol class="live-stage-rail" id="live-stage-rail">${items}</ol>`;
+  return `<ol class="live-stage-rail" id="${id}">${items}</ol>`;
 }
 
 // Timeline state for a rail item: stages before the current one are done,

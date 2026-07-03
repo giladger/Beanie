@@ -304,8 +304,10 @@ import {
   compareHistoryShot,
   liveGhostReference,
   renderHistoryView,
+  renderShotStagesModal as renderShotStagesModalView,
   selectedHistoryShot as selectHistoryShot
 } from './views/historyView';
+import { historicShotStages } from './domain/historicShotStages';
 import { renderShotEditModal as renderShotEditModalView } from './views/shotEditorView';
 import {
   hotWaterTargetSpec,
@@ -434,6 +436,7 @@ type Modal =
   | 'no-scale-shot'
   | 'label-scanner'
   | 'delete-shot'
+  | 'shot-stages'
   | 'cleaning-wizard'
   | 'import-profile'
   | 'delete-profile'
@@ -939,6 +942,7 @@ export class BeanieApp {
   private liveGhostModel: LiveChartModel | null = null;
   private liveGhostShotId: string | null = null;
   private detailChartCanvas: HTMLCanvasElement | null = null;
+  private shotStagesChartCanvas: HTMLCanvasElement | null = null;
   private detailChartShotId: string | null = null;
   private detailChartCompareShotId: string | null = null;
   private simTimer: number | null = null;
@@ -4552,6 +4556,10 @@ export class BeanieApp {
       'delete-shot': ({ id }) => {
         if (id) this.deleteShot(id);
       },
+      'shot-stages': () => {
+        if (!this.selectedHistoryShot()) return;
+        this.setState({ modal: 'shot-stages' });
+      },
       'confirm-delete-shot': () => {
         void this.performDeleteShot(false);
       },
@@ -6980,6 +6988,7 @@ export class BeanieApp {
     refreshIcons();
     this.bindLiveElements();
     this.bindDetailChart();
+    this.bindShotStagesChart();
     this.bindCalibratorChart();
     this.restoreFocus(focus);
     this.restoreScroll(scroll);
@@ -7194,6 +7203,30 @@ export class BeanieApp {
 
   private compareShotForDetailChart(): ShotRecord | null {
     return compareHistoryShot(this.state.shots, this.state.detailShotId, this.state.compareShotId);
+  }
+
+  // Attaches the chart inside the shot-stages modal. The model is the same
+  // cached one the detail chart uses (markers included), just drawn larger.
+  private bindShotStagesChart(): void {
+    if (this.state.modal !== 'shot-stages') {
+      this.shotStagesChartCanvas = null;
+      return;
+    }
+    const canvas = this.root.querySelector<HTMLCanvasElement>('#shot-stages-canvas');
+    const shot = canvas ? this.selectedHistoryShot() : null;
+    if (!canvas || !shot) {
+      this.shotStagesChartCanvas = null;
+      return;
+    }
+    if (canvas === this.shotStagesChartCanvas) return;
+    this.shotStagesChartCanvas = canvas;
+    const chart = new LiveChart(canvas, { detailed: true, pixelScale: 3 });
+    chart.setModel(this.shotChartModel(shot));
+    // Draw after layout so the canvas has its CSS box for DPR sizing.
+    window.requestAnimationFrame(() => {
+      chart.resize();
+      chart.draw();
+    });
   }
 
   // Returns the canvas chart model for a saved shot, rebuilding only when the
@@ -7461,6 +7494,7 @@ export class BeanieApp {
     if (this.state.modal === 'no-scale-shot') return this.renderNoScaleShotModal();
     if (this.state.modal === 'label-scanner') return this.renderLabelScannerModal();
     if (this.state.modal === 'delete-shot') return this.renderDeleteShotModal();
+    if (this.state.modal === 'shot-stages') return this.renderShotStagesModal();
     if (this.state.modal === 'cleaning-wizard') return this.renderCleaningWizardModal();
     if (this.state.modal === 'import-profile') return this.renderImportProfileModal();
     if (this.state.modal === 'delete-profile') return this.renderDeleteProfileModal();
@@ -7508,6 +7542,20 @@ export class BeanieApp {
       ? { dose: formatGrams(plan.dose), remaining: formatGrams(plan.remaining), next: formatGrams(plan.next) }
       : null;
     return renderDeleteShotModalView(reclaim);
+  }
+
+  // Live-shot style replay of the selected saved shot: its stage rail (with
+  // advance reasons rebuilt from the trace and the persisted stop reason on
+  // the last reached step) beside a full-size chart.
+  private renderShotStagesModal(): string {
+    const shot = this.selectedHistoryShot();
+    if (!shot) return '';
+    const profile = shot.workflow?.profile ?? null;
+    const steps = profile ? createProfileEditorState(profile).steps : [];
+    return renderShotStagesModalView({
+      title: profile?.title ?? 'Shot stages',
+      stages: historicShotStages(shot, steps)
+    });
   }
 
   private renderWaterWarningBanner(): string {

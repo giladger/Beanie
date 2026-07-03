@@ -85,6 +85,34 @@ run('a missing decision (transient socket gap) uses the firmware description', (
   );
 });
 
+run('a missing decision on a weight step uses the weight heuristic (history)', () => {
+  // Saved shots persist no advance decisions; a weight-target step with only
+  // a placeholder exit that advanced early most likely advanced on weight.
+  const step = makeStep({
+    seconds: 80,
+    weight: 18,
+    exit: { type: 'flow', condition: 'under', value: 0 }
+  });
+  reasonEqual(
+    liveStageAdvanceReason(null, step, 8, { pressure: 9, flow: 2, weight: 18.2 }),
+    'weight 18.2 g',
+    'weight'
+  );
+});
+
+run('a KNOWN firmware advance never claims the weight heuristic', () => {
+  const step = makeStep({
+    seconds: 10,
+    weight: 18,
+    exit: { type: 'flow', condition: 'under', value: 0 }
+  });
+  reasonEqual(
+    liveStageAdvanceReason(FIRMWARE, step, 9.8, { pressure: 9, flow: 2, weight: 12 }),
+    '9.8s elapsed',
+    'time'
+  );
+});
+
 run('an unknown future advance reason falls back to the firmware description', () => {
   const step = makeStep({ seconds: 40, volume: 36 });
   reasonEqual(

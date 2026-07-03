@@ -282,6 +282,13 @@ export interface ShotMeasurement {
 
 export interface ShotRecord extends ShotSummary {
   measurements: ShotMeasurement[];
+  /**
+   * Why the shot ended, as decided by the gateway's shot sequencer (e.g.
+   * `targetWeight`, `apiStop`, `machineEnded`). OPEN SET — tolerate unknown
+   * values. Null/absent for legacy shots and shots the gateway didn't
+   * sequence.
+   */
+  stopReason?: string | null;
 }
 
 export interface ShotUpdate {

@@ -77,6 +77,16 @@ export function liveStageAdvanceReason(
         kind: isFlow ? 'flow' : 'pressure'
       };
     }
+    // No decision on record at all — a historic shot (only the final stop
+    // reason persists) or a transient live gap. An app weight skip is then a
+    // real possibility, so the old placeholder-exit heuristic applies: a
+    // weight-target step that advanced early most likely advanced on weight.
+    // A KNOWN non-skip decision (profileAdvance) skips this — the firmware
+    // advanced, so it cannot have been the app's weight exit.
+    if (decision == null && step.weight > 0) {
+      const weight = at.weight ?? step.weight;
+      return { text: `weight ${formatStageNumber(weight)} g`, kind: 'weight' };
+    }
     if (step.volume > 0) {
       return { text: `volume ${formatStageNumber(step.volume)} ml`, kind: 'volume' };
     }
