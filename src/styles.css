@@ -1733,6 +1733,9 @@ p {
 }
 
 .live-stage-rail {
+  /* Positioned so item.offsetTop is rail-relative — the app centers the
+     current stage by scroll as the pour advances through long profiles. */
+  position: relative;
   flex: 0 0 auto;
   width: 148px;
   display: flex;
@@ -1742,6 +1745,19 @@ p {
   padding: 0;
   list-style: none;
   overflow-y: auto;
+}
+
+/* Long profiles overflow the rail; fade the clipped edges so it's obvious
+   there are more steps above/below the fold. Applied by the app only when
+   the rail actually scrolls. */
+.live-stage-rail.scrollable {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 14px,
+    #000 calc(100% - 14px),
+    transparent 100%
+  );
 }
 
 .live-stage-rail[hidden] {

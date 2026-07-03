@@ -922,6 +922,10 @@ export class BeanieApp {
   // Stage-marker count at the last rail reason patch, so the DOM is only touched
   // when a stage actually advances rather than on every telemetry frame.
   private lastStageReasonCount = -1;
+  // Stage index the rail last auto-centered on. Long profiles overflow the
+  // rail's height, so the current stage is scrolled into view on each change
+  // (and once per rebuild) — never per frame, so a user peek isn't fought.
+  private lastScrolledStage = -1;
   // Cached chart model for the selected history/calibrator shot. Building the
   // model walks the shot's full measurement array, which is too expensive to
   // repeat on every setState re-render. Measurements are immutable once saved,
@@ -3259,9 +3263,11 @@ export class BeanieApp {
       temp: this.root.querySelector<HTMLElement>('#live-temp'),
       stageRail: this.root.querySelector<HTMLElement>('#live-stage-rail')
     };
-    // The rail DOM was just (re)built, so force the next readout tick to repopulate
-    // every stage reason regardless of the current marker count.
+    // The rail DOM was just (re)built, so force the next readout tick to
+    // repopulate every stage reason and re-center the current stage (a fresh
+    // rail starts scrolled to the top, hiding it on long profiles).
     this.lastStageReasonCount = -1;
+    this.lastScrolledStage = -1;
     this.drawLiveChart();
   }
 
@@ -3288,6 +3294,23 @@ export class BeanieApp {
         item.classList.toggle('current', current != null && index === current);
         item.classList.toggle('upcoming', current != null && index > current);
       });
+      // Long profiles overflow the rail's height: fade the clipped edges and
+      // keep the current stage centered, scrolling only when it changes so a
+      // user peeking at other steps isn't fought over the scroll position.
+      const rail = els.stageRail;
+      rail.classList.toggle('scrollable', rail.scrollHeight > rail.clientHeight + 1);
+      if (current != null && current !== this.lastScrolledStage) {
+        this.lastScrolledStage = current;
+        const item = rail.querySelector<HTMLElement>(
+          `.live-stage-item[data-index="${current}"]`
+        );
+        if (item && typeof rail.scrollTo === 'function') {
+          rail.scrollTo({
+            top: item.offsetTop - (rail.clientHeight - item.clientHeight) / 2,
+            behavior: 'smooth'
+          });
+        }
+      }
       const markerCount = this.liveShot.snapshot.stageMarkers.length;
       if (markerCount !== this.lastStageReasonCount) {
         this.lastStageReasonCount = markerCount;
