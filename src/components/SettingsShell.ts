@@ -29,6 +29,11 @@ import {
   WATER_SOFT_STEP_ML,
   waterLevelMl
 } from '../domain/waterAlert';
+import {
+  parseScreensaverPhotoUrls,
+  screensaverShowsPhotos,
+  type ScreensaverMode
+} from '../domain/screensaver';
 import type { PluginInfo } from '../api/settings';
 import type { DecentAccountStatus } from '../api/settings';
 import { escapeAttr, escapeHtml } from './html';
@@ -117,7 +122,7 @@ function settingsSections(
     {
       id: 'app',
       title: 'App',
-      terms: 'appearance theme ui skin update diagnostics about version brightness screen display sleep wake tap zone area machine asleep',
+      terms: 'appearance theme ui skin update diagnostics about version brightness screen display sleep wake tap zone area machine asleep screensaver saver clock photos slideshow',
       html: [
         renderSection('Beanie display', renderAppearanceRows(model.preferences)),
         renderSection('Sleep screen', renderSleepScreenRows(model.preferences)),
@@ -606,6 +611,11 @@ function renderAppearanceRows(preferences: SettingsPreferences): string {
         ['large', 'Large']
       ] satisfies Array<[UIScalePreference, string]>)
     )}
+    ${settingControlRow(
+      'Topbar clock',
+      'Show the wall clock in the top bar',
+      `<label class="settings-toggle"><input type="checkbox" data-action="settings-topbar-clock" ${preferences.topbarClock ? 'checked' : ''} /><span></span></label>`
+    )}
   `;
 }
 
@@ -632,6 +642,7 @@ function renderSleepScreenRows(preferences: SettingsPreferences): string {
       )
     : '';
   return `
+    ${renderScreensaverRows(preferences)}
     ${settingControlRow(
       'Wake app without the machine',
       'Adds a tap zone to the tablet sleep screen that opens Beanie while the machine stays asleep',
@@ -639,6 +650,55 @@ function renderSleepScreenRows(preferences: SettingsPreferences): string {
       'settings-line-wrap'
     )}
     ${positionRow}
+  `;
+}
+
+const SCREENSAVER_MODE_LABELS: Array<[ScreensaverMode, string]> = [
+  ['black', 'Black'],
+  ['clock', 'Clock'],
+  ['photos', 'Photos'],
+  ['photos-clock', 'Photos + clock']
+];
+
+function renderScreensaverRows(preferences: SettingsPreferences): string {
+  const mode = preferences.screensaverMode;
+  const black = mode === 'black';
+  const brightnessRow = settingControlRow(
+    'Screensaver brightness',
+    black ? 'The black screensaver always turns the screen fully off' : 'Screen backlight while the screensaver shows',
+    numberEditButton({
+      target: 'screensaver-brightness',
+      title: 'Screensaver brightness',
+      value: String(preferences.screensaverBrightness),
+      display: black ? 'Screen off' : `${preferences.screensaverBrightness}%`,
+      min: 0,
+      max: 100,
+      step: 5,
+      unit: '%',
+      disabled: black
+    })
+  );
+  const photoCount = parseScreensaverPhotoUrls(preferences.screensaverPhotoUrls).length;
+  const photosRow = screensaverShowsPhotos(mode)
+    ? settingControlRow(
+        'Screensaver photos',
+        photoCount > 0
+          ? `${photoCount} photo${photoCount === 1 ? '' : 's'} in the slideshow, changing every minute`
+          : 'One image URL per line; with none configured the screensaver falls back to the clock',
+        `<textarea class="settings-input settings-textarea" data-action="settings-screensaver-photos" rows="3" placeholder="https://… (one image URL per line)">${escapeHtml(preferences.screensaverPhotoUrls)}</textarea>`,
+        'settings-line-stack'
+      )
+    : '';
+  return `
+    ${settingControlRow(
+      'Screensaver',
+      'What the tablet shows while the machine sleeps (tap the screen to wake)',
+      `${segmentedControl('settings-screensaver-mode', mode, SCREENSAVER_MODE_LABELS)}
+       <button type="button" class="text-button" data-action="screensaver-preview">${icon('eye')}<span>Preview</span></button>`,
+      'settings-line-wrap'
+    )}
+    ${brightnessRow}
+    ${photosRow}
   `;
 }
 

@@ -31,6 +31,29 @@ await run('an unknown stored zone position falls back to the top edge', () => {
   equal(readSettingsPreferences().wakeAppZonePosition, 'right');
 });
 
+await run('clock and screensaver preferences default sensibly and round-trip', () => {
+  clearSyncedCache();
+  setStorePushHandler(null);
+  const defaults = readSettingsPreferences();
+  equal(defaults.topbarClock, true);
+  equal(defaults.screensaverMode, 'black');
+  equal(defaults.screensaverBrightness, 25);
+  equal(defaults.screensaverPhotoUrls, '');
+
+  writeSettingsPreferences({
+    ...defaults,
+    topbarClock: false,
+    screensaverMode: 'photos-clock',
+    screensaverBrightness: 60,
+    screensaverPhotoUrls: 'https://a.example/1.jpg\nhttps://a.example/2.jpg'
+  });
+  const next = readSettingsPreferences();
+  equal(next.topbarClock, false);
+  equal(next.screensaverMode, 'photos-clock');
+  equal(next.screensaverBrightness, 60);
+  equal(next.screensaverPhotoUrls, 'https://a.example/1.jpg\nhttps://a.example/2.jpg');
+});
+
 await run('isWakeAppZonePosition accepts the four edges and rejects others', () => {
   equal(isWakeAppZonePosition('top'), true);
   equal(isWakeAppZonePosition('bottom'), true);

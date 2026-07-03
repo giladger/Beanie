@@ -28,6 +28,7 @@ import {
   gatewayWsOrigin
 } from './api/gateway';
 import { readMachineSnapshot, readScaleSnapshot, readShotStateEvent } from './api/guards';
+import { escapeAttr, escapeHtml } from './components/html';
 import {
   emptyDecisionLog,
   nextDecisionLog,
@@ -347,6 +348,16 @@ import {
   writeSettingsPreferences
 } from './domain/settings';
 import {
+  SCREENSAVER_PHOTO_INTERVAL_MS,
+  isScreensaverMode,
+  nextScreensaverPhotoIndex,
+  parseScreensaverPhotoUrls,
+  screensaverClockPosition,
+  screensaverDimBrightness,
+  screensaverShowsClock,
+  screensaverShowsPhotos
+} from './domain/screensaver';
+import {
   loadAllFromStore,
   pollFromStore,
   setStorePushHandler,
@@ -556,7 +567,8 @@ interface NumberEditTarget {
     | 'shot-edit'
     | 'form-field'
     | 'water-soft'
-    | 'machine-refill';
+    | 'machine-refill'
+    | 'screensaver-brightness';
   group?: string;
   key?: string;
   beanId?: string;
@@ -714,6 +726,9 @@ interface AppState {
   /** Edge to flash a translucent wake-app-zone preview over for ~2s after the
    * user enables the zone or changes its placement in Settings; null when idle. */
   wakeZonePreview: WakeAppZonePosition | null;
+  /** Settings "Preview" is showing the screensaver overlay; a tap dismisses it
+   * (no machine command, no brightness change). */
+  saverPreview: boolean;
   applyState: ApplyState;
   appliedSignature: string | null;
   flowCalDraft: number | null;
@@ -862,6 +877,7 @@ export class BeanieApp {
     asleep: false,
     appAwake: false,
     wakeZonePreview: null,
+    saverPreview: false,
     applyState: 'idle',
     appliedSignature: null,
     flowCalDraft: null,
@@ -893,6 +909,11 @@ export class BeanieApp {
   private shotStateSocketAttempts = 0;
   private shotRefreshTimer: number | null = null;
   private clockTimer: number | null = null;
+  private saverPhotoTimer: number | null = null;
+  // Slideshow/clock placement live outside AppState so their minute ticks
+  // patch the overlay DOM in place instead of re-rendering the app.
+  private saverPhotoIndex = 0;
+  private saverClockPos = screensaverClockPosition(0.5, 0.5);
   private beanRefreshTimer: number | null = null;
   private machineSocket: WebSocket | null = null;
   private scaleSocket: WebSocket | null = null;
@@ -962,7 +983,7 @@ export class BeanieApp {
   private timedSteamStopScheduledForMs: number | null = null;
   private machineServiceWorkflowToRestore: MachineServiceWorkflowRestore | null = null;
   private sleepBrightnessTimer: number | null = null;
-  private sleepBrightnessZeroed = false;
+  private sleepBrightnessDimmed = false;
   // Brightness to restore when the user wakes the app without the machine.
   // Kept current off the live display socket; falls back to 100.
   private wakeAppRestoreBrightness = 100;
@@ -1048,6 +1069,7 @@ export class BeanieApp {
     window.addEventListener('focus', this.handleWindowFocus);
     this.render();
     this.armClockTimer();
+    this.armSaverPhotoTimer();
     void this.load();
     if (isHandoffArrival(location.search)) {
       history.replaceState(null, '', location.pathname);
@@ -1078,6 +1100,7 @@ export class BeanieApp {
     if (this.shotStateRetryTimer != null) window.clearTimeout(this.shotStateRetryTimer);
     if (this.shotRefreshTimer != null) window.clearInterval(this.shotRefreshTimer);
     if (this.clockTimer != null) window.clearTimeout(this.clockTimer);
+    if (this.saverPhotoTimer != null) window.clearTimeout(this.saverPhotoTimer);
     if (this.beanRefreshTimer != null) window.clearInterval(this.beanRefreshTimer);
     if (this.simTimer != null) window.clearTimeout(this.simTimer);
     if (this.timedSteamStopTimer != null) window.clearTimeout(this.timedSteamStopTimer);
@@ -1093,6 +1116,7 @@ export class BeanieApp {
     this.displayRetryTimer = null;
     this.shotRefreshTimer = null;
     this.clockTimer = null;
+    this.saverPhotoTimer = null;
     this.beanRefreshTimer = null;
     this.simTimer = null;
     this.timedSteamStopTimer = null;
@@ -1514,17 +1538,56 @@ export class BeanieApp {
     }, SHOT_REFRESH_INTERVAL_MS);
   }
 
-  // Patch the topbar clock in place on each minute boundary (no re-render).
-  // A timeout chain rather than a 1s interval, so an idle tablet stays idle.
+  // Patch the topbar and screensaver clocks in place on each minute boundary
+  // (no re-render). A timeout chain rather than a 1s interval, so an idle
+  // tablet stays idle.
   private armClockTimer(): void {
     if (this.clockTimer != null) window.clearTimeout(this.clockTimer);
     const msToNextMinute = 60_000 - (Date.now() % 60_000);
     this.clockTimer = window.setTimeout(() => {
       this.clockTimer = null;
+      const label = clockLabel(new Date());
       const el = this.root.querySelector<HTMLElement>('#top-clock');
-      if (el) el.textContent = clockLabel(new Date());
+      if (el) el.textContent = label;
+      const saverClock = this.root.querySelector<HTMLElement>('#saver-clock');
+      if (saverClock) {
+        // Wander like de1app's saver clock so the time never burns in.
+        saverClock.textContent = label;
+        this.saverClockPos = screensaverClockPosition(Math.random(), Math.random());
+        saverClock.style.left = `${this.saverClockPos.leftPct}%`;
+        saverClock.style.top = `${this.saverClockPos.topPct}%`;
+      }
       this.armClockTimer();
     }, msToNextMinute + 250);
+  }
+
+  // Advance the screensaver photo slideshow by crossfading the two stacked
+  // <img> layers. The chain runs whenever the overlay could appear and no-ops
+  // (cheaply) while it isn't on screen.
+  private armSaverPhotoTimer(): void {
+    if (this.saverPhotoTimer != null) window.clearTimeout(this.saverPhotoTimer);
+    this.saverPhotoTimer = window.setTimeout(() => {
+      this.saverPhotoTimer = null;
+      this.advanceSaverPhoto();
+      this.armSaverPhotoTimer();
+    }, SCREENSAVER_PHOTO_INTERVAL_MS);
+  }
+
+  private advanceSaverPhoto(): void {
+    const a = this.root.querySelector<HTMLImageElement>('#saver-photo-a');
+    const b = this.root.querySelector<HTMLImageElement>('#saver-photo-b');
+    if (!a || !b) return;
+    const photos = parseScreensaverPhotoUrls(this.state.settingsPreferences.screensaverPhotoUrls);
+    if (photos.length < 2) return;
+    this.saverPhotoIndex = nextScreensaverPhotoIndex(this.saverPhotoIndex, photos.length);
+    const incoming = a.classList.contains('active') ? b : a;
+    const outgoing = incoming === a ? b : a;
+    incoming.onload = () => {
+      incoming.onload = null;
+      incoming.classList.add('active');
+      outgoing.classList.remove('active');
+    };
+    incoming.src = photos[this.saverPhotoIndex]!;
   }
 
   private startBeanRefreshTimer(): void {
@@ -2192,7 +2255,7 @@ export class BeanieApp {
       appAwake: false,
       status: command.status
     });
-    if (state === 'sleeping') this.scheduleSleepBrightnessZero(1000);
+    if (state === 'sleeping') this.scheduleSleepBrightnessDim(1000);
     else this.observeSleepBrightnessState(false);
     return true;
   }
@@ -2475,24 +2538,24 @@ export class BeanieApp {
     if (sleeping) {
       // The user kept the app awake while the machine sleeps — leave the screen lit.
       if (this.state.appAwake) return;
-      this.scheduleSleepBrightnessZero(0);
+      this.scheduleSleepBrightnessDim(0);
       return;
     }
-    const hadSleepDim = this.sleepBrightnessZeroed || this.sleepBrightnessTimer != null;
+    const hadSleepDim = this.sleepBrightnessDimmed || this.sleepBrightnessTimer != null;
     this.clearSleepBrightnessTimer();
-    this.sleepBrightnessZeroed = false;
+    this.sleepBrightnessDimmed = false;
     if (hadSleepDim) void this.refreshDisplayStateSilently();
   }
 
-  private scheduleSleepBrightnessZero(delayMs: number): void {
-    if (this.state.demo || this.sleepBrightnessZeroed || this.state.appAwake) return;
+  private scheduleSleepBrightnessDim(delayMs: number): void {
+    if (this.state.demo || this.sleepBrightnessDimmed || this.state.appAwake) return;
     if (this.sleepBrightnessTimer != null) {
       if (delayMs > 0) return;
       this.clearSleepBrightnessTimer();
     }
     this.sleepBrightnessTimer = window.setTimeout(() => {
       this.sleepBrightnessTimer = null;
-      void this.zeroDisplayForSleep();
+      void this.dimDisplayForSleep();
     }, delayMs);
   }
 
@@ -2502,17 +2565,21 @@ export class BeanieApp {
     this.sleepBrightnessTimer = null;
   }
 
-  private async zeroDisplayForSleep(): Promise<void> {
-    if (this.state.demo || this.sleepBrightnessZeroed || this.state.appAwake) return;
+  private async dimDisplayForSleep(): Promise<void> {
+    if (this.state.demo || this.sleepBrightnessDimmed || this.state.appAwake) return;
     // The dim is deferred ~1s; if the machine woke in that window, don't black
     // out the screen (and don't fight reaprime's wake-restore).
     if (!this.machineIsSleeping()) return;
-    this.sleepBrightnessZeroed = true;
+    this.sleepBrightnessDimmed = true;
+    // The black screensaver turns the screen fully off (as before); clock and
+    // photo savers keep the configured backlight so their content is visible.
+    const prefs = this.state.settingsPreferences;
+    const level = screensaverDimBrightness(prefs.screensaverMode, prefs.screensaverBrightness);
     // Publish the PUT so a concurrent wake-app tap restores brightness only
-    // after this dim lands — otherwise the two writes race and 0 can win last.
+    // after this dim lands — otherwise the two writes race and the dim can win last.
     const dim = (async () => {
       try {
-        const display = await gateway.setDisplayBrightness(0);
+        const display = await gateway.setDisplayBrightness(level);
         this.patchBundle({ display });
       } catch (error) {
         console.warn('[Beanie] Sleep brightness dim failed', error);
@@ -2538,9 +2605,9 @@ export class BeanieApp {
   // brightness only on a real wake). `appAwake` then suppresses re-dimming and
   // hides the screensaver until the machine actually wakes.
   private async wakeAppWithoutMachine(): Promise<void> {
-    const wasDimmed = this.sleepBrightnessZeroed;
+    const wasDimmed = this.sleepBrightnessDimmed;
     this.clearSleepBrightnessTimer();
-    this.sleepBrightnessZeroed = false;
+    this.sleepBrightnessDimmed = false;
     this.setState({ appAwake: true, status: 'App awake — machine still asleep' });
     this.armWakeAppIdleTimer();
     if (this.state.demo || !wasDimmed) return;
@@ -2577,7 +2644,7 @@ export class BeanieApp {
   private wakeAppIdleScreenOff(): void {
     if (this.state.demo || !this.state.appAwake || !this.machineIsSleeping()) return;
     this.setState({ appAwake: false });
-    this.scheduleSleepBrightnessZero(0);
+    this.scheduleSleepBrightnessDim(0);
   }
 
   // Flash a translucent preview of the wake-app zone over the current view for
@@ -4705,11 +4772,7 @@ export class BeanieApp {
       'scale-stat': async () => {
         await this.handleScaleStatTap();
       },
-      // Topbar stat taps: the group temp opens the recipe temp editor, the
-      // water level jumps to its alert/refill settings (Settings → Machine).
-      'group-stat': () => {
-        this.openEditDialog('temperature');
-      },
+      // Tapping the water level jumps to its alert/refill settings (Settings → Machine).
       'water-stat': () => {
         this.openSettingsPage('machine');
       },
@@ -4849,6 +4912,17 @@ export class BeanieApp {
           this.updateSettingsPreferences({ wakeAppZonePosition: el.dataset.value });
           this.previewWakeAppZone(el.dataset.value);
         }
+      },
+      'settings-screensaver-mode': ({ el }) => {
+        if (isScreensaverMode(el.dataset.value)) {
+          this.updateSettingsPreferences({ screensaverMode: el.dataset.value });
+        }
+      },
+      'screensaver-preview': () => {
+        this.setState({ saverPreview: true });
+      },
+      'saver-preview-end': () => {
+        this.setState({ saverPreview: false });
       },
       'settings-reset-cache': async () => {
         await this.resetLocalCache();
@@ -5539,6 +5613,14 @@ export class BeanieApp {
       const enabled = (target as HTMLInputElement).checked;
       this.updateSettingsPreferences({ wakeAppZoneEnabled: enabled });
       if (enabled) this.previewWakeAppZone(this.state.settingsPreferences.wakeAppZonePosition);
+      return;
+    }
+    if (target.dataset.action === 'settings-topbar-clock') {
+      this.updateSettingsPreferences({ topbarClock: (target as HTMLInputElement).checked });
+      return;
+    }
+    if (target.dataset.action === 'settings-screensaver-photos') {
+      this.updateSettingsPreferences({ screensaverPhotoUrls: target.value });
       return;
     }
     if (target.dataset.action === 'settings-machine-refill') {
@@ -6914,6 +6996,13 @@ export class BeanieApp {
       if (Number.isFinite(ml)) this.updateSettingsPreferences({ waterSoftLimitMl: Math.max(0, ml) });
       return;
     }
+    if (edit.target === 'screensaver-brightness') {
+      const percent = Number(value);
+      if (Number.isFinite(percent)) {
+        this.updateSettingsPreferences({ screensaverBrightness: Math.max(0, Math.min(100, Math.round(percent))) });
+      }
+      return;
+    }
     if (edit.target === 'machine-refill') {
       const mm = Number(value);
       if (Number.isFinite(mm)) await this.setMachineRefillLevel(Math.max(0, mm));
@@ -7135,7 +7224,7 @@ export class BeanieApp {
           current: this.state.machine?.state?.state ?? 'idle',
           busy: this.state.busy
         },
-        clock: clockLabel(new Date()),
+        clock: this.state.settingsPreferences.topbarClock ? clockLabel(new Date()) : null,
         cleaningDue: cleaningDueNow,
         asleep: this.state.asleep
       },
@@ -7395,16 +7484,41 @@ export class BeanieApp {
       wakeAppZoneEnabled: this.state.settingsPreferences.wakeAppZoneEnabled,
       wakeAppZonePosition: this.state.settingsPreferences.wakeAppZonePosition
     });
-    if (!model.showOverlay) return '';
+    const preview = this.state.saverPreview;
+    if (!model.showOverlay && !preview) return '';
     // The wake-app zone layers on top of (and is rendered after) the wake-machine
     // overlay so a tap on the strip opens the app without waking the machine.
-    const zone = model.showWakeAppZone
+    const zone = !preview && model.showWakeAppZone
       ? `<button type="button" class="sleep-wake-app-zone sleep-wake-app-zone-${model.zonePosition}" data-action="wake-app" aria-label="Open app without waking the machine"></button>`
       : '';
+    const action = preview ? 'saver-preview-end' : 'wake';
+    const label = preview ? 'End screensaver preview' : 'Wake machine';
     return `
-      <button type="button" class="sleep-overlay" data-action="wake" aria-label="Wake machine"></button>
+      <button type="button" class="sleep-overlay" data-action="${action}" aria-label="${label}">
+        ${this.renderScreensaverContent()}
+      </button>
       ${zone}
     `;
+  }
+
+  // Screensaver content inside the sleep overlay, modelled on de1app's saver
+  // page: an optional photo slideshow (two stacked images crossfaded by the
+  // slideshow timer) and an optional clock that wanders to avoid burn-in.
+  private renderScreensaverContent(): string {
+    const prefs = this.state.settingsPreferences;
+    const photos = parseScreensaverPhotoUrls(prefs.screensaverPhotoUrls);
+    const showPhotos = screensaverShowsPhotos(prefs.screensaverMode) && photos.length > 0;
+    const showClock = screensaverShowsClock(prefs.screensaverMode, photos.length);
+    if (!showPhotos && !showClock) return '';
+    this.saverPhotoIndex = photos.length > 0 ? this.saverPhotoIndex % photos.length : 0;
+    const photoLayers = showPhotos
+      ? `<img id="saver-photo-a" class="saver-photo active" alt="" src="${escapeAttr(photos[this.saverPhotoIndex]!)}" />
+         <img id="saver-photo-b" class="saver-photo" alt="" />`
+      : '';
+    const clock = showClock
+      ? `<span id="saver-clock" class="saver-clock ${showPhotos ? 'on-photo' : ''}" style="left: ${this.saverClockPos.leftPct}%; top: ${this.saverClockPos.topPct}%;">${escapeHtml(clockLabel(new Date()))}</span>`
+      : '';
+    return `${photoLayers}${clock}`;
   }
 
   private renderWakeAppZonePreview(): string {
@@ -8259,7 +8373,7 @@ export class BeanieApp {
         lowBatteryBrightnessActive: false
       }
     });
-    if (brightness !== 0) this.sleepBrightnessZeroed = false;
+    if (brightness !== 0) this.sleepBrightnessDimmed = false;
     if (this.settingsLocal) {
       this.setState({ status: 'Brightness saved (demo)' });
       return;
@@ -8284,7 +8398,7 @@ export class BeanieApp {
       // the screensaver returns — even when the machine was already asleep (no
       // telemetry transition to clear it for us).
       if (this.state.appAwake) this.setState({ appAwake: false });
-      this.scheduleSleepBrightnessZero(1000);
+      this.scheduleSleepBrightnessDim(1000);
     } else if (result.status !== 'Machine command failed') {
       this.observeSleepBrightnessState(false);
     }

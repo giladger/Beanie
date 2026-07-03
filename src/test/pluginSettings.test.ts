@@ -186,7 +186,11 @@ function settingsModel(): SettingsShellModel {
       uiScale: 'standard',
       waterSoftLimitMl: 400,
       wakeAppZoneEnabled: false,
-      wakeAppZonePosition: 'top'
+      wakeAppZonePosition: 'top',
+      topbarClock: true,
+      screensaverMode: 'black',
+      screensaverBrightness: 25,
+      screensaverPhotoUrls: ''
     },
     machineRefillLevelMm: null,
     gateway: {

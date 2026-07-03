@@ -21,8 +21,9 @@ export interface WorkbenchTopbarViewModel {
     current: MachineState;
     busy: boolean;
   };
-  /** Wall-clock label (e.g. "14:05"); the app patches #top-clock each minute. */
-  clock: string;
+  /** Wall-clock label (e.g. "14:05"), or null to hide the topbar clock.
+   * The app patches #top-clock in place each minute. */
+  clock: string | null;
   cleaningDue: boolean;
   asleep: boolean;
 }
@@ -172,13 +173,13 @@ export function renderTopbar(model: WorkbenchTopbarViewModel): string {
       <div class="top-inline">
         <div class="top-stats" aria-label="Machine metrics">
           ${topStat('Status', model.machineStatus.label, 'stat-machine', statusTone)}
-          ${topStatButton('Group', model.groupTemperature, 'Set brew temperature', 'group-stat', 'stat-group')}
-          ${topStatButton('Steam', model.steamTemperature, 'Steam settings', 'open-machine-settings', 'stat-steam')}
+          ${topStat('Group', model.groupTemperature, 'stat-group')}
+          ${topStat('Steam', model.steamTemperature, 'stat-steam')}
           ${topStatButton('Water', model.water, 'Water level alert settings', 'water-stat', 'stat-water', model.waterTone)}
           ${topStatButton('Scale', model.scale.label, model.scale.title, 'scale-stat', 'stat-scale', `top-stat-divide ${model.scale.tone}`.trim())}
         </div>
         ${renderShotCommand(model.machineCommands)}
-        <div class="top-clock" id="top-clock" aria-label="Clock">${escapeHtml(model.clock)}</div>
+        ${model.clock == null ? '' : `<div class="top-clock" id="top-clock" aria-label="Clock">${escapeHtml(model.clock)}</div>`}
         <div class="top-icons" role="toolbar" aria-label="Skin actions">
           <button class="icon-tool icon-tool-labeled ${model.cleaningDue ? 'has-badge' : ''}" data-action="open-machine-settings" aria-label="${escapeAttr(machineSettingsLabel)}" title="${escapeAttr(machineSettingsLabel)}">${icon('waves')}<span class="icon-tool-label">Machine</span>${model.cleaningDue ? '<span class="icon-tool-badge" aria-hidden="true"></span>' : ''}</button>
           <button class="icon-tool icon-tool-labeled" data-action="open-settings" aria-label="Settings" title="Settings">${icon('settings')}<span class="icon-tool-label">Settings</span></button>

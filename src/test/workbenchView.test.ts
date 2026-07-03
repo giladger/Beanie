@@ -11,11 +11,12 @@ run('workbench renders topbar metrics, hero bean actions, recipe controls, and h
   includes(html, 'class="topbar"');
   includes(html, 'id="stat-machine">Ready</strong>');
   includes(html, 'class="top-stat stat-tone-ready"');
-  // Water carries its alert tone and, like group/steam/scale, is tappable.
+  // Water (alert settings) and Scale (tare/connect) are tappable; the group
+  // and steam temperature readouts are deliberately plain stats.
   includes(html, 'top-stat-button stat-warn');
-  includes(html, 'data-action="group-stat"');
   includes(html, 'data-action="water-stat"');
   includes(html, 'data-action="scale-stat"');
+  excludes(html, 'data-action="group-stat"');
   includes(html, 'top-stat-divide');
   // Only the fallback Shot command lives in the topbar; steam/flush/hot-water
   // start from the machine page's lanes.
@@ -63,6 +64,11 @@ run('workbench hides remaining/age chips and machine commands when model says un
   excludes(html, 'hero-roast');
   excludes(html, 'data-action="machine-command"');
   excludes(html, 'has-badge');
+});
+
+run('workbench hides the topbar clock when the preference turns it off', () => {
+  const html = renderWorkbench(model({ topbar: { ...model().topbar, clock: null } }));
+  excludes(html, 'id="top-clock"');
 });
 
 run('page header escapes the title and back value while preserving action html', () => {

@@ -3,13 +3,22 @@ import { FLOW_CALIBRATION_STORAGE_KEYS } from './flowCalibration';
 import {
   getSyncedItem,
   removeSyncedItem,
+  screensaverBrightnessKey,
+  screensaverModeKey,
+  screensaverPhotoUrlsKey,
   setSyncedItem,
   syncedCacheKeys,
+  topbarClockKey,
   uiScaleKey,
   wakeAppZoneEnabledKey,
   wakeAppZonePositionKey,
   waterSoftKey
 } from './settingsStore';
+import {
+  DEFAULT_SCREENSAVER_BRIGHTNESS,
+  SCREENSAVER_MODES,
+  type ScreensaverMode
+} from './screensaver';
 import { DEFAULT_WATER_SOFT_ML } from './waterAlert';
 
 export type ThemePreference =
@@ -65,6 +74,14 @@ export interface SettingsPreferences {
   wakeAppZoneEnabled: boolean;
   /** Which screen edge the wake-app tap zone occupies. */
   wakeAppZonePosition: WakeAppZonePosition;
+  /** Show the wall clock in the workbench topbar. */
+  topbarClock: boolean;
+  /** What the sleep screensaver shows (black stays a fully dark screen). */
+  screensaverMode: ScreensaverMode;
+  /** Backlight percent while a clock/photos screensaver shows (black is always 0). */
+  screensaverBrightness: number;
+  /** Photo slideshow sources, one image URL per line. */
+  screensaverPhotoUrls: string;
 }
 
 export interface GatewayStatusModel {
@@ -114,6 +131,10 @@ const preservedResetKeys = new Set([
   waterSoftKey,
   wakeAppZoneEnabledKey,
   wakeAppZonePositionKey,
+  topbarClockKey,
+  screensaverModeKey,
+  screensaverBrightnessKey,
+  screensaverPhotoUrlsKey,
   // Per-profile/global flow calibration is hardware-tuning config — a reset
   // must not wipe it.
   ...FLOW_CALIBRATION_STORAGE_KEYS
@@ -125,7 +146,11 @@ export function readSettingsPreferences(): SettingsPreferences {
     uiScale: readEnum(uiScaleKey, ['compact', 'standard', 'large'], 'standard'),
     waterSoftLimitMl: readNonNegativeNumber(waterSoftKey, DEFAULT_WATER_SOFT_ML),
     wakeAppZoneEnabled: readBoolean(wakeAppZoneEnabledKey, false),
-    wakeAppZonePosition: readEnum(wakeAppZonePositionKey, WAKE_APP_ZONE_POSITIONS, 'top')
+    wakeAppZonePosition: readEnum(wakeAppZonePositionKey, WAKE_APP_ZONE_POSITIONS, 'top'),
+    topbarClock: readBoolean(topbarClockKey, true),
+    screensaverMode: readEnum(screensaverModeKey, SCREENSAVER_MODES, 'black'),
+    screensaverBrightness: readNonNegativeNumber(screensaverBrightnessKey, DEFAULT_SCREENSAVER_BRIGHTNESS),
+    screensaverPhotoUrls: getSyncedItem(screensaverPhotoUrlsKey) ?? ''
   };
 }
 
@@ -136,6 +161,10 @@ export function writeSettingsPreferences(next: SettingsPreferences): void {
   setSyncedItem(waterSoftKey, String(next.waterSoftLimitMl));
   setSyncedItem(wakeAppZoneEnabledKey, String(next.wakeAppZoneEnabled));
   setSyncedItem(wakeAppZonePositionKey, next.wakeAppZonePosition);
+  setSyncedItem(topbarClockKey, String(next.topbarClock));
+  setSyncedItem(screensaverModeKey, next.screensaverMode);
+  setSyncedItem(screensaverBrightnessKey, String(next.screensaverBrightness));
+  setSyncedItem(screensaverPhotoUrlsKey, next.screensaverPhotoUrls);
 }
 
 export function applySettingsPreferences(preferences: SettingsPreferences): void {

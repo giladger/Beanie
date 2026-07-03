@@ -1505,6 +1505,44 @@ p {
   padding: 0;
   appearance: none;
   cursor: pointer;
+  overflow: hidden;
+}
+
+/* Screensaver photo slideshow: two stacked layers crossfaded by the app. */
+.saver-photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 1.2s ease;
+}
+
+.saver-photo.active {
+  opacity: 1;
+}
+
+/* Screensaver clock: dim gray on black (like de1app's), brighter with a text
+   shadow when floating over photos. It drifts to a fresh spot every minute
+   (burn-in protection), easing between positions. */
+.saver-clock {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  color: #555;
+  font-size: 96px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  transition: top 1s ease, left 1s ease;
+  pointer-events: none;
+}
+
+.saver-clock.on-photo {
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.85);
 }
 
 /* Edge strip layered over the black sleep overlay: tapping it opens Beanie
@@ -6005,6 +6043,17 @@ p {
 
 .settings-input {
   text-align: right;
+}
+
+/* Multiline settings value (screensaver photo URLs). */
+textarea.settings-textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
 }
 
 .settings-number-button {
