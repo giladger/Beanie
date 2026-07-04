@@ -1890,6 +1890,13 @@ p {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
+}
+
+/* Entrance animation only when a chip GENUINELY first appears (the app adds
+   `fresh` on the live empty→filled transition). Animating on element creation
+   would replay on every innerHTML rebuild — the end-of-shot renders come in
+   quick succession and the whole rail would flicker. */
+.live-stage-reason.fresh {
   animation: live-stage-reason-in 180ms ease-out;
 }
 

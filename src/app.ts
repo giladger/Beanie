@@ -3044,12 +3044,14 @@ export class BeanieApp {
         this.lastStageReasonCount = -1;
         // Once the pour has ended those ticks stop, so a stop decision landing
         // a beat after the snapshot socket ended the shot must repaint the
-        // frozen panel itself (the final stage's reason comes from it).
+        // frozen panel itself (the final stage's reason comes from it). Patch
+        // the bound rail in place rather than re-rendering — an innerHTML
+        // rebuild here (on top of the end-of-shot renders) reads as flicker.
         if (
           !this.liveShot.isActive &&
           (this.state.liveActive || this.state.liveFinalizing)
         ) {
-          this.setState({});
+          this.updateLiveReadouts();
         }
       } catch (error) {
         console.warn('[Beanie] Bad shotState frame', error);
@@ -3519,6 +3521,12 @@ export class BeanieApp {
       const rail = els.stageRail;
       rail.classList.toggle('scrollable', rail.scrollHeight > rail.clientHeight + 1);
       if (current != null && current !== this.lastScrolledStage) {
+        // A freshly rebuilt rail (lastScrolledStage reset) starts at the top —
+        // land on the current stage instantly; a visible smooth scroll on
+        // every end-of-shot re-render reads as flicker. Live stage changes
+        // still glide.
+        const behavior: ScrollBehavior =
+          this.lastScrolledStage === -1 ? 'auto' : 'smooth';
         this.lastScrolledStage = current;
         const item = rail.querySelector<HTMLElement>(
           `.live-stage-item[data-index="${current}"]`
@@ -3526,7 +3534,7 @@ export class BeanieApp {
         if (item && typeof rail.scrollTo === 'function') {
           rail.scrollTo({
             top: item.offsetTop - (rail.clientHeight - item.clientHeight) / 2,
-            behavior: 'smooth'
+            behavior
           });
         }
       }
@@ -3536,9 +3544,14 @@ export class BeanieApp {
         const reasons = this.liveStageReasons();
         els.stageRail.querySelectorAll<HTMLElement>('.live-stage-reason').forEach((span) => {
           const reason = reasons[Number(span.dataset.index)] ?? null;
+          // Animate only a chip that genuinely just appeared (empty → filled
+          // during the live patch); rebuilt rails render their chips already
+          // filled, so re-renders never replay the entrance.
+          const appeared = span.textContent === '' && Boolean(reason?.text);
           span.textContent = reason?.text ?? '';
           if (reason) span.dataset.kind = reason.kind;
           else delete span.dataset.kind;
+          if (appeared) span.classList.add('fresh');
         });
       }
     }
