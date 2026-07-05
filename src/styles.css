@@ -2698,6 +2698,24 @@ p {
   overflow: visible;
 }
 
+/* iOS Safari's dynamic toolbars make 100vh overshoot the visible area, so the
+   modal's sticky footer (Cancel / Add coffee) lands behind the browser chrome
+   and can't be reached. Bound the modal — and the backdrop it's centred in — to
+   the *visible* viewport with dvh so the actions always stay on screen. */
+@supports (height: 100dvh) {
+  .bean-picker-backdrop {
+    height: 100dvh;
+  }
+
+  .bean-picker-modal {
+    height: calc(100dvh - 16px);
+  }
+
+  .bean-picker-modal.create-mode {
+    max-height: calc(100dvh - 16px);
+  }
+}
+
 .bean-picker-list-panel,
 .bean-picker-inspector,
 .bean-picker-decision,
@@ -2984,6 +3002,23 @@ p {
   height: 38px;
   min-width: 0;
   padding: 0 10px;
+}
+
+/* Native date inputs centre their value and, on iOS Safari, ignore the set
+   height and balloon — so the roast-date field towers over the left-aligned
+   text and number fields beside it. Strip the native chrome so the height
+   sticks, and left-align the value to match its neighbours. */
+.bean-picker-first-stock-fields input[type='date'],
+.bean-picker-batch-fields input[type='date'] {
+  -webkit-appearance: none;
+  appearance: none;
+  text-align: left;
+}
+
+.bean-picker-first-stock-fields input[type='date']::-webkit-date-and-time-value,
+.bean-picker-batch-fields input[type='date']::-webkit-date-and-time-value {
+  text-align: left;
+  margin: 0;
 }
 
 .bean-picker-hint {
@@ -3538,12 +3573,15 @@ p {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* Keep the bag fields two-per-row (roast date + roast, bag + left) rather than
+     one tall stack — the date field stays a sensible width and the section is
+     short enough that the sticky footer buttons stay in reach. */
   .bean-picker-first-stock-fields {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .bean-picker-batch-fields {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .bean-picker-notes textarea {
