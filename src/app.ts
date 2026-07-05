@@ -3478,7 +3478,8 @@ export class BeanieApp {
       this.liveCanvas = canvas;
       this.liveChart = new LiveChart(canvas, {
         detailed: true,
-        hideMaxTimeLabel: this.state.liveChartMode === 'auto'
+        hideMaxTimeLabel: this.state.liveChartMode === 'auto',
+        hover: true
       });
     }
     this.liveReadoutEls = {
@@ -7481,7 +7482,7 @@ export class BeanieApp {
     this.detailChartCanvas = canvas;
     this.detailChartShotId = shot.id;
     this.detailChartCompareShotId = compare?.id ?? null;
-    const chart = new LiveChart(canvas, { detailed: true, pixelScale: 3 });
+    const chart = new LiveChart(canvas, { detailed: true, pixelScale: 3, hover: true });
     const model = this.shotChartModel(shot);
     chart.setModel(compare ? overlayComparisonModel(model, this.compareChartModel(compare)) : model);
     // Draw after layout so the canvas has its CSS box for DPR sizing.
@@ -7510,7 +7511,7 @@ export class BeanieApp {
     }
     if (canvas === this.shotStagesChartCanvas) return;
     this.shotStagesChartCanvas = canvas;
-    const chart = new LiveChart(canvas, { detailed: true, pixelScale: 3 });
+    const chart = new LiveChart(canvas, { detailed: true, pixelScale: 3, hover: true });
     chart.setModel(this.shotChartModel(shot));
     // Draw after layout so the canvas has its CSS box for DPR sizing.
     window.requestAnimationFrame(() => {
@@ -7571,7 +7572,7 @@ export class BeanieApp {
         }
         return item;
       });
-    const chart = new LiveChart(canvas, { detailed: true, pixelScale: 3 });
+    const chart = new LiveChart(canvas, { detailed: true, pixelScale: 3, hover: true });
     chart.setModel({ ...model, series });
     window.requestAnimationFrame(() => {
       chart.resize();

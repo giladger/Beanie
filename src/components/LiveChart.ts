@@ -1,4 +1,9 @@
-import type { LiveChartModel, LiveChartSeries } from '../domain/liveChartModel';
+import type {
+  LiveChartModel,
+  LiveChartPoint,
+  LiveChartSeries,
+  ShotGraphSeriesKey
+} from '../domain/liveChartModel';
 
 // Imperative canvas renderer for espresso-shot charts. It draws into a single
 // <canvas> in one pass instead of rebuilding DOM for every frame,
@@ -24,6 +29,12 @@ export interface LiveChartOptions {
   detailed?: boolean;
   hideMaxTimeLabel?: boolean;
   pixelScale?: number;
+  /**
+   * Follow the mouse with a crosshair + per-series values tooltip. Only ever
+   * attached on devices with a hovering fine pointer (i.e. desktops), so the
+   * tablet/touch paths never pay for the listeners or redraws.
+   */
+  hover?: boolean;
 }
 
 const MARGIN_DETAILED = { top: 18, right: 22, bottom: 58, left: 42 };
@@ -39,6 +50,8 @@ let MARKER_LINE = 'rgba(255,255,255,0.44)';
 let TEXT_COLOR = 'rgba(245,247,248,0.82)';
 let MUTED_TEXT = 'rgba(255,255,255,0.5)';
 let NODATA_LINE = 'rgba(255,255,255,0.18)';
+let TOOLTIP_BG = 'rgba(17, 23, 28, 0.95)';
+let TOOLTIP_BORDER = 'rgba(255,255,255,0.22)';
 let themeCacheKey = '';
 
 // Resolve the chart CSS custom properties (which are color-mix()/var()
@@ -69,6 +82,8 @@ function refreshThemeColors(): void {
   TEXT_COLOR = read('--chart-text', TEXT_COLOR);
   MUTED_TEXT = read('--chart-text-muted', MUTED_TEXT);
   NODATA_LINE = read('--chart-nodata', NODATA_LINE);
+  TOOLTIP_BG = read('--panel', TOOLTIP_BG);
+  TOOLTIP_BORDER = read('--line-strong', TOOLTIP_BORDER);
   probe.remove();
   themeCacheKey = key;
 }
@@ -137,6 +152,88 @@ function parseDashArray(dashArray: string): number[] {
   return dashes;
 }
 
+/**
+ * Value of a series at time t, linearly interpolated between the surrounding
+ * samples. Null when t falls outside the series' recorded time range (e.g.
+ * hovering past the end of the shorter shot in a comparison).
+ */
+export function seriesValueAt(points: LiveChartPoint[], t: number): number | null {
+  if (points.length === 0) return null;
+  const first = points[0]!;
+  const last = points[points.length - 1]!;
+  if (t < first.t || t > last.t) return null;
+  // Binary search for the first sample at or after t.
+  let lo = 0;
+  let hi = points.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (points[mid]!.t < t) lo = mid + 1;
+    else hi = mid;
+  }
+  const after = points[lo]!;
+  if (lo === 0 || after.t === t) return after.value;
+  const before = points[lo - 1]!;
+  const span = after.t - before.t;
+  if (span <= 0) return after.value;
+  return before.value + ((after.value - before.value) * (t - before.t)) / span;
+}
+
+export interface HoverRow {
+  color: string;
+  dashed: boolean;
+  label: string;
+  /** Value as plotted (temp series are stored /10 to share the pressure axis). */
+  plottedValue: number;
+  text: string;
+}
+
+// Tooltip rows show real units — the temperature series are unscaled back from
+// the /10 representation they use to share the 0-12 Y axis.
+export function hoverValueText(key: ShotGraphSeriesKey, value: number): string {
+  switch (key) {
+    case 'pressure':
+    case 'targetPressure':
+      return `${value.toFixed(1)} bar`;
+    case 'flow':
+    case 'targetFlow':
+      return `${value.toFixed(1)} ml/s`;
+    case 'weightFlow':
+      return `${value.toFixed(1)} g/s`;
+    case 'groupTemperature':
+    case 'targetTemperature':
+      return `${(value * 10).toFixed(1)}°C`;
+    default:
+      return value.toFixed(1);
+  }
+}
+
+function hoverRowLabel(series: LiveChartSeries): string {
+  // The legend says "Temp / 10" because the plotted line is scaled; the
+  // tooltip prints the real temperature, so drop the divisor from the name.
+  if (series.key === 'groupTemperature') return 'Temp';
+  if (series.key === 'targetTemperature') return 'Target temp';
+  return series.shortLabel;
+}
+
+/** One tooltip row per legend-worthy series that has a sample at time t. */
+export function buildHoverRows(model: LiveChartModel, t: number): HoverRow[] {
+  const rows: HoverRow[] = [];
+  for (let i = 0; i < model.series.length; i += 1) {
+    const series = model.series[i]!;
+    if (series.legend === false) continue;
+    const value = seriesValueAt(series.points, t);
+    if (value == null) continue;
+    rows.push({
+      color: series.color,
+      dashed: series.dashArray != null,
+      label: hoverRowLabel(series),
+      plottedValue: value,
+      text: hoverValueText(series.key, value)
+    });
+  }
+  return rows;
+}
+
 function hasData(model: LiveChartModel): boolean {
   for (let i = 0; i < model.series.length; i += 1) {
     if (model.series[i]!.points.length > 0) return true;
@@ -154,6 +251,8 @@ export class LiveChart {
   private cssWidth = 0;
   private cssHeight = 0;
   private dpr = 1;
+  /** Mouse position in CSS pixels while a hover probe is active, else null. */
+  private hoverPoint: { x: number; y: number } | null = null;
 
   constructor(canvas: HTMLCanvasElement, options: LiveChartOptions = {}) {
     const ctx = canvas.getContext('2d');
@@ -163,6 +262,27 @@ export class LiveChart {
     this.detailed = options.detailed ?? false;
     this.pixelScale = options.pixelScale ?? 1;
     this.hideMaxTimeLabel = options.hideMaxTimeLabel ?? false;
+    if (options.hover) this.attachHoverProbe();
+  }
+
+  private attachHoverProbe(): void {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+    this.canvas.addEventListener('pointermove', (event) => {
+      if (event.pointerType !== 'mouse') return;
+      const rect = this.canvas.getBoundingClientRect();
+      this.setHoverPoint({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+    });
+    this.canvas.addEventListener('pointerleave', () => this.setHoverPoint(null));
+  }
+
+  private setHoverPoint(point: { x: number; y: number } | null): void {
+    const previous = this.hoverPoint;
+    if (previous == null && point == null) return;
+    this.hoverPoint = point;
+    // Redraw immediately so the crosshair tracks the mouse even on charts that
+    // otherwise only draw on data changes (historic shots, calibrator).
+    this.draw();
   }
 
   setModel(model: LiveChartModel): void {
@@ -211,6 +331,113 @@ export class LiveChart {
       this.drawSeries(model.series[i]!, model.maxTime, model.maxY, plot);
     }
     if (detailed) this.drawLegend(model.series, plot, width);
+    this.drawHover(model, plot);
+  }
+
+  // Crosshair + values tooltip at the hovered time. Drawn last so it sits on
+  // top of the curves; only present on charts constructed with hover enabled
+  // (setHoverPoint is only ever called by the probe listeners).
+  private drawHover(model: LiveChartModel, plot: PlotArea): void {
+    const point = this.hoverPoint;
+    if (!point) return;
+    if (point.x < plot.x || point.x > plot.x + plot.width) return;
+    if (point.y < plot.y || point.y > plot.y + plot.height) return;
+    const t = ((point.x - plot.x) / plot.width) * model.maxTime;
+    const rows = buildHoverRows(model, t);
+    if (rows.length === 0) return;
+    const ctx = this.ctx;
+
+    ctx.strokeStyle = MARKER_LINE;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+    ctx.lineCap = 'butt';
+    const lineX = snapPixel(point.x);
+    ctx.beginPath();
+    ctx.moveTo(lineX, plot.y);
+    ctx.lineTo(lineX, plot.y + plot.height);
+    ctx.stroke();
+    ctx.lineCap = 'round';
+
+    // Dot on each solid curve at the interpolated value; the dashed target
+    // lines stay unmarked so the plot doesn't get busy at step edges.
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i]!;
+      if (row.dashed) continue;
+      ctx.fillStyle = row.color;
+      ctx.beginPath();
+      ctx.arc(point.x, projectY(row.plottedValue, model.maxY, plot), 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    this.drawHoverTooltip(rows, `${t.toFixed(1)}s`, point, plot);
+  }
+
+  private drawHoverTooltip(
+    rows: HoverRow[],
+    title: string,
+    point: { x: number; y: number },
+    plot: PlotArea
+  ): void {
+    const ctx = this.ctx;
+    const pad = 9;
+    const swatch = 16;
+    const swatchGap = 7;
+    const labelValueGap = 14;
+    const rowHeight = 16;
+
+    ctx.font = '11px sans-serif';
+    let contentWidth = ctx.measureText(title).width;
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i]!;
+      const width =
+        swatch + swatchGap + ctx.measureText(row.label).width + labelValueGap + ctx.measureText(row.text).width;
+      if (width > contentWidth) contentWidth = width;
+    }
+    const boxWidth = Math.ceil(contentWidth) + pad * 2;
+    const boxHeight = pad * 2 + rowHeight * (rows.length + 1);
+
+    // To the right of the crosshair, flipped left when it would leave the
+    // plot; clamped vertically so the box never spills outside the plot.
+    let x = point.x + 14;
+    if (x + boxWidth > plot.x + plot.width) x = point.x - 14 - boxWidth;
+    x = Math.max(plot.x + 2, x);
+    let y = point.y + 14;
+    if (y + boxHeight > plot.y + plot.height) y = plot.y + plot.height - boxHeight - 2;
+    y = Math.max(plot.y + 2, y);
+
+    ctx.fillStyle = TOOLTIP_BG;
+    ctx.strokeStyle = TOOLTIP_BORDER;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') ctx.roundRect(x, y, boxWidth, boxHeight, 6);
+    else ctx.rect(x, y, boxWidth, boxHeight);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = TEXT_COLOR;
+    let rowY = y + pad + rowHeight / 2;
+    ctx.fillText(title, x + pad, rowY);
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i]!;
+      rowY += rowHeight;
+      ctx.strokeStyle = row.color;
+      ctx.lineWidth = row.dashed ? 1.5 : 2.4;
+      ctx.setLineDash(row.dashed ? [4, 3] : []);
+      ctx.beginPath();
+      ctx.moveTo(x + pad, rowY);
+      ctx.lineTo(x + pad + swatch, rowY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = TEXT_COLOR;
+      ctx.textAlign = 'left';
+      ctx.fillText(row.label, x + pad + swatch + swatchGap, rowY);
+      ctx.textAlign = 'right';
+      ctx.fillText(row.text, x + boxWidth - pad, rowY);
+    }
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
   }
 
   private drawNoData(plot: PlotArea, width: number, height: number): void {

@@ -6875,6 +6875,20 @@ p {
   min-height: 0;
 }
 
+/* On desktops the replay must beat the inline detail chart it was opened
+   from, so let the modal take (nearly) the whole viewport instead of the
+   960×440 cap sized for the machine's tablet. */
+@media (hover: hover) and (pointer: fine) {
+  .shot-stages-modal {
+    width: min(1600px, calc(100vw - 32px));
+  }
+
+  .shot-stages-body {
+    /* Viewport minus the backdrop padding, modal padding, and facts head. */
+    height: calc(100vh - 175px);
+  }
+}
+
 .shot-stages-canvas-wrap {
   flex: 1;
   min-width: 0;

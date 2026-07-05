@@ -1,13 +1,17 @@
 import {
+  buildHoverRows,
   clamp01,
   computePlotArea,
   formatTick,
+  hoverValueText,
   niceStep,
   projectX,
   projectY,
+  seriesValueAt,
   tickValues,
   type PlotArea
 } from '../components/LiveChart';
+import type { LiveChartModel } from '../domain/liveChartModel';
 
 run('computePlotArea respects detailed margins', () => {
   const plot = computePlotArea(920, 340, true);
@@ -80,6 +84,94 @@ run('tickValues produces ascending ticks ending at the max', () => {
 run('formatTick keeps integers clean and trims decimals', () => {
   equal(formatTick(5), '5');
   equal(formatTick(2.5), '2.5');
+});
+
+run('seriesValueAt interpolates between surrounding samples', () => {
+  const points = [
+    { t: 0, value: 0 },
+    { t: 2, value: 4 },
+    { t: 4, value: 4 }
+  ];
+  equal(seriesValueAt(points, 0), 0);
+  equal(seriesValueAt(points, 1), 2);
+  equal(seriesValueAt(points, 2), 4);
+  equal(seriesValueAt(points, 3), 4);
+  equal(seriesValueAt(points, 4), 4);
+});
+
+run('seriesValueAt returns null outside the recorded range', () => {
+  const points = [
+    { t: 1, value: 3 },
+    { t: 2, value: 5 }
+  ];
+  equal(seriesValueAt(points, 0.5), null);
+  equal(seriesValueAt(points, 2.5), null);
+  equal(seriesValueAt([], 1), null);
+});
+
+run('hoverValueText prints real units and unscales the temp series', () => {
+  equal(hoverValueText('pressure', 8.25), '8.3 bar');
+  equal(hoverValueText('targetFlow', 2), '2.0 ml/s');
+  equal(hoverValueText('weightFlow', 1.8), '1.8 g/s');
+  equal(hoverValueText('groupTemperature', 8.53), '85.3°C');
+  equal(hoverValueText('targetTemperature', 8.8), '88.0°C');
+});
+
+run('buildHoverRows skips legendless overlays and out-of-range series', () => {
+  const model: LiveChartModel = {
+    maxTime: 10,
+    maxY: 12,
+    markers: [],
+    series: [
+      {
+        key: 'pressure',
+        label: 'Pressure',
+        shortLabel: 'Pressure',
+        color: '#50c17b',
+        points: [
+          { t: 0, value: 0 },
+          { t: 10, value: 9 }
+        ]
+      },
+      {
+        key: 'flow',
+        label: 'Flow',
+        shortLabel: 'Flow',
+        color: '#7ca8ff',
+        legend: false,
+        points: [
+          { t: 0, value: 1 },
+          { t: 10, value: 1 }
+        ]
+      },
+      {
+        key: 'weightFlow',
+        label: 'Weight flow',
+        shortLabel: 'Weight flow',
+        color: '#8a6d1c',
+        points: [
+          { t: 6, value: 2 },
+          { t: 10, value: 2 }
+        ]
+      },
+      {
+        key: 'groupTemperature',
+        label: 'Temp / 10',
+        shortLabel: 'Temp / 10',
+        color: '#ff5a67',
+        points: [
+          { t: 0, value: 9.2 },
+          { t: 10, value: 9.2 }
+        ]
+      }
+    ]
+  };
+  const rows = buildHoverRows(model, 5);
+  equal(rows.length, 2);
+  equal(rows[0]!.label, 'Pressure');
+  equal(rows[0]!.text, '4.5 bar');
+  equal(rows[1]!.label, 'Temp');
+  equal(rows[1]!.text, '92.0°C');
 });
 
 function run(name: string, fn: () => void): void {
