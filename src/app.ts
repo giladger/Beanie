@@ -7247,6 +7247,7 @@ export class BeanieApp {
     }
     const bean = this.selectedBean();
     const focus = this.captureFocus();
+    const beanFormDrafts = this.captureBeanFormDrafts();
     const scroll = this.captureScroll();
     const isPhone = this.isPhoneLayout();
     const renderPhone = isPhone && (this.state.view === 'workbench' || this.state.view === 'settings');
@@ -7268,6 +7269,7 @@ export class BeanieApp {
     this.bindDetailChart();
     this.bindShotStagesChart();
     this.bindCalibratorChart();
+    this.restoreBeanFormDrafts(beanFormDrafts);
     this.restoreFocus(focus);
     this.restoreScroll(scroll);
   }
@@ -7616,6 +7618,43 @@ export class BeanieApp {
         el.setSelectionRange(focus.start, focus.start);
       } catch {
         /* not a text input */
+      }
+    }
+  }
+
+  // The bean create/edit form fields are uncontrolled — their text lives only in
+  // the DOM until the form is submitted or blurred. captureFocus preserves the
+  // one focused field, but a background re-render (bean/settings poll, telemetry,
+  // an auto-save round-trip) rebuilds the whole form from the *saved* bean and
+  // snaps every other edited-but-uncommitted field back to its old value, which
+  // reads as an old<->new flicker. So snapshot every dirty field (value differs
+  // from the rendered default) across the open bean form(s) and reapply it after
+  // the rebuild. Clean fields are left untouched so they still adopt fresh values
+  // (a just-saved edit, or a change synced from another device).
+  private captureBeanFormDrafts(): Array<{ id: string; values: Map<string, string> }> {
+    const drafts: Array<{ id: string; values: Map<string, string> }> = [];
+    const forms = this.root.querySelectorAll<HTMLFormElement>('form[data-form="bean-picker-bean"]');
+    for (const form of Array.from(forms)) {
+      const values = new Map<string, string>();
+      for (const el of Array.from(form.querySelectorAll<HTMLElement>('[name]'))) {
+        if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) continue;
+        if (el.name && el.value !== el.defaultValue) values.set(el.name, el.value);
+      }
+      if (values.size > 0) drafts.push({ id: form.dataset.id ?? '', values });
+    }
+    return drafts;
+  }
+
+  private restoreBeanFormDrafts(drafts: Array<{ id: string; values: Map<string, string> }>): void {
+    if (drafts.length === 0) return;
+    const forms = this.root.querySelectorAll<HTMLFormElement>('form[data-form="bean-picker-bean"]');
+    for (const form of Array.from(forms)) {
+      const draft = drafts.find((entry) => entry.id === (form.dataset.id ?? ''));
+      if (!draft) continue;
+      for (const el of Array.from(form.querySelectorAll<HTMLElement>('[name]'))) {
+        if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) continue;
+        const value = draft.values.get(el.name);
+        if (value != null && el.value !== value) el.value = value;
       }
     }
   }
