@@ -1,8 +1,12 @@
 import type { Bean } from '../api/types';
 import {
+  buildLabelScanPrompt,
+  canonicalizeDraft,
+  countRoasterBeans,
   draftToBatchFields,
   draftToBeanFields,
   findExistingBean,
+  LABEL_SCAN_PROMPT,
   labelScanToDraft,
   lowConfidenceFields,
   normalizeIsoDate,
@@ -70,6 +74,52 @@ run('finds an existing bean by roaster + name, case-insensitively', () => {
   // No match, or missing identity, returns null.
   equal(findExistingBean(beans, 'Onyx', 'Mythology'), null);
   equal(findExistingBean(beans, '', 'Geometry'), null);
+});
+
+run('scan prompt folds in the active library; empty library falls back to the base prompt', () => {
+  const beans: Bean[] = [
+    { id: 'a', roaster: 'Onyx', name: 'Geometry' },
+    { id: 'b', roaster: 'Sey', name: 'Hot Springs', archived: true }
+  ];
+  const prompt = buildLabelScanPrompt(beans);
+  equal(prompt.includes('"Onyx" | "Geometry"'), true);
+  // Archived beans stay out of the prompt (canonicalizeDraft still knows them).
+  equal(prompt.includes('Hot Springs'), false);
+  // The JSON shape instruction survives, still at the end.
+  equal(prompt.includes('Respond with ONLY a JSON object'), true);
+  equal(buildLabelScanPrompt([]), LABEL_SCAN_PROMPT);
+});
+
+run('canonicalizeDraft snaps scanned spellings to the library', () => {
+  const beans: Bean[] = [
+    { id: 'a', roaster: 'Onyx', name: 'Geometry', country: 'Colombia', processing: 'Washed' },
+    { id: 'b', roaster: 'Sey', name: 'Geometria', archived: true }
+  ];
+  const snapped = canonicalizeDraft(
+    draft({ roaster: 'ONYX', name: 'GEOMETRY', country: 'colombia', processing: 'washed', region: 'Huila' }),
+    beans
+  );
+  equal(snapped.roaster, 'Onyx');
+  equal(snapped.name, 'Geometry');
+  equal(snapped.country, 'Colombia');
+  equal(snapped.processing, 'Washed');
+  // No library match — the scanned value stands.
+  equal(snapped.region, 'Huila');
+  // Archived beans still lend their spelling.
+  equal(canonicalizeDraft(draft({ roaster: 'SEY' }), beans).roaster, 'Sey');
+  // A bean name only snaps within its own roaster.
+  equal(canonicalizeDraft(draft({ roaster: 'Onyx', name: 'geometria' }), beans).name, 'geometria');
+});
+
+run('countRoasterBeans counts case-insensitively, archived included', () => {
+  const beans: Bean[] = [
+    { id: 'a', roaster: 'Onyx', name: 'Geometry' },
+    { id: 'b', roaster: 'ONYX', name: 'Monarch', archived: true },
+    { id: 'c', roaster: 'Sey', name: 'Hot Springs' }
+  ];
+  equal(countRoasterBeans(beans, ' onyx '), 2);
+  equal(countRoasterBeans(beans, 'Gardelli'), 0);
+  equal(countRoasterBeans(beans, ''), 0);
 });
 
 run('collects low-confidence draft fields from dotted or bare paths', () => {

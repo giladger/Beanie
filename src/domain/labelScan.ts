@@ -72,23 +72,60 @@ export type LabelScanDraftField = keyof LabelScanDraft;
  * Instruction sent with the bag photos. Descriptive only — extract what is
  * printed, never infer or invent (matches Beanie's no-silent-magic stance: the
  * scan fills a draft, the human confirms it).
+ *
+ * Split into rules + response shape so {@link buildLabelScanPrompt} can slot the
+ * user's bean library between them — the shape must stay last, closest to where
+ * the model starts writing JSON.
  */
-export const LABEL_SCAN_PROMPT = [
+const LABEL_SCAN_RULES = [
   'You are reading photos of a coffee bag (possibly several angles of the same bag).',
   'Extract ONLY what is actually printed on the bag. Do not infer, guess, or invent —',
   'if a value is not visible, return null for it.',
   'Merge information across the photos; if they disagree, prefer the clearer photo.',
+  'Bags often print names in ALL CAPS or all lowercase for style — write values with natural',
+  'capitalization instead (e.g. "ETHIOPIA GUJI" -> "Ethiopia Guji"), keeping unusual casing only',
+  'when it is clearly the brand\'s own styling.',
   'Normalize the roast date to ISO YYYY-MM-DD (e.g. "Roasted 03.06.26" or "Roasted 3 June 2026" -> "2026-06-03").',
   'Give the net coffee weight in grams (convert other units, e.g. 12 oz -> 340, 1 lb -> 454).',
   'In `notes`, capture the roaster\'s description / tasting notes and any producer, farm, variety/varietal,',
   'and altitude details that are printed on the bag.',
   'In meta.lowConfidenceFields list the dotted paths of any fields you are unsure about,',
-  'e.g. "bean.name" or "batch.roastDate". Put the full text you read in meta.rawText.',
+  'e.g. "bean.name" or "batch.roastDate". Put the full text you read in meta.rawText.'
+].join(' ');
+
+const LABEL_SCAN_SHAPE = [
   'Respond with ONLY a JSON object of exactly this shape, using null for anything not printed on the bag:',
   '{ "bean": { "roaster", "name", "country", "region", "processing", "notes" },',
   '"batch": { "roastDate" (YYYY-MM-DD), "roastLevel", "weight" (grams, a number) },',
   '"meta": { "lowConfidenceFields" (array of strings), "rawText" } }'
 ].join(' ');
+
+/** Library-blind prompt — the transport's fallback when no beans are supplied. */
+export const LABEL_SCAN_PROMPT = `${LABEL_SCAN_RULES} ${LABEL_SCAN_SHAPE}`;
+
+// Enough library for spelling matches without bloating the prompt; a scan of a
+// bag you already have almost always involves a recently added bean.
+const PROMPT_LIBRARY_LIMIT = 60;
+
+/**
+ * Build the scan prompt with the user's bean library folded in, so the model
+ * reuses the library's exact spellings when the bag matches a known roaster or
+ * bean, and follows its naming style for new ones.
+ */
+export function buildLabelScanPrompt(beans: Bean[]): string {
+  const active = beans.filter((bean) => !bean.archived);
+  if (active.length === 0) return LABEL_SCAN_PROMPT;
+  const listed = active.slice(-PROMPT_LIBRARY_LIMIT);
+  return [
+    LABEL_SCAN_RULES,
+    'The user\'s bean library already contains ("roaster" | "bean name"):',
+    ...listed.map((bean) => `"${bean.roaster}" | "${bean.name}"`),
+    'If the bag is one of these beans or from one of these roasters, copy the spelling and',
+    'capitalization EXACTLY as listed (the print on the bag may style it differently).',
+    'For anything not in the list, follow the list\'s general naming style.',
+    LABEL_SCAN_SHAPE
+  ].join('\n');
+}
 
 /** Build the editable review draft from a raw scan. Tolerant of partial scans. */
 export function labelScanToDraft(scan: LabelScan): LabelScanDraft {
@@ -152,6 +189,51 @@ export function findExistingBean(beans: Bean[], roaster: string, name: string): 
         bean.name.trim().toLowerCase() === n
     ) ?? null
   );
+}
+
+/**
+ * Deterministic follow-up to the prompt's library hints: when a scanned value
+ * matches something already in the library (trimmed, case-insensitive), adopt
+ * the library's spelling, so one roaster never splinters into "ONYX", "Onyx"
+ * and "onyx". The bean name only snaps within the matched roaster — different
+ * roasters can reuse a name with different styling. Origin fields (country,
+ * region, processing) snap across the whole library. Archived beans still
+ * count: their spellings are as much "yours" as active ones.
+ */
+export function canonicalizeDraft(draft: LabelScanDraft, beans: Bean[]): LabelScanDraft {
+  const next = { ...draft };
+  next.roaster = librarySpelling(beans.map((bean) => bean.roaster), next.roaster);
+  const roasterKey = matchKey(next.roaster);
+  next.name = librarySpelling(
+    beans.filter((bean) => matchKey(bean.roaster) === roasterKey).map((bean) => bean.name),
+    next.name
+  );
+  next.country = librarySpelling(beans.map((bean) => bean.country ?? ''), next.country);
+  next.region = librarySpelling(beans.map((bean) => bean.region ?? ''), next.region);
+  next.processing = librarySpelling(beans.map((bean) => bean.processing ?? ''), next.processing);
+  return next;
+}
+
+/**
+ * How many beans the library already holds from this roaster. Archived beans
+ * count — a finished bag is still part of your history with the roaster.
+ */
+export function countRoasterBeans(beans: Bean[], roaster: string): number {
+  const key = matchKey(roaster);
+  if (!key) return 0;
+  return beans.filter((bean) => matchKey(bean.roaster) === key).length;
+}
+
+/** First library value equal to `value` ignoring case/whitespace, else `value` itself. */
+function librarySpelling(values: string[], value: string): string {
+  const key = matchKey(value);
+  if (!key) return value;
+  const match = values.find((candidate) => matchKey(candidate) === key);
+  return match != null ? match.trim() : value;
+}
+
+function matchKey(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 /** The set of draft fields the model flagged as low-confidence, for UI highlighting. */

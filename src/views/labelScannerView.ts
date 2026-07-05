@@ -34,6 +34,8 @@ export interface LabelScannerViewModel {
   enriching: boolean;
   /** Set when the scan matches a bean you already have — routes to a new batch. */
   existingBeanLabel: string | null;
+  /** Beans already in the library from the scanned roaster — a familiar-roaster nod. */
+  roasterBeanCount: number;
   saving: boolean;
   error: string | null;
 }
@@ -168,11 +170,7 @@ function renderReview(model: LabelScannerViewModel): string {
   const saveLabel = model.saving ? 'Saving…' : model.existingBeanLabel ? 'Add bag' : 'Add bean';
   return `
     <form class="label-scanner-review" data-form="scanner-review">
-      <p class="scan-review-head">${
-        model.existingBeanLabel
-          ? `Adding a bag to your <strong>${escapeHtml(model.existingBeanLabel)}</strong>`
-          : 'New bean from this bag — check the details, then save.'
-      }</p>
+      <p class="scan-review-head">${renderReviewHead(model, draft)}</p>
       <div class="scan-review-grid">
         <div class="scan-review-fields">
           ${textField('roaster', 'Roaster', draft.roaster, flag('roaster'), 'required')}
@@ -202,6 +200,22 @@ function renderReview(model: LabelScannerViewModel): string {
       </div>
     </form>
   `;
+}
+
+function renderReviewHead(model: LabelScannerViewModel, draft: LabelScanDraft): string {
+  if (model.existingBeanLabel) return `Adding a bag to your <strong>${escapeHtml(model.existingBeanLabel)}</strong>`;
+  const roaster = draft.roaster.trim();
+  if (model.roasterBeanCount > 0 && roaster) {
+    return `New bean — your ${ordinal(model.roasterBeanCount + 1)} from <strong>${escapeHtml(roaster)}</strong>. Check the details, then save.`;
+  }
+  return 'New bean from this bag — check the details, then save.';
+}
+
+function ordinal(n: number): string {
+  const teens = n % 100;
+  if (teens >= 11 && teens <= 13) return `${n}th`;
+  const last = n % 10;
+  return `${n}${last === 1 ? 'st' : last === 2 ? 'nd' : last === 3 ? 'rd' : 'th'}`;
 }
 
 function renderError(model: LabelScannerViewModel): string {

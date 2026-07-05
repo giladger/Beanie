@@ -99,6 +99,14 @@ run('review routes to a new batch when the bean already exists', () => {
   includes(html, 'Add bag');
 });
 
+run('review greets a familiar roaster with the running count', () => {
+  const html = renderLabelScannerModal(
+    model({ step: 'review', draft: draft({ roaster: 'Onyx', name: 'Mythology' }), roasterBeanCount: 3 })
+  );
+  includes(html, 'your 4th from <strong>Onyx</strong>');
+  includes(html, 'Add bean');
+});
+
 run('review offers an enrich button and flags web-sourced fields distinctly', () => {
   const html = renderLabelScannerModal(
     model({
@@ -148,6 +156,7 @@ function model(overrides: Partial<LabelScannerViewModel>): LabelScannerViewModel
     webFields: [],
     enriching: false,
     existingBeanLabel: null,
+    roasterBeanCount: 0,
     saving: false,
     error: null,
     ...overrides

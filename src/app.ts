@@ -117,6 +117,9 @@ import {
 import { enrichLabel, GeminiError, isGeminiKeyError, scanLabel, verifyGeminiKey } from './api/gemini';
 import { fileToScaledImage, type CapturedImage } from './domain/labelImage';
 import {
+  buildLabelScanPrompt,
+  canonicalizeDraft,
+  countRoasterBeans,
   findExistingBean,
   labelScanToDraft,
   lowConfidenceFields,
@@ -626,6 +629,8 @@ interface LabelScannerState {
   enriching: boolean;
   existingBeanId: string | null;
   existingBeanLabel: string | null;
+  /** Beans already in the library from the scanned roaster (new-bean case). */
+  roasterBeanCount: number;
   saving: boolean;
   error: string | null;
 }
@@ -4444,6 +4449,7 @@ export class BeanieApp {
         enriching: false,
         existingBeanId: null,
         existingBeanLabel: null,
+        roasterBeanCount: 0,
         saving: false,
         error: null
       }
@@ -4488,10 +4494,10 @@ export class BeanieApp {
         : await scanLabel(
             scanner.images.map((image) => ({ mime: image.mime, base64: image.base64 })),
             readGeminiApiKey() ?? '',
-            { signal }
+            { signal, prompt: buildLabelScanPrompt(this.state.beans) }
           );
       if (!this.scannerSessionAlive(session)) return;
-      const draft = labelScanToDraft(scan);
+      const draft = canonicalizeDraft(labelScanToDraft(scan), this.state.beans);
       const existing = findExistingBean(this.state.beans, draft.roaster, draft.name);
       this.setScanner({
         step: 'review',
@@ -4501,7 +4507,8 @@ export class BeanieApp {
         webFields: [],
         enriching: false,
         existingBeanId: existing?.id ?? null,
-        existingBeanLabel: existing ? beanLabel(existing) : null
+        existingBeanLabel: existing ? beanLabel(existing) : null,
+        roasterBeanCount: countRoasterBeans(this.state.beans, draft.roaster)
       });
       // Look up the roaster's site in the background — the review form is
       // already editable while it searches.
@@ -4733,6 +4740,7 @@ export class BeanieApp {
       webFields: scanner.webFields,
       enriching: scanner.enriching,
       existingBeanLabel: scanner.existingBeanLabel,
+      roasterBeanCount: scanner.roasterBeanCount,
       saving: scanner.saving,
       error: scanner.error
     });
