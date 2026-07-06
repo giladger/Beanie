@@ -3843,14 +3843,12 @@ export class BeanieApp {
     const remaining = positiveNumber(batch?.weightRemaining);
     if (!batch || remaining == null) return;
     const next = Math.max(0, round(remaining - dose, 1));
+    // Send only the field this write owns: the gateway merges partial bodies
+    // (absent fields keep their stored values), so echoing the rest of the
+    // batch from local state would overwrite edits made on another device.
     const batchInput: Partial<BeanBatch> = {
       beanId: bean.id,
-      roastDate: batch.roastDate ?? null,
-      roastLevel: batch.roastLevel ?? null,
-      weight: batch.weight ?? null,
-      weightRemaining: next,
-      storageEvents: batch.storageEvents ?? null,
-      frozen: batch.frozen
+      weightRemaining: next
     };
     await this.saveBatchStoragePatch(bean, batch.id, batchInput, `Bag: ${formatGrams(next)} left`);
   }
@@ -3875,12 +3873,7 @@ export class BeanieApp {
     const { bean, batch, next } = plan;
     const batchInput: Partial<BeanBatch> = {
       beanId: bean.id,
-      roastDate: batch.roastDate ?? null,
-      roastLevel: batch.roastLevel ?? null,
-      weight: batch.weight ?? null,
-      weightRemaining: next,
-      storageEvents: batch.storageEvents ?? null,
-      frozen: batch.frozen
+      weightRemaining: next
     };
     await this.saveBatchStoragePatch(bean, batch.id, batchInput, `Bag: ${formatGrams(next)} left`);
   }
@@ -6197,19 +6190,19 @@ export class BeanieApp {
     const previous = current.find((item) => item.id === batchId);
     if (!previous) return;
     const nextValue = numberOrNullInput(value);
-    const batchInput: Partial<BeanBatch> = {
-      beanId: bean.id,
-      roastDate: previous.roastDate,
-      roastLevel: previous.roastLevel,
-      weight: previous.weight,
-      weightRemaining: previous.weightRemaining,
-      storageEvents: previous.storageEvents ?? null,
-      frozen: previous.frozen
-    };
+    // Patch only the edited field (the gateway merges partial bodies): echoing
+    // the whole batch here would clobber concurrent edits from other devices.
+    const batchInput: Partial<BeanBatch> = { beanId: bean.id };
+    const weight = name === 'weight' ? nextValue : previous.weight ?? null;
     if (name === 'weight') batchInput.weight = nextValue;
-    if (name === 'weightRemaining') batchInput.weightRemaining = nextValue;
     // Keep "left" within the bag size whether the bag or the remaining changed.
-    batchInput.weightRemaining = clampRemainingToWeight(batchInput.weightRemaining ?? null, batchInput.weight ?? null);
+    const remaining = clampRemainingToWeight(
+      name === 'weightRemaining' ? nextValue : previous.weightRemaining ?? null,
+      weight
+    );
+    if (name === 'weightRemaining' || remaining !== (previous.weightRemaining ?? null)) {
+      batchInput.weightRemaining = remaining;
+    }
     const optimistic = this.beanWorkflow.beginBatchUpdate({
       bean,
       batchesByBean: this.state.batchesByBean,
@@ -6361,14 +6354,11 @@ export class BeanieApp {
       storageEvents: frozenEvent.storageEvents ?? null,
       frozen: true
     };
+    // Only the kept-on-shelf remainder changes on the parent bag; the gateway
+    // merges partial bodies, so leave every other field out of the patch.
     const parentUpdate: Partial<BeanBatch> = {
       beanId: selection.bean.id,
-      roastDate: selection.batch.roastDate ?? null,
-      roastLevel: selection.batch.roastLevel ?? null,
-      weight: selection.batch.weight ?? null,
-      weightRemaining: keep,
-      storageEvents: selection.batch.storageEvents ?? null,
-      frozen: selection.batch.frozen ?? false
+      weightRemaining: keep
     };
 
     this.setState({ status: 'Freezing stock' });
@@ -6466,12 +6456,7 @@ export class BeanieApp {
 
     const batchInput: Partial<BeanBatch> = {
       beanId: bean.id,
-      roastDate: batch.roastDate ?? null,
-      roastLevel: batch.roastLevel ?? null,
-      weight: batch.weight ?? null,
-      weightRemaining: 0,
-      storageEvents: batch.storageEvents ?? null,
-      frozen: batch.frozen
+      weightRemaining: 0
     };
     const optimistic = this.beanWorkflow.beginBatchUpdate({
       bean,
@@ -9295,9 +9280,11 @@ function normalizeBeanField(value: unknown): string {
   return String(value ?? '').trim();
 }
 
+// Only the fields the form actually edits go into the patch. The gateway merges
+// partial bodies, so anything echoed from the previous batch (notably the
+// freeze/thaw history, which no batch form edits) would overwrite concurrent
+// changes from another device.
 function batchFieldsFromForm(data: FormData, beanId: string, fallback?: BeanBatch): Partial<BeanBatch> {
-  const frozen = data.has('frozen') ? data.get('frozen') === 'on' : fallback?.frozen ?? false;
-  const storageEvents = fallback?.storageEvents ?? (frozen ? [{ type: 'frozen' as const, at: new Date().toISOString() }] : null);
   const weight = data.has('weight') ? numberOrNullInput(data.get('weight')) : fallback?.weight ?? null;
   const weightRemaining = data.has('weightRemaining')
     ? numberOrNullInput(data.get('weightRemaining'))
@@ -9308,9 +9295,7 @@ function batchFieldsFromForm(data: FormData, beanId: string, fallback?: BeanBatc
     roastLevel: textOrNull(data.get('roastLevel')),
     weight,
     // A bag can't hold more than its size, so "left" is capped at the bag weight.
-    weightRemaining: clampRemainingToWeight(weightRemaining, weight),
-    storageEvents,
-    frozen
+    weightRemaining: clampRemainingToWeight(weightRemaining, weight)
   };
 }
 
