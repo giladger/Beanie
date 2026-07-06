@@ -289,6 +289,12 @@ import {
 import { loadBeanBatches } from './data/beanRepository';
 import { migrateStorageEventsToGateway } from './data/storageEventsMigration';
 import {
+  appendPendingDose,
+  readPendingDoses,
+  resolvePendingDose,
+  writePendingDoses
+} from './domain/pendingDoses';
+import {
   renderPhoneProfilesPage as renderPhoneProfilePickerPage,
   renderProfilesPage as renderProfilePickerPage
 } from './views/profilePickerView';
@@ -914,6 +920,8 @@ export class BeanieApp {
   private waterRetryTimer: number | null = null;
   private displayRetryTimer: number | null = null;
   private shotStateRetryTimer: number | null = null;
+  private pendingDoseRetryTimer: number | null = null;
+  private pendingDoseFlushActive = false;
   // Consecutive failed (re)connect attempts per socket, for backoff pacing.
   private machineSocketAttempts = 0;
   private scaleSocketAttempts = 0;
@@ -1116,6 +1124,7 @@ export class BeanieApp {
     if (this.waterRetryTimer != null) window.clearTimeout(this.waterRetryTimer);
     if (this.displayRetryTimer != null) window.clearTimeout(this.displayRetryTimer);
     if (this.shotStateRetryTimer != null) window.clearTimeout(this.shotStateRetryTimer);
+    if (this.pendingDoseRetryTimer != null) window.clearTimeout(this.pendingDoseRetryTimer);
     if (this.shotRefreshTimer != null) window.clearInterval(this.shotRefreshTimer);
     if (this.clockTimer != null) window.clearTimeout(this.clockTimer);
     if (this.saverPhotoTimer != null) window.clearTimeout(this.saverPhotoTimer);
@@ -1317,6 +1326,7 @@ export class BeanieApp {
       this.startShotRefreshTimer();
       this.startBeanRefreshTimer();
       void this.migrateStorageEventsOnce();
+      void this.flushPendingDoses();
     } catch (error) {
       if (this.disposed) return;
       console.warn('[Beanie] Gateway unavailable; using demo data', error);
@@ -2884,6 +2894,7 @@ export class BeanieApp {
     this.setState({ gatewayLinkDown: false, status: 'Gateway reconnected' });
     void this.refreshBeans({ force: true });
     void this.refreshVisibleShots();
+    void this.flushPendingDoses();
   }
 
   private connectScaleSocket(): void {
@@ -3850,7 +3861,94 @@ export class BeanieApp {
       beanId: bean.id,
       weightRemaining: next
     };
-    await this.saveBatchStoragePatch(bean, batch.id, batchInput, `Bag: ${formatGrams(next)} left`);
+    const result = await this.saveBatchStoragePatch(bean, batch.id, batchInput, `Bag: ${formatGrams(next)} left`);
+    if (result === 'failed' && !this.state.demo) {
+      // The beans are spent whether or not the gateway heard about it. Queue
+      // the deduction so a later flush replays it instead of the bag silently
+      // keeping weight it no longer has.
+      writePendingDoses(
+        appendPendingDose(
+          readPendingDoses(),
+          {
+            batchId: batch.id,
+            beanId: bean.id,
+            dose,
+            expectedRemaining: next,
+            at: new Date().toISOString()
+          },
+          new Date()
+        )
+      );
+      this.setState({ status: 'Bag update failed — will retry' });
+      this.schedulePendingDoseFlush();
+    }
+  }
+
+  // Replay dose deductions that never reached the gateway (shot ended while
+  // offline or the write timed out). Each entry is re-resolved against the
+  // batch as the gateway has it NOW — another device may have edited the bag
+  // since — and a deduction whose write actually landed (only the response was
+  // lost) is recognized by its expected weight and dropped, so a replay never
+  // counts a shot twice.
+  private async flushPendingDoses(): Promise<void> {
+    if (this.disposed || this.state.demo || this.pendingDoseFlushActive) return;
+    const pending = readPendingDoses();
+    if (pending.length === 0) return;
+    this.pendingDoseFlushActive = true;
+    try {
+      const queue = [...pending];
+      while (queue.length > 0) {
+        const entry = queue[0]!;
+        try {
+          const batch = await this.batchForPendingDose(entry.batchId);
+          const resolution = resolvePendingDose(entry, batch);
+          if (resolution.action === 'apply') {
+            const saved = await gateway.updateBatch(entry.batchId, {
+              beanId: entry.beanId,
+              weightRemaining: resolution.weightRemaining
+            });
+            this.adoptFlushedBatch(saved);
+          }
+          queue.shift();
+          writePendingDoses(queue);
+        } catch {
+          // Gateway still unreachable: keep the rest of the queue for the next
+          // reconnect or startup, and check back on a timer meanwhile.
+          this.schedulePendingDoseFlush(60_000);
+          break;
+        }
+      }
+    } finally {
+      this.pendingDoseFlushActive = false;
+    }
+  }
+
+  // A deleted bag resolves to null (the deduction is moot); anything else —
+  // network down, gateway error — throws so the caller keeps the entry queued.
+  private async batchForPendingDose(batchId: string): Promise<BeanBatch | null> {
+    try {
+      return await gateway.batch(batchId);
+    } catch (error) {
+      if (error instanceof GatewayRequestError && error.issue.statusCode === 404) return null;
+      throw error;
+    }
+  }
+
+  private adoptFlushedBatch(saved: BeanBatch): void {
+    const current = this.state.batchesByBean[saved.beanId];
+    if (!current) return;
+    const batches = current.map((item) => (item.id === saved.id ? saved : item));
+    this.setState({ batchesByBean: { ...this.state.batchesByBean, [saved.beanId]: batches } });
+    void beanieCache.putBeanBatches(saved.beanId, batches).catch(() => {});
+  }
+
+  private schedulePendingDoseFlush(delayMs = 30_000): void {
+    if (this.disposed) return;
+    if (this.pendingDoseRetryTimer != null) window.clearTimeout(this.pendingDoseRetryTimer);
+    this.pendingDoseRetryTimer = window.setTimeout(() => {
+      this.pendingDoseRetryTimer = null;
+      void this.flushPendingDoses();
+    }, delayMs);
   }
 
   // The inverse of consumeBatchDoseForShot: a deleted shot can return its dose to
@@ -6407,7 +6505,7 @@ export class BeanieApp {
     batchId: string,
     batchInput: Partial<BeanBatch>,
     status: string
-  ): Promise<void> {
+  ): Promise<'saved' | 'failed' | 'skipped'> {
     const optimistic = this.beanWorkflow.beginBatchUpdate({
       bean,
       batchesByBean: this.state.batchesByBean,
@@ -6416,14 +6514,14 @@ export class BeanieApp {
       batchInput,
       demo: this.state.demo
     });
-    if (optimistic.type !== 'optimistic') return;
+    if (optimistic.type !== 'optimistic') return 'skipped';
 
     this.setState({
       batchesByBean: optimistic.batchesByBean,
       status
     });
     if (optimistic.shouldScheduleApply) this.scheduleApply();
-    if (optimistic.complete) return;
+    if (optimistic.complete) return 'saved';
 
     const result = await this.beanWorkflow.finishBatchUpdate({
       bean,
@@ -6443,6 +6541,7 @@ export class BeanieApp {
       batchesByBean: result.batchesByBean,
       status: result.type === 'failed' ? result.status : status
     });
+    return result.type === 'failed' ? 'failed' : 'saved';
   }
 
   private async finishBatchFromPicker(beanId: string | null, batchId: string): Promise<void> {

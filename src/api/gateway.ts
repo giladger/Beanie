@@ -302,6 +302,10 @@ export const gateway = {
       `/api/v1/beans/${encodeURIComponent(beanId)}/batches?includeArchived=false`,
       readBatches
     ).then((list) => list.map(fromGatewayBatch)),
+  batch: (id: string) =>
+    fetchJson<BeanBatch>('batches', `/api/v1/bean-batches/${encodeURIComponent(id)}`, readBatch).then(
+      fromGatewayBatch
+    ),
   createBatch: (beanId: string, batch: Partial<BeanBatch>) =>
     fetchJson<BeanBatch>(
       'batches',
