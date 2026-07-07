@@ -11,6 +11,7 @@
 - Derek answers read cleaner: citation markers and the source list are gone, and the context chips show rounded values.
 - Derek answers are saved on the shot they were asked about — reopen "Dial in" on that shot and the answer is right there, with "Ask again" for a fresh one. Shots with Derek notes carry a small sparkles mark in the history and phone lists.
 - The tip you applied is saved on the shot too: loading that shot's recipe (second tap) brings the changed value along, highlights the control that carries it, and offers "Revert tweak" to load the recipe as it really was.
+- Describing the shot is optional: tap "Ask Derek" with nothing selected and Derek reads the curve as-is and gives his own take on what (if anything) to change.
 - Fixed cross-device edits being overwritten: bag updates (dose deduction at shot end, inline weight edits, freezes, finishing a bag) now send only the fields they change, so they can no longer revert freeze/thaw history or roast-date edits made on another device.
 - Fixed a shot's bag deduction being silently lost when the gateway write failed: failed deductions are queued on-device and replayed against fresh bag state on startup or reconnect, without ever double-counting a shot.
 

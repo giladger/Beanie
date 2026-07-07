@@ -9,7 +9,15 @@
 
 /** Remove `[n]` citation markers (and the space before them) from answer text. */
 export function stripCitationMarkers(text: string): string {
-  return text.replace(/\s*\[\d{1,2}\](?=[\s.,;:!?)]|$)/g, '');
+  // Loop until stable: in "profile [2][5]." the first pass can only strip the
+  // trailing marker (the lookahead keeps word-adjacent brackets like
+  // "array[1]indexing" intact), which re-exposes the one before it.
+  let out = text;
+  for (;;) {
+    const next = out.replace(/\s*\[\d{1,2}\](?=[\s.,;:!?)"'\]]|\[|$)/g, '');
+    if (next === out) return next;
+    out = next;
+  }
 }
 
 export function renderAnswerMarkdown(text: string): string {

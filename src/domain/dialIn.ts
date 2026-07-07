@@ -322,7 +322,14 @@ export function composeDialInQuery(context: DialInContext, ask: DialInAsk): stri
     if (phrases.length > 0) lines.push(`The shot ${joinPhrases(phrases)}.`);
     const note = ask.note.trim();
     if (note) lines.push(note);
-    lines.push('What should I change for the next shot?');
+    if (phrases.length > 0 || note) {
+      lines.push('What should I change for the next shot?');
+    } else {
+      // Nothing described: hand Derek the shot as-is and ask for a read.
+      lines.push(
+        'I have not tasted anything specific to report — please read the shot data above and tell me how this shot looks, and what single change (if any) you would make for the next one.'
+      );
+    }
   }
 
   lines.push(outputContract());
@@ -469,8 +476,12 @@ function readSuggestion(raw: unknown, context: DialInContext): DialInSuggestion 
   }
 
   if (known === 'grind') {
-    // Grind settings are grinder-specific (numbers or notch names) — no clamp,
-    // but a numeric current lets the card show a delta.
+    // Grind settings are grinder-specific (numbers or notch names like "3C"),
+    // so no range clamp — but a purely qualitative target ("finer") is advice,
+    // not a settable value.
+    if (typeof target === 'string' && !/\d/.test(target)) {
+      return { kind: 'manual', parameter, direction, current, target, unit, why };
+    }
     return { kind: 'recipe', parameter: known, direction, current, target, unit, why };
   }
 

@@ -106,8 +106,9 @@ export function toggleTasteChip(state: DerekState, chipId: string): DerekState {
 
 export function canAskDerek(state: DerekState): boolean {
   if (state.step === 'asking' || state.applying) return false;
-  if (state.source === 'general') return state.question.trim().length > 0;
-  return state.tasteChipIds.length > 0 || state.note.trim().length > 0 || state.question.trim().length > 0;
+  // A general ask needs a question; a shot ask never does — Derek gets the
+  // full shot either way, so "just take a look" is a valid ask.
+  return state.source === 'shot' || state.question.trim().length > 0;
 }
 
 /** Move into the asking state, clearing any previous answer. */

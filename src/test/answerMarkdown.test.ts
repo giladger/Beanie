@@ -14,6 +14,9 @@ run('renders paragraphs, bold, and lists', () => {
 
 run('strips citation markers instead of rendering them', () => {
   equal(stripCitationMarkers('Grind finer. [1] Hotter helps [2], too [13].'), 'Grind finer. Hotter helps, too.');
+  // Consecutive markers all strip (the live-answer regression).
+  equal(stripCitationMarkers('typical for the Default profile [2][5]. However'), 'typical for the Default profile. However');
+  equal(stripCitationMarkers('stacked [1][2][3] markers'), 'stacked markers');
   // Bracketed numbers that are not citations (mid-word/data) survive.
   equal(stripCitationMarkers('array[1]indexing'), 'array[1]indexing');
   const html = renderAnswerMarkdown('Grind **finer**. [1]');

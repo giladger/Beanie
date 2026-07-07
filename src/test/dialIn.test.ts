@@ -124,6 +124,17 @@ run('a previous Derek tweak stamped on the shot feeds back into the next ask', (
   contains(query, 'Preinfusion time 8s → 13s');
 });
 
+run('composeDialInQuery with nothing described asks Derek to read the shot', () => {
+  const shot = shotWith([measurement(0, 1, 0.5, 0), measurement(22, 8.9, 2.1, 38)]);
+  const context = buildDialInContext({ shot, bean: null, batch: null, grinder: null });
+  const query = composeDialInQuery(context, { tasteChipIds: [], note: '' });
+  contains(query, 'tell me how this shot looks');
+  if (query.includes('What should I change for the next shot?')) {
+    throw new Error('the described-shot question must be replaced by the read-the-shot ask');
+  }
+  contains(query, '```json'); // the output contract still applies
+});
+
 run('composeDialInQuery with a free question skips the taste sentence', () => {
   const query = composeDialInQuery(emptyContext, {
     tasteChipIds: ['sour'],
@@ -188,6 +199,14 @@ run('extractDialInSuggestions survives missing and malformed blocks', () => {
   const malformed = extractDialInSuggestions('Text\n```json\n{oops\n```', emptyContext);
   equal(malformed.suggestions.length, 0);
   equal(malformed.displayText, 'Text');
+});
+
+run('a qualitative grind target is advice, not a settable value', () => {
+  const answer =
+    '```json\n{"suggestions":[{"parameter":"grind","direction":"decrease","current":null,"target":"finer","why":"Slow the shot."},{"parameter":"grind","target":"14.5","why":"Two notches finer."}]}\n```';
+  const { suggestions } = extractDialInSuggestions(answer, emptyContext);
+  equal(suggestions[0]!.kind, 'manual');
+  equal(suggestions[1]!.kind, 'recipe');
 });
 
 run('extractDialInSuggestions maps profile switches', () => {

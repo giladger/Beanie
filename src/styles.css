@@ -10308,3 +10308,9 @@ p {
 .recipe-grid .derek-changed .profile-label-row > label {
   color: var(--accent);
 }
+
+.derek-prompt-optional {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 0.78rem;
+}

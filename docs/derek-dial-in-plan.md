@@ -296,3 +296,8 @@ Accepting a profile-level suggestion:
       (`isDerekedShot`)
 - [x] Tests: `derekShot.test.ts` (4), extractor/renderer/controller updates
       (709 ok total)
+- [x] Description-free asks: a shot ask needs no chips/note — the composed
+      question becomes "read the shot data and tell me how it looks";
+      verified live (Derek spotted a too-fast shot unprompted). Qualitative
+      grind targets ("finer") demote to advice cards; consecutive citation
+      markers (`[2][5]`) now strip fully.

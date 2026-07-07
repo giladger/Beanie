@@ -8305,7 +8305,7 @@ export class BeanieApp {
     const labels = state.tasteChipIds
       .map((id) => TASTE_CHIPS.find((chip) => chip.id === id)?.label)
       .filter((label): label is string => Boolean(label));
-    return [labels.join(', '), state.note.trim()].filter(Boolean).join(' · ') || 'Dial-in help';
+    return [labels.join(', '), state.note.trim()].filter(Boolean).join(' · ') || 'Take a look at this shot';
   }
 
   private async saveDerekAnswerOnShot(

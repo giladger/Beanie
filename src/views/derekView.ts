@@ -73,7 +73,7 @@ function renderCompose(model: DerekViewModel): string {
   const taste =
     state.source === 'shot'
       ? `
-        <p class="derek-prompt">What was wrong with it?</p>
+        <p class="derek-prompt">What was wrong with it? <span class="derek-prompt-optional">optional — Derek reads the full shot either way</span></p>
         <div class="derek-taste-chips">
           ${TASTE_CHIPS.map(
             (chip) => `

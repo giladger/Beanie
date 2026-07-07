@@ -27,18 +27,23 @@ function render(state: DerekState, chips: string[] = []): string {
   return renderDerekModal({ state, contextChips: chips });
 }
 
-run('compose renders taste chips, context chips, and a gated ask button', () => {
+run('compose renders taste chips as optional and never gates a shot ask', () => {
   const html = render(startDerek('shot', 's1'), ['Chelchele · light', '18g → 40g']);
   contains(html, 'Dial in with Derek');
   contains(html, 'data-action="derek-taste"');
   contains(html, 'Chelchele · light');
-  contains(html, 'data-action="derek-ask" disabled');
+  contains(html, 'optional — Derek reads the full shot');
+  // No description needed: "just take a look" is a valid ask.
+  if (html.includes('data-action="derek-ask" disabled')) {
+    throw new Error('a shot ask must be possible with nothing described');
+  }
 
   const armed = render(toggleTasteChip(startDerek('shot', 's1'), 'sour'));
   contains(armed, 'aria-pressed="true"');
-  if (armed.includes('data-action="derek-ask" disabled')) {
-    throw new Error('ask must be enabled once a chip is active');
-  }
+
+  // General asks still need a question before Ask enables.
+  const general = render(startDerek('general', null));
+  contains(general, 'data-action="derek-ask" disabled');
 });
 
 run('asking renders the phase line and streamed text with the fence held back', () => {

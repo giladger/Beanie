@@ -33,15 +33,13 @@ function resultWith(answerText: string): DerekResult {
   return { mode: 'answer', answerText, citations: [], answerId: 'a1' };
 }
 
-run('compose gating: shot asks need a chip or note; general asks need a question', () => {
+run('compose gating: shot asks never require input; general asks need a question', () => {
+  // A shot ask works empty — "just take a look" hands Derek the full shot.
   let state = startDerek('shot', 'shot-1');
-  equal(canAskDerek(state), false);
-  state = toggleTasteChip(state, 'sour');
   equal(canAskDerek(state), true);
   state = toggleTasteChip(state, 'sour');
-  equal(canAskDerek(state), false);
-  state = { ...state, note: 'tastes thin' };
   equal(canAskDerek(state), true);
+  equal(canAskDerek({ ...state, step: 'asking' }), false);
 
   let general = startDerek('general', null);
   equal(canAskDerek(general), false);
