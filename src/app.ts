@@ -6925,8 +6925,25 @@ export class BeanieApp {
       const current = this.brewTempValue() ?? 93;
       draft.brewTemp = round(current + delta, 1);
     }
-    this.setState({ draft, status: 'Draft changed' });
+    this.setState({ draft, ...this.clearDerekTweakOnEdit(field), status: 'Draft changed' });
     this.scheduleApply();
+  }
+
+  // Editing the value Derek changed drops the tweak marking (and the pending
+  // next-shot stamp) — the recipe is no longer running that Derek tweak. Only
+  // an edit to the tweaked control counts; changing a different value leaves
+  // the marking on the one that is still Derek's.
+  private clearDerekTweakOnEdit(field: string): { derekTweakChip?: null } {
+    const parameter = this.state.derekTweakChip?.parameter;
+    if (!parameter) return {};
+    const editsTweak =
+      (parameter === 'dose' && field === 'dose') ||
+      (parameter === 'yield' && (field === 'yield' || field === 'ratio')) ||
+      (parameter === 'grind' && field === 'grinderSetting') ||
+      (parameter === 'brew_temperature' && field === 'temperature');
+    if (!editsTweak) return {};
+    clearPendingDerekTweak();
+    return { derekTweakChip: null };
   }
 
   private openEditDialog(field: EditField): void {
@@ -7490,7 +7507,13 @@ export class BeanieApp {
     }
     if (dialog.field === 'temperature') draft.brewTemp = parseNumberInput(value);
     rememberInputDialogValue(dialog.kind, value);
-    this.setState({ draft, modal: null, editDialog: null, status: 'Draft changed' });
+    this.setState({
+      draft,
+      ...this.clearDerekTweakOnEdit(dialog.field),
+      modal: null,
+      editDialog: null,
+      status: 'Draft changed'
+    });
     this.scheduleApply();
   }
 
