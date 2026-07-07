@@ -1,17 +1,43 @@
 # Changelog
 
-## Unreleased
+## v0.3.0 - 2026-07-07
+
+### Derek dial-in helper
 
 - Added a Derek dial-in helper: from a shot's detail pane (or the topbar), tap taste chips ("sour", "too fast"…) and Beanie asks Derek — Decent's community-knowledge assistant — with your bean, grinder, recipe, and the shot's actual curve attached. The cited answer streams in live, and ends with one-change-at-a-time suggestion cards: pick one and "Use for next shot" applies it — grind/dose/yield/temperature changes stage straight into the recipe, and profile-level changes (peak pressure, preinfusion) generate a tweaked copy of the profile that the bean's recipe switches to. Requires a Decent.app build with the Derek relay; the buttons hide on gateways without it.
+- Describing the shot is optional: tap "Ask Derek" with nothing selected and Derek reads the curve as-is and gives his own take on what (if anything) to change.
+- Derek now sees the whole shot: every chart series (pressure, flow, weight, group temp, weight flow) at full sample resolution, not a thinned summary.
 - Profile-tweak cards show a before/after mini-trace of what the change does to the planned curve, and suggestions the tweak engine can't apply to the loaded profile appear as advice-only cards instead of failing on tap.
 - While a Derek tweak is staged, the workbench profile control offers a one-tap "Revert tweak"; it clears once a shot is pulled with it, the bean changes, or a profile is picked by hand.
 - The change you applied is remembered and stamped onto the next shot pulled on that bean, so a later "Dial in" on that shot tells Derek what was already tried and how it turned out.
-- The phone's selected-shot card gets its own "Dial in" button.
-- Derek now sees the whole shot: every chart series (pressure, flow, weight, group temp, weight flow) at full sample resolution, not a thinned summary.
-- Derek answers read cleaner: citation markers and the source list are gone, and the context chips show rounded values.
 - Derek answers are saved on the shot they were asked about — reopen "Dial in" on that shot and the answer is right there, with "Ask again" for a fresh one. Shots with Derek notes carry a small sparkles mark in the history and phone lists.
 - The tip you applied is saved on the shot too: loading that shot's recipe (second tap) brings the changed value along, highlights the control that carries it, and offers "Revert tweak" to load the recipe as it really was.
-- Describing the shot is optional: tap "Ask Derek" with nothing selected and Derek reads the curve as-is and gives his own take on what (if anything) to change.
+- Derek answers read cleaner: citation markers and the source list are gone, and the context chips show rounded values.
+- The phone's selected-shot card gets its own "Dial in" button.
+
+### Live stage rail & shot replay
+
+- The live stage rail now reads its advance and stop reasons from the gateway's shotState feed instead of guessing: an app-issued weight skip is named authoritatively (with the projected weight that tripped it), firmware-natural exits describe the step's own exit/time/volume trigger from telemetry, and the shot-complete status reads the real stop decision — target weight/volume, API or app command, machine stop, error, disconnect, or no-scale abort.
+- Redesigned the live stage rail as a stepper timeline: completed stages tick off with a check badge and an accent connector, the current stage stays highlighted, stages the pour hasn't reached recede, and each stage's advance reason shows as a chip tinted with the color of the chart series that triggered it (pressure green, flow blue, weight gold). The final stop chip is teal for a met target, amber for an abnormal ending, neutral for a plain stop.
+- Pressing a saved shot's chart now opens a live-style stage replay: the full stage rail — every step with the reason it advanced — beside a full-size chart of the shot, with per-stage reasons rebuilt from the shot's trace and the persisted stop reason on the last stage.
+- The rail keeps the current stage in view when a profile overflows it, shows a cleaning profile's steps during a cleaning cycle, freezes on the last stage at shot end labelled with the stop reason, and stays visible while a shot is saving.
+
+### Sleep screensaver, glanceable topbar & clock
+
+- Added a configurable sleep screensaver (modelled on de1app's saver page): when the machine sleeps, the wake-on-tap screen can show the classic dim black screen (default, unchanged), a clock, a photo slideshow, or photos with a clock. The clock wanders to a fresh spot to avoid burn-in; photos are picked from a device folder, downscaled, and stored on-device so the slideshow needs no network while the tablet sleeps; screensaver brightness is configurable (default 25%); and a Preview button shows the saver immediately. The setting syncs across devices.
+- Made the topbar glanceable: the status stat is tinted by machine state (ready green, heating amber, service teal, asleep muted, error/offline/add-water red) and shows the live group temperature while warming up ("Heating 82→93°"). Every stat is now tappable — Group opens the brew temp editor, Steam the Steam·Water·Flush page, Water the water-level alerts, Scale tares or connects — and the machine-services button is renamed to Machine.
+- Added a topbar wall clock (with its own toggle under Settings → App) and a Clock format setting — Auto / 12h / 24h — applied to both the topbar and screensaver clocks, since Android webviews don't always surface the tablet's 24-hour switch to the page.
+- Moved the fallback steam/flush/hot-water start commands onto a per-lane Start button on the Steam·Water·Flush page, which already hosts their progress and stop controls.
+
+### Charts & polish
+
+- Added a mouse hover crosshair and values tooltip to shot charts, and let the shot-stages modal fill the screen on desktops.
+- Made the AI bag-label scanner library-aware: it reuses the bean/roaster spellings and naming style already in your library instead of inventing new ones.
+
+### Fixes
+
+- Fixed the add-coffee form on mobile: reachable buttons and a tamed date field.
+- Kept in-progress bean edits from flickering back to old values on re-render, and stopped the live stage rail flickering at shot end.
 - Fixed cross-device edits being overwritten: bag updates (dose deduction at shot end, inline weight edits, freezes, finishing a bag) now send only the fields they change, so they can no longer revert freeze/thaw history or roast-date edits made on another device.
 - Fixed a shot's bag deduction being silently lost when the gateway write failed: failed deductions are queued on-device and replayed against fresh bag state on startup or reconnect, without ever double-counting a shot.
 
