@@ -264,7 +264,7 @@ function fromGatewayBatch(batch: BeanBatch): BeanBatch {
   return { ...rest, storageEvents: (events as BeanBatchStorageEvent[] | null) ?? null };
 }
 
-function withSkinProxyToken(init: RequestInit): RequestInit {
+export function withSkinProxyToken(init: RequestInit): RequestInit {
   const token = window.__REA_PROXY_TOKEN__;
   if (!token) return init;
   const headers = new Headers(init.headers);
