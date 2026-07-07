@@ -295,6 +295,41 @@ import {
   writePendingDoses
 } from './domain/pendingDoses';
 import {
+  probeDerekRelay,
+  streamDerekAnswer,
+  DerekRequestError,
+  DerekStallError,
+  DerekUnavailableError,
+  type DerekEvent,
+  type DerekRelayAvailability
+} from './api/derek';
+import {
+  buildDialInContext,
+  composeDialInQuery,
+  suggestionTitle,
+  type DialInContext,
+  type DialInSuggestion
+} from './domain/dialIn';
+import { renderAnswerMarkdown } from './domain/answerMarkdown';
+import { applyProfileTweak } from './domain/profileTweaks';
+import {
+  beginAsk,
+  beginFollowUp,
+  canAskDerek,
+  failAsk,
+  finishAsk,
+  markUnavailable,
+  reduceDerekEvent,
+  selectSuggestion,
+  selectedSuggestion,
+  startDerek,
+  toggleTasteChip,
+  visiblePartial,
+  partialReachedSuggestions,
+  type DerekState
+} from './controllers/derekController';
+import { phaseLabel, renderDerekModal as renderDerekModalView } from './views/derekView';
+import {
   renderPhoneProfilesPage as renderPhoneProfilePickerPage,
   renderProfilesPage as renderProfilePickerPage
 } from './views/profilePickerView';
@@ -467,6 +502,7 @@ type Modal =
   | 'cleaning-wizard'
   | 'import-profile'
   | 'delete-profile'
+  | 'derek'
   | null;
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
 interface ClickActionContext {
@@ -768,6 +804,8 @@ interface AppState {
   gatewayLinkDown: boolean;
   /** Draw the reference shot's curves under the live trace while pulling. */
   liveGhost: boolean;
+  /** The Derek dial-in helper modal; null when closed. */
+  derek: DerekState | null;
 }
 
 interface LiveReadoutEls {
@@ -911,7 +949,8 @@ export class BeanieApp {
     cleaningProfilePicking: false,
     cleaningWizard: null,
     gatewayLinkDown: false,
-    liveGhost: true
+    liveGhost: true,
+    derek: null
   };
 
   private applyTimer: number | null = null;
@@ -922,6 +961,11 @@ export class BeanieApp {
   private shotStateRetryTimer: number | null = null;
   private pendingDoseRetryTimer: number | null = null;
   private pendingDoseFlushActive = false;
+  private derekAbort: AbortController | null = null;
+  /** Once probed, remembered for the session (the gateway rarely changes). */
+  private derekRelay: DerekRelayAvailability = 'unknown';
+  /** Context snapshot the open Derek modal composes queries from. */
+  private derekContext: DialInContext | null = null;
   // Consecutive failed (re)connect attempts per socket, for backoff pacing.
   private machineSocketAttempts = 0;
   private scaleSocketAttempts = 0;
@@ -1125,6 +1169,7 @@ export class BeanieApp {
     if (this.displayRetryTimer != null) window.clearTimeout(this.displayRetryTimer);
     if (this.shotStateRetryTimer != null) window.clearTimeout(this.shotStateRetryTimer);
     if (this.pendingDoseRetryTimer != null) window.clearTimeout(this.pendingDoseRetryTimer);
+    this.derekAbort?.abort();
     if (this.shotRefreshTimer != null) window.clearInterval(this.shotRefreshTimer);
     if (this.clockTimer != null) window.clearTimeout(this.clockTimer);
     if (this.saverPhotoTimer != null) window.clearTimeout(this.saverPhotoTimer);
@@ -4063,7 +4108,8 @@ export class BeanieApp {
       this.machineClickActions(),
       this.settingsClickActions(),
       this.navigationClickActions(),
-      this.profileEditorClickActions()
+      this.profileEditorClickActions(),
+      this.derekClickActions()
     ];
     for (const group of groups) {
       for (const [action, handler] of Object.entries(group)) {
@@ -5457,6 +5503,12 @@ export class BeanieApp {
     }
     if (target.dataset.action === 'profile-search') {
       this.setState({ profileSearch: target.value, profilePage: 0, profileFocusId: null });
+    }
+    if (target.dataset.action === 'derek-note' && this.state.derek) {
+      this.setState({ derek: { ...this.state.derek, note: target.value } });
+    }
+    if (target.dataset.action === 'derek-question' && this.state.derek) {
+      this.setState({ derek: { ...this.state.derek, question: target.value } });
     }
     if (target.dataset.action === 'settings-account-field') {
       this.updateDecentAccountField(target.dataset.key ?? '', target.value);
@@ -7465,7 +7517,8 @@ export class BeanieApp {
           ? clockLabel(new Date(), this.state.settingsPreferences.clockFormat)
           : null,
         cleaningDue: cleaningDueNow,
-        asleep: this.state.asleep
+        asleep: this.state.asleep,
+        derekEnabled: this.derekEnabled()
       },
       hero: this.heroViewModel(bean),
       recipe: {
@@ -7914,7 +7967,8 @@ export class BeanieApp {
       shotsTotal: this.state.shotsTotal,
       shotsLoadingMore: this.state.shotsLoadingMore,
       secondTapHint: this.state.secondTapHint,
-      batchesByBean: this.state.batchesByBean
+      batchesByBean: this.state.batchesByBean,
+      derekEnabled: this.derekEnabled()
     });
   }
 
@@ -7922,7 +7976,338 @@ export class BeanieApp {
     return selectHistoryShot(this.state.shots, this.state.detailShotId);
   }
 
+  // --- Derek dial-in helper -------------------------------------------------
+
+  private derekClickActions(): Record<string, ClickActionHandler> {
+    return {
+      'derek-dial-in': ({ id }) => {
+        this.openDerek('shot', id ?? this.state.detailShotId);
+      },
+      'derek-open': () => {
+        this.openDerek('general', null);
+      },
+      'derek-taste': ({ id }) => {
+        if (this.state.derek && id) this.setState({ derek: toggleTasteChip(this.state.derek, id) });
+      },
+      'derek-toggle-context': () => {
+        const derek = this.state.derek;
+        if (derek) this.setState({ derek: { ...derek, showContext: !derek.showContext } });
+      },
+      'derek-ask': () => {
+        void this.askDerek();
+      },
+      'derek-cancel': () => {
+        this.derekAbort?.abort();
+        if (this.state.derek) this.setState({ derek: { ...this.state.derek, step: 'compose' } });
+      },
+      'derek-back': () => {
+        if (this.state.derek) this.setState({ derek: { ...this.state.derek, step: 'compose' } });
+      },
+      'derek-close': () => {
+        this.closeDerek();
+      },
+      'derek-pick-suggestion': ({ id }) => {
+        const index = Number(id);
+        if (this.state.derek && Number.isInteger(index)) {
+          this.setState({ derek: selectSuggestion(this.state.derek, index) });
+        }
+      },
+      'derek-apply': () => {
+        void this.applyDerekSuggestion();
+      },
+      'derek-follow-up': () => {
+        if (this.state.derek) this.setState({ derek: beginFollowUp(this.state.derek) });
+      }
+    };
+  }
+
+  private derekEnabled(): boolean {
+    return !this.state.demo && this.derekRelay !== 'missing';
+  }
+
+  private openDerek(source: 'shot' | 'general', shotId: string | null): void {
+    if (this.state.demo) {
+      this.setState({ status: 'Derek needs a live gateway — not available in demo' });
+      return;
+    }
+    this.derekContext = this.buildDerekContext(source, shotId);
+    const derek = startDerek(source, shotId);
+    this.setState({
+      modal: 'derek',
+      derek: this.derekRelay === 'missing' ? markUnavailable(derek) : derek
+    });
+    if (this.derekRelay === 'unknown') {
+      void probeDerekRelay().then((availability) => {
+        this.derekRelay = availability;
+        if (availability === 'missing' && this.state.modal === 'derek' && this.state.derek) {
+          this.setState({ derek: markUnavailable(this.state.derek) });
+        }
+      });
+    }
+  }
+
+  private closeDerek(): void {
+    this.derekAbort?.abort();
+    this.derekAbort = null;
+    this.derekContext = null;
+    this.setState({ modal: null, derek: null });
+  }
+
+  // A shot-sourced ask describes THAT shot (its own recipe and telemetry); a
+  // general ask carries the current bean/recipe as background context.
+  private buildDerekContext(source: 'shot' | 'general', shotId: string | null): DialInContext {
+    const shot = shotId ? (this.state.shots.find((item) => item.id === shotId) ?? null) : null;
+    const beanId = shot?.workflow?.context?.beanId ?? this.state.selectedBeanId;
+    const bean = this.state.beans.find((item) => item.id === beanId) ?? null;
+    const batchId = shot?.workflow?.context?.beanBatchId ?? this.state.selectedBatchId;
+    const batch = bean
+      ? ((this.state.batchesByBean[bean.id] ?? []).find((item) => item.id === batchId) ?? null)
+      : null;
+    const grinderId = shot?.workflow?.context?.grinderId ?? this.state.draft.grinderId;
+    const grinder = this.state.grinders.find((item) => item.id === grinderId) ?? null;
+    return buildDialInContext({
+      shot,
+      bean,
+      batch,
+      grinder,
+      recipe:
+        source === 'general'
+          ? {
+              doseG: this.state.draft.dose,
+              yieldG: this.state.draft.yield,
+              temperatureC: this.brewTempValue()
+            }
+          : null,
+      profileTitle: source === 'general' ? (this.state.draft.profileTitle ?? null) : null
+    });
+  }
+
+  private derekContextChips(): string[] {
+    const context = this.derekContext;
+    if (!context) return [];
+    const chips: string[] = [];
+    if (context.bean?.name) {
+      chips.push([context.bean.name, context.bean.roastLevel].filter(Boolean).join(' · '));
+    }
+    if (context.grinder?.model || context.grinder?.setting) {
+      chips.push(
+        [context.grinder.model, context.grinder.setting ? `@ ${context.grinder.setting}` : null]
+          .filter(Boolean)
+          .join(' ')
+      );
+    }
+    const recipe = context.recipe;
+    if (recipe.doseG != null || recipe.yieldG != null) {
+      chips.push(
+        `${recipe.doseG ?? '?'}g → ${recipe.yieldG ?? '?'}g${recipe.temperatureC != null ? ` @ ${recipe.temperatureC}°C` : ''}`
+      );
+    }
+    if (context.shot?.durationS != null) {
+      chips.push(
+        `shot: ${Math.round(context.shot.durationS)}s${context.shot.peakPressureBar != null ? `, ${context.shot.peakPressureBar} bar peak` : ''}`
+      );
+    }
+    if (context.profileTitle) chips.push(context.profileTitle);
+    return chips;
+  }
+
+  private async askDerek(): Promise<void> {
+    const derek = this.state.derek;
+    if (!derek || !canAskDerek(derek)) return;
+    const context = this.derekContext ?? this.buildDerekContext(derek.source, derek.shotId);
+    this.derekContext = context;
+    const query = composeDialInQuery(context, {
+      tasteChipIds: derek.tasteChipIds,
+      note: derek.note,
+      freeQuestion: derek.question.trim() ? derek.question : null
+    });
+
+    const asking = beginAsk(derek, query);
+    const seq = asking.askSeq;
+    this.setState({ derek: asking });
+
+    this.derekAbort?.abort();
+    const abort = new AbortController();
+    this.derekAbort = abort;
+    try {
+      const result = await streamDerekAnswer(
+        { query },
+        { signal: abort.signal, onEvent: (event) => this.handleDerekEvent(seq, event) }
+      );
+      if (!this.derekAskCurrent(seq)) return;
+      this.setState({ derek: finishAsk(this.state.derek!, result, context) });
+    } catch (error) {
+      if (!this.derekAskCurrent(seq)) return;
+      if (error instanceof DerekUnavailableError) {
+        this.derekRelay = 'missing';
+        this.setState({ derek: markUnavailable(this.state.derek!) });
+        return;
+      }
+      // The user closing/cancelling aborts the fetch — that's not a failure.
+      if (abort.signal.aborted && !(error instanceof DerekStallError)) return;
+      console.warn('[Beanie] Derek ask failed', error);
+      const message =
+        error instanceof DerekRequestError && error.status === 429
+          ? 'Derek is busy — try again in a minute.'
+          : error instanceof DerekStallError
+            ? 'Derek stopped responding mid-answer.'
+            : "Derek isn't reachable right now.";
+      this.setState({ derek: failAsk(this.state.derek!, message) });
+    }
+  }
+
+  private derekAskCurrent(seq: number): boolean {
+    return (
+      !this.disposed &&
+      this.state.modal === 'derek' &&
+      this.state.derek?.askSeq === seq &&
+      this.state.derek.step === 'asking'
+    );
+  }
+
+  private handleDerekEvent(seq: number, event: DerekEvent): void {
+    if (!this.derekAskCurrent(seq)) return;
+    const derek = this.state.derek!;
+    if (event.type === 'delta') {
+      // Hot path: a full re-render per token would rebuild the whole app for
+      // every word, so append to the state in place and patch the DOM directly
+      // (same pattern as the live-shot readouts).
+      this.state.derek = reduceDerekEvent(derek, event);
+      this.patchDerekStream(this.state.derek);
+      return;
+    }
+    if (event.type === 'result') return; // askDerek() folds the result in.
+    this.setState({ derek: reduceDerekEvent(derek, event) });
+  }
+
+  private patchDerekStream(derek: DerekState): void {
+    const answer = document.getElementById('derek-answer-stream');
+    if (answer) {
+      answer.innerHTML = renderAnswerMarkdown(visiblePartial(derek));
+      const body = answer.closest('.derek-body');
+      if (body) body.scrollTop = body.scrollHeight;
+    }
+    const phase = document.getElementById('derek-phase');
+    if (phase) {
+      phase.textContent = partialReachedSuggestions(derek)
+        ? 'Preparing suggestions…'
+        : phaseLabel(derek);
+    }
+  }
+
+  private async applyDerekSuggestion(): Promise<void> {
+    const derek = this.state.derek;
+    if (!derek || derek.applying) return;
+    const suggestion = selectedSuggestion(derek);
+    if (!suggestion) return;
+    this.setState({ derek: { ...derek, applying: true } });
+    try {
+      const summary = await this.performDerekApply(suggestion);
+      if (!this.state.derek) return;
+      this.setState({
+        derek: { ...this.state.derek, applying: false, appliedSummary: summary },
+        status: `Next shot: ${summary}`
+      });
+      this.scheduleApply();
+    } catch (error) {
+      console.error('[Beanie] Apply Derek suggestion failed', error);
+      if (this.state.derek) {
+        this.setState({
+          derek: { ...this.state.derek, applying: false },
+          status: error instanceof Error ? error.message : 'Could not apply the change'
+        });
+      }
+    }
+  }
+
+  private async performDerekApply(suggestion: DialInSuggestion): Promise<string> {
+    const { parameter, target } = suggestion;
+    if (parameter === 'grind' && target != null) {
+      this.setState({ draft: { ...this.state.draft, grinderSetting: String(target) } });
+      return suggestionTitle(suggestion);
+    }
+    if (parameter === 'dose' || parameter === 'yield' || parameter === 'brew_temperature') {
+      const value = typeof target === 'number' ? target : Number(target);
+      if (!Number.isFinite(value)) throw new Error('The suggested value is not a number');
+      const patch =
+        parameter === 'dose'
+          ? { dose: value }
+          : parameter === 'yield'
+            ? { yield: value }
+            : { brewTemp: value };
+      this.setState({ draft: { ...this.state.draft, ...patch } });
+      return suggestionTitle(suggestion);
+    }
+    if (parameter === 'profile') {
+      const record = this.findProfileByTitle(String(target ?? ''));
+      if (!record) throw new Error(`"${String(target)}" isn't in your profile library`);
+      const selection = selectProfileForDraft({
+        draft: this.state.draft,
+        profiles: this.state.profiles,
+        grinders: this.state.grinders,
+        profileId: record.id
+      });
+      this.setState({ draft: selection.draft });
+      return `Profile → ${record.profile.title ?? 'profile'}`;
+    }
+
+    // Profile-level knob: build the tweaked variant and point the recipe at it.
+    const profile = this.state.draft.profile ?? this.state.workflow?.profile ?? null;
+    if (!profile) throw new Error('No profile loaded to tweak');
+    const tweak = applyProfileTweak(profile, suggestion);
+    if (!tweak) throw new Error("This profile can't take that change automatically");
+
+    const saved = await saveProfile(
+      {
+        profiles: this.state.profiles,
+        editingId: null,
+        profile: tweak.profile,
+        demo: this.state.demo,
+        nowMs: Date.now()
+      },
+      {
+        createProfile: (input) => gateway.createProfile(input),
+        updateProfile: (id, input) => gateway.updateProfile(id, input),
+        loadProfiles: () => gateway.profiles(),
+        invalidateProfileMutation: (profileId) => beanieCache.invalidateProfileMutation(profileId),
+        putProfiles: (profiles) => beanieCache.putProfiles(profiles),
+        restoreProfile: (id) => gateway.setProfileVisibility(id, 'visible').then(() => {})
+      }
+    );
+    if (saved.type === 'failed') throw new Error('Saving the tweaked profile failed');
+    const selection = selectProfileForDraft({
+      draft: this.state.draft,
+      profiles: saved.profiles,
+      grinders: this.state.grinders,
+      profileId: saved.profileId
+    });
+    this.setState({ profiles: saved.profiles, draft: selection.draft });
+    return tweak.summary;
+  }
+
+  private findProfileByTitle(title: string): ProfileRecord | null {
+    const wanted = title.trim().toLowerCase();
+    if (!wanted) return null;
+    const titled = this.state.profiles.map((record) => ({
+      record,
+      title: (record.profile.title ?? '').trim().toLowerCase()
+    }));
+    return (
+      titled.find((item) => item.title === wanted)?.record ??
+      titled.find((item) => item.title.startsWith(wanted))?.record ??
+      titled.find((item) => item.title.includes(wanted))?.record ??
+      null
+    );
+  }
+
+  private renderDerekModal(): string {
+    const derek = this.state.derek;
+    if (!derek) return '';
+    return renderDerekModalView({ state: derek, contextChips: this.derekContextChips() });
+  }
+
   private renderModal(): string {
+    if (this.state.modal === 'derek') return this.renderDerekModal();
     if (this.state.modal === 'bean-picker') return this.renderBeanPickerModal();
     if (this.state.modal === 'batch-storage') return this.renderBatchStorageModal();
     if (this.state.modal === 'edit-number') return this.renderEditDialog();

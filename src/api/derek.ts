@@ -182,6 +182,31 @@ function readResult(payload: Record<string, unknown>): DerekResult {
   };
 }
 
+export type DerekRelayAvailability = 'available' | 'missing' | 'unknown';
+
+// Cheap availability check: an invalid body costs Derek a fast validation 4xx
+// (no model run), while a gateway without the relay route answers 404. Network
+// failure is inconclusive — the gateway may just be rebooting — so the caller
+// should keep the feature visible and let a real ask surface the error.
+export async function probeDerekRelay(
+  fetchImpl: typeof fetch = fetch
+): Promise<DerekRelayAvailability> {
+  try {
+    const response = await fetchImpl(
+      `${gatewayHttpOrigin()}/api/v1/derek/answers/stream`,
+      withSkinProxyToken({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}'
+      })
+    );
+    void response.body?.cancel().catch(() => {});
+    return response.status === 404 ? 'missing' : 'available';
+  } catch {
+    return 'unknown';
+  }
+}
+
 export interface StreamDerekOptions {
   onEvent: (event: DerekEvent) => void;
   signal?: AbortSignal;

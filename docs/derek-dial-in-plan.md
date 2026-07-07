@@ -220,31 +220,50 @@ Accepting a profile-level suggestion:
 - [x] Tests: simple + advanced + ambiguous cases, clamping, no-op guard
       (11 tests in `src/test/profileTweaks.test.ts`)
 
-### Phase 5 — Controller (`src/controllers/derekController.ts`)
-- [ ] State machine incl. queue/phase/delta/result/error, retry, abort
-- [ ] Suggestion selection (radio) + apply flow (recipe-level and
-      profile-level via existing save paths)
-- [ ] Tests: transitions, apply outcomes, failure recovery
+### Phase 5 — Controller (`src/controllers/derekController.ts`) ✅
+- [x] Pure state machine incl. queue/phase/delta/result/error, retry, abort,
+      stale-ask guard (`askSeq`), follow-up flow
+- [x] Suggestion selection (radio; manual cards unselectable; first applicable
+      pre-selected)
+- [x] Tests: transitions, interrupted streams, selection rules
+      (8 tests in `src/test/derekController.test.ts`)
 
-### Phase 6 — View (`src/views/derekView.ts`) + styles
-- [ ] Modal (tablet) + bottom sheet (phone) with all streaming states
-- [ ] Taste chips screen, context chips + "what Derek is told" disclosure
-- [ ] Suggestion cards with radio semantics + before/after profile preview
-- [ ] Citations footer with links (+ QR fallback on webview)
-- [ ] M50 Mini 800px-height check — nothing clips
-- [ ] Tests: render per state, card selection, escaping
+### Phase 6 — View (`src/views/derekView.ts`) + styles ✅
+- [x] One modal for tablet and phone (renderModal is shared across layouts)
+      with all streaming states
+- [x] Taste chips screen, context chips + "what Derek is told" disclosure
+- [x] Suggestion cards with radio semantics, "try first" tag, variant/manual
+      hints
+- [x] Citations footer with links (new tab)
+- [x] M50 Mini 800px-height check — verified in the browser at 1340×800:
+      modal is 700px, nothing clips, body scrolls internally
+- [x] Tests: render per state, gating, fence hold-back, escaping
+      (4 tests in `src/test/derekView.test.ts`)
+- [ ] Deferred: QR fallback for citations on the tablet webview;
+      before/after mini profile chart on variant cards
 
-### Phase 7 — App wiring (`app.ts`)
-- [ ] Entry points: shot detail, shot editor, workbench
-- [ ] Feature probe (once per session; hide entry points on 404) + demo-mode
-      disable
-- [ ] Apply: recipe staging, variant POST + recipe pointer swap, tweak chip +
-      revert
-- [ ] Record applied tweak in next shot's `annotations.extras.derekTweak`
-- [ ] Settings toggle (Settings → App → Derek dial-in help, default on)
-- [ ] Live verification against the real gateway + Derek
+### Phase 7 — App wiring (`app.ts`) ✅ (with deferrals)
+- [x] Entry points: shot detail pane tools ("Dial in with Derek") and
+      workbench topbar ("Derek") — hidden in demo and on relay-less gateways
+- [x] Feature probe: lazy on first open (invalid-body POST — Derek 400 =
+      present, reaprime 404 = missing), cached per session; a 404 mid-ask also
+      flips the modal to its "needs a newer Decent.app" state
+- [x] Delta streaming patches the answer DOM in place (no full re-render per
+      token, same pattern as live-shot readouts)
+- [x] Apply: recipe staging (grind/dose/yield/temperature), profile switch by
+      fuzzy title, variant save via the dedup-aware saveProfile path + recipe
+      pointer swap, then scheduleApply — the next pull uses the tweak, and
+      re-opening the bean restores it (recipe = source of truth)
+- [x] Live verification: full pipeline (composer → SSE stream → extractor)
+      run against the real Derek service; three valid single-parameter
+      suggestions returned with Beanie's current values cross-checked in
+- [ ] Deferred: explicit workbench "revert tweak" chip (the variant's
+      `· derek:` title already shows in the recipe row; revert = re-pick the
+      original profile), `annotations.extras.derekTweak` learning loop (V2),
+      settings on/off toggle (feature is opt-in per tap; low value), phone
+      entry buttons (the modal itself is phone-ready)
 
-### Phase 8 — Polish & ship
-- [ ] Full test suite + `tsc` clean
-- [ ] CHANGELOG entry
-- [ ] Commit(s) with progress marked here
+### Phase 8 — Polish & ship ✅
+- [x] Full test suite (701 ok) + `tsc` clean
+- [x] CHANGELOG entry
+- [x] Committed with progress marked here

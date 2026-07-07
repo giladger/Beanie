@@ -25,6 +25,8 @@ export interface WorkbenchTopbarViewModel {
    * The app patches #top-clock in place each minute. */
   clock: string | null;
   cleaningDue: boolean;
+  /** Show the "Ask Derek" tool (live gateway with the Derek relay). */
+  derekEnabled?: boolean;
   asleep: boolean;
 }
 
@@ -181,6 +183,7 @@ export function renderTopbar(model: WorkbenchTopbarViewModel): string {
         ${renderShotCommand(model.machineCommands)}
         ${model.clock == null ? '' : `<div class="top-clock" id="top-clock" aria-label="Clock">${escapeHtml(model.clock)}</div>`}
         <div class="top-icons" role="toolbar" aria-label="Skin actions">
+          ${model.derekEnabled ? `<button class="icon-tool icon-tool-labeled" data-action="derek-open" aria-label="Ask Derek, the Decent assistant" title="Ask Derek, the Decent assistant">${icon('sparkles')}<span class="icon-tool-label">Derek</span></button>` : ''}
           <button class="icon-tool icon-tool-labeled ${model.cleaningDue ? 'has-badge' : ''}" data-action="open-machine-settings" aria-label="${escapeAttr(machineSettingsLabel)}" title="${escapeAttr(machineSettingsLabel)}">${icon('droplet')}<span class="icon-tool-label">Water</span>${model.cleaningDue ? '<span class="icon-tool-badge" aria-hidden="true"></span>' : ''}</button>
           <button class="icon-tool icon-tool-labeled" data-action="open-settings" aria-label="Settings" title="Settings">${icon('settings')}<span class="icon-tool-label">Settings</span></button>
           <button class="icon-tool icon-tool-labeled ${model.asleep ? 'icon-tool-wake' : ''}" data-action="${powerAction}" aria-label="${powerLabel}" title="${powerLabel}">${icon('power')}<span class="icon-tool-label">${escapeHtml(powerLabel)}</span></button>

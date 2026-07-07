@@ -27,6 +27,8 @@ export interface HistoryViewModel {
   shotsLoadingMore: boolean;
   secondTapHint: { kind: 'shot' | 'bean'; id: string } | null;
   batchesByBean: Record<string, BeanBatch[]>;
+  /** Show the "Dial in with Derek" tool (live gateway with the Derek relay). */
+  derekEnabled?: boolean;
 }
 
 export function renderHistoryView(model: HistoryViewModel): string {
@@ -204,6 +206,7 @@ function renderShotDetailPane(
           variant: 'detail'
         })}
         <div class="pane-tools">
+          ${model.derekEnabled ? `<button class="icon-button shot-edit-button" data-action="derek-dial-in" data-id="${escapeAttr(shot.id)}" aria-label="Dial in with Derek" title="Dial in with Derek">${icon('sparkles')}</button>` : ''}
           <button class="icon-button shot-edit-button history-tool ${model.comparePicking || compare ? 'active' : ''}" data-action="toggle-compare-pick" aria-pressed="${model.comparePicking}" aria-label="Compare with another shot" title="Compare with another shot">${icon('git-compare-arrows')}</button>
           <button class="icon-button shot-edit-button" data-action="edit-shot" aria-label="Edit shot fields" title="Edit shot fields">${icon('pencil')}</button>
         </div>
