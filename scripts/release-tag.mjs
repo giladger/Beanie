@@ -16,17 +16,28 @@ function main() {
   fetchTags(remote);
 
   const tags = semverTags();
-  if (tags.length === 0) {
-    fail('No existing vX.Y.Z tags found.');
-  }
+  const latest = tags.at(-1) ?? null;
 
-  const latest = tags.at(-1);
-  const next = `v${latest.major}.${latest.minor}.${latest.patch + 1}`;
+  const requested = requestedVersion();
+  let next;
+  if (requested) {
+    // Explicit version wins over the default patch bump — use it for minor/major
+    // releases (e.g. `npm run release -- 0.3.0`).
+    next = `v${requested.major}.${requested.minor}.${requested.patch}`;
+    if (latest && !isGreater(requested, latest)) {
+      fail(`${next} is not greater than the latest tag ${latest.tag}.`);
+    }
+  } else {
+    if (!latest) {
+      fail('No existing vX.Y.Z tags found. Pass an explicit version, e.g. --version=0.1.0.');
+    }
+    next = `v${latest.major}.${latest.minor}.${latest.patch + 1}`;
+  }
   assertTagMissing(next, remote);
 
   if (dryRun) {
     console.log(`ok - would bump project version to ${next.slice(1)}`);
-    console.log(`ok - would commit, tag, and push ${next} from ${latest.tag}`);
+    console.log(`ok - would commit, tag, and push ${next}${latest ? ` from ${latest.tag}` : ''}`);
     return;
   }
 
@@ -46,6 +57,29 @@ function optionValue(name) {
     if (arg.startsWith(prefix)) return arg.slice(prefix.length);
   }
   return null;
+}
+
+// An explicit target version from `--version=X.Y.Z` or a bare positional `X.Y.Z`
+// (a leading `v` is accepted). Returns null when none is given.
+function requestedVersion() {
+  const raw = optionValue('--version') ?? positionalArg();
+  if (!raw) return null;
+  const match = raw.replace(/^v/, '').match(/^(\d+)\.(\d+)\.(\d+)$/);
+  if (!match) fail(`Invalid version "${raw}". Expected X.Y.Z (e.g. 0.3.0).`);
+  return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]) };
+}
+
+function positionalArg() {
+  for (const arg of process.argv.slice(2)) {
+    if (!arg.startsWith('-')) return arg;
+  }
+  return null;
+}
+
+function isGreater(a, b) {
+  if (a.major !== b.major) return a.major > b.major;
+  if (a.minor !== b.minor) return a.minor > b.minor;
+  return a.patch > b.patch;
 }
 
 function assertGitRepo() {
