@@ -8,6 +8,7 @@ import {
   recipeFromShot,
   shotFreshnessBadgeForShot
 } from '../domain/beanWorkflow';
+import { isDerekedShot } from '../domain/derekShot';
 import { isServiceShot } from '../domain/shotRecord';
 import { buildShotStats, hasShotStats, shotDurationSeconds, type ShotStats } from '../domain/shotStats';
 import { renderStageRail, type LiveStagesView } from './workbenchView';
@@ -142,6 +143,7 @@ function renderShotListItem(
     <button class="shot-item ${active ? 'active' : ''} ${comparing ? 'comparing' : ''} ${hint ? 'has-second-tap-hint' : ''}" data-action="select-history-shot" data-id="${escapeAttr(shot.id)}">
       <span class="shot-item-info">
         <span class="shot-item-recipe">${escapeHtml(recipeText)}${duration ? ` @ ${escapeHtml(duration)}` : ''}</span>
+        ${isDerekedShot(shot) ? `<span class="derek-shot-mark" title="Has Derek dial-in notes">${icon('sparkles')}</span>` : ''}
         ${comparing ? '<span class="compare-badge">overlay</span>' : ''}
         ${enjoymentBadge(shot)}
       </span>

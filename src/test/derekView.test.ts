@@ -52,11 +52,11 @@ run('asking renders the phase line and streamed text with the fence held back', 
   if (html.includes('```json')) throw new Error('raw fence must never render');
 });
 
-run('done renders answer, cards with radio semantics, citations, and apply', () => {
+run('done renders answer and cards with radio semantics and apply', () => {
   const result: DerekResult = {
     mode: 'answer',
     answerText:
-      'Longer preinfusion. [1]\n```json\n{"suggestions":[{"parameter":"preinfusion_time","direction":"increase","current":8,"target":13,"unit":"s","why":"Saturates the puck."},{"parameter":"wdt","target":"deep","why":"Better prep."}]}\n```',
+      'Longer preinfusion. [1]\n```json\n{"suggestions":[{"parameter":"preinfusion_time","direction":"increase","current":8,"target":13,"unit":"s","why":"Saturates the puck. [3]"},{"parameter":"wdt","target":"deep","why":"Better prep."}]}\n```',
     citations: [
       {
         url: 'https://example.com/thread',
@@ -74,14 +74,15 @@ run('done renders answer, cards with radio semantics, citations, and apply', () 
     context
   );
   const html = render(state);
-  contains(html, 'data-cite="1"');
   contains(html, 'Preinfusion time: 8 → 13 s');
   contains(html, 'try first');
   contains(html, 'creates a tweaked copy of the profile');
   contains(html, 'advice only');
   contains(html, 'data-action="derek-apply"');
-  contains(html, 'href="https://example.com/thread"');
-  contains(html, 'Sour light roasts');
+  // Citation markers and the source list are stripped, not rendered.
+  contains(html, 'Longer preinfusion.');
+  if (html.includes('[1]') || html.includes('[3]')) throw new Error('citation markers must be stripped');
+  if (html.includes('Sources') || html.includes('example.com')) throw new Error('source list must not render');
   // Model output is escaped: the answer text goes through the safe renderer.
   if (html.includes('<script')) throw new Error('unescaped html');
 });

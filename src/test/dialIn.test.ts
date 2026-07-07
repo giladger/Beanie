@@ -73,18 +73,20 @@ run('buildDialInContext assembles bean, grinder, recipe, and shot facts', () => 
   equal(context.telemetry.length, 3);
 });
 
-run('downsampleTelemetry keeps ~1Hz rows and caps long shots', () => {
+run('downsampleTelemetry keeps full resolution and thins only past the cap', () => {
   const short = shotWith(
     Array.from({ length: 50 }, (_, index) => measurement(index * 0.2, 8, 2, index))
   );
   const shortRows = downsampleTelemetry(short);
-  // 10s shot at 5Hz → one row per second bucket.
-  equal(shortRows.length <= 11, true);
+  // A typical shot fits whole: every 5Hz sample is passed through.
+  equal(shortRows.length, 50);
   equal(shortRows[0]!.t, 0);
 
-  const long = shotWith(Array.from({ length: 300 }, (_, index) => measurement(index, 8, 2, index)));
+  const long = shotWith(Array.from({ length: 900 }, (_, index) => measurement(index * 0.2, 8, 2, index)));
   const longRows = downsampleTelemetry(long);
-  equal(longRows.length <= 60, true);
+  equal(longRows.length <= 300, true);
+  // The final sample survives thinning — the end of the shot matters.
+  equal(longRows[longRows.length - 1]!.t, 179.8);
 });
 
 run('composeDialInQuery reads naturally and carries the contract', () => {
@@ -101,7 +103,7 @@ run('composeDialInQuery reads naturally and carries the contract', () => {
   contains(query, 'Grinder: Niche Zero at setting 14.5.');
   contains(query, '18.1g in 40g out target (1:2.2)');
   contains(query, 'stopped at target weight');
-  contains(query, 'Shot telemetry (t_s, pressure_bar, flow_mls, weight_g):');
+  contains(query, 'Full shot telemetry (t_s, pressure_bar, flow_mls, weight_g, group_temp_c, weight_flow_gs):');
   contains(query, 'The shot tasted sour, and ran too fast.');
   contains(query, 'Second bag.');
   contains(query, 'What should I change for the next shot?');
@@ -164,7 +166,9 @@ run('extractDialInSuggestions parses the fenced block and strips it from display
   ].join('\n');
 
   const { suggestions, displayText } = extractDialInSuggestions(answer, context);
-  equal(displayText, 'Try a longer preinfusion first. [3]');
+  // Citation markers are stripped from both the prose and the why-lines.
+  equal(displayText, 'Try a longer preinfusion first.');
+  equal(suggestions[0]!.why, 'Longer preinfusion.');
   equal(suggestions.length, 4);
   equal(suggestions[0]!.kind, 'profile');
   equal(suggestions[0]!.parameter, 'preinfusion_time');

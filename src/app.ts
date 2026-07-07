@@ -310,6 +310,7 @@ import {
   buildDialInContext,
   composeDialInQuery,
   suggestionTitle,
+  TASTE_CHIPS,
   type DialInContext,
   type DialInSuggestion
 } from './domain/dialIn';
@@ -324,6 +325,7 @@ import {
   finishAsk,
   markUnavailable,
   reduceDerekEvent,
+  restoreSavedAnswer,
   selectSuggestion,
   selectedSuggestion,
   startDerek,
@@ -332,6 +334,13 @@ import {
   partialReachedSuggestions,
   type DerekState
 } from './controllers/derekController';
+import {
+  annotationsWithAppliedTip,
+  annotationsWithDerekAnswer,
+  latestDerekAnswer,
+  readShotDerek,
+  type AppliedDerekTip
+} from './domain/derekShot';
 import {
   phaseLabel,
   renderDerekModal as renderDerekModalView,
@@ -814,9 +823,20 @@ interface AppState {
   liveGhost: boolean;
   /** The Derek dial-in helper modal; null when closed. */
   derek: DerekState | null;
-  /** A Derek profile tweak is loaded for the next shot; offers one-tap revert.
-   * Cleared when the shot is pulled, the bean changes, or a profile is picked. */
-  derekTweakChip: { summary: string; revertProfileId: string | null } | null;
+  /** A Derek change is loaded for the next shot; offers one-tap revert and
+   * marks the changed workbench control. Cleared when the shot is pulled, the
+   * bean changes, or a profile is picked by hand. */
+  derekTweakChip: DerekTweakChip | null;
+}
+
+interface DerekTweakChip {
+  summary: string;
+  /** Which dial-in parameter changed — drives the control highlight. */
+  parameter: string | null;
+  /** Revert = re-pick this profile (profile-level tweaks)… */
+  revertProfileId: string | null;
+  /** …or reload this shot's recipe without the tip (recipe-level tips). */
+  revertShotId: string | null;
 }
 
 interface LiveReadoutEls {
@@ -1933,18 +1953,80 @@ export class BeanieApp {
     }, 200);
   }
 
-  private loadShotRecipe(shotId: string): void {
+  private loadShotRecipe(shotId: string, opts: { skipDerekTip?: boolean } = {}): void {
     const shot = this.state.shots.find((item) => item.id === shotId);
     if (!shot) return;
     this.completeSecondTapHint('shot');
+    let draft = normalizeDraft(recipeFromShot(shot, 'planned'), this.state.profiles, this.state.grinders);
+    let chip: DerekTweakChip | null = null;
+    let status = 'Shot recipe loaded';
+    if (!opts.skipDerekTip) {
+      // A tip chosen from this shot's Derek answer travels with the recipe:
+      // loading the shot loads the changed value too, marked in the workbench.
+      const applied = readShotDerek(shot).applied;
+      if (applied) {
+        const overlay = this.draftWithAppliedTip(draft, applied, shot.id);
+        if (overlay) {
+          draft = overlay.draft;
+          chip = overlay.chip;
+          status = `Shot recipe + ${applied.summary}`;
+        }
+      }
+    }
     this.setState({
-      draft: normalizeDraft(recipeFromShot(shot, 'planned'), this.state.profiles, this.state.grinders),
+      draft,
+      derekTweakChip: chip,
       view: 'workbench',
       detailShotId: shotId,
       secondTapHint: null,
-      status: 'Shot recipe loaded'
+      status
     });
     this.scheduleApply();
+  }
+
+  private draftWithAppliedTip(
+    draft: RecipeDraft,
+    tip: AppliedDerekTip,
+    shotId: string
+  ): { draft: RecipeDraft; chip: DerekTweakChip } | null {
+    const chip: DerekTweakChip = {
+      summary: tip.summary,
+      parameter: tip.parameter,
+      revertProfileId: null,
+      revertShotId: shotId
+    };
+    switch (tip.parameter) {
+      case 'grind':
+        return { draft: { ...draft, grinderSetting: String(tip.target) }, chip };
+      case 'dose':
+      case 'yield':
+      case 'brew_temperature': {
+        const value = typeof tip.target === 'number' ? tip.target : Number(tip.target);
+        if (!Number.isFinite(value)) return null;
+        const patch =
+          tip.parameter === 'dose'
+            ? { dose: value }
+            : tip.parameter === 'yield'
+              ? { yield: value }
+              : { brewTemp: value };
+        return { draft: { ...draft, ...patch }, chip };
+      }
+      default: {
+        // Profile-level tips point at the variant profile created at apply
+        // time; if it was deleted since, load the plain recipe instead.
+        const record =
+          (tip.profileId ? this.state.profiles.find((item) => item.id === tip.profileId) : null) ??
+          (tip.profileTitle ? this.findProfileByTitle(tip.profileTitle) : null);
+        if (!record) return null;
+        const selection = selectProfileForDraft({
+          draft,
+          profiles: this.state.profiles,
+          grinders: this.state.grinders,
+          profileId: record.id
+        });
+        return { draft: selection.draft, chip };
+      }
+    }
   }
 
   private selectHistoryShot(shotId: string): void {
@@ -7561,7 +7643,12 @@ export class BeanieApp {
         grinderStep: this.grinderStep(),
         ratioLabel: formatRatio(ratioFor(draft.dose, draft.yield)),
         brewTempLabel: brewTemp == null ? '--' : `${brewTemp.toFixed(1)}`,
-        derekTweak: this.state.derekTweakChip ? { summary: this.state.derekTweakChip.summary } : null
+        derekTweak: this.state.derekTweakChip
+          ? {
+              summary: this.state.derekTweakChip.summary,
+              parameter: this.state.derekTweakChip.parameter
+            }
+          : null
       },
       historyHtml: this.renderHistory()
     });
@@ -8070,11 +8157,20 @@ export class BeanieApp {
       return;
     }
     this.derekContext = this.buildDerekContext(source, shotId);
-    const derek = startDerek(source, shotId);
-    this.setState({
-      modal: 'derek',
-      derek: this.derekRelay === 'missing' ? markUnavailable(derek) : derek
-    });
+    let derek = startDerek(source, shotId);
+    if (this.derekRelay === 'missing') {
+      derek = markUnavailable(derek);
+    } else if (source === 'shot' && shotId) {
+      // Reopen straight onto the answer saved on this shot, if there is one —
+      // "Ask again" starts a fresh compose.
+      const shot = this.state.shots.find((item) => item.id === shotId) ?? null;
+      const saved = latestDerekAnswer(shot);
+      if (saved) {
+        const restored = restoreSavedAnswer(derek, saved, readShotDerek(shot).applied?.summary ?? null);
+        derek = downgradeUntweakableSuggestions(restored, this.currentDerekProfile());
+      }
+    }
+    this.setState({ modal: 'derek', derek });
     if (this.derekRelay === 'unknown') {
       void probeDerekRelay().then((availability) => {
         this.derekRelay = availability;
@@ -8143,7 +8239,7 @@ export class BeanieApp {
     }
     if (context.shot?.durationS != null) {
       chips.push(
-        `shot: ${Math.round(context.shot.durationS)}s${context.shot.peakPressureBar != null ? `, ${context.shot.peakPressureBar} bar peak` : ''}`
+        `shot: ${Math.round(context.shot.durationS)}s${context.shot.peakPressureBar != null ? `, ${round(context.shot.peakPressureBar, 1)} bar peak` : ''}`
       );
     }
     if (context.profileTitle) chips.push(context.profileTitle);
@@ -8175,9 +8271,13 @@ export class BeanieApp {
       );
       if (!this.derekAskCurrent(seq)) return;
       const finished = finishAsk(this.state.derek!, result, context);
-      this.setState({
-        derek: downgradeUntweakableSuggestions(finished, this.currentDerekProfile())
-      });
+      const ready = downgradeUntweakableSuggestions(finished, this.currentDerekProfile());
+      this.setState({ derek: ready });
+      // Keep the answer on the shot it was asked about, so it can be reopened
+      // later (and synced across devices with the shot itself).
+      if (result && ready.source === 'shot' && ready.shotId && ready.displayText) {
+        void this.saveDerekAnswerOnShot(ready.shotId, ready, this.derekAskedLabel(derek));
+      }
     } catch (error) {
       if (!this.derekAskCurrent(seq)) return;
       if (error instanceof DerekUnavailableError) {
@@ -8195,6 +8295,68 @@ export class BeanieApp {
             ? 'Derek stopped responding mid-answer.'
             : "Derek isn't reachable right now.";
       this.setState({ derek: failAsk(this.state.derek!, message) });
+    }
+  }
+
+  // One line describing what was asked, for the saved-answer record.
+  private derekAskedLabel(state: DerekState): string {
+    const question = state.question.trim();
+    if (question) return question;
+    const labels = state.tasteChipIds
+      .map((id) => TASTE_CHIPS.find((chip) => chip.id === id)?.label)
+      .filter((label): label is string => Boolean(label));
+    return [labels.join(', '), state.note.trim()].filter(Boolean).join(' · ') || 'Dial-in help';
+  }
+
+  private async saveDerekAnswerOnShot(
+    shotId: string,
+    derek: DerekState,
+    asked: string
+  ): Promise<void> {
+    const shot = this.state.shots.find((item) => item.id === shotId);
+    if (!shot || !derek.displayText) return;
+    await this.persistShotDerekQuietly(
+      shot,
+      annotationsWithDerekAnswer(shot.annotations, {
+        at: new Date().toISOString(),
+        asked,
+        answer: derek.displayText,
+        suggestions: derek.suggestions
+      }),
+      'Save Derek answer failed'
+    );
+  }
+
+  // Update a shot's Derek annotations without the modal-closing/busy side
+  // effects of the interactive shot-save path — this runs behind the modal.
+  private async persistShotDerekQuietly(
+    shot: ShotRecord,
+    annotations: ShotAnnotations,
+    failureStatus: string
+  ): Promise<void> {
+    if (this.state.demo) return;
+    this.shotCacheGeneration += 1;
+    const result = await saveShotUpdate(
+      {
+        shot,
+        update: { annotations },
+        demo: false,
+        successStatus: this.state.status,
+        demoStatus: this.state.status,
+        failureStatus
+      },
+      {
+        updateShot: (id, update) => gateway.updateShot(id, update),
+        invalidateShotMutation: (id) => beanieCache.invalidateShotMutation(id),
+        putShotRecord: (saved) => beanieCache.putShotRecord(saved)
+      }
+    );
+    if (result.type === 'saved') {
+      this.setState({
+        shots: this.state.shots.map((item) => (item.id === result.shot.id ? result.shot : item))
+      });
+    } else {
+      console.warn('[Beanie]', failureStatus, result.error);
     }
   }
 
@@ -8252,15 +8414,39 @@ export class BeanieApp {
       if (beanId) {
         writePendingDerekTweak({ beanId, summary: applied.summary, at: new Date().toISOString() });
       }
+      const derekState = this.state.derek;
       this.setState({
-        derek: { ...this.state.derek, applying: false, appliedSummary: applied.summary },
-        derekTweakChip:
-          applied.revertProfileId !== undefined
-            ? { summary: applied.summary, revertProfileId: applied.revertProfileId }
-            : this.state.derekTweakChip,
+        derek: { ...derekState, applying: false, appliedSummary: applied.summary },
+        derekTweakChip: {
+          summary: applied.summary,
+          parameter: suggestion.parameter,
+          revertProfileId: applied.revertProfileId ?? null,
+          revertShotId: derekState.shotId
+        },
         status: `Next shot: ${applied.summary}`
       });
       this.scheduleApply();
+      // Record the chosen tip on the shot it came from: loading that shot's
+      // recipe later re-applies it.
+      if (derekState.source === 'shot' && derekState.shotId && suggestion.target != null) {
+        const shot = this.state.shots.find((item) => item.id === derekState.shotId);
+        if (shot) {
+          const tip: AppliedDerekTip = {
+            parameter: suggestion.parameter,
+            target: suggestion.target,
+            unit: suggestion.unit,
+            summary: applied.summary,
+            at: new Date().toISOString(),
+            ...(applied.appliedProfileId ? { profileId: applied.appliedProfileId } : {}),
+            ...(applied.appliedProfileTitle ? { profileTitle: applied.appliedProfileTitle } : {})
+          };
+          void this.persistShotDerekQuietly(
+            shot,
+            annotationsWithAppliedTip(shot.annotations, tip),
+            'Save Derek tip failed'
+          );
+        }
+      }
     } catch (error) {
       console.error('[Beanie] Apply Derek suggestion failed', error);
       if (this.state.derek) {
@@ -8272,9 +8458,12 @@ export class BeanieApp {
     }
   }
 
-  private async performDerekApply(
-    suggestion: DialInSuggestion
-  ): Promise<{ summary: string; revertProfileId?: string | null }> {
+  private async performDerekApply(suggestion: DialInSuggestion): Promise<{
+    summary: string;
+    revertProfileId?: string | null;
+    appliedProfileId?: string | null;
+    appliedProfileTitle?: string | null;
+  }> {
     const { parameter, target } = suggestion;
     if (parameter === 'grind' && target != null) {
       this.setState({ draft: { ...this.state.draft, grinderSetting: String(target) } });
@@ -8302,7 +8491,11 @@ export class BeanieApp {
         profileId: record.id
       });
       this.setState({ draft: selection.draft });
-      return { summary: `Profile → ${record.profile.title ?? 'profile'}` };
+      return {
+        summary: `Profile → ${record.profile.title ?? 'profile'}`,
+        appliedProfileId: record.id,
+        appliedProfileTitle: record.profile.title ?? null
+      };
     }
 
     // Profile-level knob: build the tweaked variant and point the recipe at it.
@@ -8337,29 +8530,43 @@ export class BeanieApp {
       profileId: saved.profileId
     });
     this.setState({ profiles: saved.profiles, draft: selection.draft });
-    return { summary: tweak.summary, revertProfileId };
+    return {
+      summary: tweak.summary,
+      revertProfileId,
+      appliedProfileId: saved.profileId,
+      appliedProfileTitle:
+        saved.profiles.find((item) => item.id === saved.profileId)?.profile.title ??
+        tweak.profile.title ??
+        null
+    };
   }
 
   private revertDerekTweak(): void {
     const chip = this.state.derekTweakChip;
     if (!chip) return;
-    if (!chip.revertProfileId) {
-      this.setState({ derekTweakChip: null, status: 'Pick a profile to replace the tweak' });
+    clearPendingDerekTweak();
+    if (chip.revertProfileId) {
+      const selection = selectProfileForDraft({
+        draft: this.state.draft,
+        profiles: this.state.profiles,
+        grinders: this.state.grinders,
+        profileId: chip.revertProfileId
+      });
+      this.setState({
+        draft: selection.draft,
+        derekTweakChip: null,
+        status: 'Back to the original profile'
+      });
+      this.scheduleApply();
       return;
     }
-    const selection = selectProfileForDraft({
-      draft: this.state.draft,
-      profiles: this.state.profiles,
-      grinders: this.state.grinders,
-      profileId: chip.revertProfileId
-    });
-    clearPendingDerekTweak();
-    this.setState({
-      draft: selection.draft,
-      derekTweakChip: null,
-      status: 'Back to the original profile'
-    });
-    this.scheduleApply();
+    if (chip.revertShotId) {
+      // Recipe-level tip: reload the source shot's recipe as it really was.
+      this.loadShotRecipe(chip.revertShotId, { skipDerekTip: true });
+      this.setState({ derekTweakChip: null, status: 'Back to the shot recipe' });
+      return;
+    }
+    this.setState({ derekTweakChip: null, status: 'Derek change unpinned' });
   }
 
   private findProfileByTitle(title: string): ProfileRecord | null {

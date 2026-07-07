@@ -7,10 +7,10 @@ import {
   downgradeUntweakableSuggestions,
   failAsk,
   finishAsk,
-  knownCitationNumbers,
   markUnavailable,
   partialReachedSuggestions,
   reduceDerekEvent,
+  restoreSavedAnswer,
   selectSuggestion,
   selectedSuggestion,
   startDerek,
@@ -161,13 +161,25 @@ run('downgradeUntweakableSuggestions demotes cards the engine cannot apply', () 
   equal(kept.selectedSuggestion, 0);
 });
 
-run('knownCitationNumbers flattens source numbers', () => {
-  const numbers = knownCitationNumbers([
-    { url: 'u', sectionTitle: 't', sourceType: null, date: null, sourceNumbers: [1, 3] },
-    { url: 'u2', sectionTitle: 't2', sourceType: null, date: null, sourceNumbers: [2] }
-  ]);
-  equal(numbers.size, 3);
-  equal(numbers.has(3), true);
+run('restoreSavedAnswer reopens a stored answer as a done state', () => {
+  const state = restoreSavedAnswer(
+    startDerek('shot', 's1'),
+    {
+      at: '2026-07-06T08:00:00.000Z',
+      asked: 'Sour, Too fast',
+      answer: 'Extend the preinfusion.',
+      suggestions: [
+        { kind: 'manual', parameter: 'wdt', direction: null, current: null, target: 'deep', unit: null, why: 'prep' },
+        { kind: 'recipe', parameter: 'grind', direction: 'decrease', current: '14.5', target: '14', unit: null, why: 'slower' }
+      ]
+    },
+    'Grind: 14.5 → 14'
+  );
+  equal(state.step, 'done');
+  equal(state.savedAt, '2026-07-06T08:00:00.000Z');
+  equal(state.displayText, 'Extend the preinfusion.');
+  equal(state.selectedSuggestion, 1); // first applicable, skipping the manual card
+  equal(state.appliedSummary, 'Grind: 14.5 → 14');
 });
 
 function run(name: string, fn: () => void): void {

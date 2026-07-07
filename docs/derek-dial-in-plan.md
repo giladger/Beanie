@@ -274,6 +274,25 @@ Accepting a profile-level suggestion:
 - [ ] Deferred: settings on/off toggle (feature is opt-in per tap; low value)
 
 ### Phase 8 — Polish & ship ✅
-- [x] Full test suite (705 ok) + `tsc` clean
+- [x] Full test suite + `tsc` clean
 - [x] CHANGELOG entry
 - [x] Committed with progress marked here
+
+### Phase 9 — Shots remember Derek ✅
+- [x] Context chips round their values (no more 9.8525390625 bar)
+- [x] Full telemetry: every chart series (pressure, flow, weight, group temp,
+      weight flow) at full sample resolution up to 300 rows — verified live
+      (230-row 46s shot, 8.5KB query, valid suggestions back)
+- [x] Citations removed: `[n]` markers stripped at extraction/render time,
+      Sources footer dropped
+- [x] Answers persist on the shot (`annotations.extras.derek.answers`, capped
+      at 3): reopening "Dial in" on that shot shows the saved answer with a
+      "Saved answer · date" note and "Ask again"
+- [x] The chosen tip persists on the shot (`extras.derek.applied`, incl. the
+      variant profile id): loading the shot's recipe (second tap) re-applies
+      it, the workbench control carrying the change is highlighted, and
+      "Revert tweak" reloads the plain shot recipe
+- [x] Dereked shots carry a sparkles marker in the history and phone lists
+      (`isDerekedShot`)
+- [x] Tests: `derekShot.test.ts` (4), extractor/renderer/controller updates
+      (709 ok total)

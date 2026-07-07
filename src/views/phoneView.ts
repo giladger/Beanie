@@ -12,6 +12,7 @@ import {
   shotFreshnessBadgeForShot
 } from '../domain/beanWorkflow';
 import { beanStockSummary } from '../domain/beanDisplay';
+import { isDerekedShot } from '../domain/derekShot';
 import { isServiceShot } from '../domain/shotRecord';
 import { escapeAttr, escapeHtml } from '../components/html';
 import { icon } from '../components/icons';
@@ -339,6 +340,7 @@ function renderShotRow(shot: ShotRecord, active: boolean, batchesByBean: Record<
         <strong>${escapeHtml(`${formatGrams(recipe.dose)} -> ${formatGrams(recipe.yield)}`)}</strong>
         <span>${escapeHtml([freshness, recipe.profileTitle ?? 'No profile', shotDate(shot.timestamp)].filter(Boolean).join(' · '))}</span>
       </span>
+      ${isDerekedShot(shot) ? `<span class="derek-shot-mark" title="Has Derek dial-in notes">${icon('sparkles')}</span>` : ''}
       ${enjoymentBadge(shot)}
     </button>
   `;

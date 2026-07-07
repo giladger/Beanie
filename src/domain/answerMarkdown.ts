@@ -1,50 +1,47 @@
 // Renders Derek's markdown answers to HTML. Deliberately tiny: Derek's
-// answers use paragraphs, **bold**, ordered/unordered lists, and `[n]`
-// citation markers — that subset is supported and EVERYTHING else is escaped
-// text. The answer is remote model output, so nothing it contains may ever
-// reach the DOM unescaped.
+// answers use paragraphs, **bold**, and ordered/unordered lists — that subset
+// is supported and EVERYTHING else is escaped text. The answer is remote
+// model output, so nothing it contains may ever reach the DOM unescaped.
+//
+// Derek cites its RAG sources as `[n]` markers; Beanie doesn't surface the
+// source list, so the markers are stripped rather than rendered as chips
+// pointing nowhere.
 
-/** `[n]` markers become tappable citation chips carrying this class. */
-export const CITE_MARKER_CLASS = 'derek-cite';
+/** Remove `[n]` citation markers (and the space before them) from answer text. */
+export function stripCitationMarkers(text: string): string {
+  return text.replace(/\s*\[\d{1,2}\](?=[\s.,;:!?)]|$)/g, '');
+}
 
-export function renderAnswerMarkdown(text: string, knownCitations?: ReadonlySet<number>): string {
-  const blocks = text
+export function renderAnswerMarkdown(text: string): string {
+  const blocks = stripCitationMarkers(text)
     .replace(/\r\n/g, '\n')
     .split(/\n{2,}/)
     .map((block) => block.trim())
     .filter(Boolean);
-  return blocks.map((block) => renderBlock(block, knownCitations)).join('');
+  return blocks.map((block) => renderBlock(block)).join('');
 }
 
-function renderBlock(block: string, knownCitations?: ReadonlySet<number>): string {
+function renderBlock(block: string): string {
   const lines = block.split('\n').map((line) => line.trim()).filter(Boolean);
   if (lines.length > 0 && lines.every((line) => /^[-*]\s+/.test(line))) {
     const items = lines
-      .map((line) => `<li>${renderInline(line.replace(/^[-*]\s+/, ''), knownCitations)}</li>`)
+      .map((line) => `<li>${renderInline(line.replace(/^[-*]\s+/, ''))}</li>`)
       .join('');
     return `<ul>${items}</ul>`;
   }
   if (lines.length > 0 && lines.every((line) => /^\d+\.\s+/.test(line))) {
     const items = lines
-      .map((line) => `<li>${renderInline(line.replace(/^\d+\.\s+/, ''), knownCitations)}</li>`)
+      .map((line) => `<li>${renderInline(line.replace(/^\d+\.\s+/, ''))}</li>`)
       .join('');
     return `<ol>${items}</ol>`;
   }
   // A markdown heading reads fine as a bold paragraph at this size.
   const headed = lines.map((line) => line.replace(/^#{1,4}\s+(.*)$/, '**$1**'));
-  return `<p>${headed.map((line) => renderInline(line, knownCitations)).join('<br />')}</p>`;
+  return `<p>${headed.map((line) => renderInline(line)).join('<br />')}</p>`;
 }
 
-function renderInline(text: string, knownCitations?: ReadonlySet<number>): string {
-  let html = escapeHtml(text);
-  // Bold before citations so `**[1]**` still finds its marker.
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/\[(\d{1,2})\]/g, (match, digits: string) => {
-    const number = Number(digits);
-    if (knownCitations && !knownCitations.has(number)) return match;
-    return `<sup class="${CITE_MARKER_CLASS}" data-cite="${number}">[${number}]</sup>`;
-  });
-  return html;
+function renderInline(text: string): string {
+  return escapeHtml(text).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
 }
 
 function escapeHtml(value: string): string {

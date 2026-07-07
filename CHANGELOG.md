@@ -7,6 +7,10 @@
 - While a Derek tweak is staged, the workbench profile control offers a one-tap "Revert tweak"; it clears once a shot is pulled with it, the bean changes, or a profile is picked by hand.
 - The change you applied is remembered and stamped onto the next shot pulled on that bean, so a later "Dial in" on that shot tells Derek what was already tried and how it turned out.
 - The phone's selected-shot card gets its own "Dial in" button.
+- Derek now sees the whole shot: every chart series (pressure, flow, weight, group temp, weight flow) at full sample resolution, not a thinned summary.
+- Derek answers read cleaner: citation markers and the source list are gone, and the context chips show rounded values.
+- Derek answers are saved on the shot they were asked about — reopen "Dial in" on that shot and the answer is right there, with "Ask again" for a fresh one. Shots with Derek notes carry a small sparkles mark in the history and phone lists.
+- The tip you applied is saved on the shot too: loading that shot's recipe (second tap) brings the changed value along, highlights the control that carries it, and offers "Revert tweak" to load the recipe as it really was.
 - Fixed cross-device edits being overwritten: bag updates (dose deduction at shot end, inline weight edits, freezes, finishing a bag) now send only the fields they change, so they can no longer revert freeze/thaw history or roast-date edits made on another device.
 - Fixed a shot's bag deduction being silently lost when the gateway write failed: failed deductions are queued on-device and replayed against fresh bag state on startup or reconnect, without ever double-counting a shot.
 

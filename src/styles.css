@@ -10271,3 +10271,40 @@ p {
   width: 11px;
   height: 11px;
 }
+
+/* Dereked-shot marker in shot lists, and the saved-answer note. */
+.derek-shot-mark {
+  display: inline-flex;
+  flex: none;
+  color: var(--accent);
+  opacity: 0.85;
+}
+
+.derek-shot-mark svg {
+  width: 13px;
+  height: 13px;
+}
+
+.derek-saved-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.derek-saved-note svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* Workbench control carrying a staged Derek change. */
+.recipe-grid .derek-changed {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.recipe-grid .derek-changed > label,
+.recipe-grid .derek-changed .profile-label-row > label {
+  color: var(--accent);
+}

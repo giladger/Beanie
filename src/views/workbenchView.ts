@@ -44,8 +44,9 @@ export interface WorkbenchRecipeViewModel {
   grinderStep: number;
   ratioLabel: string;
   brewTempLabel: string;
-  /** A Derek profile tweak is staged for the next shot; offers one-tap revert. */
-  derekTweak?: { summary: string } | null;
+  /** A Derek change is staged for the next shot; offers one-tap revert and
+   * highlights the control carrying the changed value. */
+  derekTweak?: { summary: string; parameter: string | null } | null;
 }
 
 export interface WorkbenchViewModel {
@@ -213,16 +214,29 @@ export function renderHero(model: WorkbenchHeroViewModel): string {
   `;
 }
 
+// Which recipe control carries a staged Derek change, per dial-in parameter.
+// Profile-level knobs (peak pressure, preinfusion) live in the profile cell.
+function derekMarkFor(tweak: WorkbenchRecipeViewModel['derekTweak'], control: string): boolean {
+  const parameter = tweak?.parameter;
+  if (!parameter) return false;
+  if (control === 'dose' || control === 'yield' || control === 'grind') {
+    return parameter === (control === 'grind' ? 'grind' : control);
+  }
+  if (control === 'temp') return parameter === 'brew_temperature';
+  return control === 'profile' && !['grind', 'dose', 'yield', 'brew_temperature'].includes(parameter);
+}
+
 export function renderRecipeEditor(model: WorkbenchRecipeViewModel): string {
   const draft = model.draft;
+  const mark = (control: string) => (derekMarkFor(model.derekTweak, control) ? ' derek-changed' : '');
   return `
     <section class="recipe-grid">
-      ${controlProfile(draft.profileTitle ?? 'No profile', model.derekTweak)}
-      ${controlNumber('Dose', 'dose', draft.dose, 0.5)}
-      ${controlNumber('Yield', 'yield', draft.yield, 1)}
+      ${controlProfile(draft.profileTitle ?? 'No profile', model.derekTweak, mark('profile'))}
+      ${controlNumber('Dose', 'dose', draft.dose, 0.5, mark('dose'))}
+      ${controlNumber('Yield', 'yield', draft.yield, 1, mark('yield'))}
       ${controlRatio(model.ratioLabel)}
-      ${controlGrind(draft.grinderSetting ?? '--', model.grinderStep)}
-      ${controlTemp(model.brewTempLabel)}
+      ${controlGrind(draft.grinderSetting ?? '--', model.grinderStep, mark('grind'))}
+      ${controlTemp(model.brewTempLabel, mark('temp'))}
     </section>
   `;
 }
@@ -250,9 +264,9 @@ function renderShotCommand(model: WorkbenchTopbarViewModel['machineCommands']): 
   `;
 }
 
-function controlNumber(label: string, field: EditField, value: number | null | undefined, step: number): string {
+function controlNumber(label: string, field: EditField, value: number | null | undefined, step: number, markClass = ''): string {
   return `
-    <div class="control panel">
+    <div class="control panel${markClass}">
       <label>${escapeHtml(label)}</label>
       <div class="stepper compact-stepper">
         <button data-action="adjust" data-field="${field}" data-delta="${-step}" aria-label="Decrease ${escapeAttr(label)}">${icon('minus')}</button>
@@ -263,9 +277,9 @@ function controlNumber(label: string, field: EditField, value: number | null | u
   `;
 }
 
-function controlGrind(value: string, step: number): string {
+function controlGrind(value: string, step: number, markClass = ''): string {
   return `
-    <div class="control grind-control panel">
+    <div class="control grind-control panel${markClass}">
       <label>Grind</label>
       <div class="stepper compact-stepper">
         <button data-action="adjust" data-field="grinderSetting" data-delta="${-step}" aria-label="Decrease grind">${icon('minus')}</button>
@@ -280,12 +294,16 @@ function controlGrind(value: string, step: number): string {
 // already shows the variant's "· derek:" title, so all that's needed is the
 // way back — and the workbench has no vertical room for a separate banner
 // (the surface grid is three fixed rows).
-function controlProfile(title: string, tweak?: { summary: string } | null): string {
+function controlProfile(
+  title: string,
+  tweak: { summary: string; parameter: string | null } | null | undefined,
+  markClass = ''
+): string {
   const revert = tweak
     ? `<button type="button" class="derek-tweak-revert" data-action="derek-revert-tweak" title="${escapeAttr(`Revert: ${tweak.summary}`)}" aria-label="${escapeAttr(`Revert Derek tweak: ${tweak.summary}`)}">${icon('rotate-ccw')}<span>Revert tweak</span></button>`
     : '';
   return `
-    <div class="select-control profile-control panel">
+    <div class="select-control profile-control panel${markClass}">
       <div class="profile-label-row"><label>Profile</label>${revert}</div>
       <button type="button" class="profile-button" data-action="open-profile-picker">
         <span>${escapeHtml(title)}</span>
@@ -307,9 +325,9 @@ function controlRatio(label: string): string {
   `;
 }
 
-function controlTemp(label: string): string {
+function controlTemp(label: string, markClass = ''): string {
   return `
-    <div class="control panel">
+    <div class="control panel${markClass}">
       <label>Temp</label>
       <div class="stepper compact-stepper">
         <button data-action="adjust" data-field="temperature" data-delta="-0.5" aria-label="Decrease temperature">${icon('minus')}</button>

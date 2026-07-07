@@ -1,4 +1,4 @@
-import { renderAnswerMarkdown } from '../domain/answerMarkdown';
+import { renderAnswerMarkdown, stripCitationMarkers } from '../domain/answerMarkdown';
 
 run('renders paragraphs, bold, and lists', () => {
   const html = renderAnswerMarkdown(
@@ -12,16 +12,17 @@ run('renders paragraphs, bold, and lists', () => {
   );
 });
 
-run('renders citation markers as chips, filtered by the known set', () => {
-  const html = renderAnswerMarkdown('Grind finer. [1] Maybe hotter. [9]', new Set([1]));
-  contains(html, '<sup class="derek-cite" data-cite="1">[1]</sup>');
-  contains(html, 'Maybe hotter. [9]');
-  if (html.includes('data-cite="9"')) throw new Error('unknown citation must stay plain text');
+run('strips citation markers instead of rendering them', () => {
+  equal(stripCitationMarkers('Grind finer. [1] Hotter helps [2], too [13].'), 'Grind finer. Hotter helps, too.');
+  // Bracketed numbers that are not citations (mid-word/data) survive.
+  equal(stripCitationMarkers('array[1]indexing'), 'array[1]indexing');
+  const html = renderAnswerMarkdown('Grind **finer**. [1]');
+  equal(html, '<p>Grind <strong>finer</strong>.</p>');
 });
 
 run('escapes every HTML construct in model output', () => {
   const html = renderAnswerMarkdown(
-    '<script>alert(1)</script> **<img src=x onerror=alert(1)>** [1] <a href="javascript:evil()">link</a>'
+    '<script>alert(1)</script> **<img src=x onerror=alert(1)>** <a href="javascript:evil()">link</a>'
   );
   if (/<(script|img|a)\b/.test(html)) throw new Error(`unescaped HTML leaked: ${html}`);
   contains(html, '&lt;script&gt;');

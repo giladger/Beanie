@@ -6,7 +6,6 @@ import { renderAnswerMarkdown } from '../domain/answerMarkdown';
 import { TASTE_CHIPS, suggestionTitle, type DialInSuggestion } from '../domain/dialIn';
 import {
   canAskDerek,
-  knownCitationNumbers,
   partialReachedSuggestions,
   visiblePartial,
   type DerekState
@@ -163,19 +162,24 @@ export function phaseLabel(state: DerekState): string {
 }
 
 function renderAnswer(state: DerekState, previews?: ReadonlyArray<string | null>): string {
-  const known = knownCitationNumbers(state.citations);
   return `
     <div class="derek-answer-wrap">
+      ${state.savedAt ? `<p class="derek-saved-note">${icon('history')} Saved answer · ${escapeHtml(savedAtLabel(state.savedAt))}</p>` : ''}
       ${state.interrupted ? '<p class="derek-interrupted">The answer was interrupted — this is what arrived.</p>' : ''}
-      <div class="derek-answer">${renderAnswerMarkdown(state.displayText ?? '', known.size > 0 ? known : undefined)}</div>
+      <div class="derek-answer">${renderAnswerMarkdown(state.displayText ?? '')}</div>
       ${renderSuggestions(state, previews)}
-      ${renderCitations(state)}
     </div>
     <div class="modal-actions derek-actions">
-      <button class="secondary-button" data-action="derek-follow-up">Ask a follow-up</button>
+      <button class="secondary-button" data-action="derek-follow-up">${state.savedAt ? 'Ask again' : 'Ask a follow-up'}</button>
       ${renderApplyButton(state)}
     </div>
   `;
+}
+
+function savedAtLabel(at: string): string {
+  const time = Date.parse(at);
+  if (!Number.isFinite(time)) return '';
+  return new Date(time).toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
 function renderSuggestions(state: DerekState, previews?: ReadonlyArray<string | null>): string {
@@ -283,27 +287,3 @@ function renderApplyButton(state: DerekState): string {
   `;
 }
 
-function renderCitations(state: DerekState): string {
-  if (state.citations.length === 0) return '';
-  const items = state.citations
-    .map((citation, index) => {
-      const number = citation.sourceNumbers[0] ?? index + 1;
-      const meta = [citation.sourceType, citation.date].filter(Boolean).join(' · ');
-      return `
-        <a class="derek-citation" href="${escapeAttr(citation.url)}" target="_blank" rel="noopener noreferrer">
-          <span class="derek-citation-number">[${number}]</span>
-          <span class="derek-citation-body">
-            <strong>${escapeHtml(citation.sectionTitle || citation.url)}</strong>
-            ${meta ? `<small>${escapeHtml(meta)}</small>` : ''}
-          </span>
-        </a>
-      `;
-    })
-    .join('');
-  return `
-    <div class="derek-citations">
-      <p class="derek-citations-head">Sources</p>
-      ${items}
-    </div>
-  `;
-}

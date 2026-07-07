@@ -1,5 +1,6 @@
-import type { DerekCitation, DerekEvent, DerekResult } from '../api/derek';
+import type { DerekEvent, DerekResult } from '../api/derek';
 import type { Profile } from '../api/types';
+import type { SavedDerekAnswer } from '../domain/derekShot';
 import {
   extractDialInSuggestions,
   jsonFenceCutoff,
@@ -34,9 +35,10 @@ export interface DerekState {
   queuePosition: number | null;
   /** Accumulated delta text while streaming. */
   partialText: string;
-  /** Final prose (fenced JSON stripped). */
+  /** Final prose (fenced JSON and citation markers stripped). */
   displayText: string | null;
-  citations: DerekCitation[];
+  /** Set when showing an answer saved on the shot earlier (ISO timestamp). */
+  savedAt: string | null;
   suggestions: DialInSuggestion[];
   selectedSuggestion: number | null;
   applying: boolean;
@@ -62,13 +64,33 @@ export function startDerek(source: 'shot' | 'general', shotId: string | null): D
     queuePosition: null,
     partialText: '',
     displayText: null,
-    citations: [],
+    savedAt: null,
     suggestions: [],
     selectedSuggestion: null,
     applying: false,
     appliedSummary: null,
     error: null,
     interrupted: false
+  };
+}
+
+/** Reopen a shot's saved answer as a done state (no network involved). */
+export function restoreSavedAnswer(
+  state: DerekState,
+  saved: SavedDerekAnswer,
+  appliedSummary: string | null
+): DerekState {
+  const firstApplicable = saved.suggestions.findIndex((item) => item.kind !== 'manual');
+  return {
+    ...state,
+    step: 'done',
+    displayText: saved.answer,
+    savedAt: saved.at,
+    suggestions: saved.suggestions,
+    selectedSuggestion: firstApplicable === -1 ? null : firstApplicable,
+    appliedSummary,
+    interrupted: false,
+    error: null
   };
 }
 
@@ -100,7 +122,7 @@ export function beginAsk(state: DerekState, contextText: string): DerekState {
     queuePosition: null,
     partialText: '',
     displayText: null,
-    citations: [],
+    savedAt: null,
     suggestions: [],
     selectedSuggestion: null,
     applying: false,
@@ -152,7 +174,6 @@ export function finishAsk(
     ...state,
     step: 'done',
     displayText,
-    citations: result.citations,
     suggestions,
     selectedSuggestion: firstApplicable === -1 ? null : firstApplicable,
     interrupted: false,
@@ -225,13 +246,4 @@ export function partialReachedSuggestions(state: DerekState): boolean {
 function cutPartial(text: string): string {
   const cutoff = jsonFenceCutoff(text);
   return (cutoff == null ? text : text.slice(0, cutoff)).trimEnd();
-}
-
-/** The citation numbers the final answer actually maps — for marker filtering. */
-export function knownCitationNumbers(citations: readonly DerekCitation[]): Set<number> {
-  const numbers = new Set<number>();
-  for (const citation of citations) {
-    for (const value of citation.sourceNumbers) numbers.add(value);
-  }
-  return numbers;
 }

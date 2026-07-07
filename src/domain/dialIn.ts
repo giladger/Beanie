@@ -1,4 +1,5 @@
 import type { Bean, BeanBatch, Grinder, ShotRecord } from '../api/types';
+import { stripCitationMarkers } from './answerMarkdown';
 import { buildShotStats, shotDurationSeconds } from './shotStats';
 import { computeBeanFreshness } from './beanFreshness';
 import { FIELD_SPECS } from './profileModel';
@@ -37,6 +38,8 @@ export interface DialInTelemetryRow {
   pressure: number | null;
   flow: number | null;
   weight: number | null;
+  temperature: number | null;
+  weightFlow: number | null;
 }
 
 export interface DialInContext {
@@ -165,13 +168,14 @@ function firstStepTemperature(steps: unknown[] | undefined): number | null {
 // ---------------------------------------------------------------------------
 // Telemetry downsampling
 
-const TELEMETRY_MAX_ROWS = 60;
+const TELEMETRY_MAX_ROWS = 300;
 const ESPRESSO_SUBSTATES = new Set(['preinfusion', 'pouring']);
 
-// Compress the measurement series to at most ~60 rows of
-// (t, pressure, flow, weight) over the pour window — enough for Derek to see
-// preinfusion length, the ramp, and where flow ran away, at a token cost that
-// stays negligible next to the answer.
+// The whole pour, every chart series (pressure, flow, weight, group temp,
+// weight flow), at full sample resolution up to 300 rows — a typical 5Hz shot
+// fits without dropping a sample; only very long shots get evenly thinned to
+// stay under the cap. This is the same data the shot chart plots, so Derek
+// sees exactly what the user sees.
 export function downsampleTelemetry(shot: ShotRecord): DialInTelemetryRow[] {
   const all = Array.isArray(shot.measurements) ? shot.measurements : [];
   const pour = all.filter((measurement) => {
@@ -184,25 +188,22 @@ export function downsampleTelemetry(shot: ShotRecord): DialInTelemetryRow[] {
 
   const startMs = Date.parse(series[0]!.machine.timestamp);
   if (!Number.isFinite(startMs)) return [];
-  const endMs = Date.parse(series[series.length - 1]!.machine.timestamp);
-  const durationS = Number.isFinite(endMs) ? Math.max(0, (endMs - startMs) / 1000) : 0;
-  const stepS = Math.max(1, Math.ceil(durationS / TELEMETRY_MAX_ROWS));
+  const stride = Math.max(1, Math.ceil(series.length / TELEMETRY_MAX_ROWS));
 
   const rows: DialInTelemetryRow[] = [];
-  let nextBucket = 0;
-  for (const measurement of series) {
+  for (let index = 0; index < series.length; index += stride) {
+    // Always keep the final sample — the end of the shot matters.
+    const measurement = index + stride >= series.length ? series[series.length - 1]! : series[index]!;
     const at = Date.parse(measurement.machine.timestamp);
     if (!Number.isFinite(at)) continue;
-    const t = (at - startMs) / 1000;
-    if (t < nextBucket) continue;
-    nextBucket = Math.floor(t / stepS) * stepS + stepS;
     rows.push({
-      t: round1(t),
-      pressure: round1OrNull(measurement.machine.pressure),
-      flow: round1OrNull(measurement.machine.flow),
-      weight: round1OrNull(measurement.scale?.weight)
+      t: round1((at - startMs) / 1000),
+      pressure: round2OrNull(measurement.machine.pressure),
+      flow: round2OrNull(measurement.machine.flow),
+      weight: round1OrNull(measurement.scale?.weight),
+      temperature: round1OrNull(measurement.machine.groupTemperature ?? measurement.machine.mixTemperature),
+      weightFlow: round2OrNull(measurement.scale?.weightFlow)
     });
-    if (rows.length >= TELEMETRY_MAX_ROWS) break;
   }
   return rows;
 }
@@ -297,9 +298,11 @@ export function composeDialInQuery(context: DialInContext, ask: DialInAsk): stri
   }
 
   if (context.telemetry.length > 0) {
-    lines.push('Shot telemetry (t_s, pressure_bar, flow_mls, weight_g):');
+    lines.push('Full shot telemetry (t_s, pressure_bar, flow_mls, weight_g, group_temp_c, weight_flow_gs):');
     for (const row of context.telemetry) {
-      lines.push(`${row.t}, ${cell(row.pressure)}, ${cell(row.flow)}, ${cell(row.weight)}`);
+      lines.push(
+        `${row.t}, ${cell(row.pressure)}, ${cell(row.flow)}, ${cell(row.weight)}, ${cell(row.temperature)}, ${cell(row.weightFlow)}`
+      );
     }
   }
 
@@ -412,9 +415,11 @@ export function extractDialInSuggestions(
   context: DialInContext
 ): { suggestions: DialInSuggestion[]; displayText: string } {
   const fence = findJsonFence(answerText);
-  if (!fence) return { suggestions: [], displayText: answerText.trim() };
+  if (!fence) return { suggestions: [], displayText: stripCitationMarkers(answerText).trim() };
 
-  const displayText = (answerText.slice(0, fence.start) + answerText.slice(fence.end)).trim();
+  const displayText = stripCitationMarkers(
+    answerText.slice(0, fence.start) + answerText.slice(fence.end)
+  ).trim();
   let parsed: unknown;
   try {
     parsed = JSON.parse(fence.json);
@@ -436,7 +441,7 @@ function readSuggestion(raw: unknown, context: DialInContext): DialInSuggestion 
   if (!raw || typeof raw !== 'object') return null;
   const item = raw as Record<string, unknown>;
   const parameter = typeof item.parameter === 'string' ? item.parameter.trim() : '';
-  const why = typeof item.why === 'string' ? item.why.trim() : '';
+  const why = typeof item.why === 'string' ? stripCitationMarkers(item.why).trim() : '';
   if (!parameter || !why) return null;
 
   const direction =
@@ -579,6 +584,12 @@ function round1(value: number): number {
 
 function round1OrNull(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? round1(value) : null;
+}
+
+function round2OrNull(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.round(value * 100) / 100
+    : null;
 }
 
 function numberOrNull(value: number | null | undefined): number | null {
