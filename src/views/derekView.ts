@@ -1,5 +1,7 @@
+import type { Profile } from '../api/types';
 import { escapeAttr, escapeHtml } from '../components/html';
 import { icon } from '../components/icons';
+import { profileStepTargets, type ProfileStepTarget } from '../components/profilePreview';
 import { renderAnswerMarkdown } from '../domain/answerMarkdown';
 import { TASTE_CHIPS, suggestionTitle, type DialInSuggestion } from '../domain/dialIn';
 import {
@@ -14,6 +16,8 @@ export interface DerekViewModel {
   state: DerekState;
   /** Short context facts shown as chips: bean, grinder, recipe, shot. */
   contextChips: string[];
+  /** Per-suggestion before/after SVG (profile-tweak cards only), by index. */
+  tweakPreviews?: ReadonlyArray<string | null>;
 }
 
 export function renderDerekModal(model: DerekViewModel): string {
@@ -58,7 +62,7 @@ function renderBody(model: DerekViewModel): string {
         </div>
       `;
     case 'done':
-      return renderAnswer(state);
+      return renderAnswer(state, model.tweakPreviews);
   }
 }
 
@@ -158,13 +162,13 @@ export function phaseLabel(state: DerekState): string {
   }
 }
 
-function renderAnswer(state: DerekState): string {
+function renderAnswer(state: DerekState, previews?: ReadonlyArray<string | null>): string {
   const known = knownCitationNumbers(state.citations);
   return `
     <div class="derek-answer-wrap">
       ${state.interrupted ? '<p class="derek-interrupted">The answer was interrupted — this is what arrived.</p>' : ''}
       <div class="derek-answer">${renderAnswerMarkdown(state.displayText ?? '', known.size > 0 ? known : undefined)}</div>
-      ${renderSuggestions(state)}
+      ${renderSuggestions(state, previews)}
       ${renderCitations(state)}
     </div>
     <div class="modal-actions derek-actions">
@@ -174,10 +178,10 @@ function renderAnswer(state: DerekState): string {
   `;
 }
 
-function renderSuggestions(state: DerekState): string {
+function renderSuggestions(state: DerekState, previews?: ReadonlyArray<string | null>): string {
   if (state.suggestions.length === 0) return '';
   const cards = state.suggestions
-    .map((suggestion, index) => renderSuggestionCard(suggestion, index, state))
+    .map((suggestion, index) => renderSuggestionCard(suggestion, index, state, previews?.[index] ?? null))
     .join('');
   return `
     <div class="derek-suggestions">
@@ -190,7 +194,8 @@ function renderSuggestions(state: DerekState): string {
 function renderSuggestionCard(
   suggestion: DialInSuggestion,
   index: number,
-  state: DerekState
+  state: DerekState,
+  preview: string | null
 ): string {
   const manual = suggestion.kind === 'manual';
   const selected = state.selectedSuggestion === index;
@@ -205,9 +210,63 @@ function renderSuggestionCard(
         <small>${escapeHtml(suggestion.why)}</small>
         ${manual ? '<small class="derek-manual-tag">advice only — apply by hand</small>' : ''}
         ${suggestion.kind === 'profile' ? '<small class="derek-variant-tag">creates a tweaked copy of the profile</small>' : ''}
+        ${preview ?? ''}
       </span>
     </div>
   `;
+}
+
+/**
+ * Compact before/after sparkline for a profile tweak: the original's primary
+ * trace faded and dashed under the tweaked one, both on a shared time/value
+ * scale so a longer preinfusion or a lower peak is visible at a glance.
+ * Returns '' when the traces don't visibly differ (e.g. a limiter-only tweak
+ * that the step targets don't plot).
+ */
+export function renderTweakPreview(original: Profile, tweaked: Profile): string {
+  const before = profileStepTargets(original);
+  const after = profileStepTargets(tweaked);
+  if (before.length === 0 || after.length === 0) return '';
+  const usePressure =
+    before.some((t) => t.pressure != null) || after.some((t) => t.pressure != null);
+  const pick = (t: ProfileStepTarget) => (usePressure ? t.pressure : t.flow) ?? 0;
+  const totalSeconds = Math.max(sumSeconds(before), sumSeconds(after), 1);
+  const yMax = Math.max(...before.map(pick), ...after.map(pick), 1) * 1.15;
+
+  const width = 220;
+  const height = 52;
+  const pad = 3;
+  const path = (targets: ProfileStepTarget[]): string => {
+    let elapsed = 0;
+    let d = '';
+    let previous: number | null = null;
+    for (const target of targets) {
+      const value = pick(target);
+      const x0 = pad + (elapsed / totalSeconds) * (width - 2 * pad);
+      elapsed += target.seconds;
+      const x1 = pad + (elapsed / totalSeconds) * (width - 2 * pad);
+      const y = height - pad - (Math.max(0, value) / yMax) * (height - 2 * pad);
+      if (!d) d = `M${x0.toFixed(1)} ${y.toFixed(1)}`;
+      else if (target.transition === 'fast' && previous !== value) d += `L${x0.toFixed(1)} ${y.toFixed(1)}`;
+      d += `L${x1.toFixed(1)} ${y.toFixed(1)}`;
+      previous = value;
+    }
+    return d;
+  };
+
+  const beforePath = path(before);
+  const afterPath = path(after);
+  if (beforePath === afterPath) return '';
+  return `
+    <svg class="derek-tweak-preview" viewBox="0 0 ${width} ${height}" role="img" aria-label="Profile before and after the tweak">
+      <path class="derek-tweak-before" d="${beforePath}" fill="none" />
+      <path class="derek-tweak-after" d="${afterPath}" fill="none" />
+    </svg>
+  `;
+}
+
+function sumSeconds(targets: ProfileStepTarget[]): number {
+  return targets.reduce((sum, target) => sum + target.seconds, 0);
 }
 
 function renderApplyButton(state: DerekState): string {

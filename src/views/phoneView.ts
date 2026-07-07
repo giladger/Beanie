@@ -44,6 +44,8 @@ export interface PhoneShellModel {
   ratioLabel: string;
   brewTempLabel: string;
   settingsHtml: string;
+  /** Show the "Dial in with Derek" shot tool (live gateway with the relay). */
+  derekEnabled?: boolean;
 }
 
 const TABS: Array<{ id: PhoneTab; label: string; icon: string }> = [
@@ -297,7 +299,7 @@ function renderShotsTab(model: PhoneShellModel): string {
           shots.length
             ? shots.map((shot) => {
                 const active = shot.id === selected?.id;
-                return `${renderShotRow(shot, active, model.batchesByBean)}${active ? renderShotDetail(shot, draft, model.selectedShotDirty, model.batchesByBean) : ''}`;
+                return `${renderShotRow(shot, active, model.batchesByBean)}${active ? renderShotDetail(shot, draft, model.selectedShotDirty, model.batchesByBean, model.derekEnabled === true) : ''}`;
               }).join('')
             : `<p class="phone-empty">${query ? 'No shots match that search.' : 'No espresso shots found.'}</p>`
         }
@@ -346,7 +348,8 @@ function renderShotDetail(
   shot: ShotRecord,
   draft: ShotEditDraft | null,
   dirty: boolean,
-  batchesByBean: Record<string, BeanBatch[]>
+  batchesByBean: Record<string, BeanBatch[]>,
+  derekEnabled: boolean
 ): string {
   const recipe = recipeFromShot(shot);
   const ratio = formatRatio(ratioFor(recipe.dose, recipe.yield));
@@ -356,6 +359,7 @@ function renderShotDetail(
     <article class="phone-card phone-shot-card">
       <div class="phone-card-head">
         <span class="phone-card-label">Selected shot</span>
+        ${derekEnabled ? `<button type="button" class="phone-shot-save phone-shot-derek" data-action="derek-dial-in" data-id="${escapeAttr(shot.id)}">${icon('sparkles')}<span>Dial in</span></button>` : ''}
         <button type="button" class="phone-shot-save" data-action="phone-save-shot" data-id="${escapeAttr(shot.id)}" ${dirty ? '' : 'disabled'}>
           ${icon('check')}<span>${dirty ? 'Save' : 'Saved'}</span>
         </button>

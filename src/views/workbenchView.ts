@@ -44,6 +44,8 @@ export interface WorkbenchRecipeViewModel {
   grinderStep: number;
   ratioLabel: string;
   brewTempLabel: string;
+  /** A Derek profile tweak is staged for the next shot; offers one-tap revert. */
+  derekTweak?: { summary: string } | null;
 }
 
 export interface WorkbenchViewModel {
@@ -215,7 +217,7 @@ export function renderRecipeEditor(model: WorkbenchRecipeViewModel): string {
   const draft = model.draft;
   return `
     <section class="recipe-grid">
-      ${controlProfile(draft.profileTitle ?? 'No profile')}
+      ${controlProfile(draft.profileTitle ?? 'No profile', model.derekTweak)}
       ${controlNumber('Dose', 'dose', draft.dose, 0.5)}
       ${controlNumber('Yield', 'yield', draft.yield, 1)}
       ${controlRatio(model.ratioLabel)}
@@ -274,10 +276,17 @@ function controlGrind(value: string, step: number): string {
   `;
 }
 
-function controlProfile(title: string): string {
+// The staged-tweak affordance lives in the label row: the profile button
+// already shows the variant's "· derek:" title, so all that's needed is the
+// way back — and the workbench has no vertical room for a separate banner
+// (the surface grid is three fixed rows).
+function controlProfile(title: string, tweak?: { summary: string } | null): string {
+  const revert = tweak
+    ? `<button type="button" class="derek-tweak-revert" data-action="derek-revert-tweak" title="${escapeAttr(`Revert: ${tweak.summary}`)}" aria-label="${escapeAttr(`Revert Derek tweak: ${tweak.summary}`)}">${icon('rotate-ccw')}<span>Revert tweak</span></button>`
+    : '';
   return `
     <div class="select-control profile-control panel">
-      <label>Profile</label>
+      <div class="profile-label-row"><label>Profile</label>${revert}</div>
       <button type="button" class="profile-button" data-action="open-profile-picker">
         <span>${escapeHtml(title)}</span>
       </button>

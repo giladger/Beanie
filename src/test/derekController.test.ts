@@ -1,8 +1,10 @@
 import type { DerekResult } from '../api/derek';
+import { createProfileEditorState, profileFromEditorState } from '../components/profileEditor';
 import {
   beginAsk,
   beginFollowUp,
   canAskDerek,
+  downgradeUntweakableSuggestions,
   failAsk,
   finishAsk,
   knownCitationNumbers,
@@ -16,6 +18,7 @@ import {
   visiblePartial
 } from '../controllers/derekController';
 import type { DialInContext } from '../domain/dialIn';
+import { compileSimpleToSteps, defaultSimpleKnobs } from '../domain/simpleProfile';
 
 const context: DialInContext = {
   profileTitle: null,
@@ -129,6 +132,33 @@ run('visiblePartial cuts streamed text at the JSON fence', () => {
   state = reduceDerekEvent(state, { type: 'delta', text: 'Advice.\n```json\n{"sugg' });
   equal(visiblePartial(state), 'Advice.');
   equal(partialReachedSuggestions(state), true);
+});
+
+run('downgradeUntweakableSuggestions demotes cards the engine cannot apply', () => {
+  const answer =
+    '```json\n{"suggestions":[{"parameter":"preinfusion_flow","direction":"increase","current":null,"target":3,"unit":"ml/s","why":"gentler"},{"parameter":"grind","target":"14","why":"slower"}]}\n```';
+  const state = finishAsk(
+    beginAsk({ ...startDerek('general', null), question: 'q' }, 'ctx'),
+    resultWith(answer),
+    context
+  );
+  equal(state.suggestions[0]!.kind, 'profile');
+  equal(state.selectedSuggestion, 0);
+
+  // No profile loaded at all: the profile card demotes, selection moves on.
+  const demoted = downgradeUntweakableSuggestions(state, null);
+  equal(demoted.suggestions[0]!.kind, 'manual');
+  equal(demoted.selectedSuggestion, 1);
+
+  // A tweakable simple profile: nothing changes.
+  const profile = profileFromEditorState({
+    ...createProfileEditorState(null),
+    title: 'Simple',
+    steps: compileSimpleToSteps(defaultSimpleKnobs('pressure'), 'pressure')
+  });
+  const kept = downgradeUntweakableSuggestions(state, profile);
+  equal(kept.suggestions[0]!.kind, 'profile');
+  equal(kept.selectedSuggestion, 0);
 });
 
 run('knownCitationNumbers flattens source numbers', () => {

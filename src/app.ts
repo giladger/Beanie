@@ -94,13 +94,16 @@ import {
   readFavoriteBeans,
   readFavoriteProfiles,
   readGeminiApiKey,
+  clearPendingDerekTweak,
   readLastBeanId,
+  readPendingDerekTweak,
   readScanOnThisDevice,
   readStorageEventsMigrated,
   writeFavoriteBeans,
   writeFavoriteProfiles,
   writeGeminiApiKey,
   writeLastBeanId,
+  writePendingDerekTweak,
   writeScanOnThisDevice
 } from './domain/storage';
 import {
@@ -316,6 +319,7 @@ import {
   beginAsk,
   beginFollowUp,
   canAskDerek,
+  downgradeUntweakableSuggestions,
   failAsk,
   finishAsk,
   markUnavailable,
@@ -328,7 +332,11 @@ import {
   partialReachedSuggestions,
   type DerekState
 } from './controllers/derekController';
-import { phaseLabel, renderDerekModal as renderDerekModalView } from './views/derekView';
+import {
+  phaseLabel,
+  renderDerekModal as renderDerekModalView,
+  renderTweakPreview
+} from './views/derekView';
 import {
   renderPhoneProfilesPage as renderPhoneProfilePickerPage,
   renderProfilesPage as renderProfilePickerPage
@@ -806,6 +814,9 @@ interface AppState {
   liveGhost: boolean;
   /** The Derek dial-in helper modal; null when closed. */
   derek: DerekState | null;
+  /** A Derek profile tweak is loaded for the next shot; offers one-tap revert.
+   * Cleared when the shot is pulled, the bean changes, or a profile is picked. */
+  derekTweakChip: { summary: string; revertProfileId: string | null } | null;
 }
 
 interface LiveReadoutEls {
@@ -950,7 +961,8 @@ export class BeanieApp {
     cleaningWizard: null,
     gatewayLinkDown: false,
     liveGhost: true,
-    derek: null
+    derek: null,
+    derekTweakChip: null
   };
 
   private applyTimer: number | null = null;
@@ -1429,7 +1441,8 @@ export class BeanieApp {
   ): Promise<void> {
     const selection = this.beanWorkflow.beginBeanSelection(beanId, this.state.beans, { writeLastBeanId });
     if (!selection) return;
-    this.setState(selection.state);
+    // A staged Derek tweak belongs to the bean it was suggested for.
+    this.setState({ ...selection.state, derekTweakChip: null });
 
     const result = await this.beanWorkflow.completeBeanSelection({
       selection,
@@ -3856,6 +3869,8 @@ export class BeanieApp {
           liveActive: false,
           liveFinalizing: false,
           detailShotId: savedShot.id,
+          // The staged Derek tweak was used by this pull; the chip's job is done.
+          derekTweakChip: null,
           status: 'Shot saved'
         });
         return;
@@ -4023,16 +4038,33 @@ export class BeanieApp {
 
   private async saveFreshnessForCompletedShot(shot: ShotRecord, batch: BeanBatch | null): Promise<ShotRecord> {
     const metadata = shotMetadataWithFreshness(shot.metadata, null, batch, shot.timestamp);
-    if (!metadata?.freshness) return shot;
+    // A Derek suggestion applied before this pull gets stamped onto the shot,
+    // closing the advice → try → result loop: the next "Dial in" on this shot
+    // tells Derek what was already changed.
+    const pendingTweak = readPendingDerekTweak();
+    const beanId = batch?.beanId ?? shot.workflow?.context?.beanId ?? null;
+    const annotations =
+      pendingTweak && beanId && pendingTweak.beanId === beanId
+        ? {
+            ...shot.annotations,
+            extras: { ...shot.annotations?.extras, derekTweak: pendingTweak.summary }
+          }
+        : null;
+
+    const update: ShotUpdate = {};
+    if (metadata?.freshness) update.metadata = metadata;
+    if (annotations) update.annotations = annotations;
+    if (!update.metadata && !update.annotations) return shot;
     try {
-      const saved = await gateway.updateShot(shot.id, { metadata });
+      const saved = await gateway.updateShot(shot.id, update);
+      if (annotations) clearPendingDerekTweak();
       this.shotCacheGeneration += 1;
       await beanieCache.invalidateShotMutation(saved.id).catch(() => {});
       await beanieCache.putShotRecord(saved).catch(() => {});
       return saved;
     } catch (error) {
-      console.error('[Beanie] Save freshness snapshot failed', error);
-      return { ...shot, metadata };
+      console.error('[Beanie] Save shot context failed', error);
+      return { ...shot, ...(update.metadata ? { metadata: update.metadata } : {}) };
     }
   }
 
@@ -5529,6 +5561,8 @@ export class BeanieApp {
       draft: selection.draft,
       view: 'workbench',
       profileSearch: '',
+      // Picking a profile by hand replaces whatever Derek tweak was staged.
+      derekTweakChip: null,
       status: selection.status
     });
     this.scheduleApply();
@@ -7466,7 +7500,8 @@ export class BeanieApp {
       draft: this.state.draft,
       ratioLabel: formatRatio(ratioFor(this.state.draft.dose, this.state.draft.yield)),
       brewTempLabel: brewTemp == null ? '--' : brewTemp.toFixed(1),
-      settingsHtml
+      settingsHtml,
+      derekEnabled: this.derekEnabled()
     });
   }
 
@@ -7525,7 +7560,8 @@ export class BeanieApp {
         draft,
         grinderStep: this.grinderStep(),
         ratioLabel: formatRatio(ratioFor(draft.dose, draft.yield)),
-        brewTempLabel: brewTemp == null ? '--' : `${brewTemp.toFixed(1)}`
+        brewTempLabel: brewTemp == null ? '--' : `${brewTemp.toFixed(1)}`,
+        derekTweak: this.state.derekTweakChip ? { summary: this.state.derekTweakChip.summary } : null
       },
       historyHtml: this.renderHistory()
     });
@@ -8017,6 +8053,9 @@ export class BeanieApp {
       },
       'derek-follow-up': () => {
         if (this.state.derek) this.setState({ derek: beginFollowUp(this.state.derek) });
+      },
+      'derek-revert-tweak': () => {
+        this.revertDerekTweak();
       }
     };
   }
@@ -8135,7 +8174,10 @@ export class BeanieApp {
         { signal: abort.signal, onEvent: (event) => this.handleDerekEvent(seq, event) }
       );
       if (!this.derekAskCurrent(seq)) return;
-      this.setState({ derek: finishAsk(this.state.derek!, result, context) });
+      const finished = finishAsk(this.state.derek!, result, context);
+      this.setState({
+        derek: downgradeUntweakableSuggestions(finished, this.currentDerekProfile())
+      });
     } catch (error) {
       if (!this.derekAskCurrent(seq)) return;
       if (error instanceof DerekUnavailableError) {
@@ -8202,11 +8244,21 @@ export class BeanieApp {
     if (!suggestion) return;
     this.setState({ derek: { ...derek, applying: true } });
     try {
-      const summary = await this.performDerekApply(suggestion);
+      const applied = await this.performDerekApply(suggestion);
       if (!this.state.derek) return;
+      // Remember the change so the shot pulled with it gets stamped — the next
+      // ask then opens with "this shot was pulled after making this change".
+      const beanId = this.state.selectedBeanId;
+      if (beanId) {
+        writePendingDerekTweak({ beanId, summary: applied.summary, at: new Date().toISOString() });
+      }
       this.setState({
-        derek: { ...this.state.derek, applying: false, appliedSummary: summary },
-        status: `Next shot: ${summary}`
+        derek: { ...this.state.derek, applying: false, appliedSummary: applied.summary },
+        derekTweakChip:
+          applied.revertProfileId !== undefined
+            ? { summary: applied.summary, revertProfileId: applied.revertProfileId }
+            : this.state.derekTweakChip,
+        status: `Next shot: ${applied.summary}`
       });
       this.scheduleApply();
     } catch (error) {
@@ -8220,11 +8272,13 @@ export class BeanieApp {
     }
   }
 
-  private async performDerekApply(suggestion: DialInSuggestion): Promise<string> {
+  private async performDerekApply(
+    suggestion: DialInSuggestion
+  ): Promise<{ summary: string; revertProfileId?: string | null }> {
     const { parameter, target } = suggestion;
     if (parameter === 'grind' && target != null) {
       this.setState({ draft: { ...this.state.draft, grinderSetting: String(target) } });
-      return suggestionTitle(suggestion);
+      return { summary: suggestionTitle(suggestion) };
     }
     if (parameter === 'dose' || parameter === 'yield' || parameter === 'brew_temperature') {
       const value = typeof target === 'number' ? target : Number(target);
@@ -8236,7 +8290,7 @@ export class BeanieApp {
             ? { yield: value }
             : { brewTemp: value };
       this.setState({ draft: { ...this.state.draft, ...patch } });
-      return suggestionTitle(suggestion);
+      return { summary: suggestionTitle(suggestion) };
     }
     if (parameter === 'profile') {
       const record = this.findProfileByTitle(String(target ?? ''));
@@ -8248,11 +8302,11 @@ export class BeanieApp {
         profileId: record.id
       });
       this.setState({ draft: selection.draft });
-      return `Profile → ${record.profile.title ?? 'profile'}`;
+      return { summary: `Profile → ${record.profile.title ?? 'profile'}` };
     }
 
     // Profile-level knob: build the tweaked variant and point the recipe at it.
-    const profile = this.state.draft.profile ?? this.state.workflow?.profile ?? null;
+    const profile = this.currentDerekProfile();
     if (!profile) throw new Error('No profile loaded to tweak');
     const tweak = applyProfileTweak(profile, suggestion);
     if (!tweak) throw new Error("This profile can't take that change automatically");
@@ -8275,6 +8329,7 @@ export class BeanieApp {
       }
     );
     if (saved.type === 'failed') throw new Error('Saving the tweaked profile failed');
+    const revertProfileId = this.state.draft.profileId ?? null;
     const selection = selectProfileForDraft({
       draft: this.state.draft,
       profiles: saved.profiles,
@@ -8282,7 +8337,29 @@ export class BeanieApp {
       profileId: saved.profileId
     });
     this.setState({ profiles: saved.profiles, draft: selection.draft });
-    return tweak.summary;
+    return { summary: tweak.summary, revertProfileId };
+  }
+
+  private revertDerekTweak(): void {
+    const chip = this.state.derekTweakChip;
+    if (!chip) return;
+    if (!chip.revertProfileId) {
+      this.setState({ derekTweakChip: null, status: 'Pick a profile to replace the tweak' });
+      return;
+    }
+    const selection = selectProfileForDraft({
+      draft: this.state.draft,
+      profiles: this.state.profiles,
+      grinders: this.state.grinders,
+      profileId: chip.revertProfileId
+    });
+    clearPendingDerekTweak();
+    this.setState({
+      draft: selection.draft,
+      derekTweakChip: null,
+      status: 'Back to the original profile'
+    });
+    this.scheduleApply();
   }
 
   private findProfileByTitle(title: string): ProfileRecord | null {
@@ -8300,10 +8377,31 @@ export class BeanieApp {
     );
   }
 
+  private currentDerekProfile(): Profile | null {
+    return this.state.draft.profile ?? this.state.workflow?.profile ?? null;
+  }
+
   private renderDerekModal(): string {
     const derek = this.state.derek;
     if (!derek) return '';
-    return renderDerekModalView({ state: derek, contextChips: this.derekContextChips() });
+    return renderDerekModalView({
+      state: derek,
+      contextChips: this.derekContextChips(),
+      tweakPreviews: this.derekTweakPreviews(derek)
+    });
+  }
+
+  // Before/after sparkline per profile-tweak card. Recomputed on render: at
+  // most four applyProfileTweak calls over ≤20 steps — negligible.
+  private derekTweakPreviews(derek: DerekState): Array<string | null> {
+    if (derek.step !== 'done' || derek.suggestions.length === 0) return [];
+    const profile = this.currentDerekProfile();
+    if (!profile) return [];
+    return derek.suggestions.map((suggestion) => {
+      if (suggestion.kind !== 'profile') return null;
+      const tweak = applyProfileTweak(profile, suggestion);
+      return tweak ? renderTweakPreview(profile, tweak.profile) : null;
+    });
   }
 
   private renderModal(): string {

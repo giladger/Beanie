@@ -239,8 +239,10 @@ Accepting a profile-level suggestion:
       modal is 700px, nothing clips, body scrolls internally
 - [x] Tests: render per state, gating, fence hold-back, escaping
       (4 tests in `src/test/derekView.test.ts`)
-- [ ] Deferred: QR fallback for citations on the tablet webview;
-      before/after mini profile chart on variant cards
+- [x] Before/after sparkline on variant cards (`renderTweakPreview`):
+      original trace dashed/faded under the tweaked one on a shared scale;
+      suppressed when the traces don't visibly differ. Verified at 1340×800.
+- [ ] Deferred: QR fallback for citations on the tablet webview
 
 ### Phase 7 — App wiring (`app.ts`) ✅ (with deferrals)
 - [x] Entry points: shot detail pane tools ("Dial in with Derek") and
@@ -257,13 +259,21 @@ Accepting a profile-level suggestion:
 - [x] Live verification: full pipeline (composer → SSE stream → extractor)
       run against the real Derek service; three valid single-parameter
       suggestions returned with Beanie's current values cross-checked in
-- [ ] Deferred: explicit workbench "revert tweak" chip (the variant's
-      `· derek:` title already shows in the recipe row; revert = re-pick the
-      original profile), `annotations.extras.derekTweak` learning loop (V2),
-      settings on/off toggle (feature is opt-in per tap; low value), phone
-      entry buttons (the modal itself is phone-ready)
+- [x] Untweakable profile suggestions demote to advice-only cards at answer
+      time (`downgradeUntweakableSuggestions`) instead of failing on Apply
+- [x] Revert affordance: while a Derek tweak is staged, the workbench profile
+      control's label row gains a "Revert tweak" action (zero vertical cost —
+      the surface grid has three fixed rows, so a banner was not an option).
+      Cleared when a shot is pulled, the bean changes, or a profile is picked.
+- [x] Learning loop: an applied suggestion is remembered per-device
+      (`beanie:pending-derek-tweak`, 48h window) and stamped onto the next
+      shot pulled on that bean (`annotations.extras.derekTweak`, piggybacking
+      the freshness-snapshot shot update); the next "Dial in" on that shot
+      tells Derek "this shot was pulled after making this change"
+- [x] Phone entry: "Dial in" button on the phone's selected-shot card
+- [ ] Deferred: settings on/off toggle (feature is opt-in per tap; low value)
 
 ### Phase 8 — Polish & ship ✅
-- [x] Full test suite (701 ok) + `tsc` clean
+- [x] Full test suite (705 ok) + `tsc` clean
 - [x] CHANGELOG entry
 - [x] Committed with progress marked here

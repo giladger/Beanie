@@ -3,6 +3,10 @@
 ## Unreleased
 
 - Added a Derek dial-in helper: from a shot's detail pane (or the topbar), tap taste chips ("sour", "too fast"…) and Beanie asks Derek — Decent's community-knowledge assistant — with your bean, grinder, recipe, and the shot's actual curve attached. The cited answer streams in live, and ends with one-change-at-a-time suggestion cards: pick one and "Use for next shot" applies it — grind/dose/yield/temperature changes stage straight into the recipe, and profile-level changes (peak pressure, preinfusion) generate a tweaked copy of the profile that the bean's recipe switches to. Requires a Decent.app build with the Derek relay; the buttons hide on gateways without it.
+- Profile-tweak cards show a before/after mini-trace of what the change does to the planned curve, and suggestions the tweak engine can't apply to the loaded profile appear as advice-only cards instead of failing on tap.
+- While a Derek tweak is staged, the workbench profile control offers a one-tap "Revert tweak"; it clears once a shot is pulled with it, the bean changes, or a profile is picked by hand.
+- The change you applied is remembered and stamped onto the next shot pulled on that bean, so a later "Dial in" on that shot tells Derek what was already tried and how it turned out.
+- The phone's selected-shot card gets its own "Dial in" button.
 - Fixed cross-device edits being overwritten: bag updates (dose deduction at shot end, inline weight edits, freezes, finishing a bag) now send only the fields they change, so they can no longer revert freeze/thaw history or roast-date edits made on another device.
 - Fixed a shot's bag deduction being silently lost when the gateway write failed: failed deductions are queued on-device and replayed against fresh bag state on startup or reconnect, without ever double-counting a shot.
 

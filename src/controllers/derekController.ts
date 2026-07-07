@@ -1,10 +1,12 @@
 import type { DerekCitation, DerekEvent, DerekResult } from '../api/derek';
+import type { Profile } from '../api/types';
 import {
   extractDialInSuggestions,
   jsonFenceCutoff,
   type DialInContext,
   type DialInSuggestion
 } from '../domain/dialIn';
+import { isProfileTweakable } from '../domain/profileTweaks';
 
 // Pure state machine for the Derek dial-in modal. The app owns the streaming
 // side effects; every transition here is a plain function so the whole flow is
@@ -160,6 +162,32 @@ export function finishAsk(
 
 export function failAsk(state: DerekState, message: string): DerekState {
   return { ...state, step: 'failed', error: message, applying: false };
+}
+
+/**
+ * Downgrade profile-level suggestions the tweak engine can't actually apply to
+ * THIS profile (exotic step structures, no profile loaded) to advice-only
+ * cards, and repair the pre-selection — better to learn at render time than to
+ * fail on the Apply tap.
+ */
+export function downgradeUntweakableSuggestions(
+  state: DerekState,
+  profile: Profile | null
+): DerekState {
+  if (state.suggestions.length === 0) return state;
+  let changed = false;
+  const suggestions = state.suggestions.map((suggestion) => {
+    if (suggestion.kind !== 'profile' || isProfileTweakable(profile, suggestion)) return suggestion;
+    changed = true;
+    return { ...suggestion, kind: 'manual' as const };
+  });
+  if (!changed) return state;
+  const firstApplicable = suggestions.findIndex((item) => item.kind !== 'manual');
+  return {
+    ...state,
+    suggestions,
+    selectedSuggestion: firstApplicable === -1 ? null : firstApplicable
+  };
 }
 
 export function markUnavailable(state: DerekState): DerekState {

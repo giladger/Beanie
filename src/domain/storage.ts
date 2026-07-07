@@ -88,6 +88,55 @@ export function writeScanOnThisDevice(on: boolean): void {
   }
 }
 
+// The change the user just applied from a Derek suggestion, waiting for the
+// next shot on that bean to be pulled so it can be stamped onto that shot's
+// annotations (closing the advice → try → result loop). Per-device: the apply
+// happened here, and the stamp happens where the shot ends.
+const pendingDerekTweakKey = 'beanie:pending-derek-tweak';
+const pendingDerekTweakMaxAgeMs = 48 * 60 * 60 * 1000;
+
+export interface PendingDerekTweak {
+  beanId: string;
+  summary: string;
+  at: string;
+}
+
+export function readPendingDerekTweak(): PendingDerekTweak | null {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(pendingDerekTweakKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PendingDerekTweak>;
+    if (typeof parsed.beanId !== 'string' || typeof parsed.summary !== 'string' || typeof parsed.at !== 'string') {
+      return null;
+    }
+    // A tweak applied days ago no longer explains the next shot pulled.
+    const at = Date.parse(parsed.at);
+    if (!Number.isFinite(at) || Date.now() - at > pendingDerekTweakMaxAgeMs) return null;
+    return { beanId: parsed.beanId, summary: parsed.summary, at: parsed.at };
+  } catch {
+    return null;
+  }
+}
+
+export function writePendingDerekTweak(tweak: PendingDerekTweak): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(pendingDerekTweakKey, JSON.stringify(tweak));
+  } catch {
+    // Best-effort; without it the next ask simply lacks the "previous change" line.
+  }
+}
+
+export function clearPendingDerekTweak(): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.removeItem(pendingDerekTweakKey);
+  } catch {
+    // Best-effort.
+  }
+}
+
 // One-time, per-device bookkeeping for the freeze/thaw history migration. The
 // history used to live only in this device's IndexedDB cache, so each device has
 // to copy its OWN cache up to the gateway exactly once — hence localStorage, not

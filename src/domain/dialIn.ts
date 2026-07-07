@@ -134,8 +134,18 @@ export function buildDialInContext(sources: DialInContextSources): DialInContext
           enjoymentLabel: enjoymentLabel(shot.annotations?.enjoyment)
         }
       : null,
-    telemetry: shot ? downsampleTelemetry(shot) : []
+    telemetry: shot ? downsampleTelemetry(shot) : [],
+    // A change applied from an earlier Derek suggestion is stamped onto the
+    // shot pulled with it — feed it back so Derek knows what was already tried.
+    previousTweak: shotDerekTweak(shot)
   };
+}
+
+function shotDerekTweak(shot: ShotRecord | null): string | null {
+  const extras = shot?.annotations?.extras;
+  if (!extras || typeof extras !== 'object') return null;
+  const value = (extras as Record<string, unknown>).derekTweak;
+  return typeof value === 'string' && value.trim() ? value : null;
 }
 
 // Enjoyment is stored 0-100; de1app imports use 0 for "not rated".
@@ -294,7 +304,9 @@ export function composeDialInQuery(context: DialInContext, ask: DialInAsk): stri
   }
 
   if (context.previousTweak) {
-    lines.push(`After the previous shot I made this change: ${context.previousTweak}.`);
+    lines.push(
+      `Note: this shot was pulled after making this change from the previous one (based on earlier advice): ${context.previousTweak}.`
+    );
   }
 
   const question = ask.freeQuestion?.trim();

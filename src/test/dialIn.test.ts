@@ -109,6 +109,19 @@ run('composeDialInQuery reads naturally and carries the contract', () => {
   contains(query, 'exactly ONE parameter');
 });
 
+run('a previous Derek tweak stamped on the shot feeds back into the next ask', () => {
+  const shot = shotWith([measurement(0, 1, 0.5, 0), measurement(22, 8.9, 2.1, 38)]);
+  shot.annotations = {
+    ...shot.annotations,
+    extras: { derekTweak: 'Preinfusion time 8s → 13s' }
+  };
+  const context = buildDialInContext({ shot, bean: null, batch: null, grinder: null });
+  equal(context.previousTweak, 'Preinfusion time 8s → 13s');
+  const query = composeDialInQuery(context, { tasteChipIds: ['bitter'], note: '' });
+  contains(query, 'this shot was pulled after making this change');
+  contains(query, 'Preinfusion time 8s → 13s');
+});
+
 run('composeDialInQuery with a free question skips the taste sentence', () => {
   const query = composeDialInQuery(emptyContext, {
     tasteChipIds: ['sour'],

@@ -1,4 +1,5 @@
 import type { DerekResult } from '../api/derek';
+import { createProfileEditorState, profileFromEditorState } from '../components/profileEditor';
 import {
   beginAsk,
   finishAsk,
@@ -7,8 +8,11 @@ import {
   toggleTasteChip,
   type DerekState
 } from '../controllers/derekController';
-import type { DialInContext } from '../domain/dialIn';
-import { renderDerekModal } from '../views/derekView';
+import type { DialInContext, DialInSuggestion } from '../domain/dialIn';
+import { applyProfileTweak } from '../domain/profileTweaks';
+import { compileSimpleToSteps, defaultSimpleKnobs } from '../domain/simpleProfile';
+import { renderDerekModal, renderTweakPreview } from '../views/derekView';
+import { renderRecipeEditor } from '../views/workbenchView';
 
 const context: DialInContext = {
   profileTitle: null,
@@ -80,6 +84,45 @@ run('done renders answer, cards with radio semantics, citations, and apply', () 
   contains(html, 'Sour light roasts');
   // Model output is escaped: the answer text goes through the safe renderer.
   if (html.includes('<script')) throw new Error('unescaped html');
+});
+
+run('renderTweakPreview draws before/after traces that actually differ', () => {
+  const profile = profileFromEditorState({
+    ...createProfileEditorState(null),
+    title: 'Simple',
+    steps: compileSimpleToSteps({ ...defaultSimpleKnobs('pressure'), preTime: 8 }, 'pressure')
+  });
+  const suggestion: DialInSuggestion = {
+    kind: 'profile',
+    parameter: 'preinfusion_time',
+    direction: 'increase',
+    current: 8,
+    target: 20,
+    unit: 's',
+    why: ''
+  };
+  const tweak = applyProfileTweak(profile, suggestion);
+  if (!tweak) throw new Error('expected a tweak');
+  const svg = renderTweakPreview(profile, tweak.profile);
+  contains(svg, 'derek-tweak-before');
+  contains(svg, 'derek-tweak-after');
+  // Identical profiles yield no preview rather than two identical lines.
+  if (renderTweakPreview(profile, profile) !== '') throw new Error('identical traces must render nothing');
+});
+
+run('the workbench profile control offers a revert while a tweak is staged', () => {
+  const model = {
+    draft: { profileTitle: 'Simple · derek: preinfusion 20s' },
+    grinderStep: 0.1,
+    ratioLabel: '1:2',
+    brewTempLabel: '92.0',
+    derekTweak: { summary: 'Preinfusion time 8s → 20s' }
+  };
+  const html = renderRecipeEditor(model as Parameters<typeof renderRecipeEditor>[0]);
+  contains(html, 'data-action="derek-revert-tweak"');
+  contains(html, 'Revert: Preinfusion time 8s → 20s');
+  const without = renderRecipeEditor({ ...model, derekTweak: null } as Parameters<typeof renderRecipeEditor>[0]);
+  if (without.includes('derek-tweak-revert')) throw new Error('revert must hide when no tweak is staged');
 });
 
 run('unavailable and failed steps render their guidance', () => {
