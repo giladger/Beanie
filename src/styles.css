@@ -1112,6 +1112,10 @@ p {
 }
 
 .second-tap-tooltip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.1;
   position: absolute;
   right: 10px;
   bottom: 7px;
@@ -1123,7 +1127,6 @@ p {
   color: var(--ink);
   font-size: 10px;
   font-weight: 900;
-  line-height: 1;
   pointer-events: none;
   white-space: nowrap;
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.24);
@@ -1206,6 +1209,10 @@ p {
 
 /* One-tap fill for the EY derived from TDS × yield ÷ dose. */
 .ey-calc-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.1;
   justify-self: start;
   margin-top: 3px;
   padding: 3px 7px;
@@ -1215,7 +1222,6 @@ p {
   color: var(--soft);
   font-size: 11px;
   font-weight: 800;
-  line-height: 1;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -1354,6 +1360,10 @@ p {
 }
 
 .compare-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.1;
   padding: 2px 6px;
   border: 1px solid color-mix(in srgb, var(--amber) 55%, var(--line));
   border-radius: var(--radius);
@@ -1361,7 +1371,6 @@ p {
   color: var(--soft);
   font-size: 10px;
   font-weight: 900;
-  line-height: 1;
   white-space: nowrap;
 }
 
@@ -1370,6 +1379,7 @@ p {
 }
 
 .compare-chip {
+  line-height: 1.1;
   position: absolute;
   top: 2px;
   right: 8px;
@@ -1432,6 +1442,7 @@ p {
 }
 
 .enjoyment-badge {
+  line-height: 1.1;
   --tone: var(--soft);
   flex: 0 0 auto;
   display: inline-flex;
@@ -2185,6 +2196,10 @@ p {
 }
 
 .flow-cal-shot-noscale {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.1;
   align-self: center;
   padding: 2px 7px;
   border: 1px solid var(--line);
@@ -2205,6 +2220,10 @@ p {
 }
 
 .flow-cal-shot-base {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.1;
   padding: 2px 8px;
   border: 1px solid color-mix(in srgb, var(--teal) 45%, var(--line));
   border-radius: 999px;
@@ -2243,6 +2262,10 @@ p {
 }
 
 .flow-cal-detail-head .flow-cal-detail-base {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.1;
   padding: 2px 9px;
   border: 1px solid color-mix(in srgb, var(--teal) 45%, var(--line));
   border-radius: 999px;
@@ -4452,6 +4475,7 @@ p {
 
 /* Derived kind chip under the title */
 .profile-type-chip {
+  line-height: 1.1;
   display: inline-flex;
   align-items: center;
   margin-top: 8px;
@@ -5619,6 +5643,9 @@ p {
 
 /* Value is now a tap target that opens the numpad dialog */
 .pe-ctl-value {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.1;
   flex: 1 1 auto;
   min-width: 0;
   appearance: none;
@@ -5629,7 +5656,6 @@ p {
   font: inherit;
   font-size: 15px;
   font-weight: 800;
-  line-height: 1;
   padding: 7px 2px;
   white-space: nowrap;
   cursor: pointer;
@@ -7782,6 +7808,9 @@ p {
 }
 
 .settings-nav-btn {
+  display: flex;
+  align-items: center;
+  line-height: 1.1;
   text-align: left;
   padding: 12px 14px;
   border: 1px solid var(--line);
@@ -7950,6 +7979,10 @@ p {
 
 .pe-mode-btn,
 .pe-kind-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.1;
   appearance: none;
   border: 0;
   background: transparent;
@@ -7983,6 +8016,10 @@ p {
 }
 
 .pe-subtab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.1;
   appearance: none;
   border: 0;
   background: transparent;
@@ -8027,6 +8064,9 @@ p {
 }
 
 .pe-limit-field .pe-limit-value {
+  display: flex;
+  align-items: center;
+  line-height: 1.1;
   width: 100%;
   min-height: 42px;
   padding: 10px 12px;
@@ -9383,6 +9423,10 @@ p {
   }
 
   .phone-apply-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.1;
     flex: 0 0 auto;
     padding: 2px 8px;
     border-radius: 999px;
