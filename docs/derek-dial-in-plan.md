@@ -207,14 +207,18 @@ Accepting a profile-level suggestion:
 - [x] Tests: XSS attempts, marker mapping, heading fallback
       (4 tests in `src/test/answerMarkdown.test.ts`)
 
-### Phase 4 — Profile tweak engine (`src/domain/profileTweaks.ts`)
-- [ ] `applyProfileTweak(profile, suggestion)` → `Profile | null`
-- [ ] Simple-profile path via `parseStepsToSimple`/`compileSimpleToSteps`
-- [ ] Advanced path: peak-pressure and preinfusion locators + edits
-- [ ] Confidence gate (null on ambiguity)
-- [ ] Variant titling `<Original> · derek: <param> <value>` (idempotent)
-- [ ] Tests: fixtures from bundled default profiles, simple + advanced +
-      ambiguous cases, clamping
+### Phase 4 — Profile tweak engine (`src/domain/profileTweaks.ts`) ✅
+- [x] `applyProfileTweak(profile, suggestion)` → tweaked profile + summary,
+      or null
+- [x] Simple-profile path via `parseStepsToSimple`/`compileSimpleToSteps`
+      (flow profiles: peak pressure = existing limiter only)
+- [x] Advanced path: peak-pressure (all steps at the old peak move together)
+      and single-named-preinfusion locators + edits
+- [x] Confidence gate (null on ambiguity, no-op targets, string targets)
+- [x] Variant titling `<Original> · derek: <param> <value>` — idempotent,
+      never chains suffixes; `isDerekVariantTitle`/`baseProfileTitle` helpers
+- [x] Tests: simple + advanced + ambiguous cases, clamping, no-op guard
+      (11 tests in `src/test/profileTweaks.test.ts`)
 
 ### Phase 5 — Controller (`src/controllers/derekController.ts`)
 - [ ] State machine incl. queue/phase/delta/result/error, retry, abort
