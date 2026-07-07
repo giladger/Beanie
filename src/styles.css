@@ -9935,7 +9935,13 @@ p {
 }
 
 .derek-context-chip {
-  padding: 4px 10px;
+  /* Explicit flex centering: padding + normal line-height centers unevenly on
+   * the tablet webview (labels with/without descenders drift high/low). */
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 10px;
+  line-height: 1.1;
   border-radius: 999px;
   background: var(--panel-2);
   border: 1px solid var(--line);
@@ -9956,7 +9962,13 @@ p {
 }
 
 .derek-taste-chip {
-  padding: 9px 14px;
+  /* Same webview-centering discipline as the context chips. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 14px;
+  line-height: 1.1;
   border-radius: 999px;
   border: 1px solid var(--line-strong);
   background: var(--panel-2);
