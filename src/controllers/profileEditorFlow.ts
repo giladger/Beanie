@@ -32,6 +32,7 @@ import {
 } from './profileEditorController';
 import { beanieCache } from '../domain/cache';
 import type { StepFieldKey } from '../domain/profileModel';
+import { OperationEpoch } from './operationEpoch';
 
 // The profile editor's app glue: the pe-* dispatch table, open/import/submit,
 // the tap-to-edit value dialog, and the notes modal commit. The editor's
@@ -75,10 +76,20 @@ function profileSaveErrorMessage(error: unknown): string {
 }
 
 export class ProfileEditorFlow {
+  private readonly editorEpoch = new OperationEpoch();
+  private readonly importEpoch = new OperationEpoch();
+  private activeEditorSave: number | null = null;
+
   constructor(
     private readonly host: ProfileEditorFlowHost,
     private readonly root: HTMLElement
   ) {}
+
+  dispose(): void {
+    this.editorEpoch.invalidate();
+    this.importEpoch.invalidate();
+    this.activeEditorSave = null;
+  }
 
   profileEditorClickActions(): Record<string, ClickActionHandler> {
     return {
@@ -204,6 +215,7 @@ export class ProfileEditorFlow {
   }
 
   private editorDispatch(fn: (pe: ProfileEditorState) => ProfileEditorState): void {
+    if (this.host.state().busy) return;
     const pe = this.host.state().profileEditor;
     if (!pe) return;
     this.host.setState({ profileEditor: fn(pe) });
@@ -222,6 +234,7 @@ export class ProfileEditorFlow {
   }
 
   private openImportProfile(): void {
+    this.importEpoch.invalidate();
     this.host.setState({ modal: 'import-profile', profileImport: { code: '', busy: false, error: null } });
   }
 
@@ -237,12 +250,17 @@ export class ProfileEditorFlow {
       this.host.setState({ profileImport: { code: '', busy: false, error: 'Enter a share code.' } });
       return;
     }
+    const operation = this.importEpoch.begin();
     this.host.setState({ profileImport: { code, busy: true, error: null } });
     try {
       const result = await gateway.importProfileFromVisualizer(code);
+      if (!this.importCurrent(operation, code)) return;
       await beanieCache.invalidateProfileMutation(result.profileId ?? undefined);
+      if (!this.importCurrent(operation, code)) return;
       const profiles = await gateway.profiles();
+      if (!this.importCurrent(operation, code)) return;
       await beanieCache.putProfiles(profiles);
+      if (!this.importCurrent(operation, code)) return;
       this.host.setState({
         profiles,
         modal: null,
@@ -251,16 +269,31 @@ export class ProfileEditorFlow {
         status: result.profileTitle ? `Imported ${result.profileTitle}` : 'Profile imported'
       });
     } catch (err) {
+      if (!this.importCurrent(operation, code)) return;
       this.host.setState({ profileImport: { code, busy: false, error: importErrorMessage(err) } });
     }
   }
 
+  private importCurrent(operation: number, code: string): boolean {
+    const current = this.host.state().profileImport;
+    return (
+      this.importEpoch.owns(operation) &&
+      this.host.state().modal === 'import-profile' &&
+      current?.busy === true &&
+      current.code === code
+    );
+  }
+
   private openProfileEditorInput(editingProfileId: string | null, profile: Profile | null): void {
+    const canceledEditorSave = this.activeEditorSave != null;
+    this.editorEpoch.invalidate();
+    this.activeEditorSave = null;
     this.host.setState({
       view: 'profile-editor',
       editingProfileId,
       profileEditor: createProfileEditorState(profile),
-      profileEdit: null
+      profileEdit: null,
+      busy: canceledEditorSave ? false : this.host.state().busy
     });
   }
 
@@ -272,7 +305,7 @@ export class ProfileEditorFlow {
 
   async submitProfileEditor(): Promise<void> {
     const pe = this.host.state().profileEditor;
-    if (!pe) return;
+    if (!pe || this.host.state().busy) return;
     const problem = this.validateProfileEditor(pe);
     if (problem) {
       this.host.setState({ status: problem, profileEditor: { ...pe, saveNotice: { tone: 'error', message: problem } } });
@@ -280,6 +313,8 @@ export class ProfileEditorFlow {
     }
     const profile = profileFromEditorState(pe);
     const editingId = this.host.state().editingProfileId;
+    const operation = this.editorEpoch.begin();
+    this.activeEditorSave = operation;
     const cloneOfDefault = Boolean(editingId) && this.host.state().profiles.find((item) => item.id === editingId)?.isDefault === true;
     this.host.setState({
       busy: true,
@@ -301,6 +336,8 @@ export class ProfileEditorFlow {
       putProfiles: (profiles) => beanieCache.putProfiles(profiles),
       restoreProfile: (id) => gateway.setProfileVisibility(id, 'visible').then(() => {})
     });
+    if (!this.editorCurrent(operation, editingId)) return;
+    this.activeEditorSave = null;
 
     if (result.type === 'failed') {
       console.error('[Beanie] Save profile failed', result.error);
@@ -362,6 +399,16 @@ export class ProfileEditorFlow {
       status: result.status
     });
     this.host.scheduleApply();
+  }
+
+  private editorCurrent(operation: number, editingId: string | null): boolean {
+    return (
+      this.editorEpoch.owns(operation) &&
+      this.activeEditorSave === operation &&
+      this.host.state().busy &&
+      this.host.state().profileEditor != null &&
+      this.host.state().editingProfileId === editingId
+    );
   }
 
   // Tap a control's value → numpad dialog bound to that editor field.

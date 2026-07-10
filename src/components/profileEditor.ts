@@ -593,11 +593,12 @@ export function renderProfileEditor(state: ProfileEditorState): string {
   `;
 }
 
-export function renderEditorModeBar(state: ProfileEditorState): string {
+export function renderEditorModeBar(state: ProfileEditorState, disabled = false): string {
+  const disabledAttr = disabled ? ' disabled' : '';
   return `
     <div class="pe-mode-bar" role="group" aria-label="Editor mode">
-      <button type="button" class="pe-mode-btn ${state.editorMode === 'basic' ? 'active' : ''}" data-action="pe-set-mode" data-value="basic">Basic</button>
-      <button type="button" class="pe-mode-btn ${state.editorMode === 'advanced' ? 'active' : ''}" data-action="pe-set-mode" data-value="advanced">Advanced</button>
+      <button type="button" class="pe-mode-btn ${state.editorMode === 'basic' ? 'active' : ''}" data-action="pe-set-mode" data-value="basic"${disabledAttr}>Basic</button>
+      <button type="button" class="pe-mode-btn ${state.editorMode === 'advanced' ? 'active' : ''}" data-action="pe-set-mode" data-value="advanced"${disabledAttr}>Advanced</button>
     </div>
   `;
 }

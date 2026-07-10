@@ -36,14 +36,14 @@ export function renderImportProfileModal(state: {
 }): string {
   const disabled = state.busy ? 'disabled' : '';
   return `
-    <div class="modal-backdrop" data-action="close-modal">
+    <div class="modal-backdrop" data-action="${state.busy ? 'noop' : 'close-modal'}">
       <section class="modal machine-label-modal" role="dialog" aria-modal="true" aria-label="Import profile from Visualizer" data-action="noop">
         <div class="modal-head">
           <div>
             <span class="eyebrow">Visualizer</span>
             <h2>Import profile</h2>
           </div>
-          <button type="button" class="icon-button" data-action="close-modal" aria-label="Close">${icon('x')}</button>
+          <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" ${disabled}>${icon('x')}</button>
         </div>
         <input class="machine-label-input" data-action="import-profile-input" value="${escapeAttr(state.code)}" placeholder="Share code" autocomplete="off" ${disabled} />
         ${
@@ -52,7 +52,7 @@ export function renderImportProfileModal(state: {
             : `<p class="profile-import-hint">Enter the share code from visualizer.coffee. Private shots need your Visualizer credentials set in Settings.</p>`
         }
         <div class="modal-actions">
-          <button type="button" class="text-button" data-action="close-modal">Cancel</button>
+          <button type="button" class="text-button" data-action="close-modal" ${disabled}>Cancel</button>
           <button type="button" class="command primary" data-action="import-profile-submit" ${disabled}>${icon('arrow-down')}<span>${state.busy ? 'Importing…' : 'Import'}</span></button>
         </div>
       </section>

@@ -30,11 +30,84 @@ export interface LiveChartOptions {
   hideMaxTimeLabel?: boolean;
   pixelScale?: number;
   /**
+   * Maximum number of pixels retained by this chart's canvas backing store.
+   * The effective DPR is reduced isotropically when DPR * pixelScale would
+   * exceed the budget. This bounds the GPU allocation without changing the
+   * canvas' CSS size.
+   */
+  maxBackingStorePixels?: number;
+  /**
    * Follow the mouse with a crosshair + per-series values tooltip. Only ever
    * attached on devices with a hovering fine pointer (i.e. desktops), so the
    * tablet/touch paths never pay for the listeners or redraws.
    */
   hover?: boolean;
+}
+
+export type LiveChartInvalidation = 'model' | 'layout' | 'theme' | 'interaction';
+
+/** Four megapixels is roughly a 16 MiB RGBA backing store per mounted chart. */
+export const DEFAULT_MAX_BACKING_STORE_PIXELS = 4 * 1024 * 1024;
+
+export interface CanvasBackingStoreSize {
+  width: number;
+  height: number;
+  scale: number;
+  capped: boolean;
+}
+
+/**
+ * Compute a bounded canvas backing store while preserving a single X/Y scale.
+ * CSS client dimensions are integral in browsers; normalizing them here also
+ * makes this helper safe for synthetic callers and unit tests.
+ */
+export function computeCanvasBackingStoreSize(
+  cssWidthValue: number,
+  cssHeightValue: number,
+  devicePixelRatioValue: number,
+  pixelScaleValue: number,
+  maxBackingStorePixelsValue = DEFAULT_MAX_BACKING_STORE_PIXELS
+): CanvasBackingStoreSize {
+  const cssWidth = finiteNonNegativeInteger(cssWidthValue);
+  const cssHeight = finiteNonNegativeInteger(cssHeightValue);
+  const devicePixelRatio = finitePositive(devicePixelRatioValue, 1);
+  const pixelScale = Math.max(1, finitePositive(pixelScaleValue, 1));
+  const maxBackingStorePixels = Math.max(
+    1,
+    finitePositiveInteger(maxBackingStorePixelsValue, DEFAULT_MAX_BACKING_STORE_PIXELS)
+  );
+  const requestedScale = devicePixelRatio * pixelScale;
+
+  if (cssWidth === 0 || cssHeight === 0) {
+    return { width: 1, height: 1, scale: 1, capped: false };
+  }
+
+  const cssPixels = cssWidth * cssHeight;
+  const maximumScale = Math.sqrt(maxBackingStorePixels / cssPixels);
+  const scale = Math.min(requestedScale, maximumScale);
+
+  // Flooring, rather than rounding, guarantees the integer backing store does
+  // not cross the budget due to rounding at the cap boundary.
+  const width = Math.max(1, Math.floor(cssWidth * scale));
+  const height = Math.max(1, Math.floor(cssHeight * scale));
+  return {
+    width,
+    height,
+    scale,
+    capped: scale < requestedScale
+  };
+}
+
+function finitePositive(value: number, fallback: number): number {
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function finitePositiveInteger(value: number, fallback: number): number {
+  return Number.isFinite(value) && value > 0 ? Math.max(1, Math.floor(value)) : fallback;
+}
+
+function finiteNonNegativeInteger(value: number): number {
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
 const MARGIN_DETAILED = { top: 18, right: 22, bottom: 58, left: 42 };
@@ -242,74 +315,204 @@ function hasData(model: LiveChartModel): boolean {
 }
 
 export class LiveChart {
+  private static readonly canvasOwners = new WeakMap<HTMLCanvasElement, LiveChart>();
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly detailed: boolean;
   private readonly pixelScale: number;
+  private readonly maxBackingStorePixels: number;
   private hideMaxTimeLabel: boolean;
   private model: LiveChartModel | null = null;
   private cssWidth = 0;
   private cssHeight = 0;
   private dpr = 1;
+  private disposed = false;
+  private hoverProbeAttached = false;
+  private animationFrame: number | null = null;
+  private pendingResize = false;
+  private pendingThemeRefresh = false;
+  private pendingPaint = false;
+  private resizeObserver: ResizeObserver | null = null;
+  private themeMedia: MediaQueryList | null = null;
+  private windowResizeAttached = false;
+  private visibilityAttached = false;
   /** Mouse position in CSS pixels while a hover probe is active, else null. */
   private hoverPoint: { x: number; y: number } | null = null;
+
+  private readonly handlePointerMove = (event: PointerEvent): void => {
+    if (event.pointerType !== 'mouse') return;
+    const rect = this.canvas.getBoundingClientRect();
+    this.setHoverPoint({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+  };
+
+  private readonly handlePointerLeave = (): void => {
+    this.setHoverPoint(null);
+  };
+
+  private readonly handleLayoutSource = (): void => {
+    this.invalidate('layout');
+  };
+
+  private readonly handleThemeSource = (): void => {
+    this.invalidate('theme');
+  };
+
+  private readonly handleVisibilitySource = (): void => {
+    if (!this.documentVisible()) return;
+    // DPR/layout and system theme may both have changed while backgrounded.
+    this.invalidate('layout');
+    this.invalidate('theme');
+  };
 
   constructor(canvas: HTMLCanvasElement, options: LiveChartOptions = {}) {
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('LiveChart requires a 2D canvas context');
+    // A canvas is an exclusive rendering resource. Replacing a chart on the
+    // same element disposes the former owner before the new one takes over,
+    // preventing orphaned hover listeners and stale scheduled draws.
+    LiveChart.canvasOwners.get(canvas)?.dispose();
     this.canvas = canvas;
     this.ctx = ctx;
     this.detailed = options.detailed ?? false;
-    this.pixelScale = options.pixelScale ?? 1;
+    this.pixelScale = Math.max(1, finitePositive(options.pixelScale ?? 1, 1));
+    this.maxBackingStorePixels = finitePositiveInteger(
+      options.maxBackingStorePixels ?? DEFAULT_MAX_BACKING_STORE_PIXELS,
+      DEFAULT_MAX_BACKING_STORE_PIXELS
+    );
     this.hideMaxTimeLabel = options.hideMaxTimeLabel ?? false;
+    LiveChart.canvasOwners.set(canvas, this);
     if (options.hover) this.attachHoverProbe();
+    this.attachInvalidationSources();
+  }
+
+  private attachInvalidationSources(): void {
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(this.handleLayoutSource);
+      this.resizeObserver.observe(this.canvas);
+    }
+    if (typeof window !== 'undefined') {
+      if (typeof window.addEventListener === 'function') {
+        // Resize also covers DPR changes that do not alter the CSS box.
+        window.addEventListener('resize', this.handleLayoutSource);
+        this.windowResizeAttached = true;
+      }
+      if (typeof window.matchMedia === 'function') {
+        this.themeMedia = window.matchMedia('(prefers-color-scheme: dark)');
+        if (typeof this.themeMedia.addEventListener === 'function') {
+          this.themeMedia.addEventListener('change', this.handleThemeSource);
+        }
+      }
+    }
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', this.handleVisibilitySource);
+      this.visibilityAttached = true;
+    }
+  }
+
+  private detachInvalidationSources(): void {
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
+    if (
+      this.windowResizeAttached &&
+      typeof window !== 'undefined' &&
+      typeof window.removeEventListener === 'function'
+    ) {
+      window.removeEventListener('resize', this.handleLayoutSource);
+    }
+    this.windowResizeAttached = false;
+    if (this.themeMedia && typeof this.themeMedia.removeEventListener === 'function') {
+      this.themeMedia.removeEventListener('change', this.handleThemeSource);
+    }
+    this.themeMedia = null;
+    if (
+      this.visibilityAttached &&
+      typeof document !== 'undefined' &&
+      typeof document.removeEventListener === 'function'
+    ) {
+      document.removeEventListener('visibilitychange', this.handleVisibilitySource);
+    }
+    this.visibilityAttached = false;
+  }
+
+  private documentVisible(): boolean {
+    return typeof document === 'undefined' || document.visibilityState !== 'hidden';
   }
 
   private attachHoverProbe(): void {
+    if (this.disposed || this.hoverProbeAttached) return;
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
     if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
-    this.canvas.addEventListener('pointermove', (event) => {
-      if (event.pointerType !== 'mouse') return;
-      const rect = this.canvas.getBoundingClientRect();
-      this.setHoverPoint({ x: event.clientX - rect.left, y: event.clientY - rect.top });
-    });
-    this.canvas.addEventListener('pointerleave', () => this.setHoverPoint(null));
+    this.canvas.addEventListener('pointermove', this.handlePointerMove);
+    this.canvas.addEventListener('pointerleave', this.handlePointerLeave);
+    this.hoverProbeAttached = true;
+  }
+
+  private detachHoverProbe(): void {
+    if (!this.hoverProbeAttached) return;
+    this.canvas.removeEventListener('pointermove', this.handlePointerMove);
+    this.canvas.removeEventListener('pointerleave', this.handlePointerLeave);
+    this.hoverProbeAttached = false;
   }
 
   private setHoverPoint(point: { x: number; y: number } | null): void {
+    if (this.disposed) return;
     const previous = this.hoverPoint;
     if (previous == null && point == null) return;
     this.hoverPoint = point;
-    // Redraw immediately so the crosshair tracks the mouse even on charts that
-    // otherwise only draw on data changes (historic shots, calibrator).
-    this.draw();
+    // Coalesce pointer events onto the display frame. Historic charts otherwise
+    // only draw when their model changes, so interaction owns this invalidation.
+    this.invalidate('interaction');
   }
 
   setModel(model: LiveChartModel): void {
+    if (this.disposed) return;
     this.model = model;
   }
 
   setOptions(options: LiveChartOptions): void {
+    if (this.disposed) return;
     if (options.hideMaxTimeLabel != null) this.hideMaxTimeLabel = options.hideMaxTimeLabel;
+    if (options.hover === true) this.attachHoverProbe();
+    if (options.hover === false) {
+      const hadHoverPoint = this.hoverPoint != null;
+      this.detachHoverProbe();
+      this.hoverPoint = null;
+      if (hadHoverPoint) this.invalidate('interaction');
+    }
   }
 
   resize(): void {
-    const cssWidth = this.canvas.clientWidth;
-    const cssHeight = this.canvas.clientHeight;
-    const deviceRatio = typeof window !== 'undefined' && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
-    const ratio = deviceRatio * Math.max(1, this.pixelScale);
-    if (cssWidth === this.cssWidth && cssHeight === this.cssHeight && ratio === this.dpr) {
+    if (this.disposed) return;
+    const cssWidth = finiteNonNegativeInteger(this.canvas.clientWidth);
+    const cssHeight = finiteNonNegativeInteger(this.canvas.clientHeight);
+    const deviceRatio =
+      typeof window !== 'undefined' ? finitePositive(window.devicePixelRatio, 1) : 1;
+    const backingStore = computeCanvasBackingStoreSize(
+      cssWidth,
+      cssHeight,
+      deviceRatio,
+      this.pixelScale,
+      this.maxBackingStorePixels
+    );
+    if (
+      cssWidth === this.cssWidth &&
+      cssHeight === this.cssHeight &&
+      backingStore.scale === this.dpr &&
+      backingStore.width === this.canvas.width &&
+      backingStore.height === this.canvas.height
+    ) {
       return;
     }
     this.cssWidth = cssWidth;
     this.cssHeight = cssHeight;
-    this.dpr = ratio;
-    this.canvas.width = Math.max(1, Math.round(cssWidth * ratio));
-    this.canvas.height = Math.max(1, Math.round(cssHeight * ratio));
-    this.ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    this.dpr = backingStore.scale;
+    this.canvas.width = backingStore.width;
+    this.canvas.height = backingStore.height;
+    this.ctx.setTransform(backingStore.scale, 0, 0, backingStore.scale, 0, 0);
   }
 
   draw(): void {
+    if (this.disposed || !this.documentVisible()) return;
     refreshThemeColors();
     const ctx = this.ctx;
     const width = this.cssWidth;
@@ -332,6 +535,77 @@ export class LiveChart {
     }
     if (detailed) this.drawLegend(model.series, plot, width);
     this.drawHover(model, plot);
+  }
+
+  /**
+   * Request one coalesced paint. Layout invalidations resize before painting;
+   * theme invalidations force CSS token resolution. A host can therefore keep
+   * a chart instance while invalidating its independent inputs explicitly.
+   */
+  invalidate(reason: LiveChartInvalidation = 'model'): void {
+    if (this.disposed) return;
+    this.pendingPaint = true;
+    if (reason === 'layout') this.pendingResize = true;
+    if (reason === 'theme') this.pendingThemeRefresh = true;
+    if (!this.documentVisible()) return;
+    if (this.animationFrame != null) return;
+
+    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+      this.flushInvalidation();
+      return;
+    }
+    this.animationFrame = window.requestAnimationFrame(() => {
+      this.animationFrame = null;
+      this.flushInvalidation();
+    });
+  }
+
+  private flushInvalidation(): void {
+    if (this.disposed || !this.documentVisible() || !this.pendingPaint) return;
+    const shouldResize = this.pendingResize;
+    const shouldRefreshTheme = this.pendingThemeRefresh;
+    this.pendingResize = false;
+    this.pendingThemeRefresh = false;
+    this.pendingPaint = false;
+    if (shouldResize) this.resize();
+    if (shouldRefreshTheme) themeCacheKey = '';
+    this.draw();
+  }
+
+  get isDisposed(): boolean {
+    return this.disposed;
+  }
+
+  /**
+   * End this chart's ownership of the canvas and every resource associated
+   * with it. Safe to call repeatedly. The 1x1 assignment releases a potentially
+   * large GPU backing store while leaving the DOM element reusable.
+   */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.detachHoverProbe();
+    this.detachInvalidationSources();
+    if (this.animationFrame != null) {
+      if (typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+        window.cancelAnimationFrame(this.animationFrame);
+      }
+      this.animationFrame = null;
+    }
+    this.pendingResize = false;
+    this.pendingThemeRefresh = false;
+    this.pendingPaint = false;
+    this.hoverPoint = null;
+    this.model = null;
+    this.cssWidth = 0;
+    this.cssHeight = 0;
+    this.dpr = 1;
+
+    if (LiveChart.canvasOwners.get(this.canvas) === this) {
+      LiveChart.canvasOwners.delete(this.canvas);
+      this.canvas.width = 1;
+      this.canvas.height = 1;
+    }
   }
 
   // Crosshair + values tooltip at the hovered time. Drawn last so it sits on

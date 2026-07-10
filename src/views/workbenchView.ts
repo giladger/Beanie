@@ -1,21 +1,12 @@
 import type { MachineState, RecipeDraft } from '../api/types';
-import type { MachineStatusView } from '../appShell';
 import type { StageReason } from '../domain/liveStageReason';
+import type { TopbarViewModel } from '../render/topbarPresentation';
 import { icon } from '../components/icons';
 import { escapeAttr, escapeHtml } from '../components/html';
 
 export interface WorkbenchTopbarViewModel {
-  machineStatus: MachineStatusView;
-  groupTemperature: string;
-  steamTemperature: string;
-  water: string;
-  waterTone: '' | 'stat-alert' | 'stat-warn';
-  scale: {
-    label: string;
-    title: string;
-    /** Warn styling, e.g. when the scale battery is running low. */
-    tone: '' | 'stat-warn';
-  };
+  /** Complete atomic presentation for the morph-opaque telemetry island. */
+  stats: TopbarViewModel;
   machineCommands: {
     available: boolean;
     current: MachineState;
@@ -147,7 +138,7 @@ export function renderLivePanel(model: LivePanelViewModel): string {
             </button>`
             }
           </div>
-          <div class="live-readouts">
+          <div class="live-readouts" data-morph-skip="live-readouts">
             ${liveReadout('Time', 'live-time', '0.0s')}
             ${liveReadout('Weight', 'live-weight', '--', 'g')}
             ${liveReadout('Pressure', 'live-pressure', '--', 'bar')}
@@ -172,19 +163,19 @@ export function renderTopbar(model: WorkbenchTopbarViewModel): string {
   const machineSettingsLabel = model.cleaningDue
     ? 'Water - steam, water, flush (cleaning due)'
     : 'Water - steam, water, flush';
-  const statusTone = model.machineStatus.tone ? `stat-tone-${model.machineStatus.tone}` : '';
+  const stats = model.stats;
   return `
     <header class="topbar">
       <div class="top-inline">
-        <div class="top-stats" aria-label="Machine metrics">
-          ${topStat('Status', model.machineStatus.label, 'stat-machine', statusTone)}
-          ${topStat('Group', model.groupTemperature, 'stat-group')}
-          ${topStat('Steam', model.steamTemperature, 'stat-steam')}
-          ${topStatButton('Water', model.water, 'Water level alert settings', 'water-stat', 'stat-water', model.waterTone)}
-          ${topStatButton('Scale', model.scale.label, model.scale.title, 'scale-stat', 'stat-scale', `top-stat-divide ${model.scale.tone}`.trim())}
+        <div id="top-stats-island" class="top-stats" data-morph-skip="topbar-stats" aria-label="Machine metrics">
+          ${topStat('Status', stats.machine, 'stat-machine')}
+          ${topStat('Group', stats.group, 'stat-group')}
+          ${topStat('Steam', stats.steam, 'stat-steam')}
+          ${topStatButton('Water', stats.water, 'water-stat', 'stat-water')}
+          ${topStatButton('Scale', stats.scale, 'scale-stat', 'stat-scale')}
         </div>
         ${renderShotCommand(model.machineCommands)}
-        ${model.clock == null ? '' : `<div class="top-clock" id="top-clock" aria-label="Clock">${escapeHtml(model.clock)}</div>`}
+        ${model.clock == null ? '' : `<div class="top-clock" id="top-clock" data-morph-skip="top-clock" aria-label="Clock">${escapeHtml(model.clock)}</div>`}
         <div class="top-icons" role="toolbar" aria-label="Skin actions">
           ${model.derekEnabled ? `<button class="icon-tool icon-tool-labeled" data-action="derek-open" aria-label="Ask Derek, the Decent assistant" title="Ask Derek, the Decent assistant">${icon('sparkles')}<span class="icon-tool-label">Derek</span></button>` : ''}
           <button class="icon-tool icon-tool-labeled ${model.cleaningDue ? 'has-badge' : ''}" data-action="open-machine-settings" aria-label="${escapeAttr(machineSettingsLabel)}" title="${escapeAttr(machineSettingsLabel)}">${icon('droplet')}<span class="icon-tool-label">Water</span>${model.cleaningDue ? '<span class="icon-tool-badge" aria-hidden="true"></span>' : ''}</button>
@@ -338,19 +329,17 @@ function controlTemp(label: string, markClass = ''): string {
   `;
 }
 
-function topStat(label: string, value: string, id?: string, toneClass?: string): string {
+function topStat(label: string, stat: TopbarViewModel['machine'], id?: string): string {
   const idAttr = id ? ` id="${id}"` : '';
-  const cls = toneClass ? ` ${toneClass}` : '';
-  return `<div class="top-stat${cls}"><label>${escapeHtml(label)}</label><strong${idAttr}>${escapeHtml(value)}</strong></div>`;
+  return `<div class="${escapeAttr(stat.className)}" aria-label="${escapeAttr(stat.ariaLabel)}"><label>${escapeHtml(label)}</label><strong${idAttr}>${escapeHtml(stat.text)}</strong></div>`;
 }
 
-function topStatButton(label: string, value: string, title: string, action: string, id?: string, toneClass?: string): string {
+function topStatButton(label: string, stat: TopbarViewModel['water'], action: string, id?: string): string {
   const idAttr = id ? ` id="${id}"` : '';
-  const cls = toneClass ? ` ${toneClass}` : '';
   return `
-    <button class="top-stat top-stat-button${cls}" data-action="${escapeAttr(action)}" aria-label="${escapeAttr(`${label}: ${value}. ${title}`)}" title="${escapeAttr(title)}">
+    <button class="${escapeAttr(stat.className)}" data-action="${escapeAttr(action)}" aria-label="${escapeAttr(stat.ariaLabel)}" title="${escapeAttr(stat.title)}">
       <span class="top-stat-label">${escapeHtml(label)}</span>
-      <strong${idAttr}>${escapeHtml(value)}</strong>
+      <strong${idAttr}>${escapeHtml(stat.text)}</strong>
     </button>
   `;
 }
@@ -360,16 +349,18 @@ function liveReadout(label: string, id: string, value: string, unit = ''): strin
   return `<div class="live-readout"><label>${escapeHtml(label)}</label><strong id="${id}">${escapeHtml(value)}</strong>${suffix}</div>`;
 }
 
-// Fixed vertical rail of every profile stage, rendered once beside the chart;
-// the app patches the done/current/upcoming states per frame. Hidden
+// Fixed vertical rail of every profile stage, seeded beside the chart; the
+// LiveReadouts owner can rebuild it when an opaque surviving rail receives a
+// different profile, then patches done/current/upcoming states. Hidden
 // (but kept in the DOM for patching) when the profile's steps aren't known.
 // Also reused by the historic shot-stages overlay, which passes its own id.
 export function renderStageRail(
   stages: LiveStagesView | null,
   id = 'live-stage-rail'
 ): string {
+  const morphSkip = id === 'live-stage-rail' ? ' data-morph-skip="live-stage-rail"' : '';
   if (!stages || stages.steps.length === 0) {
-    return `<ol class="live-stage-rail" id="${id}" hidden></ol>`;
+    return `<ol class="live-stage-rail" id="${id}"${morphSkip} hidden></ol>`;
   }
   const items = stages.steps
     .map(
@@ -385,7 +376,7 @@ export function renderStageRail(
       </li>`
     )
     .join('');
-  return `<ol class="live-stage-rail" id="${id}">${items}</ol>`;
+  return `<ol class="live-stage-rail" id="${id}"${morphSkip}>${items}</ol>`;
 }
 
 // Timeline state for a rail item: stages before the current one are done,

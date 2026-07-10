@@ -54,13 +54,9 @@ import {
   nonNegativeNumber,
   positiveNumber,
   round,
-  scaleBatteryLow,
   scaleConnected,
-  scaleStatLabel,
-  scaleStatTitle,
   sleepOverlayModel,
   startupStatusLabel,
-  temp,
   water,
   workflowSignature,
   type LiveChartMode,
@@ -124,10 +120,14 @@ import {
 import { isHandoffArrival } from './domain/labelScanHandoff';
 import { icon } from './components/icons';
 import { captureFocus, morphRender, restoreFocus } from './render/renderer';
-import { LiveReadouts, TopbarStats } from './render/livePath';
+import { LiveReadouts } from './render/livePath';
+import { TopbarIsland } from './render/topbarIsland';
+import { TopbarProjector, type TopbarViewModel } from './render/topbarPresentation';
+import { ScreensaverIsland } from './render/screensaverIsland';
+import { DerekStreamIsland } from './render/derekStreamIsland';
+import { patchProfileRangeValue } from './render/profileEditorIsland';
 import { ScannerFlow } from './controllers/scannerFlow';
 import { ProfileEditorFlow } from './controllers/profileEditorFlow';
-import { waterTankMlFromMm } from './domain/waterTank';
 import {
   batchFieldsFromForm,
   beanFieldsFromForm,
@@ -391,7 +391,8 @@ import {
 } from './domain/cleaning';
 import { reconnectDelayMs } from './domain/connectionHealth';
 import { optimisticShotFromLive, shotMetadataWithFreshness } from './domain/liveShotRecord';
-import { waterAlertLevel, type WaterAlertLevel } from './domain/waterAlert';
+import type { WaterAlertLevel } from './domain/waterAlert';
+import { WaterAlertProjector } from './render/waterAlertPresentation';
 import {
   FLUSH_PRESETS,
   HOT_WATER_PRESETS,
@@ -916,8 +917,12 @@ export class BeanieApp {
   private shotStateSocketAttempts = 0;
   private shotRefreshTimer: number | null = null;
   private clockTimer: number | null = null;
-  // The gated + throttled top-bar readout writer (see src/render/livePath.ts).
-  private readonly topbarStats: TopbarStats;
+  // Raw telemetry is projected into one complete, stabilized view model, then
+  // committed by the topbar's sole bounded DOM owner.
+  private readonly topbarProjector = new TopbarProjector();
+  private readonly topbarIsland = new TopbarIsland();
+  private readonly screensaverIsland = new ScreensaverIsland();
+  private readonly derekStreamIsland = new DerekStreamIsland();
   private saverPhotoTimer: number | null = null;
   // Slideshow/clock placement live outside AppState so their minute ticks
   // patch the overlay DOM in place instead of re-rendering the app.
@@ -961,9 +966,9 @@ export class BeanieApp {
   // repeat on every setState re-render. Measurements are immutable once saved,
   // so the cache is keyed by shot id plus the measurements array reference (the
   // reference changes when a placeholder record is later upgraded with data).
-  private shotChartModelCache: { shotId: string; measurements: readonly ShotMeasurement[]; model: LiveChartModel } | null = null;
+  private shotChartModelCache: { shotId: string; measurements: readonly ShotMeasurement[]; profile: Profile | null; model: LiveChartModel } | null = null;
   // Same shape, for the shot overlaid on the detail chart by compare mode.
-  private compareChartModelCache: { shotId: string; measurements: readonly ShotMeasurement[]; model: LiveChartModel } | null = null;
+  private compareChartModelCache: { shotId: string; measurements: readonly ShotMeasurement[]; profile: Profile | null; model: LiveChartModel } | null = null;
   // Reference shot captured when a live pull starts, drawn under the live
   // trace (its chart model is built once here, off the telemetry hot path).
   private liveGhostModel: LiveChartModel | null = null;
@@ -972,8 +977,15 @@ export class BeanieApp {
   private detailChart: LiveChart | null = null;
   private shotStagesChartCanvas: HTMLCanvasElement | null = null;
   private shotStagesChart: LiveChart | null = null;
+  private shotStagesChartShotId: string | null = null;
+  private shotStagesChartMeasurements: readonly ShotMeasurement[] | null = null;
+  private shotStagesChartProfile: Profile | null = null;
   private calibratorChartCanvas: HTMLCanvasElement | null = null;
   private calibratorChart: LiveChart | null = null;
+  private calibratorChartShotId: string | null = null;
+  private calibratorChartMeasurements: readonly ShotMeasurement[] | null = null;
+  private calibratorChartProfile: Profile | null = null;
+  private calibratorChartFactor: number | null = null;
   // One-shot: focus the notes textarea on the render right after the modal opens.
   private pendingNotesFocus = false;
   private detailChartShotId: string | null = null;
@@ -986,6 +998,7 @@ export class BeanieApp {
   // Last computed water-alert band, used to detect threshold crossings on the
   // telemetry hot path (so we only re-render when the band actually changes).
   private lastWaterAlert: WaterAlertLevel = 'none';
+  private readonly waterAlertProjector = new WaterAlertProjector();
   private machineProgressReturnView: View | null = null;
   private machineStopFeedbackTimer: number | null = null;
   private timedSteamStopTimer: number | null = null;
@@ -1067,6 +1080,7 @@ export class BeanieApp {
       patchStateDerek: (derek) => {
         this.state.derek = derek;
       },
+      patchDerekStream: (model) => this.derekStreamIsland.offer(model),
       disposed: () => this.disposed,
       brewTempValue: () => this.brewTempValue(),
       scheduleApply: () => this.scheduleApply(),
@@ -1096,19 +1110,6 @@ export class BeanieApp {
       },
       root
     );
-    this.topbarStats = new TopbarStats(root, () => {
-      const group = this.state.machine?.groupTemperature ?? null;
-      const steam = this.state.machine?.steamTemperature ?? null;
-      const waterMm = this.state.waterLevel;
-      return {
-        status: this.machineStatusStat(),
-        group: { text: temp(group), raw: group },
-        steam: { text: temp(steam), raw: steam },
-        // Raw in ml (the display unit) so the deadband speaks the same scale.
-        water: { text: water(waterMm), raw: waterMm == null ? null : waterTankMlFromMm(waterMm) },
-        scale: scaleStatLabel(this.state.scale)
-      };
-    });
   }
 
   start(): void {
@@ -1128,9 +1129,12 @@ export class BeanieApp {
     this.phoneMedia?.addEventListener('change', this.handlePhoneMediaChange);
     // Live settings sync: re-poll the store whenever this device regains focus.
     window.addEventListener('focus', this.handleWindowFocus);
+    if (typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', this.handleDocumentVisibility);
+    }
     this.render();
     this.armClockTimer();
-    this.armSaverPhotoTimer();
+    this.syncSaverPhotoTimer();
     void this.loadScreensaverPhotos();
     void this.load();
     if (isHandoffArrival(location.search)) {
@@ -1153,6 +1157,9 @@ export class BeanieApp {
     this.root.removeEventListener('touchmove', this.handleTouchMove);
     this.phoneMedia?.removeEventListener('change', this.handlePhoneMediaChange);
     window.removeEventListener('focus', this.handleWindowFocus);
+    if (typeof document.removeEventListener === 'function') {
+      document.removeEventListener('visibilitychange', this.handleDocumentVisibility);
+    }
     if (this.settingsPollTimer != null) window.clearInterval(this.settingsPollTimer);
     if (this.applyTimer != null) window.clearTimeout(this.applyTimer);
     if (this.machineRetryTimer != null) window.clearTimeout(this.machineRetryTimer);
@@ -1162,8 +1169,13 @@ export class BeanieApp {
     if (this.shotStateRetryTimer != null) window.clearTimeout(this.shotStateRetryTimer);
     if (this.pendingDoseRetryTimer != null) window.clearTimeout(this.pendingDoseRetryTimer);
     this.derekFlow.dispose();
+    this.scannerFlow.cancelScannerWork();
+    this.profileEditorFlow.dispose();
     if (this.shotRefreshTimer != null) window.clearInterval(this.shotRefreshTimer);
-    this.topbarStats.dispose();
+    this.topbarIsland.dispose();
+    this.screensaverIsland.dispose();
+    this.derekStreamIsland.dispose();
+    this.liveReadouts.dispose();
     if (this.clockTimer != null) window.clearTimeout(this.clockTimer);
     if (this.saverPhotoTimer != null) window.clearTimeout(this.saverPhotoTimer);
     if (this.beanRefreshTimer != null) window.clearInterval(this.beanRefreshTimer);
@@ -1174,6 +1186,14 @@ export class BeanieApp {
     if (this.wakeZonePreviewTimer != null) window.clearTimeout(this.wakeZonePreviewTimer);
     if (this.wakeAppIdleTimer != null) window.clearTimeout(this.wakeAppIdleTimer);
     if (this.liveRaf != null) window.cancelAnimationFrame(this.liveRaf);
+    this.liveChart?.dispose();
+    this.detailChart?.dispose();
+    this.shotStagesChart?.dispose();
+    this.calibratorChart?.dispose();
+    this.liveChart = null;
+    this.detailChart = null;
+    this.shotStagesChart = null;
+    this.calibratorChart = null;
     this.clearMachineStopRequest();
     this.applyTimer = null;
     this.machineRetryTimer = null;
@@ -1632,21 +1652,15 @@ export class BeanieApp {
     const msToNextMinute = 60_000 - (Date.now() % 60_000);
     this.clockTimer = window.setTimeout(() => {
       this.clockTimer = null;
+      if (this.disposed) return;
       const label = clockLabel(new Date(), this.state.settingsPreferences.clockFormat);
-      const el = this.root.querySelector<HTMLElement>('#top-clock');
-      if (el) el.textContent = label;
-      const saverClock = this.root.querySelector<HTMLElement>('#saver-clock');
-      if (saverClock) {
-        saverClock.textContent = label;
-        // Wander to a fresh spot on a slow cadence so the time never burns in
-        // (persistence stress builds over hours, not minutes).
-        if (Date.now() - this.saverClockMovedAtMs >= SCREENSAVER_CLOCK_MOVE_INTERVAL_MS) {
-          this.saverClockMovedAtMs = Date.now();
-          this.saverClockPos = screensaverClockPosition(Math.random(), Math.random());
-          saverClock.style.left = `${this.saverClockPos.leftPct}%`;
-          saverClock.style.top = `${this.saverClockPos.topPct}%`;
-        }
+      // Wander to a fresh spot on a slow cadence so the time never burns in
+      // (persistence stress builds over hours, not minutes).
+      if (Date.now() - this.saverClockMovedAtMs >= SCREENSAVER_CLOCK_MOVE_INTERVAL_MS) {
+        this.saverClockMovedAtMs = Date.now();
+        this.saverClockPos = screensaverClockPosition(Math.random(), Math.random());
       }
+      this.screensaverIsland.updateClock(label, this.saverClockPos);
       this.armClockTimer();
     }, msToNextMinute + 250);
   }
@@ -1654,12 +1668,27 @@ export class BeanieApp {
   // Advance the screensaver photo slideshow by crossfading the two stacked
   // <img> layers. The chain runs whenever the overlay could appear and no-ops
   // (cheaply) while it isn't on screen.
-  private armSaverPhotoTimer(): void {
-    if (this.saverPhotoTimer != null) window.clearTimeout(this.saverPhotoTimer);
+  private syncSaverPhotoTimer(): void {
+    const visible = !document.visibilityState || document.visibilityState === 'visible';
+    const overlayActive = (this.state.asleep && !this.state.appAwake) || this.state.saverPreview;
+    const shouldRun =
+      !this.disposed &&
+      visible &&
+      Boolean(overlayActive) &&
+      this.screensaverIsland.hasPhotoSurface &&
+      screensaverShowsPhotos(this.state.settingsPreferences.screensaverMode) &&
+      this.state.screensaverPhotos.length > 1;
+    if (!shouldRun) {
+      if (this.saverPhotoTimer != null) window.clearTimeout(this.saverPhotoTimer);
+      this.saverPhotoTimer = null;
+      return;
+    }
+    if (this.saverPhotoTimer != null) return;
     this.saverPhotoTimer = window.setTimeout(() => {
       this.saverPhotoTimer = null;
+      if (this.disposed) return;
       this.advanceSaverPhoto();
-      this.armSaverPhotoTimer();
+      this.syncSaverPhotoTimer();
     }, SCREENSAVER_PHOTO_INTERVAL_MS);
   }
 
@@ -1707,15 +1736,20 @@ export class BeanieApp {
   private async compressScreensaverPhoto(file: File): Promise<string | null> {
     try {
       const bitmap = await createImageBitmap(file);
-      const scale = Math.min(1, SCREENSAVER_PHOTO_MAX_DIMENSION / Math.max(bitmap.width, bitmap.height));
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return null;
-      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-      bitmap.close();
-      return canvas.toDataURL('image/jpeg', SCREENSAVER_PHOTO_JPEG_QUALITY);
+      try {
+        const scale = Math.min(1, SCREENSAVER_PHOTO_MAX_DIMENSION / Math.max(bitmap.width, bitmap.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+        canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+        ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        return canvas.toDataURL('image/jpeg', SCREENSAVER_PHOTO_JPEG_QUALITY);
+      } finally {
+        // ImageBitmap is an explicit decoded-image resource. Every exit path,
+        // including missing canvas contexts and encoding failures, releases it.
+        bitmap.close();
+      }
     } catch (error) {
       console.warn('[Beanie] Could not import screensaver photo', file.name, error);
       return null;
@@ -1723,27 +1757,19 @@ export class BeanieApp {
   }
 
   private advanceSaverPhoto(): void {
-    const a = this.root.querySelector<HTMLImageElement>('#saver-photo-a');
-    const b = this.root.querySelector<HTMLImageElement>('#saver-photo-b');
-    if (!a || !b) return;
+    const overlayActive =
+      (this.state.asleep && !this.state.appAwake) || Boolean(this.state.saverPreview);
+    if (
+      this.disposed ||
+      (document.visibilityState && document.visibilityState !== 'visible') ||
+      !overlayActive
+    ) return;
     const photos = this.state.screensaverPhotos;
     if (photos.length < 2) return;
-    this.saverPhotoIndex = nextScreensaverPhotoIndex(this.saverPhotoIndex, photos.length);
-    const incoming = a.classList.contains('active') ? b : a;
-    const outgoing = incoming === a ? b : a;
-    incoming.onload = () => {
-      incoming.onload = null;
-      incoming.classList.add('active');
-      outgoing.classList.remove('active');
-      // Release the hidden layer's decoded bitmap once the 1.2s crossfade has
-      // finished — a data-URL src left on the faded-out <img> pins its GPU
-      // texture for the whole interval, which on the in-process WebView is
-      // memory that never comes back (docs/webview-gpu-oom-investigation.md).
-      window.setTimeout(() => {
-        if (!outgoing.classList.contains('active')) outgoing.removeAttribute('src');
-      }, 1500);
-    };
-    incoming.src = photos[this.saverPhotoIndex]!;
+    const nextIndex = nextScreensaverPhotoIndex(this.saverPhotoIndex, photos.length);
+    if (this.screensaverIsland.advancePhoto(photos[nextIndex]!)) {
+      this.saverPhotoIndex = nextIndex;
+    }
   }
 
   private startBeanRefreshTimer(): void {
@@ -2747,6 +2773,29 @@ export class BeanieApp {
     return this.machineStatusStat().label;
   }
 
+  private topbarViewModel(): TopbarViewModel {
+    const alert = this.currentWaterAlert();
+    const scale = this.state.scale;
+    return this.topbarProjector.project({
+      status: this.machineStatusStat(),
+      groupTemperatureC: this.state.machine?.groupTemperature,
+      steamTemperatureC: this.state.machine?.steamTemperature,
+      waterLevelMm: this.state.waterLevel,
+      waterAlert: alert === 'hard' ? 'hard' : alert === 'soft' ? 'soft' : 'none',
+      scale: scale
+        ? {
+            weight: scale.weight,
+            batteryLevel: scale.batteryLevel,
+            status: scale.status
+          }
+        : null
+    });
+  }
+
+  private updateTopbarIsland(): void {
+    this.topbarIsland.offer(this.topbarViewModel());
+  }
+
   private async toggleMachineCommand(state: MachineState): Promise<void> {
     const active = this.state.machine?.state?.state === state;
     await this.machineAction(active ? 'idle' : state);
@@ -3086,7 +3135,7 @@ export class BeanieApp {
           this.setState({});
           return;
         }
-        this.topbarStats.update();
+        this.updateTopbarIsland();
       } catch (error) {
         console.warn('[Beanie] Bad water level frame', error);
       }
@@ -3196,6 +3245,7 @@ export class BeanieApp {
           (this.state.liveActive || this.state.liveFinalizing)
         ) {
           this.updateLiveReadouts();
+          this.liveReadouts.flush();
         }
       } catch (error) {
         console.warn('[Beanie] Bad shotState frame', error);
@@ -3254,6 +3304,7 @@ export class BeanieApp {
 
     const panelDecision = liveShotPanelDecision(wasActive, active);
     if (panelDecision === 'started') {
+      this.liveReadouts.beginSession();
       this.captureLiveGhost();
       // A pull is hands-off, so heartbeat at the start to keep the machine awake.
       this.sendPresenceHeartbeat();
@@ -3318,7 +3369,7 @@ export class BeanieApp {
       this.setState({});
       return true;
     }
-    this.topbarStats.update();
+    this.updateTopbarIsland();
     return true;
   }
 
@@ -3492,7 +3543,7 @@ export class BeanieApp {
   }
 
   private currentWaterAlert(): WaterAlertLevel {
-    return waterAlertLevel({
+    return this.waterAlertProjector.project({
       levelMm: this.state.waterLevel,
       machineState: this.state.machine?.state?.state ?? null,
       softLimitMl: this.state.settingsPreferences.waterSoftLimitMl
@@ -3587,12 +3638,14 @@ export class BeanieApp {
   private bindLiveElements(): void {
     const canvas = this.root.querySelector<HTMLCanvasElement>('#live-canvas');
     if (!canvas) {
+      this.liveChart?.dispose();
       this.liveChart = null;
       this.liveCanvas = null;
       this.liveReadouts.clear();
       return;
     }
     if (canvas !== this.liveCanvas) {
+      this.liveChart?.dispose();
       this.liveCanvas = canvas;
       this.liveChart = new LiveChart(canvas, {
         detailed: true,
@@ -3609,6 +3662,7 @@ export class BeanieApp {
       elapsedSeconds: this.liveShot.elapsedSeconds,
       latest: this.liveShot.latest,
       currentStage: this.currentStageIndex(),
+      stageNames: profileStepNames(this.liveProfile()),
       stageMarkerCount: this.liveShot.snapshot.stageMarkers.length,
       stageReasons: () => this.liveStageReasons(),
       formatNumber
@@ -4475,6 +4529,9 @@ export class BeanieApp {
   private readonly handleWindowFocus = (): void => {
     void this.syncFromGateway();
   };
+  private readonly handleDocumentVisibility = (): void => {
+    this.syncSaverPhotoTimer();
+  };
 
   private retryFailedStoreWrites(): void {
     for (const [storeKey, value] of [...this.failedStoreWrites.entries()]) {
@@ -5104,6 +5161,7 @@ export class BeanieApp {
     target: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement,
     commit = true
   ): boolean {
+    if (this.state.busy) return false;
     const pe = this.state.profileEditor;
     if (!pe) return false;
     const action = target.dataset.action;
@@ -5126,20 +5184,11 @@ export class BeanieApp {
     const isRangeDrag = !commit && target instanceof HTMLInputElement && target.type === 'range';
     if (isRangeDrag) {
       this.state = { ...this.state, profileEditor: next };
-      this.patchLiveValue(target);
+      patchProfileRangeValue(target);
       return true;
     }
     this.setState({ profileEditor: next });
     return true;
-  }
-
-  // Live-update the value readout beside a slider mid-drag, without a re-render.
-  private patchLiveValue(range: HTMLInputElement): void {
-    const value = range.closest('.pe-ctl')?.querySelector<HTMLElement>('.pe-ctl-value');
-    if (!value) return;
-    const unit = value.querySelector('em');
-    value.textContent = range.value;
-    if (unit) value.appendChild(unit);
   }
 
   private applyExitField(
@@ -6776,6 +6825,9 @@ export class BeanieApp {
           </div>
         </div>`
       );
+      this.topbarIsland.bind(this.root);
+      this.screensaverIsland.bind(this.root);
+      this.derekStreamIsland.bind(this.root);
       return;
     }
     const bean = this.selectedBean();
@@ -6783,9 +6835,13 @@ export class BeanieApp {
     const isPhone = this.isPhoneLayout();
     const renderPhone = isPhone && (this.state.view === 'workbench' || this.state.view === 'settings');
     const isPage = this.state.view !== 'workbench' && !renderPhone;
+    // Publish the current model before morphing. If the topbar is remounted,
+    // bind() can replay only this current state—never a throttled stale frame.
+    const topbarStats = this.topbarViewModel();
+    this.topbarIsland.offer(topbarStats);
     const html = `
       <div class="app-shell ${renderPhone ? 'app-shell-phone' : isPage ? 'app-shell-page' : ''}">
-        ${renderPhone ? this.renderPhoneApp(bean) : isPage ? this.renderPage() : this.renderWorkbench(bean)}
+        ${renderPhone ? this.renderPhoneApp(bean) : isPage ? this.renderPage() : this.renderWorkbench(bean, topbarStats)}
         ${this.renderLivePanel()}
         ${this.renderModal()}
         ${isPage ? '' : this.renderWaterAlert()}
@@ -6796,6 +6852,21 @@ export class BeanieApp {
       </div>
     `;
     morphRender(this.root, html);
+    this.topbarIsland.bind(this.root);
+    this.screensaverIsland.bind(this.root);
+    this.screensaverIsland.updateClock(
+      clockLabel(new Date(), this.state.settingsPreferences.clockFormat),
+      this.saverClockPos
+    );
+    this.screensaverIsland.setClockOnPhoto(
+      screensaverShowsPhotos(this.state.settingsPreferences.screensaverMode) &&
+        this.state.screensaverPhotos.length > 0
+    );
+    this.screensaverIsland.syncPhoto(
+      this.state.screensaverPhotos[this.saverPhotoIndex] ?? null
+    );
+    this.syncSaverPhotoTimer();
+    this.derekStreamIsland.bind(this.root);
     this.bindLiveElements();
     this.bindDetailChart();
     this.bindShotStagesChart();
@@ -6874,25 +6945,13 @@ export class BeanieApp {
     });
   }
 
-  private renderWorkbench(bean: Bean | null): string {
+  private renderWorkbench(bean: Bean | null, topbarStats: TopbarViewModel): string {
     const draft = this.state.draft;
     const brewTemp = this.brewTempValue();
-    const waterAlert = this.currentWaterAlert();
-    const waterTone = waterAlert === 'hard' ? 'stat-alert' : waterAlert === 'soft' ? 'stat-warn' : '';
     const cleaningDueNow = cleaningDue(this.state.cleaning, this.state.cleaningThreshold);
-    const scale = this.state.scale;
     return renderWorkbenchView({
       topbar: {
-        machineStatus: this.machineStatusStat(),
-        groupTemperature: temp(this.state.machine?.groupTemperature),
-        steamTemperature: temp(this.state.machine?.steamTemperature),
-        water: water(this.state.waterLevel),
-        waterTone,
-        scale: {
-          label: scaleStatLabel(scale),
-          title: scaleStatTitle(scale),
-          tone: scaleBatteryLow(scale) ? 'stat-warn' : ''
-        },
+        stats: topbarStats,
         machineCommands: {
           available: machineCommandsAvailable(this.state.demo, this.state.machineInfo),
           current: this.state.machine?.state?.state ?? 'idle',
@@ -6982,6 +7041,7 @@ export class BeanieApp {
     const canvas = this.root.querySelector<HTMLCanvasElement>('#detail-canvas');
     const shot = canvas ? this.selectedHistoryShot() : null;
     if (!canvas || !shot) {
+      this.detailChart?.dispose();
       this.detailChart = null;
       this.detailChartCanvas = null;
       this.detailChartShotId = null;
@@ -6997,35 +7057,37 @@ export class BeanieApp {
         ? this.detailChartCompareShotId == null
         : this.detailChartCompareShotId === compare.id &&
           this.compareChartModelCache?.shotId === compare.id &&
-          this.compareChartModelCache.measurements === compare.measurements;
+          this.compareChartModelCache.measurements === compare.measurements &&
+          this.compareChartModelCache.profile === (compare.workflow?.profile ?? null);
     if (
       canvas === this.detailChartCanvas &&
       this.detailChart != null &&
       shot.id === this.detailChartShotId &&
       cachedModel?.shotId === shot.id &&
       cachedModel.measurements === shot.measurements &&
+      cachedModel.profile === (shot.workflow?.profile ?? null) &&
       compareCacheValid
     ) {
+      // Layout, DPR, theme, and visibility are independent event sources owned
+      // by LiveChart. A stable bind is therefore genuinely silent.
       return;
     }
     // Reuse the chart instance while the canvas element survives: LiveChart's
     // constructor attaches hover listeners to the canvas, so re-constructing on
     // a surviving canvas would stack them.
-    const chart =
-      canvas === this.detailChartCanvas && this.detailChart != null
-        ? this.detailChart
-        : new LiveChart(canvas, { detailed: true, pixelScale: 3, hover: true });
+    const reuse = canvas === this.detailChartCanvas && this.detailChart != null;
+    if (!reuse) this.detailChart?.dispose();
+    const chart = reuse
+      ? this.detailChart!
+      : new LiveChart(canvas, { detailed: true, pixelScale: 3, hover: true });
     this.detailChart = chart;
     this.detailChartCanvas = canvas;
     this.detailChartShotId = shot.id;
     this.detailChartCompareShotId = compare?.id ?? null;
     const model = this.shotChartModel(shot);
     chart.setModel(compare ? overlayComparisonModel(model, this.compareChartModel(compare)) : model);
-    // Draw after layout so the canvas has its CSS box for DPR sizing.
-    window.requestAnimationFrame(() => {
-      chart.resize();
-      chart.draw();
-    });
+    // Draw after layout so the canvas has its CSS box for bounded DPR sizing.
+    chart.invalidate(reuse ? 'model' : 'layout');
   }
 
   private compareShotForDetailChart(): ShotRecord | null {
@@ -7036,69 +7098,112 @@ export class BeanieApp {
   // cached one the detail chart uses (markers included), just drawn larger.
   private bindShotStagesChart(): void {
     if (this.state.modal !== 'shot-stages') {
+      this.shotStagesChart?.dispose();
       this.shotStagesChart = null;
       this.shotStagesChartCanvas = null;
+      this.shotStagesChartShotId = null;
+      this.shotStagesChartMeasurements = null;
+      this.shotStagesChartProfile = null;
       return;
     }
     const canvas = this.root.querySelector<HTMLCanvasElement>('#shot-stages-canvas');
     const shot = canvas ? this.selectedHistoryShot() : null;
     if (!canvas || !shot) {
+      this.shotStagesChart?.dispose();
       this.shotStagesChart = null;
       this.shotStagesChartCanvas = null;
+      this.shotStagesChartShotId = null;
+      this.shotStagesChartMeasurements = null;
+      this.shotStagesChartProfile = null;
       return;
     }
-    // The model is fixed for a given canvas + shot, so a surviving canvas means
-    // there's nothing to redo — and never re-construct a LiveChart on a
-    // surviving canvas (the constructor attaches hover listeners; see
-    // bindDetailChart).
-    if (canvas === this.shotStagesChartCanvas && this.shotStagesChart != null) return;
-    const chart = new LiveChart(canvas, { detailed: true, pixelScale: 3, hover: true });
+    const reuse = canvas === this.shotStagesChartCanvas && this.shotStagesChart != null;
+    const sameModel =
+      reuse &&
+      this.shotStagesChartShotId === shot.id &&
+      this.shotStagesChartMeasurements === shot.measurements &&
+      this.shotStagesChartProfile === (shot.workflow?.profile ?? null);
+    if (sameModel) return;
+    if (!reuse) this.shotStagesChart?.dispose();
+    const chart = reuse
+      ? this.shotStagesChart!
+      : new LiveChart(canvas, { detailed: true, pixelScale: 3, hover: true });
     this.shotStagesChart = chart;
     this.shotStagesChartCanvas = canvas;
+    this.shotStagesChartShotId = shot.id;
+    this.shotStagesChartMeasurements = shot.measurements;
+    this.shotStagesChartProfile = shot.workflow?.profile ?? null;
     chart.setModel(this.shotChartModel(shot));
-    // Draw after layout so the canvas has its CSS box for DPR sizing.
-    window.requestAnimationFrame(() => {
-      chart.resize();
-      chart.draw();
-    });
+    chart.invalidate(reuse ? 'model' : 'layout');
   }
 
   // Returns the canvas chart model for a saved shot, rebuilding only when the
   // shot (or its measurement array instance) changes.
   private shotChartModel(shot: ShotRecord): LiveChartModel {
     const cached = this.shotChartModelCache;
-    if (cached && cached.shotId === shot.id && cached.measurements === shot.measurements) {
+    const profile = shot.workflow?.profile ?? null;
+    if (
+      cached &&
+      cached.shotId === shot.id &&
+      cached.measurements === shot.measurements &&
+      cached.profile === profile
+    ) {
       return cached.model;
     }
     const model = chartModelFromShot(shot);
-    this.shotChartModelCache = { shotId: shot.id, measurements: shot.measurements, model };
+    this.shotChartModelCache = { shotId: shot.id, measurements: shot.measurements, profile, model };
     return model;
   }
 
   private compareChartModel(shot: ShotRecord): LiveChartModel {
     const cached = this.compareChartModelCache;
-    if (cached && cached.shotId === shot.id && cached.measurements === shot.measurements) {
+    const profile = shot.workflow?.profile ?? null;
+    if (
+      cached &&
+      cached.shotId === shot.id &&
+      cached.measurements === shot.measurements &&
+      cached.profile === profile
+    ) {
       return cached.model;
     }
     const model = chartModelFromShot(shot);
-    this.compareChartModelCache = { shotId: shot.id, measurements: shot.measurements, model };
+    this.compareChartModelCache = { shotId: shot.id, measurements: shot.measurements, profile, model };
     return model;
   }
 
   private bindCalibratorChart(): void {
     if (this.state.view !== 'flow-calibrator') {
+      this.calibratorChart?.dispose();
       this.calibratorChart = null;
       this.calibratorChartCanvas = null;
+      this.calibratorChartShotId = null;
+      this.calibratorChartMeasurements = null;
+      this.calibratorChartProfile = null;
+      this.calibratorChartFactor = null;
       return;
     }
     const canvas = this.root.querySelector<HTMLCanvasElement>('#flow-cal-canvas');
     if (!canvas) {
+      this.calibratorChart?.dispose();
       this.calibratorChart = null;
       this.calibratorChartCanvas = null;
+      this.calibratorChartShotId = null;
+      this.calibratorChartMeasurements = null;
+      this.calibratorChartProfile = null;
+      this.calibratorChartFactor = null;
       return;
     }
     const shot = this.flowCalibrationSelectedShot();
-    if (!shot) return;
+    if (!shot) {
+      this.calibratorChart?.dispose();
+      this.calibratorChart = null;
+      this.calibratorChartCanvas = null;
+      this.calibratorChartShotId = null;
+      this.calibratorChartMeasurements = null;
+      this.calibratorChartProfile = null;
+      this.calibratorChartFactor = null;
+      return;
+    }
     // Show the two calibration lines — machine flow and scale (weight) flow —
     // plus pressure for context. Only the machine-flow line is scaled by the
     // preview multiplier, so −/+ visibly moves it onto the scale line. Scale
@@ -7106,6 +7211,15 @@ export class BeanieApp {
     // recorded it; otherwise fall back to the open-time estimate.
     const shotBase = recordedFlowMultiplier(shot) ?? this.flowCalibrationBase();
     const factor = calibrationPreviewFactor(shotBase, this.flowCalibrationDraft());
+    const profile = shot.workflow?.profile ?? null;
+    const reuse = canvas === this.calibratorChartCanvas && this.calibratorChart != null;
+    if (
+      reuse &&
+      this.calibratorChartShotId === shot.id &&
+      this.calibratorChartMeasurements === shot.measurements &&
+      this.calibratorChartProfile === profile &&
+      this.calibratorChartFactor === factor
+    ) return;
     const model = this.shotChartModel(shot);
     const series = model.series
       .filter((item) => item.key === 'flow' || item.key === 'weightFlow' || item.key === 'pressure')
@@ -7125,17 +7239,18 @@ export class BeanieApp {
       });
     // Reuse the instance while the canvas survives (see bindDetailChart); the
     // model is re-set every time because the preview factor tracks the draft.
-    const chart =
-      canvas === this.calibratorChartCanvas && this.calibratorChart != null
-        ? this.calibratorChart
-        : new LiveChart(canvas, { detailed: true, pixelScale: 3, hover: true });
+    if (!reuse) this.calibratorChart?.dispose();
+    const chart = reuse
+      ? this.calibratorChart!
+      : new LiveChart(canvas, { detailed: true, pixelScale: 3, hover: true });
     this.calibratorChart = chart;
     this.calibratorChartCanvas = canvas;
+    this.calibratorChartShotId = shot.id;
+    this.calibratorChartMeasurements = shot.measurements;
+    this.calibratorChartProfile = profile;
+    this.calibratorChartFactor = factor;
     chart.setModel({ ...model, series });
-    window.requestAnimationFrame(() => {
-      chart.resize();
-      chart.draw();
-    });
+    chart.invalidate(reuse ? 'model' : 'layout');
   }
 
   private renderSleepOverlay(): string {
@@ -7174,11 +7289,11 @@ export class BeanieApp {
     if (!showPhotos && !showClock) return '';
     this.saverPhotoIndex = photos.length > 0 ? this.saverPhotoIndex % photos.length : 0;
     const photoLayers = showPhotos
-      ? `<img id="saver-photo-a" class="saver-photo active" alt="" src="${escapeAttr(photos[this.saverPhotoIndex]!)}" />
-         <img id="saver-photo-b" class="saver-photo" alt="" />`
+      ? `<img id="saver-photo-a" class="saver-photo active" data-morph-skip="screensaver-photo" alt="" src="${escapeAttr(photos[this.saverPhotoIndex]!)}" />
+         <img id="saver-photo-b" class="saver-photo" data-morph-skip="screensaver-photo" alt="" />`
       : '';
     const clock = showClock
-      ? `<span id="saver-clock" class="saver-clock ${showPhotos ? 'on-photo' : ''}" style="left: ${this.saverClockPos.leftPct}%; top: ${this.saverClockPos.topPct}%;">${escapeHtml(clockLabel(new Date(), prefs.clockFormat))}</span>`
+      ? `<span id="saver-clock" class="saver-clock ${showPhotos ? 'on-photo' : ''}" data-morph-skip="screensaver-clock" style="left: ${this.saverClockPos.leftPct}%; top: ${this.saverClockPos.topPct}%;">${escapeHtml(clockLabel(new Date(), prefs.clockFormat))}</span>`
       : '';
     return `${photoLayers}${clock}`;
   }
@@ -7473,19 +7588,20 @@ export class BeanieApp {
   private renderProfileEditorPage(): string {
     const pe = this.state.profileEditor;
     if (!pe) return this.pageHeader('Profile');
+    const disabled = this.state.busy ? ' disabled' : '';
     // One compact header row — Back · Basic/Advanced toggle · Save — no title
     // (tablet real estate). Basic and advanced share the same dark chrome.
     return `
       <header class="page-head pe-editor-head">
-        <button class="page-back" type="button" data-action="go-view" data-value="profiles" aria-label="Back">${icon('chevron-left')}<span>Back</span></button>
-        ${renderEditorModeBar(pe)}
+        <button class="page-back" type="button" data-action="go-view" data-value="profiles" aria-label="Back"${disabled}>${icon('chevron-left')}<span>Back</span></button>
+        ${renderEditorModeBar(pe, this.state.busy)}
         <div class="page-head-actions">
-          <button type="button" class="pe-save commit-action" data-action="save-profile">${icon('check')}<span>Save</span></button>
+          <button type="button" class="pe-save commit-action" data-action="save-profile"${disabled}>${icon('check')}<span>${this.state.busy ? 'Saving…' : 'Save'}</span></button>
         </div>
       </header>
-      <main class="page-body profile-editor-page">
+      <fieldset class="page-body profile-editor-page"${disabled}>
         ${renderProfileEditor(pe)}
-      </main>
+      </fieldset>
     `;
   }
 
@@ -8443,6 +8559,8 @@ export class BeanieApp {
   }
 
   private updateSettingsPreferences(next: Partial<SettingsPreferences>): void {
+    const themeChanged = next.theme != null && next.theme !== this.state.settingsPreferences.theme;
+    const scaleChanged = next.uiScale != null && next.uiScale !== this.state.settingsPreferences.uiScale;
     const settingsPreferences = { ...this.state.settingsPreferences, ...next };
     writeSettingsPreferences(settingsPreferences);
     applySettingsPreferences(settingsPreferences);
@@ -8450,6 +8568,14 @@ export class BeanieApp {
       settingsPreferences,
       status: 'Settings changed'
     });
+    const charts = [
+      this.liveChart,
+      this.detailChart,
+      this.shotStagesChart,
+      this.calibratorChart
+    ];
+    if (themeChanged) charts.forEach((chart) => chart?.invalidate('theme'));
+    if (scaleChanged) charts.forEach((chart) => chart?.invalidate('layout'));
   }
 
   private async resetLocalCache(): Promise<void> {

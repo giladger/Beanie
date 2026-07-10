@@ -73,12 +73,18 @@ export class ScannerFlow {
       'scanner-verify-key': async ({ el }) => {
         const input = el.closest('form')?.querySelector<HTMLInputElement>('input[name="apiKey"]');
         const key = input?.value.trim() ?? '';
+        const request = this.beginScannerRequest();
         this.setScanner({ keyDraft: key, verifying: true, verifyMessage: null });
-        const result = await verifyGeminiKey(key);
-        this.setScanner({
-          verifying: false,
-          verifyMessage: { tone: result.ok ? 'good' : 'warn', text: result.message }
-        });
+        try {
+          const result = await verifyGeminiKey(key, { signal: request.signal });
+          if (!this.scannerRequestAlive(request)) return;
+          this.setScanner({
+            verifying: false,
+            verifyMessage: { tone: result.ok ? 'good' : 'warn', text: result.message }
+          });
+        } finally {
+          if (this.scannerRequest === request.controller) this.scannerRequest = null;
+        }
       },
       'scanner-change-key': () => {
         this.setScanner({ step: 'onboard', keyDraft: readGeminiApiKey() ?? '', verifyMessage: null });
@@ -116,24 +122,45 @@ export class ScannerFlow {
    * AbortController so closing/cancelling actually stops the network call.
    */
   private scannerSession = 0;
+  private scannerRequestSeq = 0;
   private scannerRequest: AbortController | null = null;
 
   /** Abort in-flight scanner network work and invalidate its session. */
   cancelScannerWork(): void {
     this.scannerSession++;
+    this.scannerRequestSeq++;
     this.scannerRequest?.abort();
     this.scannerRequest = null;
   }
 
   /** Fresh signal for one scanner request, bound to the current session. */
-  private beginScannerRequest(): { signal: AbortSignal; session: number } {
+  private beginScannerRequest(): ScannerRequest {
     this.scannerRequest?.abort();
     this.scannerRequest = new AbortController();
-    return { signal: this.scannerRequest.signal, session: this.scannerSession };
+    this.scannerRequestSeq += 1;
+    return {
+      signal: this.scannerRequest.signal,
+      session: this.scannerSession,
+      request: this.scannerRequestSeq,
+      controller: this.scannerRequest
+    };
+  }
+
+  private scannerSessionCurrent(session: number): boolean {
+    return session === this.scannerSession;
   }
 
   private scannerSessionAlive(session: number): boolean {
     return session === this.scannerSession && this.host.state().scanner != null;
+  }
+
+  private scannerRequestAlive(request: ScannerRequest): boolean {
+    return (
+      this.scannerSessionAlive(request.session) &&
+      request.request === this.scannerRequestSeq &&
+      request.controller === this.scannerRequest &&
+      !request.signal.aborted
+    );
   }
 
   /**
@@ -144,15 +171,19 @@ export class ScannerFlow {
    */
   async openLabelScanner(options: { fromHandoff?: boolean } = {}): Promise<void> {
     this.cancelScannerWork();
+    const session = this.scannerSession;
     // The Gemini key lives in the store; make sure settings have loaded.
     await this.host.loadSettings();
+    if (!this.scannerSessionCurrent(session)) return;
     const hasKey = readGeminiApiKey() != null;
     // A tablet that has chosen "Set up on this device" (and has a key) skips the
     // hand-off entirely and scans on-device from then on.
     const scanHere = hasKey && readScanOnThisDevice();
     const handoff = isDecentAppWebView() && options.fromHandoff !== true && !this.host.state().demo && !scanHere;
     // Build the QR from the gateway's LAN IP (the tablet webview is on localhost).
-    const handoffUrl = handoff ? buildHandoffUrl(location.href, await gateway.lanAddress()) : null;
+    const lanAddress = handoff ? await gateway.lanAddress() : null;
+    if (!this.scannerSessionCurrent(session)) return;
+    const handoffUrl = handoff ? buildHandoffUrl(location.href, lanAddress) : null;
     this.host.setState({
       modal: 'label-scanner',
       scanner: {
@@ -180,9 +211,10 @@ export class ScannerFlow {
 
   async addScannerPhotos(files: File[]): Promise<void> {
     if (!this.host.state().scanner) return;
+    const session = this.scannerSession;
     // Per-file isolation: one unreadable photo must not drop the others.
     const results = await Promise.allSettled(files.map((file) => fileToScaledImage(file)));
-    if (!this.host.state().scanner) return;
+    if (!this.scannerSessionAlive(session)) return;
     const added: CapturedImage[] = results
       .filter((result): result is PromiseFulfilledResult<CapturedImage> => result.status === 'fulfilled')
       .map((result) => result.value);
@@ -209,7 +241,8 @@ export class ScannerFlow {
       });
       return;
     }
-    const { signal, session } = this.beginScannerRequest();
+    const request = this.beginScannerRequest();
+    const { signal } = request;
     this.setScanner({ step: 'extracting', error: null });
     try {
       const scan: LabelScan = this.host.state().demo
@@ -219,7 +252,7 @@ export class ScannerFlow {
             readGeminiApiKey() ?? '',
             { signal, prompt: buildLabelScanPrompt(this.host.state().beans) }
           );
-      if (!this.scannerSessionAlive(session)) return;
+      if (!this.scannerRequestAlive(request)) return;
       const draft = canonicalizeDraft(labelScanToDraft(scan), this.host.state().beans);
       const existing = findExistingBean(this.host.state().beans, draft.roaster, draft.name);
       this.setScanner({
@@ -237,7 +270,7 @@ export class ScannerFlow {
       // already editable while it searches.
       void this.runScannerEnrich({ auto: true });
     } catch (error) {
-      if (signal.aborted || !this.scannerSessionAlive(session)) return;
+      if (signal.aborted || !this.scannerRequestAlive(request)) return;
       console.error('[Beanie] Label scan failed', error);
       if (isGeminiKeyError(error)) {
         // The stored key went bad — back to onboarding instead of a dead retry loop.
@@ -251,6 +284,8 @@ export class ScannerFlow {
       }
       const message = error instanceof GeminiError ? error.message : 'Could not read the label — try again.';
       this.setScanner({ step: 'error', error: message });
+    } finally {
+      if (this.scannerRequest === request.controller) this.scannerRequest = null;
     }
   }
 
@@ -290,7 +325,8 @@ export class ScannerFlow {
       return;
     }
 
-    const { signal, session } = this.beginScannerRequest();
+    const request = this.beginScannerRequest();
+    const { signal } = request;
     this.setScanner({ enriching: true });
     try {
       const enrichment = this.host.state().demo
@@ -300,7 +336,7 @@ export class ScannerFlow {
             readGeminiApiKey() ?? '',
             { signal }
           );
-      if (!this.scannerSessionAlive(session) || this.host.state().scanner?.step !== 'review') return;
+      if (!this.scannerRequestAlive(request) || this.host.state().scanner?.step !== 'review') return;
       const current = this.readScannerReviewDraft() ?? base;
       const merged = mergeEnrichment(current, enrichment);
       this.withScannerFocusKept(() =>
@@ -312,13 +348,15 @@ export class ScannerFlow {
       );
       if (!options.auto && merged.webFields.length === 0) this.host.setState({ status: 'No extra details found.' });
     } catch (error) {
-      if (signal.aborted || !this.scannerSessionAlive(session)) return;
+      if (signal.aborted || !this.scannerRequestAlive(request)) return;
       console.error('[Beanie] Enrich failed', error);
       this.setScanner({ enriching: false });
       if (!options.auto) {
         const message = error instanceof GeminiError ? error.message : 'Could not reach the roaster — try again.';
         this.host.setState({ status: message });
       }
+    } finally {
+      if (this.scannerRequest === request.controller) this.scannerRequest = null;
     }
   }
 
@@ -360,7 +398,7 @@ export class ScannerFlow {
 
   async submitScannerReview(form: HTMLFormElement): Promise<void> {
     const scanner = this.host.state().scanner;
-    if (!scanner) return;
+    if (!scanner || scanner.saving) return;
     const data = new FormData(form);
     const beanFields = beanFieldsFromForm(data);
     if (!beanFields.roaster || !beanFields.name) {
@@ -370,6 +408,7 @@ export class ScannerFlow {
 
     // Stop a still-running background enrich from re-rendering the form mid-save.
     this.cancelScannerWork();
+    const session = this.scannerSession;
     this.setScanner({ saving: true, error: null, enriching: false });
 
     const existing =
@@ -392,6 +431,7 @@ export class ScannerFlow {
           putBeanBatches: (id, batches) => beanieCache.putBeanBatches(id, batches)
         }
       );
+      if (!this.scannerSessionAlive(session)) return;
       if (saved.type === 'failed') {
         console.error('[Beanie] Scanner save bean failed', saved.error);
         this.setScanner({ saving: false, step: 'error', error: saved.status });
@@ -426,6 +466,7 @@ export class ScannerFlow {
         putBeanBatches: (id, batches) => beanieCache.putBeanBatches(id, batches)
       }
     );
+    if (!this.scannerSessionAlive(session)) return;
 
     if (created.type === 'failed') {
       console.error('[Beanie] Scanner add batch failed', created.error);
@@ -434,6 +475,7 @@ export class ScannerFlow {
       return;
     }
 
+    this.cancelScannerWork();
     this.host.setState({
       beans,
       batchesByBean: created.batchesByBean,
@@ -444,4 +486,11 @@ export class ScannerFlow {
     });
     await this.host.selectBean(beanId, { apply: false, preferWorkflow: false });
   }
+}
+
+interface ScannerRequest {
+  signal: AbortSignal;
+  session: number;
+  request: number;
+  controller: AbortController;
 }

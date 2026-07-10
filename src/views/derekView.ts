@@ -130,10 +130,10 @@ function renderContextDisclosure(state: DerekState): string {
 function renderAsking(state: DerekState): string {
   const partial = visiblePartial(state);
   return `
-    <div class="derek-stream">
+    <div class="derek-stream" id="derek-stream-island" data-morph-skip="derek-stream">
       <p class="derek-phase" id="derek-phase">${escapeHtml(phaseLabel(state))}</p>
       <div class="derek-answer" id="derek-answer-stream">${renderAnswerMarkdown(partial)}</div>
-      ${partialReachedSuggestions(state) ? shimmer() : ''}
+      ${shimmer(partialReachedSuggestions(state))}
     </div>
     <div class="modal-actions derek-actions">
       <button class="secondary-button" data-action="derek-cancel">Cancel</button>
@@ -141,8 +141,8 @@ function renderAsking(state: DerekState): string {
   `;
 }
 
-function shimmer(): string {
-  return '<p class="derek-shimmer">Preparing suggestions…</p>';
+function shimmer(visible: boolean): string {
+  return `<p class="derek-shimmer" id="derek-shimmer"${visible ? '' : ' hidden'}>Preparing suggestions…</p>`;
 }
 
 export function phaseLabel(state: DerekState): string {
@@ -286,4 +286,3 @@ function renderApplyButton(state: DerekState): string {
     </button>
   `;
 }
-

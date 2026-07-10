@@ -50,10 +50,12 @@ import { clearPendingDerekTweak, writePendingDerekTweak } from '../domain/storag
 import { saveProfile, selectProfileForDraft } from './profileEditorController';
 import { saveShotUpdate } from './shotMetadataController';
 import { phaseLabel, renderTweakPreview } from '../views/derekView';
+import type { DerekStreamViewModel } from '../render/derekStreamIsland';
 import type { Profile, ProfileRecord, ShotAnnotations, ShotRecord } from '../api/types';
+import { OperationEpoch } from './operationEpoch';
 
 // Derek, the dial-in assistant: modal lifecycle, query composition, the SSE
-// ask stream (with its per-token DOM patch), and applying/reverting the
+// ask stream (published to a bounded presentation island), and applying/reverting the
 // suggestions. Extracted vertically from app.ts — the host interface below is
 // the full coupling surface back into the app.
 export interface DerekFlowHost {
@@ -61,6 +63,8 @@ export interface DerekFlowHost {
   setState(next: Partial<AppState>): void;
   /** Assign state.derek in place without a render (per-token hot path). */
   patchStateDerek(derek: DerekState): void;
+  /** Publish one complete frame to the bounded Derek presentation island. */
+  patchDerekStream(model: DerekStreamViewModel): void;
   disposed(): boolean;
   brewTempValue(): number | null;
   scheduleApply(): void;
@@ -71,6 +75,8 @@ export interface DerekFlowHost {
 
 export class DerekFlow {
   private abort: AbortController | null = null;
+  private readonly askEpoch = new OperationEpoch();
+  private readonly applyEpoch = new OperationEpoch();
   /** Once probed, remembered for the session (the gateway rarely changes). */
   private relay: DerekRelayAvailability = 'unknown';
   /** Context snapshot the open Derek modal composes queries from. */
@@ -80,6 +86,9 @@ export class DerekFlow {
 
   dispose(): void {
     this.abort?.abort();
+    this.abort = null;
+    this.askEpoch.invalidate();
+    this.applyEpoch.invalidate();
   }
 
   derekClickActions(): Record<string, ClickActionHandler> {
@@ -138,6 +147,10 @@ export class DerekFlow {
   }
 
   private openDerek(source: 'shot' | 'general', shotId: string | null): void {
+    this.abort?.abort();
+    this.abort = null;
+    this.askEpoch.invalidate();
+    this.applyEpoch.invalidate();
     if (this.host.state().demo) {
       this.host.setState({ status: 'Derek needs a live gateway — not available in demo' });
       return;
@@ -171,6 +184,8 @@ export class DerekFlow {
   private closeDerek(): void {
     this.abort?.abort();
     this.abort = null;
+    this.askEpoch.invalidate();
+    this.applyEpoch.invalidate();
     this.context = null;
     this.host.setState({ modal: null, derek: null });
   }
@@ -246,17 +261,17 @@ export class DerekFlow {
 
     const asking = beginAsk(derek, query);
     const seq = asking.askSeq;
-    this.host.setState({ derek: asking });
-
     this.abort?.abort();
     const abort = new AbortController();
     this.abort = abort;
+    const request = { generation: this.askEpoch.begin(), seq, abort };
+    this.host.setState({ derek: asking });
     try {
       const result = await streamDerekAnswer(
         { query },
-        { signal: abort.signal, onEvent: (event) => this.handleDerekEvent(seq, event) }
+        { signal: abort.signal, onEvent: (event) => this.handleDerekEvent(request, event) }
       );
-      if (!this.derekAskCurrent(seq)) return;
+      if (!this.derekAskCurrent(request)) return;
       const finished = finishAsk(this.host.state().derek!, result, context);
       const ready = downgradeUntweakableSuggestions(finished, this.currentDerekProfile());
       this.host.setState({ derek: ready });
@@ -266,7 +281,7 @@ export class DerekFlow {
         void this.saveDerekAnswerOnShot(ready.shotId, ready, this.derekAskedLabel(derek));
       }
     } catch (error) {
-      if (!this.derekAskCurrent(seq)) return;
+      if (!this.derekAskCurrent(request)) return;
       if (error instanceof DerekUnavailableError) {
         this.relay = 'missing';
         this.host.setState({ derek: markUnavailable(this.host.state().derek!) });
@@ -282,6 +297,8 @@ export class DerekFlow {
             ? 'Derek stopped responding mid-answer.'
             : "Derek isn't reachable right now.";
       this.host.setState({ derek: failAsk(this.host.state().derek!, message) });
+    } finally {
+      if (this.abort === abort) this.abort = null;
     }
   }
 
@@ -347,47 +364,39 @@ export class DerekFlow {
     }
   }
 
-  private derekAskCurrent(seq: number): boolean {
+  private derekAskCurrent(request: DerekAskRequest): boolean {
     const derek = this.host.state().derek;
     return (
       !this.host.disposed() &&
+      this.askEpoch.owns(request.generation) &&
+      this.abort === request.abort &&
       this.host.state().modal === 'derek' &&
-      derek?.askSeq === seq &&
+      derek?.askSeq === request.seq &&
       derek.step === 'asking'
     );
   }
 
-  private handleDerekEvent(seq: number, event: DerekEvent): void {
-    if (!this.derekAskCurrent(seq)) return;
+  private handleDerekEvent(request: DerekAskRequest, event: DerekEvent): void {
+    if (!this.derekAskCurrent(request)) return;
     const derek = this.host.state().derek!;
     if (event.type === 'delta') {
-      // Hot path: a full re-render per token would rebuild the whole app for
-      // every word, so append to the state in place and patch the DOM directly
-      // (same pattern as the live-shot readouts).
-      this.host.patchStateDerek(reduceDerekEvent(derek, event));
-      this.patchDerekStream(this.host.state().derek!);
+      // Hot path: fold the source frame into memory, then publish a complete
+      // presentation frame. The controller never retains or mutates DOM nodes.
+      const next = reduceDerekEvent(derek, event);
+      this.host.patchStateDerek(next);
+      this.host.patchDerekStream(derekStreamViewModel(next, request.generation));
       return;
     }
     if (event.type === 'result') return; // askDerek() folds the result in.
-    this.host.setState({ derek: reduceDerekEvent(derek, event) });
-  }
-
-  private patchDerekStream(derek: DerekState): void {
-    const answer = document.getElementById('derek-answer-stream');
-    if (answer) {
-      // morph-exempt: per-token streaming island — a full render per token
-      // would rebuild the app for every word. The template renders the same
-      // visiblePartial(state.derek), so a concurrent morph converges.
-      answer.innerHTML = renderAnswerMarkdown(visiblePartial(derek));
-      const body = answer.closest('.derek-body');
-      if (body) body.scrollTop = body.scrollHeight;
+    const next = reduceDerekEvent(derek, event);
+    if (event.type === 'error') {
+      this.host.setState({ derek: next });
+      return;
     }
-    const phase = document.getElementById('derek-phase');
-    if (phase) {
-      phase.textContent = partialReachedSuggestions(derek)
-        ? 'Preparing suggestions…'
-        : phaseLabel(derek);
-    }
+    // Queue and evidence phases affect only the opaque stream island. Keep the
+    // same bounded path as tokens instead of asking morphdom to update it.
+    this.host.patchStateDerek(next);
+    this.host.patchDerekStream(derekStreamViewModel(next, request.generation));
   }
 
   private async applyDerekSuggestion(): Promise<void> {
@@ -395,14 +404,23 @@ export class DerekFlow {
     if (!derek || derek.applying) return;
     const suggestion = selectedSuggestion(derek);
     if (!suggestion) return;
+    const operation = this.applyEpoch.begin();
+    const source = derek.source;
+    const sourceShotId = derek.shotId;
+    const beanId = this.host.state().selectedBeanId;
+    const revertProfileId = this.host.state().draft.profileId ?? null;
     this.host.setState({ derek: { ...derek, applying: true } });
     try {
-      const applied = await this.performDerekApply(suggestion);
+      const applied = await this.performDerekApply(
+        suggestion,
+        () => this.derekApplyCurrent(operation),
+        revertProfileId
+      );
+      if (!applied || !this.derekApplyCurrent(operation)) return;
       const derekState = this.host.state().derek;
       if (!derekState) return;
       // Remember the change so the shot pulled with it gets stamped — the next
       // ask then opens with "this shot was pulled after making this change".
-      const beanId = this.host.state().selectedBeanId;
       if (beanId) {
         writePendingDerekTweak({ beanId, summary: applied.summary, at: new Date().toISOString() });
       }
@@ -412,15 +430,15 @@ export class DerekFlow {
           summary: applied.summary,
           parameter: suggestion.parameter,
           revertProfileId: applied.revertProfileId ?? null,
-          revertShotId: derekState.shotId
+          revertShotId: sourceShotId
         },
         status: `Next shot: ${applied.summary}`
       });
       this.host.scheduleApply();
       // Record the chosen tip on the shot it came from: loading that shot's
       // recipe later re-applies it.
-      if (derekState.source === 'shot' && derekState.shotId && suggestion.target != null) {
-        const shot = this.host.state().shots.find((item) => item.id === derekState.shotId);
+      if (source === 'shot' && sourceShotId && suggestion.target != null) {
+        const shot = this.host.state().shots.find((item) => item.id === sourceShotId);
         if (shot) {
           const tip: AppliedDerekTip = {
             parameter: suggestion.parameter,
@@ -439,6 +457,7 @@ export class DerekFlow {
         }
       }
     } catch (error) {
+      if (!this.derekApplyCurrent(operation)) return;
       console.error('[Beanie] Apply Derek suggestion failed', error);
       const failed = this.host.state().derek;
       if (failed) {
@@ -450,12 +469,25 @@ export class DerekFlow {
     }
   }
 
-  private async performDerekApply(suggestion: DialInSuggestion): Promise<{
+  private derekApplyCurrent(operation: number): boolean {
+    return (
+      !this.host.disposed() &&
+      this.applyEpoch.owns(operation) &&
+      this.host.state().modal === 'derek' &&
+      this.host.state().derek?.applying === true
+    );
+  }
+
+  private async performDerekApply(
+    suggestion: DialInSuggestion,
+    isCurrent: () => boolean,
+    revertProfileId: string | null
+  ): Promise<{
     summary: string;
     revertProfileId?: string | null;
     appliedProfileId?: string | null;
     appliedProfileTitle?: string | null;
-  }> {
+  } | null> {
     const { parameter, target } = suggestion;
     if (parameter === 'grind' && target != null) {
       this.host.setState({ draft: { ...this.host.state().draft, grinderSetting: String(target) } });
@@ -513,8 +545,8 @@ export class DerekFlow {
         restoreProfile: (id) => gateway.setProfileVisibility(id, 'visible').then(() => {})
       }
     );
+    if (!isCurrent()) return null;
     if (saved.type === 'failed') throw new Error('Saving the tweaked profile failed');
-    const revertProfileId = this.host.state().draft.profileId ?? null;
     const selection = selectProfileForDraft({
       draft: this.host.state().draft,
       profiles: saved.profiles,
@@ -575,4 +607,22 @@ export class DerekFlow {
       return tweak ? renderTweakPreview(profile, tweak.profile) : null;
     });
   }
+}
+
+interface DerekAskRequest {
+  generation: number;
+  seq: number;
+  abort: AbortController;
+}
+
+function derekStreamViewModel(state: DerekState, sessionId: number): DerekStreamViewModel {
+  const showShimmer = partialReachedSuggestions(state);
+  return {
+    sessionId,
+    // renderAnswerMarkdown escapes model output and is the sole sanitizer for
+    // the island's intentional innerHTML sink.
+    answerHtml: renderAnswerMarkdown(visiblePartial(state)),
+    phase: showShimmer ? 'Preparing suggestions…' : phaseLabel(state),
+    showShimmer
+  };
 }

@@ -34,14 +34,13 @@ const onBeforeElUpdated = (fromEl: HTMLElement, toEl: HTMLElement): boolean => {
   if (fromEl instanceof HTMLCanvasElement) return false;
   // Escape hatch for imperative islands.
   if (fromEl.dataset.morphSkip != null) return false;
-  // For the field being typed in, the DOM value is truth — the template may
-  // lag a keystroke (or render a saved value for uncontrolled fields), and
-  // morphdom would otherwise clobber it.
+  // For the field being typed in, the DOM is the sole owner until focus leaves.
+  // Skip the element rather than copying its value into `toEl`: morphdom's
+  // TEXTAREA handler writes `toEl.value` back into the surviving text child,
+  // which also changes `defaultValue` and makes an unsaved textarea look clean.
+  // Attribute/class changes can wait for the first render after focus leaves.
   if (fromEl === document.activeElement && isTextEntryElement(fromEl)) {
-    const from = fromEl as HTMLInputElement | HTMLTextAreaElement;
-    const to = toEl as HTMLInputElement | HTMLTextAreaElement;
-    if (typeof from.value === 'string') to.value = from.value;
-    return true;
+    return false;
   }
   // The bean create/edit form is uncontrolled — its text lives only in the
   // DOM until submit/blur. Keep a dirty field's (value differs from its
@@ -52,9 +51,7 @@ const onBeforeElUpdated = (fromEl: HTMLElement, toEl: HTMLElement): boolean => {
     (fromEl instanceof HTMLInputElement || fromEl instanceof HTMLTextAreaElement) &&
     fromEl.value !== fromEl.defaultValue &&
     fromEl.closest('form[data-form="bean-picker-bean"]') != null
-  ) {
-    (toEl as HTMLInputElement | HTMLTextAreaElement).value = fromEl.value;
-  }
+  ) return false;
   return true;
 };
 

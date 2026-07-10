@@ -23,8 +23,9 @@ const { fileURLToPath } = (await dynamicImport('node:url')) as {
 
 const srcDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-// Files allowed to assign innerHTML without a marker.
-const ALLOWED_FILES = new Set(['render/renderer.ts']);
+// Render owners are the only layer allowed to assign markup. Source adapters,
+// controllers, and app orchestration must publish models into that layer.
+const ALLOWED_PREFIX = 'render/';
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
@@ -43,7 +44,7 @@ function sourceFiles(dir: string): string[] {
 const offenders: string[] = [];
 for (const file of sourceFiles(srcDir)) {
   const rel = relative(srcDir, file);
-  if (ALLOWED_FILES.has(rel)) continue;
+  if (rel.startsWith(ALLOWED_PREFIX)) continue;
   const lines = readFileSync(file, 'utf8').split('\n');
   lines.forEach((line, index) => {
     if (!/\.innerHTML\s*=[^=]/.test(line)) return;
@@ -55,7 +56,7 @@ for (const file of sourceFiles(srcDir)) {
   });
 }
 
-run('no raw innerHTML assignments outside the renderer (morph-exempt to opt out)', () => {
+run('no raw innerHTML assignments outside render owners (morph-exempt to opt out)', () => {
   ok(
     offenders.length === 0,
     `unsanctioned innerHTML assignment(s) — render through morphRender or add a "// morph-exempt: <why>" comment: ${offenders.join(', ')}`

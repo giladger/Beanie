@@ -9,6 +9,8 @@ run('workbench renders topbar metrics, hero bean actions, recipe controls, and h
   const html = renderWorkbench(model());
 
   includes(html, 'class="topbar"');
+  includes(html, 'id="top-stats-island"');
+  includes(html, 'data-morph-skip="topbar-stats"');
   includes(html, 'id="stat-machine">Ready</strong>');
   includes(html, 'class="top-stat stat-tone-ready"');
   // Water (alert settings) and Scale (tare/connect) are tappable; the group
@@ -24,7 +26,7 @@ run('workbench renders topbar metrics, hero bean actions, recipe controls, and h
   includes(html, 'data-value="espresso"');
   excludes(html, 'data-value="steam"');
   includes(html, 'aria-pressed="true"');
-  includes(html, 'id="top-clock" aria-label="Clock">14:05</div>');
+  includes(html, 'id="top-clock" data-morph-skip="top-clock" aria-label="Clock">14:05</div>');
   includes(html, 'Water - steam, water, flush (cleaning due)');
   includes(html, 'Milky &amp; Cake');
   includes(html, 'Dak &lt;Roasters&gt;');
@@ -39,8 +41,22 @@ run('workbench renders topbar metrics, hero bean actions, recipe controls, and h
 });
 
 run('workbench marks the status stat with the alert tone when the gateway link is down', () => {
+  const base = model();
   const html = renderWorkbench(
-    model({ topbar: { ...model().topbar, machineStatus: { label: 'Offline', tone: 'alert' } } })
+    model({
+      topbar: {
+        ...base.topbar,
+        stats: {
+          ...base.topbar.stats,
+          machine: {
+            text: 'Offline',
+            className: 'top-stat stat-tone-alert',
+            title: '',
+            ariaLabel: 'Status: Offline'
+          }
+        }
+      }
+    })
   );
 
   includes(html, 'id="stat-machine">Offline</strong>');
@@ -96,6 +112,7 @@ run('live panel renders inactive, active, and finalizing states', () => {
   includes(active, 'data-action="stop"');
   includes(active, 'disabled');
   includes(active, 'id="live-pressure"');
+  includes(active, 'data-morph-skip="live-readouts"');
 
   includes(active, 'data-action="live-ghost-toggle"');
   includes(active, 'live-ghost-button active');
@@ -104,6 +121,7 @@ run('live panel renders inactive, active, and finalizing states', () => {
   // Stage rail is a timeline: stages before the current one are done, the
   // current one highlighted, later ones upcoming.
   includes(active, 'id="live-stage-rail"');
+  includes(active, 'data-morph-skip="live-stage-rail"');
   includes(active, 'Preinfusion');
   includes(active, 'Pour');
   includes(active, 'Decline');
@@ -135,15 +153,37 @@ run('live panel renders inactive, active, and finalizing states', () => {
 function model(overrides: Partial<WorkbenchViewModel> = {}): WorkbenchViewModel {
   const base: WorkbenchViewModel = {
     topbar: {
-      machineStatus: { label: 'Ready', tone: 'ready' as const },
-      groupTemperature: '93°C',
-      steamTemperature: '140°C',
-      water: '820 ml',
-      waterTone: 'stat-warn',
-      scale: {
-        label: '18.2 g',
-        title: 'Tare scale',
-        tone: '' as const
+      stats: {
+        machine: {
+          text: 'Ready',
+          className: 'top-stat stat-tone-ready',
+          title: '',
+          ariaLabel: 'Status: Ready'
+        },
+        group: {
+          text: '93°C',
+          className: 'top-stat',
+          title: '',
+          ariaLabel: 'Group: 93°C'
+        },
+        steam: {
+          text: '140°C',
+          className: 'top-stat',
+          title: '',
+          ariaLabel: 'Steam: 140°C'
+        },
+        water: {
+          text: '820 ml',
+          className: 'top-stat top-stat-button stat-warn',
+          title: 'Water level alert settings',
+          ariaLabel: 'Water: 820 ml. Water level alert settings'
+        },
+        scale: {
+          text: '18.2 g',
+          className: 'top-stat top-stat-button top-stat-divide',
+          title: 'Tare scale',
+          ariaLabel: 'Scale: 18.2 g. Tare scale'
+        }
       },
       machineCommands: {
         available: true,

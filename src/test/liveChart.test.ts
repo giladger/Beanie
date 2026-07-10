@@ -1,6 +1,8 @@
 import {
+  LiveChart,
   buildHoverRows,
   clamp01,
+  computeCanvasBackingStoreSize,
   computePlotArea,
   formatTick,
   hoverValueText,
@@ -173,6 +175,232 @@ run('buildHoverRows skips legendless overlays and out-of-range series', () => {
   equal(rows[1]!.label, 'Temp');
   equal(rows[1]!.text, '92.0°C');
 });
+
+run('canvas backing-store sizing caps DPR and pixelScale to a pixel budget', () => {
+  const capped = computeCanvasBackingStoreSize(1000, 500, 2, 3, 2_000_000);
+  equal(capped.scale, 2);
+  equal(capped.width, 2000);
+  equal(capped.height, 1000);
+  equal(capped.width * capped.height <= 2_000_000, true);
+  equal(capped.capped, true);
+
+  const uncapped = computeCanvasBackingStoreSize(800, 400, 2, 1, 4_000_000);
+  equal(uncapped.scale, 2);
+  equal(uncapped.width, 1600);
+  equal(uncapped.height, 800);
+  equal(uncapped.capped, false);
+});
+
+run('LiveChart resize applies the bounded backing store and isotropic transform', () => {
+  withFakeWindow({ devicePixelRatio: 2 }, () => {
+    const harness = createCanvasHarness(1000, 500);
+    const chart = new LiveChart(harness.canvas, {
+      pixelScale: 3,
+      maxBackingStorePixels: 2_000_000
+    });
+
+    chart.resize();
+
+    equal(harness.canvas.width, 2000);
+    equal(harness.canvas.height, 1000);
+    equal(harness.transforms.length, 1);
+    equal(harness.transforms[0]![0], 2);
+    equal(harness.transforms[0]![3], 2);
+    chart.dispose();
+  });
+});
+
+run('LiveChart invalidation coalesces input reasons and resizes layout before drawing', () => {
+  let scheduled: FrameRequestCallback | null = null;
+  let requestCount = 0;
+  withFakeWindow(
+    {
+      requestAnimationFrame: (callback: FrameRequestCallback): number => {
+        requestCount += 1;
+        scheduled = callback;
+        return 17;
+      },
+      cancelAnimationFrame: (): void => undefined
+    },
+    () => {
+      const harness = createCanvasHarness();
+      const chart = new LiveChart(harness.canvas);
+      let resizeCount = 0;
+      let drawCount = 0;
+      chart.resize = (): void => {
+        resizeCount += 1;
+      };
+      chart.draw = (): void => {
+        drawCount += 1;
+      };
+
+      chart.invalidate('model');
+      chart.invalidate('layout');
+      chart.invalidate('theme');
+
+      equal(requestCount, 1);
+      equal(resizeCount, 0);
+      equal(drawCount, 0);
+      if (scheduled == null) throw new Error('Expected a scheduled chart frame');
+      scheduled(0);
+      equal(resizeCount, 1);
+      equal(drawCount, 1);
+      chart.dispose();
+    }
+  );
+});
+
+run('LiveChart dispose cancels work, removes hover listeners, and releases the canvas', () => {
+  let scheduled: FrameRequestCallback | null = null;
+  const cancelled: number[] = [];
+  let requestCount = 0;
+  withFakeWindow(
+    {
+      matchMedia: (): MediaQueryList => ({ matches: true }) as MediaQueryList,
+      requestAnimationFrame: (callback: FrameRequestCallback): number => {
+        requestCount += 1;
+        scheduled = callback;
+        return 23;
+      },
+      cancelAnimationFrame: (handle: number): void => {
+        cancelled.push(handle);
+      }
+    },
+    () => {
+      const harness = createCanvasHarness();
+      const chart = new LiveChart(harness.canvas, { hover: true });
+      let drawCount = 0;
+      chart.draw = (): void => {
+        drawCount += 1;
+      };
+
+      equal(harness.listenerCount('pointermove'), 1);
+      equal(harness.listenerCount('pointerleave'), 1);
+      harness.dispatch(
+        'pointermove',
+        { pointerType: 'mouse', clientX: 20, clientY: 30 } as unknown as PointerEvent
+      );
+      equal(requestCount, 1);
+
+      chart.dispose();
+      chart.dispose();
+
+      equal(chart.isDisposed, true);
+      equal(cancelled.length, 1);
+      equal(cancelled[0], 23);
+      equal(harness.listenerCount('pointermove'), 0);
+      equal(harness.listenerCount('pointerleave'), 0);
+      equal(harness.canvas.width, 1);
+      equal(harness.canvas.height, 1);
+
+      // A callback already dequeued by the browser is still harmless, and no
+      // subsequent invalidation can schedule work after disposal.
+      if (scheduled == null) throw new Error('Expected a scheduled hover frame');
+      scheduled(0);
+      chart.invalidate('layout');
+      equal(drawCount, 0);
+      equal(requestCount, 1);
+    }
+  );
+});
+
+run('LiveChart owns and disconnects its canvas resize observer', () => {
+  let observed: Element | null = null;
+  let disconnects = 0;
+  withFakeResizeObserver(
+    class {
+      observe(element: Element): void {
+        observed = element;
+      }
+
+      disconnect(): void {
+        disconnects += 1;
+      }
+    },
+    () => {
+      const harness = createCanvasHarness();
+      const chart = new LiveChart(harness.canvas);
+      equal(observed, harness.canvas);
+      chart.dispose();
+      equal(disconnects, 1);
+    }
+  );
+});
+
+interface CanvasHarness {
+  canvas: HTMLCanvasElement;
+  transforms: number[][];
+  listenerCount(type: string): number;
+  dispatch(type: string, event: Event): void;
+}
+
+function createCanvasHarness(clientWidth = 640, clientHeight = 320): CanvasHarness {
+  const listeners = new Map<string, Set<EventListener>>();
+  const transforms: number[][] = [];
+  const context = {
+    setTransform: (...values: number[]): void => {
+      transforms.push(values);
+    }
+  } as unknown as CanvasRenderingContext2D;
+  const canvas = {
+    width: 300,
+    height: 150,
+    clientWidth,
+    clientHeight,
+    getContext: (): CanvasRenderingContext2D => context,
+    getBoundingClientRect: (): Pick<DOMRect, 'left' | 'top'> => ({ left: 0, top: 0 }),
+    addEventListener: (type: string, listener: EventListener): void => {
+      const registered = listeners.get(type) ?? new Set<EventListener>();
+      registered.add(listener);
+      listeners.set(type, registered);
+    },
+    removeEventListener: (type: string, listener: EventListener): void => {
+      listeners.get(type)?.delete(listener);
+    }
+  } as unknown as HTMLCanvasElement;
+
+  return {
+    canvas,
+    transforms,
+    listenerCount: (type: string): number => listeners.get(type)?.size ?? 0,
+    dispatch: (type: string, event: Event): void => {
+      for (const listener of listeners.get(type) ?? []) listener(event);
+    }
+  };
+}
+
+function withFakeWindow<T>(value: Partial<Window>, fn: () => T): T {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value,
+    writable: true
+  });
+  try {
+    return fn();
+  } finally {
+    if (previous) Object.defineProperty(globalThis, 'window', previous);
+    else Reflect.deleteProperty(globalThis, 'window');
+  }
+}
+
+function withFakeResizeObserver<T>(
+  implementation: new () => Pick<ResizeObserver, 'observe' | 'disconnect'>,
+  fn: () => T
+): T {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver');
+  Object.defineProperty(globalThis, 'ResizeObserver', {
+    configurable: true,
+    value: implementation,
+    writable: true
+  });
+  try {
+    return fn();
+  } finally {
+    if (previous) Object.defineProperty(globalThis, 'ResizeObserver', previous);
+    else Reflect.deleteProperty(globalThis, 'ResizeObserver');
+  }
+}
 
 function run(name: string, fn: () => void): void {
   try {
