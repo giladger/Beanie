@@ -10,6 +10,7 @@ run('second tap hints show by default', () => {
 
   equal(shouldShowSecondTapHint('bean'), true);
   equal(shouldShowSecondTapHint('shot'), true);
+  equal(shouldShowSecondTapHint('profile'), true);
 });
 
 run('hint stays visible until used the configured number of times', () => {
@@ -24,7 +25,7 @@ run('hint stays visible until used the configured number of times', () => {
   equal(shouldShowSecondTapHint('bean'), false);
 });
 
-run('counting one hint up does not affect the other', () => {
+run('counting one hint up does not affect the others', () => {
   clearSyncedCache();
 
   for (let i = 0; i < secondTapHintUsesBeforeHiding; i += 1) {
@@ -33,6 +34,18 @@ run('counting one hint up does not affect the other', () => {
 
   equal(shouldShowSecondTapHint('bean'), false);
   equal(shouldShowSecondTapHint('shot'), true);
+  equal(shouldShowSecondTapHint('profile'), true);
+});
+
+run('the profile hint counts down independently', () => {
+  clearSyncedCache();
+
+  for (let i = 0; i < secondTapHintUsesBeforeHiding; i += 1) {
+    markSecondTapHintUsed('profile');
+  }
+
+  equal(shouldShowSecondTapHint('profile'), false);
+  equal(shouldShowSecondTapHint('bean'), true);
 });
 
 run('malformed hint preferences recover to defaults', () => {
@@ -41,6 +54,7 @@ run('malformed hint preferences recover to defaults', () => {
 
   equal(shouldShowSecondTapHint('bean'), true);
   equal(shouldShowSecondTapHint('shot'), true);
+  equal(shouldShowSecondTapHint('profile'), true);
 });
 
 function run(name: string, fn: () => void): void {

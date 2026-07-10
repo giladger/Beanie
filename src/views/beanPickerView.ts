@@ -36,7 +36,7 @@ export interface BeanPickerViewModel {
   editingBatchId?: string | null;
   showAllBags?: boolean;
   formNumbers?: Record<string, string>;
-  secondTapHint: { kind: 'shot' | 'bean'; id: string } | null;
+  secondTapHint: { kind: 'shot' | 'bean' | 'profile'; id: string } | null;
   averageDoseIn?: number | null;
 }
 

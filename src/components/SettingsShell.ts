@@ -111,8 +111,7 @@ function settingsSections(
     html: [
       renderSection('Status', renderGatewayRows(model)),
       bundle ? renderConnectionRuntimeSection(bundle) : '',
-      bundle ? renderDevicesSection(bundle) : '',
-      bundle ? renderSpecSectionById('connection-policy', bundle, options) : ''
+      bundle ? renderDevicesSection(bundle) : ''
     ].join('')
   };
   const sections: SettingsSection[] = [

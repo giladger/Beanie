@@ -26,7 +26,7 @@ export interface HistoryViewModel {
   demo: boolean;
   shotsTotal: number;
   shotsLoadingMore: boolean;
-  secondTapHint: { kind: 'shot' | 'bean'; id: string } | null;
+  secondTapHint: { kind: 'shot' | 'bean' | 'profile'; id: string } | null;
   batchesByBean: Record<string, BeanBatch[]>;
   /** Show the "Dial in with Derek" tool (live gateway with the Derek relay). */
   derekEnabled?: boolean;
@@ -140,7 +140,7 @@ function renderShotListItem(
   const date = shotDateShortLabel(shot.timestamp);
   const freshness = shotFreshnessBadgeForShot(shot, batchForShotFreshness(shot, batchesByBean));
   const html = `
-    <button class="shot-item ${active ? 'active' : ''} ${comparing ? 'comparing' : ''} ${hint ? 'has-second-tap-hint' : ''}" data-action="select-history-shot" data-id="${escapeAttr(shot.id)}">
+    <button class="shot-item ${active ? 'active' : ''} ${comparing ? 'comparing' : ''} ${isDerekedShot(shot) ? 'dereked' : ''} ${hint ? 'has-second-tap-hint' : ''}" data-action="select-history-shot" data-id="${escapeAttr(shot.id)}">
       <span class="shot-item-info">
         <span class="shot-item-recipe">${escapeHtml(recipeText)}${duration ? ` @ ${escapeHtml(duration)}` : ''}</span>
         ${isDerekedShot(shot) ? `<span class="derek-shot-mark" title="Has Derek dial-in notes">${icon('sparkles')}</span>` : ''}

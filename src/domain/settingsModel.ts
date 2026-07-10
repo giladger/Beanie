@@ -6,7 +6,6 @@
 
 import {
   CHARGING_MODES,
-  GATEWAY_MODES,
   LOG_LEVELS,
   SCALE_POWER_MODES,
   demoCalibration,
@@ -90,21 +89,6 @@ function titleCase(value: string): string {
 }
 
 export const SETTINGS_SPEC: SettingsSpecSection[] = [
-  {
-    id: 'connection-policy',
-    title: 'Control policy',
-    terms: 'gateway mode control external clients tracking full disabled',
-    fields: [
-      {
-        group: 'rea',
-        key: 'gatewayMode',
-        label: 'Gateway control mode',
-        type: 'select',
-        options: opts(GATEWAY_MODES),
-        help: 'How much control external clients (this skin) have over the machine.'
-      }
-    ]
-  },
   {
     id: 'app-skin',
     title: 'Skin & diagnostics',

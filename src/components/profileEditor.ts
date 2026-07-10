@@ -712,10 +712,17 @@ function renderIdentityMeta(state: ProfileEditorState): string {
           `).join('')}
         </select>
       </label>
-      <label class="pe-field pe-notes-field">
+      <div class="pe-field pe-notes-field">
         <span>Notes</span>
-        <input type="text" data-action="pe-meta" data-key="notes" value="${escapeAttr(state.notes)}" />
-      </label>
+        <button type="button" class="pe-notes-open" data-action="pe-edit-notes" aria-label="Edit notes">
+          ${
+            state.notes.trim()
+              ? `<span class="pe-notes-preview">${escapeHtml(state.notes)}</span>`
+              : `<span class="pe-notes-placeholder">Add notes…</span>`
+          }
+          <span class="pe-notes-open-icon">${icon('eye')}</span>
+        </button>
+      </div>
     </section>
   `;
 }

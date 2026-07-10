@@ -2,14 +2,13 @@ import { getSyncedItem, secondTapHintKey as secondTapHintStorageKey, setSyncedIt
 
 // The "tap again to load" hint sticks around until the gesture has been used
 // this many times, so it keeps reminding new users across several sessions.
-export const secondTapHintUsesBeforeHiding = 10;
+export const secondTapHintUsesBeforeHiding = 20;
 
-export type SecondTapHintKind = 'bean' | 'shot';
+export type SecondTapHintKind = 'bean' | 'shot' | 'profile';
 
-interface SecondTapHintPrefs {
-  beanUses: number;
-  shotUses: number;
-}
+type SecondTapHintPrefs = Record<SecondTapHintKind, number>;
+
+const HINT_KINDS: readonly SecondTapHintKind[] = ['bean', 'shot', 'profile'];
 
 function readCount(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
@@ -22,31 +21,30 @@ function readSecondTapHintPrefs(): SecondTapHintPrefs {
     const raw = getSyncedItem(secondTapHintStorageKey);
     const parsed = raw ? JSON.parse(raw) : {};
     return {
-      beanUses: readCount(parsed?.beanUses),
-      shotUses: readCount(parsed?.shotUses)
+      // `beanUses`/`shotUses`/`profileUses` are stored per gesture.
+      bean: readCount(parsed?.beanUses),
+      shot: readCount(parsed?.shotUses),
+      profile: readCount(parsed?.profileUses)
     };
   } catch {
-    return { beanUses: 0, shotUses: 0 };
+    return { bean: 0, shot: 0, profile: 0 };
   }
 }
 
 function writeSecondTapHintPrefs(prefs: SecondTapHintPrefs): void {
-  setSyncedItem(secondTapHintStorageKey, JSON.stringify(prefs));
+  setSyncedItem(
+    secondTapHintStorageKey,
+    JSON.stringify({ beanUses: prefs.bean, shotUses: prefs.shot, profileUses: prefs.profile })
+  );
 }
 
 export function shouldShowSecondTapHint(kind: SecondTapHintKind): boolean {
-  const prefs = readSecondTapHintPrefs();
-  const uses = kind === 'bean' ? prefs.beanUses : prefs.shotUses;
-  return uses < secondTapHintUsesBeforeHiding;
+  return readSecondTapHintPrefs()[kind] < secondTapHintUsesBeforeHiding;
 }
 
 export function markSecondTapHintUsed(kind: SecondTapHintKind): void {
+  if (!HINT_KINDS.includes(kind)) return;
   const prefs = readSecondTapHintPrefs();
-  if (kind === 'bean') {
-    if (prefs.beanUses >= secondTapHintUsesBeforeHiding) return;
-    writeSecondTapHintPrefs({ ...prefs, beanUses: prefs.beanUses + 1 });
-    return;
-  }
-  if (prefs.shotUses >= secondTapHintUsesBeforeHiding) return;
-  writeSecondTapHintPrefs({ ...prefs, shotUses: prefs.shotUses + 1 });
+  if (prefs[kind] >= secondTapHintUsesBeforeHiding) return;
+  writeSecondTapHintPrefs({ ...prefs, [kind]: prefs[kind] + 1 });
 }

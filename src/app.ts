@@ -347,6 +347,7 @@ import {
   renderTweakPreview
 } from './views/derekView';
 import {
+  profileShortTitle,
   renderPhoneProfilesPage as renderPhoneProfilePickerPage,
   renderProfilesPage as renderProfilePickerPage
 } from './views/profilePickerView';
@@ -386,7 +387,8 @@ import { renderCleaningWizardModal as renderCleaningWizardModalView } from './vi
 import {
   renderGrinderEditorPage as renderGrinderEditorPageView,
   renderMachineLabelModal as renderMachineLabelModalView,
-  renderImportProfileModal as renderImportProfileModalView
+  renderImportProfileModal as renderImportProfileModalView,
+  renderProfileNotesModal as renderProfileNotesModalView
 } from './views/formsView';
 import {
   renderLivePanel as renderLivePanelView,
@@ -519,6 +521,7 @@ type Modal =
   | 'cleaning-wizard'
   | 'import-profile'
   | 'delete-profile'
+  | 'notes-editor'
   | 'derek'
   | null;
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
@@ -547,7 +550,21 @@ type View =
 
 const initialSettingsPreferences = readSettingsPreferences();
 
-const FOCUSABLE_SEARCH = new Set(['search', 'shot-search', 'profile-search', 'settings-search']);
+// Input types that aren't free-text entry — focus on these is a click target,
+// not a caret, so they're excluded from the across-render focus restore.
+const NON_TEXT_INPUT_TYPES = new Set([
+  'button', 'submit', 'reset', 'checkbox', 'radio', 'range', 'color', 'file', 'image', 'hidden'
+]);
+
+// A field the user types into: <textarea>, contenteditable, or a text-like
+// <input>. These are exactly the elements where losing focus mid-render is a
+// bug; buttons, steppers, toggles, and sliders are deliberately excluded.
+function isTextEntryElement(el: HTMLElement): boolean {
+  if (el instanceof HTMLTextAreaElement) return true;
+  if (el.isContentEditable) return true;
+  if (el instanceof HTMLInputElement) return !NON_TEXT_INPUT_TYPES.has(el.type);
+  return false;
+}
 
 // Scrollable containers whose scroll position must survive a re-render.
 const SCROLL_SELECTORS = ['.bean-picker-list', '.bean-picker-batch-list', '.shot-list', '.shot-bean-list', '.profile-list', '.page-body', '.settings-detail', '.phone-main', '.phone-list', '.pe-step-detail', '.pe-step-list'];
@@ -1065,6 +1082,8 @@ export class BeanieApp {
   private liveGhostShotId: string | null = null;
   private detailChartCanvas: HTMLCanvasElement | null = null;
   private shotStagesChartCanvas: HTMLCanvasElement | null = null;
+  // One-shot: focus the notes textarea on the render right after the modal opens.
+  private pendingNotesFocus = false;
   private detailChartShotId: string | null = null;
   private detailChartCompareShotId: string | null = null;
   private simTimer: number | null = null;
@@ -1394,6 +1413,7 @@ export class BeanieApp {
       if (prevSignature != null && workflowSignature(workflow) !== prevSignature) {
         this.setState({ applyState: 'stale', status: 'Workflow changed on the machine' });
       }
+      void this.enforceGatewayTrackingMode();
       void this.loadMachineControlState();
       this.connectMachineSocket();
       this.connectScaleSocket();
@@ -1408,6 +1428,22 @@ export class BeanieApp {
       if (this.disposed) return;
       console.warn('[Beanie] Gateway unavailable; using demo data', error);
       this.loadDemo();
+    }
+  }
+
+  /**
+   * Beanie always drives the machine as a tracking client, so pin the gateway's
+   * control mode to 'tracking' on every real load. This makes the setting
+   * implicit — it no longer appears in the settings view — and stops a stray
+   * 'disabled'/'full' left on the gateway (or set by another skin) from changing
+   * how Beanie behaves. Best-effort: a failure just leaves the current mode.
+   */
+  private async enforceGatewayTrackingMode(): Promise<void> {
+    if (this.state.demo) return;
+    try {
+      await gateway.updateSettings({ gatewayMode: 'tracking' });
+    } catch (error) {
+      console.warn('[Beanie] Could not set gateway control mode to tracking', error);
     }
   }
 
@@ -5402,8 +5438,19 @@ export class BeanieApp {
         if (value) this.setState({ profilePage: Number(value) });
       },
       'focus-profile': ({ id }) => {
-        if (id) this.focusProfile(id);
+        if (!id) return;
+        // Tap-again to load, mirroring the bean picker: the first tap previews a
+        // profile, and tapping the already-focused row loads it. Only this
+        // deliberate second tap counts toward retiring the suggestion tooltip.
+        if (id === this.state.profileFocusId) {
+          this.completeSecondTapHint('profile');
+          if (this.state.cleaningProfilePicking) this.pickCleaningProfile(id);
+          else this.pickProfile(id);
+        } else {
+          this.focusProfile(id);
+        }
       },
+      // The phone list has no preview pane, so a single tap loads directly.
       'pick-profile': ({ id }) => {
         if (id) {
           if (this.state.cleaningProfilePicking) this.pickCleaningProfile(id);
@@ -5435,6 +5482,12 @@ export class BeanieApp {
         if (this.state.modal === 'cleaning-wizard') this.teardownUntrackedCleaningAction();
         if (this.state.modal === 'batch-storage') {
           this.setState({ modal: 'bean-picker', batchStorageTarget: null });
+          return;
+        }
+        // Notes editor layers over the profile-editor page — closing it must keep
+        // the editor draft intact, so just drop the modal.
+        if (this.state.modal === 'notes-editor') {
+          this.setState({ modal: null });
           return;
         }
         if (this.state.profileEdit || this.state.machineEdit || this.state.numberEdit || this.state.machineLabelEdit) {
@@ -5484,6 +5537,15 @@ export class BeanieApp {
     return {
       'pe-edit-value': ({ el }) => {
         this.openProfileValueDialog(el);
+      },
+      'pe-edit-notes': () => {
+        if (this.state.profileEditor) {
+          this.pendingNotesFocus = true;
+          this.setState({ modal: 'notes-editor' });
+        }
+      },
+      'pe-notes-save': () => {
+        this.commitProfileNotes();
       },
       'new-profile': () => {
         this.openNewProfileEditor();
@@ -5650,17 +5712,15 @@ export class BeanieApp {
     this.scheduleApply();
   }
 
+  // First tap on a profile row just previews it in the pane (like inspecting a
+  // bean) — the draft/machine profile only changes on the confirming second tap
+  // in pickProfile. The armed row teaches the tap-again gesture on its own (see
+  // renderProfileRow); no per-row hint state is needed.
   private focusProfile(id: string): void {
-    const selection = selectProfileForDraft({
-      draft: this.state.draft,
-      profiles: this.state.profiles,
-      grinders: this.state.grinders,
-      profileId: id
-    });
+    const record = this.state.profiles.find((profile) => profile.id === id);
     this.setState({
-      draft: selection.draft,
       profileFocusId: id,
-      status: selection.status
+      status: record ? `Previewing ${profileShortTitle(record.profile.title ?? id)}` : this.state.status
     });
   }
 
@@ -5857,30 +5917,53 @@ export class BeanieApp {
       return;
     }
 
-    // Saving keeps the editor open (Save is not "done") and surfaces the result
-    // in-place. The saved profile is now the one being edited, so a re-save
-    // updates it instead of creating a duplicate, and it's focused so it shows
-    // when the user returns to the list. The gateway content-hash-dedupes by
-    // brew settings (ignoring title), so a `deduped` save created nothing new —
-    // say so rather than imply a fresh profile appeared.
-    const editor = this.state.profileEditor;
-    const savedTitle = result.profiles.find((item) => item.id === result.profileId)?.profile.title;
-    const notice: { tone: 'error' | 'success'; message: string } = result.deduped
-      ? {
-          tone: 'error',
-          message: savedTitle
-            ? `These settings already match the existing profile "${savedTitle}". Change a setting to save a separate profile.`
-            : 'These settings already match an existing profile. Change a setting to save a separate profile.'
-        }
-      : { tone: 'success', message: result.status };
+    // A `deduped` save created nothing new — the gateway content-hash-dedupes by
+    // brew settings (ignoring title), so the settings already match an existing
+    // profile. Keep the editor open with the notice rather than implying a fresh
+    // profile appeared or loading something the user didn't mean to create.
+    if (result.deduped) {
+      const editor = this.state.profileEditor;
+      const savedTitle = result.profiles.find((item) => item.id === result.profileId)?.profile.title;
+      const notice = {
+        tone: 'error' as const,
+        message: savedTitle
+          ? `These settings already match the existing profile "${savedTitle}". Change a setting to save a separate profile.`
+          : 'These settings already match an existing profile. Change a setting to save a separate profile.'
+      };
+      this.setState({
+        profiles: result.profiles,
+        editingProfileId: result.profileId,
+        profileFocusId: result.profileId,
+        busy: false,
+        status: result.status,
+        profileEditor: editor ? { ...editor, dirty: false, saveNotice: notice } : editor
+      });
+      return;
+    }
+
+    // A successful save loads the profile straight away and returns to the
+    // workbench: edits to the active profile go live immediately, and a freshly
+    // created one is ready to brew without a separate load step.
+    const selection = selectProfileForDraft({
+      draft: this.state.draft,
+      profiles: result.profiles,
+      grinders: this.state.grinders,
+      profileId: result.profileId
+    });
     this.setState({
       profiles: result.profiles,
-      editingProfileId: result.profileId,
+      draft: selection.draft,
+      view: 'workbench',
+      profileEditor: null,
+      editingProfileId: null,
       profileFocusId: result.profileId,
+      profileSearch: '',
+      // Loading a profile replaces whatever Derek tweak was staged (matches pickProfile).
+      derekTweakChip: null,
       busy: false,
-      status: result.status,
-      profileEditor: editor ? { ...editor, dirty: false, saveNotice: notice } : editor
+      status: result.status
     });
+    this.scheduleApply();
   }
 
   private toggleFavoriteProfile(id: string): void {
@@ -7157,6 +7240,19 @@ export class BeanieApp {
     });
   }
 
+  // The notes modal is an uncontrolled textarea (read at save, like the machine
+  // label modal), so its typed text lives only in the DOM until the user saves.
+  private commitProfileNotes(): void {
+    const pe = this.state.profileEditor;
+    if (!pe) {
+      this.setState({ modal: null });
+      return;
+    }
+    const input = this.root.querySelector<HTMLTextAreaElement>('[data-action="pe-notes-input"]');
+    const notes = input?.value ?? pe.notes;
+    this.setState({ profileEditor: setProfileMeta(pe, 'notes', notes), modal: null });
+  }
+
   private async applyMachinePreset(name: string, presetId: string): Promise<void> {
     const plan = applyMachinePresetPlan({
       name,
@@ -7556,6 +7652,24 @@ export class BeanieApp {
     this.restoreBeanFormDrafts(beanFormDrafts);
     this.restoreFocus(focus);
     this.restoreScroll(scroll);
+    this.focusNotesEditor();
+  }
+
+  // When the notes modal has just opened, drop the caret into the textarea (at the
+  // end of any existing text) so the keyboard comes up ready to type. One-shot so
+  // later re-renders don't steal focus back while the user is mid-edit elsewhere.
+  private focusNotesEditor(): void {
+    if (!this.pendingNotesFocus) return;
+    this.pendingNotesFocus = false;
+    const input = this.root.querySelector<HTMLTextAreaElement>('[data-action="pe-notes-input"]');
+    if (!input) return;
+    input.focus();
+    const end = input.value.length;
+    try {
+      input.setSelectionRange(end, end);
+    } catch {
+      /* not selectable */
+    }
   }
 
   private isPhoneLayout(): boolean {
@@ -7863,46 +7977,51 @@ export class BeanieApp {
     });
   }
 
+  // render() replaces the whole DOM, so any focused text field is destroyed on
+  // every state change. This keeps the caret alive across that rebuild for ALL
+  // text-entry fields automatically — there's no allow-list to keep in sync, so
+  // new fields work by default. Opt a field out with data-no-focus-restore.
   private captureFocus(): { selector: string; start: number | null; value: string | null } | null {
-    const active = document.activeElement as HTMLInputElement | null;
-    const action = active?.dataset?.action;
-    if (!action) return null;
-    if (
-      !FOCUSABLE_SEARCH.has(action) &&
-      !action.startsWith('pe-') &&
-      action !== 'phone-recipe-field' &&
-      action !== 'phone-shot-field' &&
-      action !== 'shot-edit-number' &&
-      action !== 'bean-picker-batch-field' &&
-      action !== 'bean-picker-bean-field'
-    ) {
-      return null;
-    }
-    const batchForm = active?.closest<HTMLFormElement>('[data-form="bean-picker-batch"]');
+    const active = document.activeElement as HTMLElement | null;
+    if (!active || !isTextEntryElement(active)) return null;
+    if (active.dataset.noFocusRestore != null) return null;
+    // Anchor the restore selector on the most stable identifier the field has.
+    const name = active.getAttribute('name');
+    const anchor = active.dataset.action != null
+      ? `[data-action="${active.dataset.action}"]`
+      : name
+      ? `[name="${name}"]`
+      : active.id
+      ? `#${CSS.escape(active.id)}`
+      : null;
+    if (!anchor) return null;
+    const batchForm = active.closest<HTMLFormElement>('[data-form="bean-picker-batch"]');
     const parts = batchForm?.dataset.batchId != null
-      ? [`[data-form="bean-picker-batch"][data-batch-id="${batchForm.dataset.batchId}"] [data-action="${action}"]`]
-      : [`[data-action="${action}"]`];
-    if (active?.dataset.field != null) parts.push(`[data-field="${active.dataset.field}"]`);
-    if (active?.dataset.index != null) parts.push(`[data-index="${active.dataset.index}"]`);
-    if (active?.dataset.key != null) parts.push(`[data-key="${active.dataset.key}"]`);
-    if (active?.getAttribute('name') != null) parts.push(`[name="${active.getAttribute('name')}"]`);
-    // The four exit sliders share action/index/key — disambiguate by type+condition.
-    if (active?.dataset.type != null) parts.push(`[data-type="${active.dataset.type}"]`);
-    if (active?.dataset.condition != null) parts.push(`[data-condition="${active.dataset.condition}"]`);
-    const start = typeof active?.selectionStart === 'number' ? active.selectionStart : null;
+      ? [`[data-form="bean-picker-batch"][data-batch-id="${batchForm.dataset.batchId}"] ${anchor}`]
+      : [anchor];
+    if (active.dataset.field != null) parts.push(`[data-field="${active.dataset.field}"]`);
+    if (active.dataset.index != null) parts.push(`[data-index="${active.dataset.index}"]`);
+    if (active.dataset.key != null) parts.push(`[data-key="${active.dataset.key}"]`);
+    // Add name as a disambiguator only when it isn't already the anchor.
+    if (active.dataset.action != null && name != null) parts.push(`[name="${name}"]`);
+    if (active.dataset.type != null) parts.push(`[data-type="${active.dataset.type}"]`);
+    if (active.dataset.condition != null) parts.push(`[data-condition="${active.dataset.condition}"]`);
+    const input = active as HTMLInputElement | HTMLTextAreaElement;
+    const start = typeof input.selectionStart === 'number' ? input.selectionStart : null;
     // Capture the in-progress value too. These fields are uncontrolled, so a
     // background re-render (water band crossing, sleep/wake, refresh timers)
     // would otherwise reset typed-but-uncommitted text back to the saved value.
-    const value = typeof (active as HTMLInputElement | HTMLTextAreaElement | null)?.value === 'string'
-      ? (active as HTMLInputElement | HTMLTextAreaElement).value
-      : null;
+    const value = typeof input.value === 'string' ? input.value : null;
     return { selector: parts.join(''), start, value };
   }
 
   private restoreFocus(focus: { selector: string; start: number | null; value: string | null } | null): void {
     if (!focus) return;
-    const el = this.root.querySelector<HTMLInputElement>(focus.selector);
-    if (!el) return;
+    // Only restore when the selector still resolves to exactly one field, so an
+    // ambiguous match can never drop the caret into the wrong box.
+    const matches = this.root.querySelectorAll<HTMLInputElement>(focus.selector);
+    if (matches.length !== 1) return;
+    const el = matches[0];
     if (focus.value != null && el.value !== focus.value) el.value = focus.value;
     el.focus();
     if (focus.start != null) {
@@ -8092,7 +8211,8 @@ export class BeanieApp {
       focusId: this.state.profileFocusId,
       cleaningMode,
       showHidden: this.state.profilesShowHidden,
-      hiddenProfiles: this.state.hiddenProfiles
+      hiddenProfiles: this.state.hiddenProfiles,
+      showLoadHint: shouldShowSecondTapHint('profile')
     };
     return this.isPhoneLayout() ? renderPhoneProfilePickerPage(model) : renderProfilePickerPage(model);
   }
@@ -8648,7 +8768,14 @@ export class BeanieApp {
     if (this.state.modal === 'cleaning-wizard') return this.renderCleaningWizardModal();
     if (this.state.modal === 'import-profile') return this.renderImportProfileModal();
     if (this.state.modal === 'delete-profile') return this.renderDeleteProfileModal();
+    if (this.state.modal === 'notes-editor') return this.renderProfileNotesModal();
     return '';
+  }
+
+  private renderProfileNotesModal(): string {
+    const pe = this.state.profileEditor;
+    if (!pe) return '';
+    return renderProfileNotesModalView(pe.notes);
   }
 
   private renderImportProfileModal(): string {

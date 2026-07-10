@@ -13,6 +13,9 @@ export interface ProfilePickerViewModel {
   cleaningMode: boolean;
   showHidden: boolean;
   hiddenProfiles: readonly ProfileRecord[];
+  /** While true (the first several loads), an armed row teaches the gesture with
+   *  the floating "Tap again to load" tooltip instead of the plain pill. */
+  showLoadHint?: boolean;
 }
 
 export function renderProfilesPage(model: ProfilePickerViewModel): string {
@@ -62,7 +65,7 @@ export function renderProfilesPage(model: ProfilePickerViewModel): string {
           ${
             sorted.length === 0
               ? '<p class="empty">No profiles match.</p>'
-              : renderProfileRows(sorted, favorites, model.selectedId, focus?.id ?? null)
+              : renderProfileRows(sorted, favorites, model.selectedId, focus?.id ?? null, model.showLoadHint ?? false)
           }
         </div>
         ${renderProfilePreviewPane(focus, {
@@ -150,26 +153,43 @@ function renderProfileRows(
   records: ProfileRecord[],
   favorites: Set<string>,
   selectedId: string | null,
-  focusId: string | null
+  focusId: string | null,
+  showLoadHint: boolean
 ): string {
   let lastGroup = '';
   return records.map((record) => {
     const group = profileGroupLabel(record, favorites);
     const header = group !== lastGroup ? `<div class="profile-group-header">${escapeHtml(group)}</div>` : '';
     lastGroup = group;
-    return `${header}${renderProfileRow(record, favorites.has(record.id), record.id === selectedId, record.id === focusId)}`;
+    return `${header}${renderProfileRow(record, favorites.has(record.id), record.id === selectedId, record.id === focusId, showLoadHint)}`;
   }).join('');
 }
 
-function renderProfileRow(record: ProfileRecord, favorite: boolean, active: boolean, focused = false): string {
+// Selection mirrors the bean picker: the first tap focuses a row (previewing it
+// in the pane), and a second tap on the focused row loads it. An armed row shows
+// a "Tap again" affordance — while the gesture is still being learned that's the
+// floating suggestion tooltip, and afterwards the quieter inline pill. This is
+// driven purely by the armed state, so it reads the same however the row got
+// focused (list tap, or returning from the editor after a save).
+function renderProfileRow(
+  record: ProfileRecord,
+  favorite: boolean,
+  active: boolean,
+  focused = false,
+  showLoadHint = false
+): string {
   const title = record.profile.title ?? record.id;
   const shortTitle = profileShortTitle(title);
+  const armed = focused && !active;
+  const tooltip = armed && showLoadHint;
+  const status = active ? 'Selected' : armed && !tooltip ? 'Tap again' : '';
   return `
-    <div class="profile-row ${active ? 'active' : ''} ${focused ? 'focused' : ''}">
+    <div class="profile-row ${active ? 'active' : ''} ${focused ? 'focused' : ''} ${tooltip ? 'has-second-tap-hint' : ''}">
       <button type="button" class="profile-pick" data-action="focus-profile" data-id="${escapeAttr(record.id)}">
         <span class="profile-row-title">${favorite ? '<span class="profile-row-fav">★</span> ' : ''}${escapeHtml(shortTitle)}</span>
       </button>
-      ${active ? '<span class="profile-selected-dot">Selected</span>' : ''}
+      ${status ? `<span class="profile-row-action ${active ? 'current' : 'armed'}">${escapeHtml(status)}</span>` : ''}
+      ${tooltip ? '<span class="second-tap-tooltip">Tap again to load</span>' : ''}
     </div>
   `;
 }
@@ -211,10 +231,10 @@ function renderProfilePreviewPane(
         <p class="profile-preview-notes">${escapeHtml(record.profile.notes || 'No description.')}</p>
       </section>
       <div class="profile-preview-actions">
+        <span class="profile-preview-select-hint ${active ? 'is-loaded' : ''}">${active ? 'Loaded' : 'Tap the profile again to load it'}</span>
         ${cleaningMode ? '' : `<button type="button" class="pa-edit pa-hide" data-action="hide-profile" data-id="${escapeAttr(record.id)}"><span>Hide</span></button>`}
         ${cleaningMode || record.isDefault ? '' : renderDeleteButton(record.id)}
         <button type="button" class="pa-edit" data-action="edit-profile" data-id="${escapeAttr(record.id)}">${icon('pencil')}<span>Edit</span></button>
-        <button type="button" class="pa-select ${active ? 'is-selected' : ''}" data-action="pick-profile" data-id="${escapeAttr(record.id)}">Select</button>
       </div>
     </aside>
   `;

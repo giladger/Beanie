@@ -50,6 +50,66 @@ run('profile picker renders favorites first and groups by title prefix', () => {
   equal(html.indexOf('Sweet') < html.indexOf('Classic'), true);
 });
 
+run('profile picker arms the focused-but-unselected row with a tap-again cue and no Select button', () => {
+  const html = renderProfilesPage({
+    profiles,
+    search: '',
+    favoriteProfileIds: [],
+    selectedId: 'profile-pressure',
+    focusId: 'profile-flow',
+    cleaningMode: false,
+    showHidden: false,
+    hiddenProfiles: []
+  });
+
+  // The armed row invites a second tap; selection no longer uses a Select button.
+  includes(html, 'Tap again');
+  excludes(html, 'class="pa-select');
+  includes(html, 'data-action="focus-profile" data-id="profile-flow"');
+  // The still-loaded profile keeps its status pill.
+  includes(html, 'Selected');
+  // The preview caption stands in for the removed button.
+  includes(html, 'Tap the profile again to load it');
+});
+
+run('profile picker shows the suggestion tooltip on the armed row while the hint budget lasts', () => {
+  const html = renderProfilesPage({
+    profiles,
+    search: '',
+    favoriteProfileIds: [],
+    selectedId: 'profile-pressure',
+    focusId: 'profile-flow',
+    cleaningMode: false,
+    showHidden: false,
+    hiddenProfiles: [],
+    showLoadHint: true
+  });
+
+  includes(html, 'second-tap-tooltip');
+  includes(html, 'Tap again to load');
+  includes(html, 'has-second-tap-hint');
+  // While the tooltip is teaching the gesture, the plain pill stays hidden.
+  excludes(html, '>Tap again</span>');
+});
+
+run('profile picker falls back to the inline pill once the hint budget is spent', () => {
+  const html = renderProfilesPage({
+    profiles,
+    search: '',
+    favoriteProfileIds: [],
+    selectedId: 'profile-pressure',
+    focusId: 'profile-flow',
+    cleaningMode: false,
+    showHidden: false,
+    hiddenProfiles: [],
+    showLoadHint: false
+  });
+
+  // The armed row still invites a second tap, just without the floating tooltip.
+  includes(html, 'Tap again');
+  excludes(html, 'second-tap-tooltip');
+});
+
 run('profile picker filters by search and focuses the selected profile by default', () => {
   const html = renderProfilesPage({
     profiles,

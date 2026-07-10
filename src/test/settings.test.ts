@@ -85,7 +85,6 @@ run('readSkins normalizes id/name from a few shapes', () => {
 run('settings model exposes every currently editable backend setting', () => {
   const keys = new Set(SETTINGS_SPEC.flatMap((section) => section.fields.map((field) => `${field.group}.${field.key}`)));
   [
-    'rea.gatewayMode',
     'rea.automaticUpdateCheck',
     'rea.logLevel',
     'rea.blockOnNoScale',

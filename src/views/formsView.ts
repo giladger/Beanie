@@ -81,6 +81,27 @@ export function renderMachineLabelModal(label: string): string {
   `;
 }
 
+export function renderProfileNotesModal(notes: string): string {
+  return `
+    <div class="modal-backdrop notes-modal-backdrop" data-action="close-modal">
+      <section class="modal profile-notes-modal" role="dialog" aria-modal="true" aria-label="Edit notes" data-action="noop">
+        <div class="modal-head">
+          <div>
+            <span class="eyebrow">Profile</span>
+            <h2>Notes</h2>
+          </div>
+          <button type="button" class="icon-button" data-action="close-modal" aria-label="Close">${icon('x')}</button>
+        </div>
+        <textarea class="profile-notes-input" data-action="pe-notes-input" spellcheck="true" placeholder="Tasting notes, dial-in tips, anything worth remembering…">${escapeHtml(notes)}</textarea>
+        <div class="modal-actions">
+          <button type="button" class="text-button" data-action="close-modal">Cancel</button>
+          <button type="button" class="command primary" data-action="pe-notes-save">${icon('check')}<span>Save</span></button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 function formNumber(
   formKey: string,
   name: string,

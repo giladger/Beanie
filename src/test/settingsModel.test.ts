@@ -43,9 +43,9 @@ await run('all select fields backed by numeric wire values declare a number valu
 });
 
 await run('string selects keep coercing to strings', () => {
-  const gatewayMode = specField('rea', 'gatewayMode');
+  const scalePowerMode = specField('rea', 'scalePowerMode');
 
-  equal(coerceFieldValue(gatewayMode, 'tracking'), 'tracking');
+  equal(coerceFieldValue(scalePowerMode, 'disconnect'), 'disconnect');
 });
 
 await run('toggle, number, and time fields coerce and clamp their raw values', () => {
@@ -70,8 +70,8 @@ await run('field value reads typed values out of the bundle per control type', (
 
   equal(fieldValue(bundle, specField('rea', 'blockOnNoScale')), bundle.rea.blockOnNoScale === true);
   equal(fieldValue(bundle, specField('rea', 'weightFlowMultiplier')), bundle.rea.weightFlowMultiplier);
-  equal(fieldValue(bundle, specField('rea', 'gatewayMode')), String(bundle.rea.gatewayMode));
-  equal(fieldValue(setBundleField(bundle, specField('rea', 'gatewayMode'), null), specField('rea', 'gatewayMode')), '');
+  equal(fieldValue(bundle, specField('rea', 'scalePowerMode')), String(bundle.rea.scalePowerMode));
+  equal(fieldValue(setBundleField(bundle, specField('rea', 'scalePowerMode'), null), specField('rea', 'scalePowerMode')), '');
 });
 
 await run('minutes to time renders HH:MM and wraps out-of-range minutes', () => {
