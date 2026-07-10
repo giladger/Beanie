@@ -124,6 +124,35 @@ run('topbar remount applies the latest offered model instead of cached state', (
   island.dispose();
 });
 
+run('topbar suspension keeps hidden DOM silent and reconciles the latest model on resume', () => {
+  const fixture = topbarFixture();
+  const island = new TopbarIsland();
+  const projector = new TopbarProjector();
+  island.bind(fixture.root as unknown as HTMLElement);
+  island.offer(projector.project({
+    status: { label: 'Ready', tone: 'ready' },
+    groupTemperatureC: 92,
+    steamTemperatureC: 120,
+    waterLevelMm: 50,
+    scale: null
+  }));
+  const beforeSuspend = writeCount(fixture.containers, fixture.values);
+
+  island.suspend();
+  island.offer(projector.project({
+    status: { label: 'Offline', tone: 'alert' },
+    groupTemperatureC: 90,
+    steamTemperatureC: 110,
+    waterLevelMm: 48,
+    scale: null
+  }));
+  equal(writeCount(fixture.containers, fixture.values), beforeSuspend);
+
+  island.resume();
+  equal(fixture.values[0]!.textContent, 'Offline');
+  island.dispose();
+});
+
 function topbarFixture(): {
   root: FakeElement;
   containers: FakeElement[];

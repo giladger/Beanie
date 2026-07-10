@@ -5,7 +5,7 @@ import morphdom from 'morphdom';
 // input state survive renders. This module owns the morph policy and the
 // focus fallback; app.ts owns building the markup.
 //
-// Rule that lives here (see docs/webview-gpu-oom-investigation.md): in the
+// Rule that lives here (see docs/render-ownership-architecture.md): in the
 // in-process Android WebView, any redundant DOM write is a GPU-memory leak
 // risk. The morph must only touch nodes that actually changed.
 

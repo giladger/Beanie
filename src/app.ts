@@ -16,6 +16,7 @@ import type {
   ShotAnnotations,
   ShotMeasurement,
   ShotRecord,
+  ShotStateEvent,
   ShotUpdate,
   SteamSettings,
   Workflow,
@@ -27,6 +28,11 @@ import {
   gatewayHttpOrigin,
   gatewayWsOrigin
 } from './api/gateway';
+import {
+  browserSocketSupervisorScheduler,
+  browserWebSocketFactory,
+  SocketSupervisor
+} from './api/runtime/socketSupervisor';
 import { readMachineSnapshot, readScaleSnapshot, readShotStateEvent } from './api/guards';
 import { escapeAttr, escapeHtml } from './components/html';
 import {
@@ -126,6 +132,19 @@ import { TopbarProjector, type TopbarViewModel } from './render/topbarPresentati
 import { ScreensaverIsland } from './render/screensaverIsland';
 import { DerekStreamIsland } from './render/derekStreamIsland';
 import { patchProfileRangeValue } from './render/profileEditorIsland';
+import {
+  PresentationActivityCoordinator,
+  type PresentationActivityTarget
+} from './runtime/presentationActivity';
+import { DisposableScope } from './runtime/disposableScope';
+import { BackgroundTask } from './runtime/backgroundTask';
+import { WorkflowCommandCoordinator } from './runtime/workflowCommandCoordinator';
+import { OperationAuthority } from './runtime/operationAuthority';
+import { BoundedImageTranscoder } from './platform/imageTranscoder';
+import {
+  TelemetryStore,
+  type WaterLevelSnapshot
+} from './telemetry/telemetryStore';
 import { ScannerFlow } from './controllers/scannerFlow';
 import { ProfileEditorFlow } from './controllers/profileEditorFlow';
 import {
@@ -160,7 +179,7 @@ import {
   setBundleField,
   type SettingsBundle
 } from './domain/settingsModel';
-import type { DecentAccountStatus, PluginSettings } from './api/settings';
+import type { DecentAccountStatus, DisplayState, PluginSettings } from './api/settings';
 import { readDisplayState } from './api/settings';
 import { createSettingsController } from './controllers/settingsController';
 import {
@@ -275,11 +294,11 @@ import {
 import { loadBeanBatches } from './data/beanRepository';
 import { migrateStorageEventsToGateway } from './data/storageEventsMigration';
 import {
-  appendPendingDose,
   readPendingDoses,
-  resolvePendingDose,
   writePendingDoses
 } from './domain/pendingDoses';
+import { DoseMutationReconciler } from './controllers/doseMutationReconciler';
+import { rebaseChangedFields } from './domain/rebaseMutation';
 import {
 
   type DerekState
@@ -360,6 +379,7 @@ import {
 } from './domain/settings';
 import {
   SCREENSAVER_CLOCK_MOVE_INTERVAL_MS,
+  MAX_SCREENSAVER_PHOTOS,
   SCREENSAVER_PHOTOS_CACHE_KEY,
   SCREENSAVER_PHOTO_INTERVAL_MS,
   SCREENSAVER_PHOTO_JPEG_QUALITY,
@@ -424,7 +444,8 @@ import {
   optimisticMachineSnapshot,
   restoreMachineServiceWorkflowAfterEnd as restoreMachineServiceWorkflowAfterEndController,
   sendMachineActionCommand,
-  type MachineServiceWorkflowRestore
+  type MachineServiceWorkflowRestore,
+  type SendMachineActionCommandResult
 } from './controllers/machineExecutionController';
 import {
   readHotWaterStopMode,
@@ -505,11 +526,28 @@ const PRESENCE_HEARTBEAT_INTERVAL_MS = 15_000;
 const WAKE_APP_IDLE_SCREEN_OFF_MS = 5 * 60 * 1000;
 const SHOT_REFRESH_INTERVAL_MS = 60_000;
 const BEAN_REFRESH_INTERVAL_MS = 30_000;
+const SETTINGS_SYNC_INTERVAL_MS = 10_000;
 const NO_SCALE_SHOT_MESSAGE = 'Shot blocked: connect a scale to start.';
 const NO_SCALE_MACHINE_STATUS = 'Connect scale';
 const NO_SCALE_ABORT_WINDOW_MS = 3_000;
 const SCALE_FRESH_WINDOW_MS = 5_000;
 const NO_SCALE_WARNING_VISIBLE_MS = 6_000;
+
+function readWaterLevelSnapshot(value: unknown): WaterLevelSnapshot {
+  const data = value != null && typeof value === 'object'
+    ? value as { currentLevel?: unknown; refillLevel?: unknown }
+    : {};
+  return {
+    currentLevelMm:
+      typeof data.currentLevel === 'number' && Number.isFinite(data.currentLevel)
+        ? data.currentLevel
+        : null,
+    refillLevelMm:
+      typeof data.refillLevel === 'number' && Number.isFinite(data.refillLevel)
+        ? data.refillLevel
+        : null
+  };
+}
 
 // Which editor field a tap-to-edit numpad dialog is bound to.
 export interface ProfileEditTarget {
@@ -784,7 +822,69 @@ function isPhoneTab(value: string | undefined): value is PhoneTab {
 }
 
 export class BeanieApp {
-  private readonly settingsController = createSettingsController(gateway);
+  private readonly settingsController = createSettingsController({
+    ...gateway,
+    scanDevices: () => this.runExactCommand('devices', () => gateway.scanDevices()),
+    connectPreferredDevices: () => this.runExactCommand(
+      'devices',
+      () => gateway.connectPreferredDevices()
+    ),
+    connectDevice: (id) => this.runExactCommand(
+      'devices',
+      () => gateway.connectDevice(id)
+    ),
+    disconnectDevice: (id) => this.runExactCommand(
+      'devices',
+      () => gateway.disconnectDevice(id)
+    ),
+    requestState: (state) => this.runExactMachineCommand(
+      () => gateway.requestState(state as MachineState)
+    ),
+    addWakeSchedule: (schedule) => this.runExactCommand(
+      'wake-schedules',
+      () => gateway.addWakeSchedule(schedule)
+    ),
+    updateWakeSchedule: (id, body) => this.runExactCommand(
+      `wake-schedule:${id}`,
+      () => gateway.updateWakeSchedule(id, body)
+    ),
+    deleteWakeSchedule: (id) => this.runExactCommand(
+      `wake-schedule:${id}`,
+      () => gateway.deleteWakeSchedule(id)
+    ),
+    loginDecentAccount: (email, password) => this.runExactCommand(
+      'decent-account',
+      () => gateway.loginDecentAccount(email, password)
+    ),
+    logoutDecentAccount: () => this.runExactCommand(
+      'decent-account',
+      () => gateway.logoutDecentAccount()
+    ),
+    updatePluginSettings: (id, values) => this.runExactCommand(
+      `plugin:${id}`,
+      () => gateway.updatePluginSettings(id, values)
+    ),
+    updateSettings: (patch) => this.runExactCommand(
+      'gateway-settings',
+      () => gateway.updateSettings(patch)
+    ),
+    updateMachineSettings: (patch) => this.runExactMachineCommand(
+      () => gateway.updateMachineSettings(patch)
+    ),
+    updateMachineAdvancedSettings: (patch) => this.runExactMachineCommand(
+      () => gateway.updateMachineAdvancedSettings(patch)
+    ),
+    updateCalibration: (value) => this.runExactMachineCommand(
+      () => gateway.updateCalibration(value)
+    ),
+    updatePresenceSettings: (patch) => this.runExactCommand(
+      'presence-settings',
+      () => gateway.updatePresenceSettings(patch)
+    ),
+    resetMachineSettings: () => this.runExactMachineCommand(
+      () => gateway.resetMachineSettings()
+    )
+  });
   private state: AppState = {
     beans: [],
     batchesByBean: {},
@@ -896,26 +996,12 @@ export class BeanieApp {
   };
 
   private applyTimer: number | null = null;
-  private machineRetryTimer: number | null = null;
-  private scaleRetryTimer: number | null = null;
-  private waterRetryTimer: number | null = null;
-  private displayRetryTimer: number | null = null;
-  private shotStateRetryTimer: number | null = null;
-  private pendingDoseRetryTimer: number | null = null;
-  private pendingDoseFlushActive = false;
   // Derek's modal/ask/apply flow lives in its own vertical (src/controllers/derekFlow.ts).
   private readonly derekFlow: DerekFlow;
   // The label scanner's capture/extract/review flow (src/controllers/scannerFlow.ts).
   private readonly scannerFlow: ScannerFlow;
   // The profile editor's dispatch/open/submit glue (src/controllers/profileEditorFlow.ts).
   private readonly profileEditorFlow: ProfileEditorFlow;
-  // Consecutive failed (re)connect attempts per socket, for backoff pacing.
-  private machineSocketAttempts = 0;
-  private scaleSocketAttempts = 0;
-  private waterSocketAttempts = 0;
-  private displaySocketAttempts = 0;
-  private shotStateSocketAttempts = 0;
-  private shotRefreshTimer: number | null = null;
   private clockTimer: number | null = null;
   // Raw telemetry is projected into one complete, stabilized view model, then
   // committed by the topbar's sole bounded DOM owner.
@@ -923,32 +1009,59 @@ export class BeanieApp {
   private readonly topbarIsland = new TopbarIsland();
   private readonly screensaverIsland = new ScreensaverIsland();
   private readonly derekStreamIsland = new DerekStreamIsland();
+  private readonly presentationActivity = new PresentationActivityCoordinator();
+  private readonly appScope = new DisposableScope();
+  private readonly shotRefreshTask = new BackgroundTask({
+    intervalMs: SHOT_REFRESH_INTERVAL_MS,
+    run: () => this.refreshVisibleShots()
+  });
+  private readonly beanRefreshTask = new BackgroundTask({
+    intervalMs: BEAN_REFRESH_INTERVAL_MS,
+    run: () => this.refreshBeans()
+  });
+  private readonly settingsSyncTask = new BackgroundTask({
+    intervalMs: SETTINGS_SYNC_INTERVAL_MS,
+    run: () => this.syncFromGateway()
+  });
+  private readonly workflowCommands = new WorkflowCommandCoordinator<string>();
+  // Updated inside the serialized gateway command before its promise settles.
+  // The coordinator may start the next physical command before the caller's UI
+  // continuation runs, so machine sequencing must not depend on AppState being
+  // rendered first.
+  private machineWorkflowShadow: Workflow | null = null;
+  private machineWorkflowDesired: Workflow | null = null;
+  private readonly applyAuthority = new OperationAuthority();
+  private readonly loadMoreAuthority = new OperationAuthority();
+  private readonly doseMutationReconciler: DoseMutationReconciler;
+  private readonly imageTranscoder = new BoundedImageTranscoder();
+  private readonly telemetryStore = new TelemetryStore();
+  private readonly machineStream: SocketSupervisor<MachineSnapshot>;
+  private readonly scaleStream: SocketSupervisor<ScaleSnapshot>;
+  private readonly waterStream: SocketSupervisor<WaterLevelSnapshot>;
+  private readonly displayStream: SocketSupervisor<DisplayState>;
+  private readonly shotStateStream: SocketSupervisor<ShotStateEvent>;
   private saverPhotoTimer: number | null = null;
+  private screensaverImportGeneration = 0;
   // Slideshow/clock placement live outside AppState so their minute ticks
   // patch the overlay DOM in place instead of re-rendering the app.
   private saverPhotoIndex = 0;
   private saverClockPos = screensaverClockPosition(0.5, 0.5);
   private saverClockMovedAtMs = Date.now();
-  private beanRefreshTimer: number | null = null;
-  private machineSocket: WebSocket | null = null;
-  private scaleSocket: WebSocket | null = null;
-  private waterSocket: WebSocket | null = null;
-  private displaySocket: WebSocket | null = null;
-  private shotStateSocket: WebSocket | null = null;
   // The gateway sequencer's decisions for the current shot (why each stage
   // advanced, why the pour stopped), accumulated off /ws/v1/machine/shotState.
   private decisionLog: ShotDecisionLog = emptyDecisionLog();
+  private started = false;
   private disposed = false;
+  private disposeDrain: Promise<void> | null = null;
   // Memoised so the boot settings load runs once; the scanner awaits it too.
   private settingsLoadPromise: Promise<void> | null = null;
-  // Live cross-device sync: re-poll the store on this interval.
-  private settingsPollTimer: number | null = null;
   // Setting pushes that failed; keyed by store key so a Retry re-sends each.
   private readonly failedStoreWrites = new Map<string, string | null>();
+  // Latest desired value guards completion callbacks from older in-flight
+  // writes; queued values themselves are coalesced by workflowCommands.
+  private readonly desiredStoreWrites = new Map<string, string | null>();
   private shotRefreshInFlight = false;
   private beanRefreshInFlight = false;
-  private applyRequestId = 0;
-  private loadMoreRequestId = 0;
   private shotCacheGeneration = 0;
 
   private readonly beanWorkflow = new BeanWorkflowController();
@@ -956,8 +1069,6 @@ export class BeanieApp {
   private liveChart: LiveChart | null = null;
   private liveCanvas: HTMLCanvasElement | null = null;
   private readonly liveReadouts = new LiveReadouts();
-  private liveRaf: number | null = null;
-  private liveDirty = false;
   // Memoised parse of the active profile's steps for live stage-reason lookups.
   private cachedStepsProfile: Profile | null = null;
   private cachedSteps: EditorStep[] = [];
@@ -1064,6 +1175,14 @@ export class BeanieApp {
     this.noteUserActivity();
     this.onTouchMove(event);
   };
+  private readonly chartActivityTarget: PresentationActivityTarget = {
+    suspend: () => {
+      for (const chart of this.managedCharts()) chart?.suspend();
+    },
+    resume: () => {
+      for (const chart of this.managedCharts()) chart?.resume();
+    }
+  };
   private touchScrollPoint: { x: number; y: number } | null = null;
   // Decided once per touch gesture. On both WebKit and Chrome/Android, calling
   // preventDefault on the first touchmove of a gesture cancels native scrolling
@@ -1074,6 +1193,124 @@ export class BeanieApp {
   private touchGestureLocked: boolean | null = null;
 
   constructor(private readonly root: HTMLElement) {
+    this.presentationActivity.add(this.topbarIsland);
+    this.presentationActivity.add(this.liveReadouts);
+    this.presentationActivity.add(this.derekStreamIsland);
+    this.presentationActivity.add(this.chartActivityTarget);
+    // Producers are registered after surfaces. Suspension runs in reverse so
+    // background work stops before its consumers; resume restores consumers
+    // first and then performs one task-level catch-up.
+    this.presentationActivity.add(this.shotRefreshTask);
+    this.presentationActivity.add(this.beanRefreshTask);
+    this.presentationActivity.add(this.settingsSyncTask);
+    this.machineStream = new SocketSupervisor<MachineSnapshot>({
+      url: () => `${gatewayWsOrigin()}/ws/v1/machine/snapshot`,
+      socketFactory: browserWebSocketFactory,
+      scheduler: browserSocketSupervisorScheduler,
+      backoffDelayMs: reconnectDelayMs,
+      decode: (data) => readMachineSnapshot(JSON.parse(data)),
+      onMessage: (snapshot) => {
+        this.telemetryStore.ingest('machine', snapshot);
+      },
+      onOpen: () => {
+        if (this.state.gatewayLinkDown) this.handleGatewayReconnected();
+      },
+      onClose: ({ willRetry }) => {
+        if (willRetry && !this.state.gatewayLinkDown) this.setState({ gatewayLinkDown: true });
+      },
+      onFailure: (failure) => {
+        if (failure.phase === 'decode') console.warn('[Beanie] Bad machine frame', failure.error);
+      }
+    });
+    this.scaleStream = new SocketSupervisor<ScaleSnapshot>({
+      url: () => `${gatewayWsOrigin()}/ws/v1/scale/snapshot`,
+      socketFactory: browserWebSocketFactory,
+      scheduler: browserSocketSupervisorScheduler,
+      backoffDelayMs: reconnectDelayMs,
+      decode: (data) => readScaleSnapshot(JSON.parse(data)),
+      onMessage: (snapshot) => {
+        this.telemetryStore.ingest('scale', snapshot);
+      },
+      onFailure: (failure) => {
+        if (failure.phase === 'decode') console.warn('[Beanie] Bad scale frame', failure.error);
+      }
+    });
+    this.waterStream = new SocketSupervisor<WaterLevelSnapshot>({
+      url: () => `${gatewayWsOrigin()}/ws/v1/machine/waterLevels`,
+      socketFactory: browserWebSocketFactory,
+      scheduler: browserSocketSupervisorScheduler,
+      backoffDelayMs: reconnectDelayMs,
+      decode: (data) => readWaterLevelSnapshot(JSON.parse(data)),
+      onMessage: (snapshot) => {
+        this.telemetryStore.ingest('water', snapshot);
+      },
+      onFailure: (failure) => {
+        if (failure.phase === 'decode') console.warn('[Beanie] Bad water level frame', failure.error);
+      }
+    });
+    this.displayStream = new SocketSupervisor<DisplayState>({
+      url: () => `${gatewayWsOrigin()}/ws/v1/display`,
+      socketFactory: browserWebSocketFactory,
+      scheduler: browserSocketSupervisorScheduler,
+      backoffDelayMs: reconnectDelayMs,
+      decode: (data) => readDisplayState(JSON.parse(data)),
+      onMessage: (snapshot) => {
+        this.telemetryStore.ingest('display', snapshot);
+      },
+      onFailure: (failure) => {
+        if (failure.phase === 'decode') console.warn('[Beanie] Bad display frame', failure.error);
+      }
+    });
+    this.shotStateStream = new SocketSupervisor<ShotStateEvent>({
+      url: () => `${gatewayWsOrigin()}/ws/v1/machine/shotState`,
+      socketFactory: browserWebSocketFactory,
+      scheduler: browserSocketSupervisorScheduler,
+      backoffDelayMs: reconnectDelayMs,
+      decode: (data) => readShotStateEvent(JSON.parse(data)),
+      onMessage: (snapshot) => {
+        this.telemetryStore.ingest('shotState', snapshot);
+      },
+      onFailure: (failure) => {
+        if (failure.phase === 'decode') console.warn('[Beanie] Bad shotState frame', failure.error);
+      }
+    });
+    this.doseMutationReconciler = new DoseMutationReconciler({
+      readBatch: (id) => this.batchForPendingDose(id),
+      updateBatch: (id, patch, options) => gateway.updateBatch(id, patch, options),
+      runExactAggregate: (aggregateKey, run) => this.runExactCommand(aggregateKey, run),
+      readLegacy: () => readPendingDoses(),
+      clearLegacy: () => writePendingDoses([]),
+      now: () => new Date(),
+      onBatchSaved: (batch, entry) => this.adoptFlushedBatch(batch, entry.expectedRemaining),
+      onRetryScheduled: () => {
+        if (!this.disposed) this.setState({ status: 'Bag update failed — will retry' });
+      },
+      onWorkerError: (error) => {
+        if (!this.disposed) console.error('[Beanie] Dose reconciliation failed', error);
+      }
+    });
+    this.appScope.own(this.telemetryStore.subscribeChannel('machine', (frame) => {
+      this.handleMachineTelemetry(frame.value, frame.previous, frame.observedAtMs);
+    }));
+    this.appScope.own(this.telemetryStore.subscribeChannel('scale', (frame) => {
+      this.handleScaleTelemetry(frame.value, frame.previous, frame.observedAtMs);
+    }));
+    this.appScope.own(this.telemetryStore.subscribeChannel('water', (frame) => {
+      this.handleWaterTelemetry(frame.value);
+    }));
+    this.appScope.own(this.telemetryStore.subscribeChannel('display', (frame) => {
+      this.handleDisplayTelemetry(frame.value);
+    }));
+    this.appScope.own(this.telemetryStore.subscribeChannel('shotState', (frame) => {
+      this.handleShotStateTelemetry(frame.value);
+    }));
+    this.appScope.own(this.shotRefreshTask);
+    this.appScope.own(this.beanRefreshTask);
+    this.appScope.own(this.settingsSyncTask);
+    this.appScope.own(this.workflowCommands);
+    this.appScope.own(this.applyAuthority);
+    this.appScope.own(this.loadMoreAuthority);
+    this.appScope.own(this.doseMutationReconciler);
     this.derekFlow = new DerekFlow({
       state: () => this.state,
       setState: (next) => this.setState(next),
@@ -1084,9 +1321,7 @@ export class BeanieApp {
       disposed: () => this.disposed,
       brewTempValue: () => this.brewTempValue(),
       scheduleApply: () => this.scheduleApply(),
-      bumpShotCacheGeneration: () => {
-        this.shotCacheGeneration += 1;
-      },
+      updateShotAnnotations: (shotId, merge) => this.updateShotAnnotationsExact(shotId, merge),
       loadShotRecipe: (shotId, opts) => this.loadShotRecipe(shotId, opts),
       findProfileByTitle: (title) => this.findProfileByTitle(title)
     });
@@ -1097,7 +1332,8 @@ export class BeanieApp {
         selectBean: (beanId, options) => this.selectBean(beanId, options),
         loadSettings: () => this.loadSettings()
       },
-      this.beanWorkflow
+      this.beanWorkflow,
+      this.imageTranscoder
     );
     this.profileEditorFlow = new ProfileEditorFlow(
       {
@@ -1113,28 +1349,37 @@ export class BeanieApp {
   }
 
   start(): void {
-    this.disposed = false;
+    if (this.started || this.disposed) return;
+    this.started = true;
     // Route synced-setting writes to the gateway store (no-op in demo).
     setStorePushHandler((storeKey, value) => this.pushSettingToStore(storeKey, value));
     applySettingsPreferences(this.state.settingsPreferences);
-    this.root.addEventListener('click', this.handleClick);
-    this.root.addEventListener('input', this.handleInput);
-    this.root.addEventListener('change', this.handleChange);
-    this.root.addEventListener('focusout', this.handleFocusOut);
-    this.root.addEventListener('submit', this.handleSubmit);
-    this.root.addEventListener('keydown', this.handleKeydown);
-    this.root.addEventListener('wheel', this.handleWheel, { passive: false });
-    this.root.addEventListener('touchstart', this.handleTouchStart, { passive: true });
-    this.root.addEventListener('touchmove', this.handleTouchMove, { passive: false });
-    this.phoneMedia?.addEventListener('change', this.handlePhoneMediaChange);
+    this.appScope.listen(this.root, 'click', this.handleClick as EventListener);
+    this.appScope.listen(this.root, 'input', this.handleInput as EventListener);
+    this.appScope.listen(this.root, 'change', this.handleChange as EventListener);
+    this.appScope.listen(this.root, 'focusout', this.handleFocusOut as EventListener);
+    this.appScope.listen(this.root, 'submit', this.handleSubmit as EventListener);
+    this.appScope.listen(this.root, 'keydown', this.handleKeydown as EventListener);
+    this.appScope.listen(this.root, 'wheel', this.handleWheel as EventListener, { passive: false });
+    this.appScope.listen(this.root, 'touchstart', this.handleTouchStart as EventListener, { passive: true });
+    this.appScope.listen(this.root, 'touchmove', this.handleTouchMove as EventListener, { passive: false });
+    if (this.phoneMedia) {
+      this.appScope.listen(this.phoneMedia, 'change', this.handlePhoneMediaChange as EventListener);
+    }
     // Live settings sync: re-poll the store whenever this device regains focus.
-    window.addEventListener('focus', this.handleWindowFocus);
+    this.appScope.listen(window, 'focus', this.handleWindowFocus as EventListener);
     if (typeof document.addEventListener === 'function') {
-      document.addEventListener('visibilitychange', this.handleDocumentVisibility);
+      this.appScope.listen(document, 'visibilitychange', this.handleDocumentVisibility as EventListener);
     }
     this.render();
     this.armClockTimer();
     this.syncSaverPhotoTimer();
+    // Durable physical mutations reconcile independently of UI/bootstrap
+    // mode. An offline startup enters retry-wait instead of leaving the journal
+    // dormant for the whole session.
+    void this.doseMutationReconciler.start().catch((error) => {
+      console.error('[Beanie] Dose reconciler startup failed', error);
+    });
     void this.loadScreensaverPhotos();
     void this.load();
     if (isHandoffArrival(location.search)) {
@@ -1144,48 +1389,40 @@ export class BeanieApp {
   }
 
   dispose(): void {
+    if (this.disposed) return;
     this.disposed = true;
     setStorePushHandler(null);
-    this.root.removeEventListener('click', this.handleClick);
-    this.root.removeEventListener('input', this.handleInput);
-    this.root.removeEventListener('change', this.handleChange);
-    this.root.removeEventListener('focusout', this.handleFocusOut);
-    this.root.removeEventListener('submit', this.handleSubmit);
-    this.root.removeEventListener('keydown', this.handleKeydown);
-    this.root.removeEventListener('wheel', this.handleWheel);
-    this.root.removeEventListener('touchstart', this.handleTouchStart);
-    this.root.removeEventListener('touchmove', this.handleTouchMove);
-    this.phoneMedia?.removeEventListener('change', this.handlePhoneMediaChange);
-    window.removeEventListener('focus', this.handleWindowFocus);
-    if (typeof document.removeEventListener === 'function') {
-      document.removeEventListener('visibilitychange', this.handleDocumentVisibility);
-    }
-    if (this.settingsPollTimer != null) window.clearInterval(this.settingsPollTimer);
+    this.presentationActivity.dispose();
+    this.disposeLiveStreams();
+    // DisposableScope is intentionally synchronous. Start both asynchronous
+    // drains explicitly so a replacement app can await the old physical work
+    // before acquiring the same batch/machine resources.
+    const doseDrain = this.doseMutationReconciler.dispose();
+    const commandDrain = this.workflowCommands.disposeAndWait();
+    this.disposeDrain = Promise.all([doseDrain, commandDrain]).then(() => undefined);
+    void this.disposeDrain.catch((error) => {
+      console.error('[Beanie] Runtime disposal drain failed', error);
+    });
+    this.appScope.dispose();
+    this.telemetryStore.dispose();
     if (this.applyTimer != null) window.clearTimeout(this.applyTimer);
-    if (this.machineRetryTimer != null) window.clearTimeout(this.machineRetryTimer);
-    if (this.scaleRetryTimer != null) window.clearTimeout(this.scaleRetryTimer);
-    if (this.waterRetryTimer != null) window.clearTimeout(this.waterRetryTimer);
-    if (this.displayRetryTimer != null) window.clearTimeout(this.displayRetryTimer);
-    if (this.shotStateRetryTimer != null) window.clearTimeout(this.shotStateRetryTimer);
-    if (this.pendingDoseRetryTimer != null) window.clearTimeout(this.pendingDoseRetryTimer);
     this.derekFlow.dispose();
     this.scannerFlow.cancelScannerWork();
+    this.screensaverImportGeneration += 1;
+    this.imageTranscoder.dispose();
     this.profileEditorFlow.dispose();
-    if (this.shotRefreshTimer != null) window.clearInterval(this.shotRefreshTimer);
     this.topbarIsland.dispose();
     this.screensaverIsland.dispose();
     this.derekStreamIsland.dispose();
     this.liveReadouts.dispose();
     if (this.clockTimer != null) window.clearTimeout(this.clockTimer);
     if (this.saverPhotoTimer != null) window.clearTimeout(this.saverPhotoTimer);
-    if (this.beanRefreshTimer != null) window.clearInterval(this.beanRefreshTimer);
     if (this.simTimer != null) window.clearTimeout(this.simTimer);
     if (this.timedSteamStopTimer != null) window.clearTimeout(this.timedSteamStopTimer);
     if (this.sleepBrightnessTimer != null) window.clearTimeout(this.sleepBrightnessTimer);
     if (this.sleepWakeRestoreTimer != null) window.clearTimeout(this.sleepWakeRestoreTimer);
     if (this.wakeZonePreviewTimer != null) window.clearTimeout(this.wakeZonePreviewTimer);
     if (this.wakeAppIdleTimer != null) window.clearTimeout(this.wakeAppIdleTimer);
-    if (this.liveRaf != null) window.cancelAnimationFrame(this.liveRaf);
     this.liveChart?.dispose();
     this.detailChart?.dispose();
     this.shotStagesChart?.dispose();
@@ -1196,20 +1433,17 @@ export class BeanieApp {
     this.calibratorChart = null;
     this.clearMachineStopRequest();
     this.applyTimer = null;
-    this.machineRetryTimer = null;
-    this.scaleRetryTimer = null;
-    this.waterRetryTimer = null;
-    this.displayRetryTimer = null;
-    this.shotRefreshTimer = null;
     this.clockTimer = null;
     this.saverPhotoTimer = null;
-    this.beanRefreshTimer = null;
     this.simTimer = null;
     this.timedSteamStopTimer = null;
     this.sleepBrightnessTimer = null;
     this.sleepWakeRestoreTimer = null;
-    this.liveRaf = null;
-    this.closeLiveSockets();
+  }
+
+  async disposeAsync(): Promise<void> {
+    this.dispose();
+    await (this.disposeDrain ?? Promise.resolve());
   }
 
   private onScrollGesture(event: WheelEvent): void {
@@ -1345,6 +1579,8 @@ export class BeanieApp {
       if (this.disposed) return;
       const machineSleeping = machine?.state?.state === 'sleeping';
 
+      this.machineWorkflowShadow = workflow;
+      this.machineWorkflowDesired = workflow;
       this.setState({
         workflow,
         beans,
@@ -1377,15 +1613,10 @@ export class BeanieApp {
       }
       void this.enforceGatewayTrackingMode();
       void this.loadMachineControlState();
-      this.connectMachineSocket();
-      this.connectScaleSocket();
-      this.connectWaterLevelSocket();
-      this.connectDisplaySocket();
-      this.connectShotStateSocket();
-      this.startShotRefreshTimer();
-      this.startBeanRefreshTimer();
+      this.startLiveStreams();
+      this.shotRefreshTask.start();
+      this.beanRefreshTask.start();
       void this.migrateStorageEventsOnce();
-      void this.flushPendingDoses();
     } catch (error) {
       if (this.disposed) return;
       console.warn('[Beanie] Gateway unavailable; using demo data', error);
@@ -1403,7 +1634,9 @@ export class BeanieApp {
   private async enforceGatewayTrackingMode(): Promise<void> {
     if (this.state.demo) return;
     try {
-      await gateway.updateSettings({ gatewayMode: 'tracking' });
+      await this.runExactCommand('gateway-settings', () =>
+        gateway.updateSettings({ gatewayMode: 'tracking' })
+      );
     } catch (error) {
       console.warn('[Beanie] Could not set gateway control mode to tracking', error);
     }
@@ -1505,7 +1738,16 @@ export class BeanieApp {
 
   private async loadBatches(bean: Bean): Promise<BeanBatch[]> {
     if (this.state.demo) return this.state.batchesByBean[bean.id] ?? [];
-    return loadBeanBatches(bean.id, { gateway, cache: beanieCache });
+    return loadBeanBatches(bean.id, {
+      gateway: {
+        batches: (beanId) => gateway.batches(beanId),
+        updateBatch: (id, batch) => this.runExactCommand(
+          `batch:${id}`,
+          () => gateway.updateBatch(id, batch)
+        )
+      },
+      cache: beanieCache
+    });
   }
 
   // First open of this version: copy every cached batch's freeze/thaw history up
@@ -1516,7 +1758,13 @@ export class BeanieApp {
     if (this.state.demo || readStorageEventsMigrated()) return;
     try {
       const { migrated, completed } = await migrateStorageEventsToGateway({
-        gateway,
+        gateway: {
+          batches: (beanId) => gateway.batches(beanId),
+          updateBatch: (id, batch) => this.runExactCommand(
+            `batch:${id}`,
+            () => gateway.updateBatch(id, batch)
+          )
+        },
         cache: beanieCache
       });
       if (completed) markStorageEventsMigrated();
@@ -1612,14 +1860,16 @@ export class BeanieApp {
     const bean = this.selectedBean();
     if (!bean || this.state.demo || this.state.shotsLoadingMore) return;
     if (this.state.shots.length >= this.state.shotsTotal) return;
-    const requestId = ++this.loadMoreRequestId;
     const offset = this.state.shots.length;
     const batch = this.selectedBatch();
+    const operation = this.loadMoreAuthority.begin(
+      `shots:${bean.id}:${batch?.id ?? 'all'}:${offset}`
+    );
     this.setState({ shotsLoadingMore: true, status: 'Loading more shots' });
     try {
       const { records } = await this.fetchShotPage(bean, batch, offset);
       if (
-        requestId !== this.loadMoreRequestId ||
+        !operation.isCurrent ||
         this.selectedBean()?.id !== bean.id ||
         this.selectedBatch()?.id !== batch?.id
       ) return;
@@ -1631,17 +1881,11 @@ export class BeanieApp {
     } finally {
       // Never leave the flag stuck: it gates both pagination and the periodic
       // shot refresh. A newer request owns the flag, so only the latest clears.
-      if (requestId === this.loadMoreRequestId && this.state.shotsLoadingMore) {
+      if (operation.isCurrent && this.state.shotsLoadingMore) {
         this.setState({ shotsLoadingMore: false });
       }
+      operation.finish();
     }
-  }
-
-  private startShotRefreshTimer(): void {
-    if (this.shotRefreshTimer != null) return;
-    this.shotRefreshTimer = window.setInterval(() => {
-      void this.refreshVisibleShots();
-    }, SHOT_REFRESH_INTERVAL_MS);
   }
 
   // Patch the topbar and screensaver clocks in place on each minute boundary
@@ -1702,18 +1946,28 @@ export class BeanieApp {
   // slideshow: images only, downscaled and recompressed so ~100 photos stay
   // tens of MB in IndexedDB rather than gigabytes of camera originals.
   private async addScreensaverPhotos(files: File[]): Promise<void> {
-    const images = files.filter((file) => file.type.startsWith('image/'));
+    const allImages = files.filter((file) => file.type.startsWith('image/'));
+    // The merge keeps the newest photos, so selecting a huge folder only needs
+    // its final bounded window. Older selected files could never survive the
+    // persistent cap and must not consume native decode resources first.
+    const images = allImages.slice(-MAX_SCREENSAVER_PHOTOS);
     if (images.length === 0) {
       this.setState({ status: 'No images in the selection' });
       return;
     }
-    this.setState({ status: `Importing ${images.length} photo${images.length === 1 ? '' : 's'}…` });
+    const generation = ++this.screensaverImportGeneration;
+    this.setState({
+      status: allImages.length > images.length
+        ? `Importing newest ${images.length} of ${allImages.length} photos…`
+        : `Importing ${images.length} photo${images.length === 1 ? '' : 's'}…`
+    });
     const added: string[] = [];
     for (const file of images) {
+      if (this.disposed || generation !== this.screensaverImportGeneration) return;
       const compressed = await this.compressScreensaverPhoto(file);
       if (compressed) added.push(compressed);
     }
-    if (this.disposed) return;
+    if (this.disposed || generation !== this.screensaverImportGeneration) return;
     if (added.length === 0) {
       this.setState({ status: 'Could not read those images' });
       return;
@@ -1728,6 +1982,7 @@ export class BeanieApp {
   }
 
   private async clearScreensaverPhotos(): Promise<void> {
+    this.screensaverImportGeneration += 1;
     await beanieCache.deleteObject(SCREENSAVER_PHOTOS_CACHE_KEY);
     this.saverPhotoIndex = 0;
     this.setState({ screensaverPhotos: [], status: 'Screensaver photos cleared' });
@@ -1735,21 +1990,13 @@ export class BeanieApp {
 
   private async compressScreensaverPhoto(file: File): Promise<string | null> {
     try {
-      const bitmap = await createImageBitmap(file);
-      try {
-        const scale = Math.min(1, SCREENSAVER_PHOTO_MAX_DIMENSION / Math.max(bitmap.width, bitmap.height));
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-        canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return null;
-        ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-        return canvas.toDataURL('image/jpeg', SCREENSAVER_PHOTO_JPEG_QUALITY);
-      } finally {
-        // ImageBitmap is an explicit decoded-image resource. Every exit path,
-        // including missing canvas contexts and encoding failures, releases it.
-        bitmap.close();
-      }
+      const result = await this.imageTranscoder.transcode(file, {
+        maxEdge: SCREENSAVER_PHOTO_MAX_DIMENSION,
+        maxPixels: SCREENSAVER_PHOTO_MAX_DIMENSION ** 2,
+        mimeType: 'image/jpeg',
+        quality: SCREENSAVER_PHOTO_JPEG_QUALITY
+      });
+      return result.dataUrl;
     } catch (error) {
       console.warn('[Beanie] Could not import screensaver photo', file.name, error);
       return null;
@@ -1770,13 +2017,6 @@ export class BeanieApp {
     if (this.screensaverIsland.advancePhoto(photos[nextIndex]!)) {
       this.saverPhotoIndex = nextIndex;
     }
-  }
-
-  private startBeanRefreshTimer(): void {
-    if (this.beanRefreshTimer != null) return;
-    this.beanRefreshTimer = window.setInterval(() => {
-      void this.refreshBeans();
-    }, BEAN_REFRESH_INTERVAL_MS);
   }
 
   private async refreshBeans(options: { force?: boolean; allowModal?: boolean } = {}): Promise<void> {
@@ -1830,6 +2070,7 @@ export class BeanieApp {
   private async refreshVisibleShots(): Promise<void> {
     const bean = this.selectedBean();
     if (!bean || this.state.demo || this.shotRefreshInFlight) return;
+    if (this.presentationActivity.isSuspended) return;
     if (document.visibilityState !== 'visible' || this.state.view !== 'workbench') return;
     if (this.state.liveActive || this.state.liveFinalizing || this.state.shotsLoadingMore) return;
     // Skip while a modal covers the workbench: the shot list isn't visible, and a
@@ -1893,9 +2134,9 @@ export class BeanieApp {
     const draft = normalizeDraft(this.state.draft, this.state.profiles, this.state.grinders);
     const batch = this.selectedBatch();
     const update = buildWorkflowUpdate(bean, batch, draft, draft.profile, this.state.workflow);
+    this.machineWorkflowDesired = update;
     const signature = draftSignature(draft);
-    const requestId = ++this.applyRequestId;
-
+    const appliedProfileTitle = draft.profileTitle ?? draft.profile?.title ?? null;
     this.setState({ applyState: 'pending', status: 'Applying workflow' });
     if (this.state.demo) {
       // Do not write `draft` back: the user may have edited again during the
@@ -1908,45 +2149,111 @@ export class BeanieApp {
         appliedSignature: signature,
         status: 'Workflow applied in demo'
       });
-      void this.applyProfileFlowCalibration(draft.profileTitle ?? draft.profile?.title ?? null);
+      void this.applyProfileFlowCalibration(appliedProfileTitle);
       return;
     }
 
+    const resolvedCalibration = this.resolveProfileFlowCalibration(appliedProfileTitle);
+    const calibrationTarget = resolvedCalibration != null &&
+      resolvedCalibration !== this.currentFlowCalibrationMultiplier()
+      ? resolvedCalibration
+      : null;
+    const persistCalibration = calibrationTarget != null && !this.settingsLocal;
+    const operation = this.applyAuthority.begin(`recipe:${signature}`);
     try {
-      const workflow = await gateway.updateWorkflow(update);
-      if (requestId !== this.applyRequestId) return;
-      void beanieCache.putWorkflow(workflow).catch(() => {});
-      const currentSignature = draftSignature(
-        normalizeDraft(this.state.draft, this.state.profiles, this.state.grinders)
+      const outcome = await this.workflowCommands.submit(
+        'machine',
+        { policy: 'latest-wins', coalesceKey: 'recipe' },
+        async () => {
+          const workflow = await this.updateGatewayWorkflowInOwnedLane(update);
+          if (persistCalibration) await gateway.updateCalibration(calibrationTarget);
+          return workflow;
+        }
       );
-      if (currentSignature !== signature) {
-        this.setState({
+      if (!operation.isCurrent) return;
+      if (outcome.status === 'superseded' || outcome.status === 'canceled' || outcome.status === 'disposed') {
+        return;
+      }
+      if (outcome.status === 'completed') {
+        const workflow = outcome.value;
+        void beanieCache.putWorkflow(workflow).catch(() => {});
+        const currentSignature = draftSignature(
+          normalizeDraft(this.state.draft, this.state.profiles, this.state.grinders)
+        );
+        if (currentSignature !== signature) {
+          operation.commit(() => this.setState({
+            workflow,
+            ...(calibrationTarget == null ? {} : {
+              settingsBundle: calibrationBundle(
+                this.state.settingsBundle ?? demoSettingsBundle(),
+                calibrationTarget
+              )
+            }),
+            applyState: 'stale',
+            appliedSignature: signature,
+            status: 'Draft changed; applying soon'
+          }));
+          return;
+        }
+        operation.commit(() => this.setState({
           workflow,
-          applyState: 'stale',
+          ...(calibrationTarget == null ? {} : {
+            settingsBundle: calibrationBundle(
+              this.state.settingsBundle ?? demoSettingsBundle(),
+              calibrationTarget
+            )
+          }),
+          applyState: 'applied',
           appliedSignature: signature,
-          status: 'Draft changed; applying soon'
-        });
-        return;
+          status: 'Workflow applied'
+        }));
+      } else {
+        const error = outcome.error;
+        const currentSignature = draftSignature(
+          normalizeDraft(this.state.draft, this.state.profiles, this.state.grinders)
+        );
+        if (currentSignature !== signature) {
+          operation.commit(() => this.setState({ applyState: 'stale', status: 'Draft changed; applying soon' }));
+          return;
+        }
+        console.error('[Beanie] Apply failed', error);
+        operation.commit(() => this.setState({ applyState: 'failed', status: 'Apply failed' }));
       }
-      this.setState({
-        workflow,
-        applyState: 'applied',
-        appliedSignature: signature,
-        status: 'Workflow applied'
-      });
-      void this.applyProfileFlowCalibration(draft.profileTitle ?? draft.profile?.title ?? null);
-    } catch (error) {
-      if (requestId !== this.applyRequestId) return;
-      const currentSignature = draftSignature(
-        normalizeDraft(this.state.draft, this.state.profiles, this.state.grinders)
-      );
-      if (currentSignature !== signature) {
-        this.setState({ applyState: 'stale', status: 'Draft changed; applying soon' });
-        return;
-      }
-      console.error('[Beanie] Apply failed', error);
-      this.setState({ applyState: 'failed', status: 'Apply failed' });
+    } finally {
+      operation.finish();
     }
+  }
+
+  /**
+   * Unwrap an exact machine/workflow command while retaining the coordinator's
+   * explicit cancellation outcomes at the boundary. Physical work that has
+   * started is never reported as canceled; only queued work can reach these
+   * synthetic errors during teardown.
+   */
+  private async runExactCommand<Value>(
+    resourceKey: string,
+    run: () => Value | PromiseLike<Value>
+  ): Promise<Value> {
+    const outcome = await this.workflowCommands.submit(resourceKey, { policy: 'exact-fifo' }, run);
+    if (outcome.status === 'completed') return outcome.value;
+    if (outcome.status === 'failed') throw outcome.error;
+    throw new Error(`${resourceKey} command ${outcome.status}`);
+  }
+
+  private runExactMachineCommand<Value>(run: () => Value | PromiseLike<Value>): Promise<Value> {
+    return this.runExactCommand('machine', run);
+  }
+
+  private updateWorkflowExact(workflow: Workflow): Promise<Workflow> {
+    this.machineWorkflowDesired = workflow;
+    return this.runExactMachineCommand(() => this.updateGatewayWorkflowInOwnedLane(workflow));
+  }
+
+  /** Caller must own the machine lane or be the command that is acquiring it. */
+  private async updateGatewayWorkflowInOwnedLane(workflow: Workflow): Promise<Workflow> {
+    const saved = await gateway.updateWorkflow(workflow);
+    this.machineWorkflowShadow = saved;
+    return saved;
   }
 
   private machineIsSleeping(): boolean {
@@ -1956,7 +2263,19 @@ export class BeanieApp {
   // Debounced auto-apply: any dial-in edit pushes the draft to the workflow
   // 200ms after the last change, so there is no manual Apply button.
   private scheduleApply(): void {
-    if (!this.selectedBean()) return;
+    const bean = this.selectedBean();
+    if (!bean) return;
+    // Desired workflow changes at edit time, not 200ms later when the debounce
+    // fires. A physical Shot command can now capture and persist this exact
+    // draft even if the timer has not run yet.
+    const draft = normalizeDraft(this.state.draft, this.state.profiles, this.state.grinders);
+    this.machineWorkflowDesired = buildWorkflowUpdate(
+      bean,
+      this.selectedBatch(),
+      draft,
+      draft.profile,
+      this.state.workflow
+    );
     if (this.applyTimer != null) window.clearTimeout(this.applyTimer);
     this.applyTimer = window.setTimeout(() => {
       this.applyTimer = null;
@@ -2115,7 +2434,18 @@ export class BeanieApp {
       demoStatus: opts.demoStatus,
       failureStatus: opts.failureStatus
     }, {
-      updateShot: (id, nextUpdate) => gateway.updateShot(id, nextUpdate),
+      updateShot: (id, nextUpdate) => this.runExactCommand(`shot:${id}`, async () => {
+        if (!nextUpdate.annotations) return gateway.updateShot(id, nextUpdate);
+        const latest = await gateway.shot(id);
+        return gateway.updateShot(id, {
+          ...nextUpdate,
+          annotations: rebaseChangedFields(
+            shot.annotations,
+            nextUpdate.annotations,
+            latest.annotations
+          )
+        });
+      }),
       invalidateShotMutation: (id) => beanieCache.invalidateShotMutation(id),
       putShotRecord: (saved) => beanieCache.putShotRecord(saved)
     });
@@ -2126,6 +2456,22 @@ export class BeanieApp {
       console.error(`[Beanie] ${opts.failureStatus}`, result.error);
       this.setState({ busy: false, status: result.status });
     }
+  }
+
+  private async updateShotAnnotationsExact(
+    shotId: string,
+    merge: (annotations: ShotAnnotations | null | undefined) => ShotAnnotations
+  ): Promise<ShotRecord> {
+    this.shotCacheGeneration += 1;
+    const saved = await this.runExactCommand(`shot:${shotId}`, async () => {
+      // Merge at lane execution time so a Derek background save cannot replace
+      // an interactive annotation edit that landed while it was queued.
+      const latest = await gateway.shot(shotId);
+      return gateway.updateShot(shotId, { annotations: merge(latest.annotations) });
+    });
+    await beanieCache.invalidateShotMutation(saved.id).catch(() => {});
+    await beanieCache.putShotRecord(saved).catch(() => {});
+    return saved;
   }
 
   private replaceShotRecord(shot: ShotRecord, status: string): void {
@@ -2190,7 +2536,7 @@ export class BeanieApp {
     }
 
     try {
-      await gateway.deleteShot(shotId);
+      await this.runExactCommand(`shot:${shotId}`, () => gateway.deleteShot(shotId));
       this.shotCacheGeneration += 1;
       await beanieCache.invalidateShotMutation(shotId);
       if (reclaimPlan) await this.applyDoseReclaim(reclaimPlan);
@@ -2466,18 +2812,97 @@ export class BeanieApp {
       if (state === 'espresso') this.startSimulatedShot();
       return true;
     }
-    const command = await sendMachineActionCommand({
+    const prepared = this.prepareMachineActionCommand(
       state,
-      workflow: this.state.workflow,
-      steamSettings: this.currentSteamSettings(),
-      hotWaterData: this.currentHotWaterData(),
-      rinseData: this.currentRinseData(),
+      this.machineWorkflowDesired ?? this.machineWorkflowShadow ?? this.state.workflow
+    );
+    const preparedCalibration = state === 'espresso'
+      ? this.resolveProfileFlowCalibration(prepared.workflow?.profile?.title ?? null)
+      : null;
+    const coordinated = await this.workflowCommands.submit(
+      'machine',
+      { policy: 'exact-fifo' },
+      async () => {
+        // Safety inputs are observations, not desired configuration. Re-check
+        // them at dispatch after any queued workflow writes have completed.
+        const dispatchPreflight = machineActionPreflight({
+          state,
+          skipScaleCheck: opts.skipScaleCheck === true,
+          noScaleBlocked: this.shouldPreflightBlockShotForScale(),
+          waterAlertHard: this.currentWaterAlert() === 'hard'
+        });
+        if (dispatchPreflight.type !== 'ready') {
+          return { type: 'blocked' as const, preflight: dispatchPreflight };
+        }
+        let dispatchCommand = prepared;
+        if (state === 'espresso' && prepared.workflow) {
+          // Shot start is a compound exact command: persist the draft captured
+          // at the tap (even if its debounce has not fired or an earlier apply
+          // failed), then calibration, then request physical state.
+          const workflow = await this.updateGatewayWorkflowInOwnedLane(prepared.workflow);
+          dispatchCommand = { ...prepared, workflow };
+          if (preparedCalibration != null && !this.settingsLocal) {
+            await gateway.updateCalibration(preparedCalibration);
+          }
+        }
+        return {
+          type: 'command' as const,
+          command: await this.sendMachineActionInOwnedLane(dispatchCommand)
+        };
+      }
+    );
+    if (coordinated.status !== 'completed') {
+      const error = coordinated.status === 'failed'
+        ? coordinated.error
+        : new Error(`Machine action ${coordinated.status}`);
+      console.error('[Beanie] Machine action did not run', error);
+      this.setState({ busy: false, status: 'Machine command failed' });
+      return false;
+    }
+    if (coordinated.value.type === 'blocked') {
+      if (coordinated.value.preflight.type === 'blocked-no-scale') {
+        this.showNoScaleShotWarning({ busy: false });
+      } else {
+        this.setState({ busy: false, waterAlertDismissed: false, status: 'Refill the water tank' });
+      }
+      return false;
+    }
+    return this.finishMachineAction(state, service, coordinated.value.command);
+  }
+
+  private prepareMachineActionCommand(
+    state: MachineState,
+    workflow: Workflow | null
+  ): Parameters<typeof sendMachineActionCommand>[0] {
+    return {
+      state,
+      workflow,
+      steamSettings: this.currentSteamSettings(workflow),
+      hotWaterData: this.currentHotWaterData(workflow),
+      rinseData: this.currentRinseData(workflow),
       twoTapSteamStop: this.usesTwoTapSteamStop()
-    }, {
-      updateWorkflow: (workflow) => gateway.updateWorkflow(workflow),
+    };
+  }
+
+  /** Caller must already own the `machine` workflow-command lane. */
+  private sendMachineActionInOwnedLane(
+    command: Parameters<typeof sendMachineActionCommand>[0]
+  ): Promise<SendMachineActionCommandResult> {
+    return sendMachineActionCommand(command, {
+      // These adapters deliberately bypass the coordinator: the enclosing
+      // compound command owns the lane and nesting would deadlock it.
+      updateWorkflow: (nextWorkflow) => this.updateGatewayWorkflowInOwnedLane(nextWorkflow),
       requestState: (nextState) => gateway.requestState(nextState),
       isNoScaleShotBlockError
     });
+  }
+
+  private finishMachineAction(
+    state: MachineState,
+    service: MachineServiceState | null,
+    command: SendMachineActionCommandResult
+  ): boolean {
+    if (this.disposed) return false;
     if (command.restore) this.captureMachineServiceWorkflowRestore(command.restore);
     if (command.type === 'failed') {
       console.error('[Beanie] Machine action failed', command.error);
@@ -2539,10 +2964,60 @@ export class BeanieApp {
       return;
     }
     this.cleaningInProgress = true;
+    this.machineWorkflowDesired = plan.workflow;
     this.setState({ busy: true, status: plan.status });
-    const result = await loadCleaningWorkflow(plan.workflow, this.state.demo, {
-      updateWorkflow: (workflow) => gateway.updateWorkflow(workflow)
-    });
+    if (this.state.demo) {
+      const result = await loadCleaningWorkflow(plan.workflow, true, {
+        updateWorkflow: (workflow) => Promise.resolve(workflow)
+      });
+      if (result.type === 'failed') {
+        this.cleaningInProgress = false;
+        this.setState({ busy: false, status: result.status });
+        return;
+      }
+      this.state.workflow = result.workflow;
+      if (!startShot) {
+        this.setState({ busy: false, status: 'Press the GHC to run the cleaning flush' });
+        return;
+      }
+      const started = await this.machineAction('espresso', { skipScaleCheck: true });
+      if (!started) {
+        this.cleaningInProgress = false;
+        void this.applyDraft();
+      }
+      return;
+    }
+
+    // Loading the cleaning workflow and starting the physical pull is one
+    // exact lane command. A pending recipe apply therefore cannot slip between
+    // those two awaits and make the machine run the wrong profile.
+    const preparedCleaningAction = this.prepareMachineActionCommand('espresso', plan.workflow);
+    const coordinated = await this.workflowCommands.submit(
+      'machine',
+      { policy: 'exact-fifo' },
+      async () => {
+        const result = await loadCleaningWorkflow(plan.workflow, false, {
+          updateWorkflow: (workflow) => this.updateGatewayWorkflowInOwnedLane(workflow)
+        });
+        const command = result.type !== 'failed' && startShot
+          ? await this.sendMachineActionInOwnedLane({
+              ...preparedCleaningAction,
+              workflow: result.workflow
+            })
+          : null;
+        return { result, command };
+      }
+    );
+    if (coordinated.status !== 'completed') {
+      this.cleaningInProgress = false;
+      const error = coordinated.status === 'failed'
+        ? coordinated.error
+        : new Error(`Cleaning command ${coordinated.status}`);
+      console.error('[Beanie] Cleaning profile load failed', error);
+      this.setState({ busy: false, status: 'Cleaning profile failed' });
+      return;
+    }
+    const { result, command } = coordinated.value;
     if (result.type === 'failed') {
       this.cleaningInProgress = false;
       console.error('[Beanie] Cleaning profile load failed', result.error);
@@ -2556,8 +3031,9 @@ export class BeanieApp {
       this.setState({ busy: false, status: 'Press the GHC to run the cleaning flush' });
       return;
     }
-    // Run as an espresso pull; a backflush has no yield, so skip the scale gate.
-    const started = await this.machineAction('espresso', { skipScaleCheck: true });
+    // The cleaning plan already performed water/sleep preflight and cleaning
+    // profiles are exempt from the ordinary espresso scale gate.
+    const started = command != null && this.finishMachineAction('espresso', null, command);
     if (!started) {
       // The pull never started: leave cleaning mode so the next real shot is
       // not treated as a cleaning cycle, and re-apply the user's draft to put
@@ -2838,8 +3314,8 @@ export class BeanieApp {
             this.patchBundle({ display });
             return;
           }
-          const restored = await gateway.setDisplayBrightness(this.wakeAppRestoreBrightness);
-          this.patchBundle({ display: restored });
+          const restored = await this.setGatewayBrightnessLatest(this.wakeAppRestoreBrightness);
+          if (restored) this.patchBundle({ display: restored });
         } catch (error) {
           console.warn('[Beanie] Wake brightness restore check failed', error);
         }
@@ -2848,7 +3324,7 @@ export class BeanieApp {
   }
 
   private scheduleSleepBrightnessDim(delayMs: number): void {
-    if (this.state.demo || this.sleepBrightnessDimmed || this.state.appAwake) return;
+    if (this.disposed || this.state.demo || this.sleepBrightnessDimmed || this.state.appAwake) return;
     if (this.sleepBrightnessTimer != null) {
       if (delayMs > 0) return;
       this.clearSleepBrightnessTimer();
@@ -2880,8 +3356,8 @@ export class BeanieApp {
     // after this dim lands — otherwise the two writes race and the dim can win last.
     const dim = (async () => {
       try {
-        const display = await gateway.setDisplayBrightness(level);
-        this.patchBundle({ display });
+        const display = await this.setGatewayBrightnessLatest(level);
+        if (display) this.patchBundle({ display });
       } catch (error) {
         console.warn('[Beanie] Sleep brightness dim failed', error);
       }
@@ -2900,6 +3376,17 @@ export class BeanieApp {
     }
   }
 
+  private async setGatewayBrightnessLatest(brightness: number): Promise<DisplayState | null> {
+    const outcome = await this.workflowCommands.submit(
+      'display',
+      { policy: 'latest-wins', coalesceKey: 'brightness' },
+      () => gateway.setDisplayBrightness(brightness)
+    );
+    if (outcome.status === 'completed') return outcome.value;
+    if (outcome.status === 'failed') throw outcome.error;
+    return null;
+  }
+
   // Show Beanie while the machine stays asleep — the same view you'd get by
   // opening the skin in a browser. Deliberately sends NO machine command, so the
   // DE1 keeps sleeping; we only undo the screen dim ourselves (reaprime restores
@@ -2916,8 +3403,8 @@ export class BeanieApp {
     try {
       // Wait out any dim PUT still in flight so our restore is the last write.
       if (this.sleepDimPromise) await this.sleepDimPromise;
-      const display = await gateway.setDisplayBrightness(this.wakeAppRestoreBrightness);
-      this.patchBundle({ display });
+      const display = await this.setGatewayBrightnessLatest(this.wakeAppRestoreBrightness);
+      if (display) this.patchBundle({ display });
     } catch (error) {
       console.warn('[Beanie] Wake-app brightness restore failed', error);
     }
@@ -2985,7 +3472,8 @@ export class BeanieApp {
     }
 
     try {
-      await gateway.requestState('idle');
+      await this.runExactMachineCommand(() => gateway.requestState('idle'));
+      if (this.disposed) return;
       this.setState({ busy: false, status: 'Stop requested' });
       this.armMachineStopFeedbackTimer();
     } catch (error) {
@@ -2995,71 +3483,36 @@ export class BeanieApp {
     }
   }
 
-  private closeLiveSockets(): void {
-    const machineSocket = this.machineSocket;
-    const scaleSocket = this.scaleSocket;
-    const waterSocket = this.waterSocket;
-    const displaySocket = this.displaySocket;
-    const shotStateSocket = this.shotStateSocket;
-    this.machineSocket = null;
-    this.scaleSocket = null;
-    this.waterSocket = null;
-    this.displaySocket = null;
-    this.shotStateSocket = null;
-    this.closeSocket(machineSocket);
-    this.closeSocket(scaleSocket);
-    this.closeSocket(waterSocket);
-    this.closeSocket(displaySocket);
-    this.closeSocket(shotStateSocket);
-    this.machineSocketAttempts = 0;
-    this.scaleSocketAttempts = 0;
-    this.waterSocketAttempts = 0;
-    this.displaySocketAttempts = 0;
-    this.shotStateSocketAttempts = 0;
-  }
-
-  private closeSocket(socket: WebSocket | null): void {
-    if (!socket) return;
-    socket.onopen = null;
-    socket.onmessage = null;
-    socket.onerror = null;
-    socket.onclose = null;
-    socket.close();
-  }
-
-  private connectMachineSocket(): void {
+  private startLiveStreams(): void {
     if (this.disposed || this.state.demo) return;
-    const previous = this.machineSocket;
-    this.machineSocket = null;
-    this.closeSocket(previous);
-    const ws = new WebSocket(`${gatewayWsOrigin()}/ws/v1/machine/snapshot`);
-    this.machineSocket = ws;
-    ws.onopen = () => {
-      if (this.disposed || this.machineSocket !== ws) return;
-      this.machineSocketAttempts = 0;
-      if (this.state.gatewayLinkDown) this.handleGatewayReconnected();
-    };
-    ws.onmessage = (event) => {
-      try {
-        const snapshot = readMachineSnapshot(JSON.parse(event.data));
-        this.ingestLiveFrame(snapshot, null, Date.now());
-      } catch (error) {
-        console.warn('[Beanie] Bad machine frame', error);
-      }
-    };
-    ws.onclose = () => {
-      if (this.disposed) return;
-      if (this.machineSocket !== ws) return;
-      // The snapshot stream is the skin's lifeline to the gateway: while it is
-      // down every machine readout is stale, so say so instead of keeping the
-      // last state on screen as if it were live.
-      if (!this.state.gatewayLinkDown) this.setState({ gatewayLinkDown: true });
-      if (this.machineRetryTimer != null) window.clearTimeout(this.machineRetryTimer);
-      this.machineRetryTimer = window.setTimeout(() => {
-        this.machineRetryTimer = null;
-        this.connectMachineSocket();
-      }, reconnectDelayMs(this.machineSocketAttempts++));
-    };
+    this.machineStream.start();
+    this.scaleStream.start();
+    this.waterStream.start();
+    this.displayStream.start();
+    this.shotStateStream.start();
+  }
+
+  private disposeLiveStreams(): void {
+    this.machineStream.dispose();
+    this.scaleStream.dispose();
+    this.waterStream.dispose();
+    this.displayStream.dispose();
+    this.shotStateStream.dispose();
+  }
+
+  private handleMachineTelemetry(
+    snapshot: MachineSnapshot,
+    previous: MachineSnapshot | null,
+    observedAtMs: number
+  ): void {
+    if (this.disposed) return;
+    this.ingestLiveFrame(
+      snapshot,
+      null,
+      observedAtMs,
+      previous ?? this.state.machine,
+      this.telemetryStore.snapshot.scale ?? this.state.scale
+    );
   }
 
   // Re-sync after an outage: anything could have changed while the link was
@@ -3068,211 +3521,95 @@ export class BeanieApp {
     this.setState({ gatewayLinkDown: false, status: 'Gateway reconnected' });
     void this.refreshBeans({ force: true });
     void this.refreshVisibleShots();
-    void this.flushPendingDoses();
+    void this.doseMutationReconciler.trigger();
   }
 
-  private connectScaleSocket(): void {
-    if (this.disposed || this.state.demo) return;
-    const previous = this.scaleSocket;
-    this.scaleSocket = null;
-    this.closeSocket(previous);
-    const ws = new WebSocket(`${gatewayWsOrigin()}/ws/v1/scale/snapshot`);
-    this.scaleSocket = ws;
-    ws.onopen = () => {
-      if (this.scaleSocket === ws) this.scaleSocketAttempts = 0;
-    };
-    ws.onmessage = (event) => {
-      try {
-        const snapshot = readScaleSnapshot(JSON.parse(event.data));
-        this.ingestLiveFrame(null, snapshot, Date.now());
-      } catch (error) {
-        console.warn('[Beanie] Bad scale frame', error);
-      }
-    };
-    ws.onclose = () => {
-      if (this.disposed) return;
-      if (this.scaleSocket !== ws) return;
-      if (this.scaleRetryTimer != null) window.clearTimeout(this.scaleRetryTimer);
-      this.scaleRetryTimer = window.setTimeout(() => {
-        this.scaleRetryTimer = null;
-        this.connectScaleSocket();
-      }, reconnectDelayMs(this.scaleSocketAttempts++));
-    };
+  private handleScaleTelemetry(
+    snapshot: ScaleSnapshot,
+    previous: ScaleSnapshot | null,
+    observedAtMs: number
+  ): void {
+    if (this.disposed) return;
+    this.ingestLiveFrame(
+      null,
+      snapshot,
+      observedAtMs,
+      this.telemetryStore.snapshot.machine ?? this.state.machine,
+      previous ?? this.state.scale
+    );
   }
 
-  // The DE1 tank level arrives on its own socket (separate from the snapshot).
-  // It changes slowly, so patch the top-bar readout by reference rather than
-  // re-rendering the whole app on every frame.
-  private connectWaterLevelSocket(): void {
-    if (this.disposed || this.state.demo) return;
-    const previous = this.waterSocket;
-    this.waterSocket = null;
-    this.closeSocket(previous);
-    const ws = new WebSocket(`${gatewayWsOrigin()}/ws/v1/machine/waterLevels`);
-    this.waterSocket = ws;
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data) as { currentLevel?: unknown; refillLevel?: unknown };
-        const hasLevel = typeof data.currentLevel === 'number' && Number.isFinite(data.currentLevel);
-        const refill = typeof data.refillLevel === 'number' && Number.isFinite(data.refillLevel) ? data.refillLevel : null;
-        // The machine's own refill threshold rarely changes; re-render when it
-        // does so the Settings control reflects the live value.
-        if (refill !== this.state.machineRefillLevel) {
-          this.state.machineRefillLevel = refill;
-          if (this.state.view === 'settings') this.setState({});
-        }
-        if (!hasLevel) return;
-        const level = Number(data.currentLevel);
-        if (level === this.state.waterLevel) return;
-        this.state.waterLevel = level;
-        // A soft-band crossing restyles the topbar + toggles the warning banner,
-        // so re-render; otherwise go through the gated + throttled topbar
-        // writer. Never write the readout directly: the raw level differs on
-        // every frame (sensor noise), and an unconditional textContent write
-        // repaints even when the rendered string is identical — the same
-        // GPU-churn class as the b1d5a79 leak, on the water socket.
-        if (this.syncWaterAlert()) {
-          this.setState({});
-          return;
-        }
-        this.updateTopbarIsland();
-      } catch (error) {
-        console.warn('[Beanie] Bad water level frame', error);
-      }
-    };
-    ws.onopen = () => {
-      if (this.waterSocket === ws) this.waterSocketAttempts = 0;
-    };
-    ws.onclose = () => {
-      if (this.disposed) return;
-      if (this.waterSocket !== ws) return;
-      if (this.waterRetryTimer != null) window.clearTimeout(this.waterRetryTimer);
-      this.waterRetryTimer = window.setTimeout(() => {
-        this.waterRetryTimer = null;
-        this.connectWaterLevelSocket();
-      }, reconnectDelayMs(this.waterSocketAttempts++));
-    };
+  // Water is normalized before reaching this application subscriber. The
+  // subscriber owns structural alert transitions; presentation remains behind
+  // the bounded topbar owner.
+  private handleWaterTelemetry(snapshot: WaterLevelSnapshot): void {
+    if (this.disposed) return;
+    const refill = snapshot.refillLevelMm;
+    if (refill !== this.state.machineRefillLevel) {
+      this.state.machineRefillLevel = refill;
+      if (this.state.view === 'settings') this.setState({});
+    }
+    const level = snapshot.currentLevelMm;
+    if (level == null || level === this.state.waterLevel) return;
+    this.state.waterLevel = level;
+    if (this.syncWaterAlert()) {
+      this.setState({});
+      return;
+    }
+    this.updateTopbarIsland();
   }
 
-  // Track the gateway's display state live instead of relying on a one-shot GET
-  // on wake. That GET races the gateway's own brightness restore (which lands a
-  // beat after the wake transition) and can cache a transient 0%, leaving the
-  // Settings readout stuck at 0 while the screen is actually lit. The gateway
-  // pushes every DisplayState change on this socket, so the bundle always
-  // reflects the real value — and a restore that arrives late still updates it.
-  private connectDisplaySocket(): void {
-    if (this.disposed || this.state.demo) return;
-    const previous = this.displaySocket;
-    this.displaySocket = null;
-    this.closeSocket(previous);
-    const ws = new WebSocket(`${gatewayWsOrigin()}/ws/v1/display`);
-    this.displaySocket = ws;
-    ws.onmessage = (event) => {
-      try {
-        const display = readDisplayState(JSON.parse(event.data));
-        // Keep the wake-app restore target current off the live socket so it's
-        // right even before the settings bundle loads. Ignore frames while the
-        // screensaver dim is armed or applied — those echo the saver's own level
-        // (0 for black, the configured percent for clock/photos), which must not
-        // become the value we "restore" to.
-        const sleepDimActive = this.sleepBrightnessDimmed || this.sleepBrightnessTimer != null;
-        if (display.requestedBrightness > 0 && !sleepDimActive) {
-          this.wakeAppRestoreBrightness = display.requestedBrightness;
-        }
-        const current = this.state.settingsBundle?.display;
-        if (
-          current &&
-          current.brightness === display.brightness &&
-          current.requestedBrightness === display.requestedBrightness &&
-          current.lowBatteryBrightnessActive === display.lowBatteryBrightnessActive &&
-          current.wakeLockEnabled === display.wakeLockEnabled &&
-          current.wakeLockOverride === display.wakeLockOverride
-        ) {
-          return;
-        }
-        this.patchBundle({ display });
-      } catch (error) {
-        console.warn('[Beanie] Bad display frame', error);
-      }
-    };
-    ws.onopen = () => {
-      if (this.displaySocket === ws) this.displaySocketAttempts = 0;
-    };
-    ws.onclose = () => {
-      if (this.disposed) return;
-      if (this.displaySocket !== ws) return;
-      if (this.displayRetryTimer != null) window.clearTimeout(this.displayRetryTimer);
-      this.displayRetryTimer = window.setTimeout(() => {
-        this.displayRetryTimer = null;
-        this.connectDisplaySocket();
-      }, reconnectDelayMs(this.displaySocketAttempts++));
-    };
+  // Keep the wake-app restore target current from the normalized display
+  // channel. Frames caused by the screensaver dim itself are not adopted.
+  private handleDisplayTelemetry(display: DisplayState): void {
+    if (this.disposed) return;
+    const sleepDimActive = this.sleepBrightnessDimmed || this.sleepBrightnessTimer != null;
+    if (display.requestedBrightness > 0 && !sleepDimActive) {
+      this.wakeAppRestoreBrightness = display.requestedBrightness;
+    }
+    const current = this.state.settingsBundle?.display;
+    if (
+      current &&
+      current.brightness === display.brightness &&
+      current.requestedBrightness === display.requestedBrightness &&
+      current.lowBatteryBrightnessActive === display.lowBatteryBrightnessActive &&
+      current.wakeLockEnabled === display.wakeLockEnabled &&
+      current.wakeLockOverride === display.wakeLockOverride
+    ) {
+      return;
+    }
+    this.patchBundle({ display });
   }
 
-  // The gateway sequencer's shot state + decision feed. This is the authority
-  // on WHY things happened during a pull — which stage advances were app-issued
-  // weight skips vs firmware exits, and what stopped the shot — replacing the
-  // telemetry guesswork the rail and completion status used before. The chart
-  // lifecycle stays on the snapshot socket (same source as the plotted data),
-  // so this socket only feeds the decision log.
-  private connectShotStateSocket(): void {
-    if (this.disposed || this.state.demo) return;
-    const previous = this.shotStateSocket;
-    this.shotStateSocket = null;
-    this.closeSocket(previous);
-    const ws = new WebSocket(`${gatewayWsOrigin()}/ws/v1/machine/shotState`);
-    this.shotStateSocket = ws;
-    ws.onopen = () => {
-      if (this.shotStateSocket === ws) this.shotStateSocketAttempts = 0;
-    };
-    ws.onmessage = (event) => {
-      try {
-        const frame = readShotStateEvent(JSON.parse(event.data));
-        const next = nextDecisionLog(this.decisionLog, frame);
-        if (next === this.decisionLog) return;
-        this.decisionLog = next;
-        // An advance decision can land just after the frame change already
-        // patched the rail (two sockets, no ordering guarantee) — force the
-        // next readout tick to repopulate the stage reasons.
-        this.liveReadouts.forceStageRefresh();
-        // Once the pour has ended those ticks stop, so a stop decision landing
-        // a beat after the snapshot socket ended the shot must repaint the
-        // frozen panel itself (the final stage's reason comes from it). Patch
-        // the bound rail in place rather than re-rendering — an innerHTML
-        // rebuild here (on top of the end-of-shot renders) reads as flicker.
-        if (
-          !this.liveShot.isActive &&
-          (this.state.liveActive || this.state.liveFinalizing)
-        ) {
-          this.updateLiveReadouts();
-          this.liveReadouts.flush();
-        }
-      } catch (error) {
-        console.warn('[Beanie] Bad shotState frame', error);
-      }
-    };
-    ws.onclose = () => {
-      if (this.disposed) return;
-      if (this.shotStateSocket !== ws) return;
-      if (this.shotStateRetryTimer != null) window.clearTimeout(this.shotStateRetryTimer);
-      this.shotStateRetryTimer = window.setTimeout(() => {
-        this.shotStateRetryTimer = null;
-        this.connectShotStateSocket();
-      }, reconnectDelayMs(this.shotStateSocketAttempts++));
-    };
+  // The gateway sequencer's shot-state channel is the authority on why stages
+  // advanced and what stopped the pour.
+  private handleShotStateTelemetry(frame: ShotStateEvent): void {
+    if (this.disposed) return;
+    const next = nextDecisionLog(this.decisionLog, frame);
+    if (next === this.decisionLog) return;
+    this.decisionLog = next;
+    this.liveReadouts.forceStageRefresh();
+    if (
+      !this.liveShot.isActive &&
+      (this.state.liveActive || this.state.liveFinalizing)
+    ) {
+      this.updateLiveReadouts();
+      this.liveReadouts.flush();
+    }
   }
-
   // Feed one telemetry frame (from either socket, or the demo simulator) into the
   // live-shot session. The hot path deliberately avoids a full re-render: while a
   // shot is active we only redraw the canvas and patch readout text by reference.
   private ingestLiveFrame(
     machine: MachineSnapshot | null,
     scale: ScaleSnapshot | null,
-    tMs: number
+    tMs: number,
+    currentMachine = this.state.machine,
+    currentScale = this.state.scale
   ): void {
     const frameState = liveTelemetryFrameState({
-      currentMachine: this.state.machine,
-      currentScale: this.state.scale,
+      currentMachine,
+      currentScale,
       machineFrame: machine,
       scaleFrame: scale,
       view: this.state.view,
@@ -3445,7 +3782,8 @@ export class BeanieApp {
     if (state !== 'steam') return;
     this.machineService.markTimedSteamStopRequested(Date.now());
     try {
-      await gateway.requestState('idle');
+      await this.runExactMachineCommand(() => gateway.requestState('idle'));
+      if (this.disposed) return;
       this.setState({ status: 'Timed steam stop requested' });
       this.armMachineStopFeedbackTimer();
     } catch (error) {
@@ -3498,7 +3836,7 @@ export class BeanieApp {
     });
 
     try {
-      await gateway.updateWorkflow(nextWorkflow);
+      await this.updateWorkflowExact(nextWorkflow);
     } catch (error) {
       console.error('[Beanie] Extend service duration failed', error);
       this.setState({ status: 'Add time failed' });
@@ -3513,7 +3851,7 @@ export class BeanieApp {
       workflow: this.state.workflow,
       demo: this.state.demo
     }, {
-      updateWorkflow: (workflow) => gateway.updateWorkflow(workflow)
+      updateWorkflow: (workflow) => this.updateWorkflowExact(workflow)
     });
     if (result.type === 'failed') {
       console.error('[Beanie] Machine service settings restore failed', result.error);
@@ -3534,6 +3872,7 @@ export class BeanieApp {
   }
 
   private armMachineStopFeedbackTimer(): void {
+    if (this.disposed) return;
     if (this.machineStopFeedbackTimer != null) window.clearTimeout(this.machineStopFeedbackTimer);
     this.machineStopFeedbackTimer = window.setTimeout(() => {
       this.machineStopFeedbackTimer = null;
@@ -3571,7 +3910,7 @@ export class BeanieApp {
       return;
     }
     try {
-      await gateway.setRefillLevel(mm);
+      await this.runExactMachineCommand(() => gateway.setRefillLevel(mm));
       this.setState({ status: 'Machine refill level set' });
     } catch (error) {
       console.error('[Beanie] Set refill level failed', error);
@@ -3579,22 +3918,11 @@ export class BeanieApp {
     }
   }
 
-  // Coalesce many incoming frames into at most one canvas draw per animation
-  // frame. No rAF is scheduled while idle, so we never spin on a sleeping tablet.
+  // Publish the latest complete live model. LiveChart is the sole frame
+  // scheduler and coalesces model/layout/theme/interaction invalidations into
+  // one RAF; the app never calls resize()/draw() directly.
   private scheduleLiveDraw(): void {
-    this.liveDirty = true;
-    if (this.liveRaf != null) return;
-    this.liveRaf = window.requestAnimationFrame(() => {
-      this.liveRaf = null;
-      if (!this.liveDirty) return;
-      this.drawLiveChart();
-    });
-  }
-
-  private drawLiveChart(): void {
     if ((!this.state.liveActive && !this.state.liveFinalizing) || !this.liveChart) return;
-    this.liveDirty = false;
-    this.liveChart.resize();
     const ghost = this.state.liveGhost ? this.liveGhostModel : null;
     const model = this.liveShot.model({
       ...liveChartModelOptions(this.state.liveChartMode, ghost?.maxTime),
@@ -3604,7 +3932,7 @@ export class BeanieApp {
       hideMaxTimeLabel: liveChartHideMaxTimeLabel(this.state.liveChartMode, model.maxTime)
     });
     this.liveChart.setModel(ghost ? overlayComparisonModel(model, ghost) : model);
-    this.liveChart.draw();
+    this.liveChart.invalidate('model');
     this.updateLiveReadouts();
   }
 
@@ -3654,7 +3982,7 @@ export class BeanieApp {
       });
     }
     this.liveReadouts.bind(this.root);
-    this.drawLiveChart();
+    this.scheduleLiveDraw();
   }
 
   private updateLiveReadouts(): void {
@@ -3851,7 +4179,8 @@ export class BeanieApp {
           void this.consumeBatchDoseForShot(
             bean,
             batch.id,
-            decision.optimisticShot?.annotations?.actualDoseWeight ?? null
+            decision.optimisticShot?.annotations?.actualDoseWeight ?? null,
+            decision.optimisticShot?.id ?? null
           );
         }
         return;
@@ -3869,7 +4198,8 @@ export class BeanieApp {
       void this.consumeBatchDoseForShot(
         bean,
         batch.id,
-        context.optimisticShot?.annotations?.actualDoseWeight ?? null
+        context.optimisticShot?.annotations?.actualDoseWeight ?? null,
+        context.optimisticShot?.id ?? null
       );
     }
     try {
@@ -3943,80 +4273,52 @@ export class BeanieApp {
   private async consumeBatchDoseForShot(
     bean: Bean,
     batchId: string,
-    doseWeight: number | null | undefined
+    doseWeight: number | null | undefined,
+    shotId: string | null
   ): Promise<void> {
     const dose = positiveNumber(doseWeight);
-    if (dose == null) return;
+    if (dose == null || !shotId) return;
     const batch = (this.state.batchesByBean[bean.id] ?? []).find((item) => item.id === batchId);
     const remaining = positiveNumber(batch?.weightRemaining);
     if (!batch || remaining == null) return;
     const next = Math.max(0, round(remaining - dose, 1));
-    // Send only the field this write owns: the gateway merges partial bodies
-    // (absent fields keep their stored values), so echoing the rest of the
-    // batch from local state would overwrite edits made on another device.
-    const batchInput: Partial<BeanBatch> = {
-      beanId: bean.id,
-      weightRemaining: next
-    };
-    const result = await this.saveBatchStoragePatch(bean, batch.id, batchInput, `Bag: ${formatGrams(next)} left`);
-    if (result === 'failed' && !this.state.demo) {
-      // The beans are spent whether or not the gateway heard about it. Queue
-      // the deduction so a later flush replays it instead of the bag silently
-      // keeping weight it no longer has.
-      writePendingDoses(
-        appendPendingDose(
-          readPendingDoses(),
-          {
-            batchId: batch.id,
-            beanId: bean.id,
-            dose,
-            expectedRemaining: next,
-            at: new Date().toISOString()
-          },
-          new Date()
-        )
+    if (this.state.demo) {
+      await this.saveBatchStoragePatch(
+        bean,
+        batch.id,
+        { beanId: bean.id, weightRemaining: next },
+        `Bag: ${formatGrams(next)} left`
       );
-      this.setState({ status: 'Bag update failed — will retry' });
-      this.schedulePendingDoseFlush();
+      return;
     }
-  }
 
-  // Replay dose deductions that never reached the gateway (shot ended while
-  // offline or the write timed out). Each entry is re-resolved against the
-  // batch as the gateway has it NOW — another device may have edited the bag
-  // since — and a deduction whose write actually landed (only the response was
-  // lost) is recognized by its expected weight and dropped, so a replay never
-  // counts a shot twice.
-  private async flushPendingDoses(): Promise<void> {
-    if (this.disposed || this.state.demo || this.pendingDoseFlushActive) return;
-    const pending = readPendingDoses();
-    if (pending.length === 0) return;
-    this.pendingDoseFlushActive = true;
+    const at = new Date().toISOString();
     try {
-      const queue = [...pending];
-      while (queue.length > 0) {
-        const entry = queue[0]!;
-        try {
-          const batch = await this.batchForPendingDose(entry.batchId);
-          const resolution = resolvePendingDose(entry, batch);
-          if (resolution.action === 'apply') {
-            const saved = await gateway.updateBatch(entry.batchId, {
-              beanId: entry.beanId,
-              weightRemaining: resolution.weightRemaining
-            });
-            this.adoptFlushedBatch(saved);
-          }
-          queue.shift();
-          writePendingDoses(queue);
-        } catch {
-          // Gateway still unreachable: keep the rest of the queue for the next
-          // reconnect or startup, and check back on a timer meanwhile.
-          this.schedulePendingDoseFlush(60_000);
-          break;
-        }
+      // Journal before the first network attempt. A process death anywhere
+      // after this await leaves a reclaimable command rather than lost beans.
+      const queued = await this.doseMutationReconciler.enqueue({
+        shotId,
+        batchId: batch.id,
+        beanId: bean.id,
+        dose,
+        expectedRemaining: next,
+        at
+      });
+      if (queued.inserted) {
+        const batches = (this.state.batchesByBean[bean.id] ?? []).map((item) =>
+          item.id === batch.id ? { ...item, weightRemaining: next } : item
+        );
+        this.setState({
+          batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
+          status: queued.durability === 'indexeddb' || queued.durability === 'local-storage'
+            ? `Bag: ${formatGrams(next)} left`
+            : `Bag: ${formatGrams(next)} left — device storage unavailable`
+        });
+        void beanieCache.putBeanBatches(bean.id, batches).catch(() => {});
       }
-    } finally {
-      this.pendingDoseFlushActive = false;
+    } catch (error) {
+      console.error('[Beanie] Could not journal dose deduction', error);
+      this.setState({ status: 'Bag update could not be queued' });
     }
   }
 
@@ -4031,21 +4333,18 @@ export class BeanieApp {
     }
   }
 
-  private adoptFlushedBatch(saved: BeanBatch): void {
+  private adoptFlushedBatch(saved: BeanBatch, expectedRemaining: number): void {
+    if (this.disposed) return;
     const current = this.state.batchesByBean[saved.beanId];
     if (!current) return;
+    const currentBatch = current.find((item) => item.id === saved.id);
+    // A newer optimistic deduction or foreground edit already owns the local
+    // projection. Publishing this older absolute response would resurrect
+    // weight and can make a later journal entry look falsely applied.
+    if (currentBatch?.weightRemaining !== expectedRemaining) return;
     const batches = current.map((item) => (item.id === saved.id ? saved : item));
     this.setState({ batchesByBean: { ...this.state.batchesByBean, [saved.beanId]: batches } });
     void beanieCache.putBeanBatches(saved.beanId, batches).catch(() => {});
-  }
-
-  private schedulePendingDoseFlush(delayMs = 30_000): void {
-    if (this.disposed) return;
-    if (this.pendingDoseRetryTimer != null) window.clearTimeout(this.pendingDoseRetryTimer);
-    this.pendingDoseRetryTimer = window.setTimeout(() => {
-      this.pendingDoseRetryTimer = null;
-      void this.flushPendingDoses();
-    }, delayMs);
   }
 
   // The inverse of consumeBatchDoseForShot: a deleted shot can return its dose to
@@ -4093,7 +4392,19 @@ export class BeanieApp {
     if (annotations) update.annotations = annotations;
     if (!update.metadata && !update.annotations) return shot;
     try {
-      const saved = await gateway.updateShot(shot.id, update);
+      const saved = await this.runExactCommand(`shot:${shot.id}`, async () => {
+        const latest = update.annotations ? await gateway.shot(shot.id) : null;
+        return gateway.updateShot(shot.id, {
+          ...update,
+          ...(update.annotations && latest ? {
+            annotations: rebaseChangedFields(
+              shot.annotations,
+              update.annotations,
+              latest.annotations
+            )
+          } : {})
+        });
+      });
       if (annotations) clearPendingDerekTweak();
       this.shotCacheGeneration += 1;
       await beanieCache.invalidateShotMutation(saved.id).catch(() => {});
@@ -4133,11 +4444,6 @@ export class BeanieApp {
       window.clearTimeout(this.simTimer);
       this.simTimer = null;
     }
-    if (this.liveRaf != null) {
-      window.cancelAnimationFrame(this.liveRaf);
-      this.liveRaf = null;
-    }
-    this.liveDirty = false;
     this.liveShot.reset();
   }
 
@@ -4367,25 +4673,33 @@ export class BeanieApp {
    */
   private pushSettingToStore(storeKey: string, value: string | null): void {
     if (this.state.demo) return;
-    // A cleared value DELETEs the key (POSTing null would store the string
-    // "null"); otherwise the raw string is written.
-    const push =
-      value === null
+    this.desiredStoreWrites.set(storeKey, value);
+    const push = this.workflowCommands.submit(
+      `store:${storeKey}`,
+      { policy: 'latest-wins', coalesceKey: 'value' },
+      () => value === null
+        // A cleared value DELETEs the key (POSTing null would store the string
+        // "null"); otherwise the raw string is written.
         ? gateway.storeDelete(SETTINGS_STORE_NAMESPACE, storeKey)
-        : gateway.storeSet(SETTINGS_STORE_NAMESPACE, storeKey, value);
-    void push.then(
-      () => {
+        : gateway.storeSet(SETTINGS_STORE_NAMESPACE, storeKey, value)
+    );
+    void push.then((outcome) => {
+      // An older request may finish after the user chose another value. Its
+      // transport result is real, but it does not own current UI/error state.
+      if (this.desiredStoreWrites.get(storeKey) !== value) return;
+      if (outcome.status === 'completed') {
         this.failedStoreWrites.delete(storeKey);
         if (this.failedStoreWrites.size === 0 && this.state.storeError) {
           this.setState({ storeError: false });
         }
-      },
-      (error: unknown) => {
-        console.error('[Beanie] Failed to save setting to gateway store', storeKey, error);
+        return;
+      }
+      if (outcome.status === 'failed') {
+        console.error('[Beanie] Failed to save setting to gateway store', storeKey, outcome.error);
         this.failedStoreWrites.set(storeKey, value);
         if (!this.state.storeError) this.setState({ storeError: true });
       }
-    );
+    });
   }
 
   /**
@@ -4411,7 +4725,7 @@ export class BeanieApp {
       await loadAllFromStore(gateway);
       if (this.disposed) return;
       this.applyLoadedSettings();
-      this.startSettingsPoll();
+      this.settingsSyncTask.start();
     } catch (error) {
       console.warn('[Beanie] Settings load failed; using defaults', error);
       if (!this.disposed) this.applyLoadedSettings();
@@ -4436,17 +4750,13 @@ export class BeanieApp {
     applySettingsPreferences(this.state.settingsPreferences);
   }
 
-  private startSettingsPoll(): void {
-    if (this.settingsPollTimer != null) return;
-    this.settingsPollTimer = window.setInterval(() => void this.syncFromGateway(), 10_000);
-  }
-
   /**
    * Pick up changes made on another device sharing this gateway — synced
    * settings, plus the selected coffee and the workflow recipe. Runs on a timer
    * and immediately on window focus.
    */
   private async syncFromGateway(): Promise<void> {
+    if (this.presentationActivity.isSuspended || this.disposed) return;
     await this.pollSettings();
     await this.resyncWorkflowAndBean();
   }
@@ -4512,6 +4822,8 @@ export class BeanieApp {
     if (!changed) return;
     // Adopt the gateway's workflow, then re-derive the displayed recipe + bean
     // from it (display only — never applied back to the machine).
+    this.machineWorkflowShadow = workflow;
+    this.machineWorkflowDesired = workflow;
     this.state.workflow = workflow;
     // Prefer the explicitly-selected coffee (last-bean-id, written on every
     // pick) over the workflow's bean: picking a coffee uses apply:false, so the
@@ -4527,11 +4839,33 @@ export class BeanieApp {
   }
 
   private readonly handleWindowFocus = (): void => {
-    void this.syncFromGateway();
+    this.settingsSyncTask.trigger();
   };
   private readonly handleDocumentVisibility = (): void => {
     this.syncSaverPhotoTimer();
+    this.syncPresentationActivity();
   };
+
+  private syncPresentationActivity(): void {
+    const documentHidden =
+      typeof document !== 'undefined' && document.visibilityState === 'hidden';
+    const overlayOccludesApp =
+      (this.state.asleep && !this.state.appAwake) || this.state.saverPreview;
+    const suspended = documentHidden || overlayOccludesApp;
+    this.presentationActivity.setSuspended(suspended);
+    // A chart can be mounted by a later shell morph while the coordinator is
+    // already suspended. Reconcile dynamic resources on every bind pass.
+    if (suspended) this.chartActivityTarget.suspend();
+  }
+
+  private managedCharts(): Array<LiveChart | null> {
+    return [
+      this.liveChart,
+      this.detailChart,
+      this.shotStagesChart,
+      this.calibratorChart
+    ];
+  }
 
   private retryFailedStoreWrites(): void {
     for (const [storeKey, value] of [...this.failedStoreWrites.entries()]) {
@@ -5766,7 +6100,7 @@ export class BeanieApp {
       latestBatchesByBean: this.state.batchesByBean,
       previousBatches: optimistic.previousBatches
     }, {
-      updateBatch: (id, input) => gateway.updateBatch(id, input),
+      updateBatch: (id, input) => this.runExactCommand(`batch:${id}`, () => gateway.updateBatch(id, input)),
       putBeanBatches: (ownerId, batches) => beanieCache.putBeanBatches(ownerId, batches)
     });
 
@@ -5828,7 +6162,7 @@ export class BeanieApp {
       latestBatchesByBean: this.state.batchesByBean,
       previousBatches: optimistic.previousBatches
     }, {
-      updateBatch: (id, input) => gateway.updateBatch(id, input),
+      updateBatch: (id, input) => this.runExactCommand(`batch:${id}`, () => gateway.updateBatch(id, input)),
       putBeanBatches: (ownerId, batches) => beanieCache.putBeanBatches(ownerId, batches)
     });
 
@@ -5981,13 +6315,16 @@ export class BeanieApp {
 
       // The batches POST endpoint persists weights but drops storage state, so the
       // new portion comes back unfrozen. Set its frozen state with a follow-up update.
-      const createdRaw = await gateway.createBatch(selection.bean.id, frozenBatch);
-      const created = await gateway.updateBatch(createdRaw.id, {
-        beanId: selection.bean.id,
-        storageEvents: frozenBatch.storageEvents ?? null,
-        frozen: true
+      const { created, savedParent } = await this.runExactCommand(`batch:${selection.batch.id}`, async () => {
+        const createdRaw = await gateway.createBatch(selection.bean.id, frozenBatch);
+        const created = await gateway.updateBatch(createdRaw.id, {
+          beanId: selection.bean.id,
+          storageEvents: frozenBatch.storageEvents ?? null,
+          frozen: true
+        });
+        const savedParent = await gateway.updateBatch(selection.batch.id, parentUpdate);
+        return { created, savedParent };
       });
-      const savedParent = await gateway.updateBatch(selection.batch.id, parentUpdate);
       const latest = this.state.batchesByBean[selection.bean.id] ?? current;
       const batches = [created, ...latest.map((batch) => (batch.id === selection.batch.id ? savedParent : batch))];
       await beanieCache.putBeanBatches(selection.bean.id, batches).catch(() => {});
@@ -6033,7 +6370,7 @@ export class BeanieApp {
       latestBatchesByBean: this.state.batchesByBean,
       previousBatches: optimistic.previousBatches
     }, {
-      updateBatch: (id, input) => gateway.updateBatch(id, input),
+      updateBatch: (id, input) => this.runExactCommand(`batch:${id}`, () => gateway.updateBatch(id, input)),
       putBeanBatches: (ownerId, batches) => beanieCache.putBeanBatches(ownerId, batches)
     });
 
@@ -6093,7 +6430,7 @@ export class BeanieApp {
       latestBatchesByBean: this.state.batchesByBean,
       previousBatches: optimistic.previousBatches
     }, {
-      updateBatch: (id, input) => gateway.updateBatch(id, input),
+      updateBatch: (id, input) => this.runExactCommand(`batch:${id}`, () => gateway.updateBatch(id, input)),
       putBeanBatches: (ownerId, batches) => beanieCache.putBeanBatches(ownerId, batches)
     });
 
@@ -6184,7 +6521,7 @@ export class BeanieApp {
       latestBatchesByBean: this.state.batchesByBean,
       previousBatches: optimistic.previousBatches
     }, {
-      updateBatch: (id, input) => gateway.updateBatch(id, input),
+      updateBatch: (id, input) => this.runExactCommand(`batch:${id}`, () => gateway.updateBatch(id, input)),
       putBeanBatches: (ownerId, batches) => beanieCache.putBeanBatches(ownerId, batches)
     });
 
@@ -6509,10 +6846,12 @@ export class BeanieApp {
     }
 
     try {
-      const verifiedMachineSettings = await updateSteamPurgeModeAndReadBack(plan.nextMode, {
-        updateMachineSettings: (patch) => gateway.updateMachineSettings(patch),
-        readMachineSettings: () => gateway.machineSettings()
-      });
+      const verifiedMachineSettings = await this.runExactMachineCommand(() =>
+        updateSteamPurgeModeAndReadBack(plan.nextMode, {
+          updateMachineSettings: (patch) => gateway.updateMachineSettings(patch),
+          readMachineSettings: () => gateway.machineSettings()
+        })
+      );
       this.setState({
         machineSettings: verifiedMachineSettings,
         busy: false,
@@ -6554,20 +6893,25 @@ export class BeanieApp {
       hotWaterStopMode: this.state.hotWaterStopMode,
       status
     });
+    this.machineWorkflowDesired = plan.workflow;
     this.setState({
       workflow: plan.workflow,
       machineSettings: plan.machineSettings,
       busy: true,
       status: plan.savingStatus
     });
-    const result = await persistMachineWorkflowPlan(plan, this.state.demo, {
+    const persist = () => persistMachineWorkflowPlan(plan, this.state.demo, {
       writeHotWaterWeightTarget: (value) => writeHotWaterWeightTarget(value),
-      updateWorkflow: (workflow) => gateway.updateWorkflow(workflow),
+      // This multi-endpoint plan is submitted as one lane command below.
+      updateWorkflow: (workflow) => this.updateGatewayWorkflowInOwnedLane(workflow),
       updateMachineSettings: (patch) => gateway.updateMachineSettings(patch),
       logDirectMachineUpdateFailure: (error) => {
         console.error('[Beanie] Direct machine settings update failed', error);
       }
     });
+    const result = this.state.demo
+      ? await persist()
+      : await this.runExactMachineCommand(persist);
     if (result.type === 'demo') {
       this.setState({ busy: false, status: result.status });
       return;
@@ -6594,15 +6938,15 @@ export class BeanieApp {
     });
   }
 
-  private currentSteamSettings(): SteamSettings {
-    if (this.state.workflow?.steamSettings) return steamValues(this.state.workflow, null);
-    return steamValues(this.state.workflow, this.state.machineSettings);
+  private currentSteamSettings(workflow = this.state.workflow): SteamSettings {
+    if (workflow?.steamSettings) return steamValues(workflow, null);
+    return steamValues(workflow, this.state.machineSettings);
   }
 
-  private currentHotWaterData(): HotWaterData {
-    const values = this.state.workflow?.hotWaterData
-      ? hotWaterValues(this.state.workflow, null)
-      : hotWaterValues(this.state.workflow, this.state.machineSettings);
+  private currentHotWaterData(workflow = this.state.workflow): HotWaterData {
+    const values = workflow?.hotWaterData
+      ? hotWaterValues(workflow, null)
+      : hotWaterValues(workflow, this.state.machineSettings);
     // Time mode zeroes the volume sent to the gateway (so the DE1 stops on time
     // and reaprime's stop-at-weight stays inert). Restore the user's saved
     // volume/weight target so it survives a reload and a switch back to Weight mode.
@@ -6614,9 +6958,9 @@ export class BeanieApp {
     return values;
   }
 
-  private currentRinseData(): RinseData {
-    if (this.state.workflow?.rinseData) return flushValues(this.state.workflow, null);
-    return flushValues(this.state.workflow, this.state.machineSettings);
+  private currentRinseData(workflow = this.state.workflow): RinseData {
+    if (workflow?.rinseData) return flushValues(workflow, null);
+    return flushValues(workflow, this.state.machineSettings);
   }
 
   private adjustDialogValue(delta: number): void {
@@ -6828,6 +7172,7 @@ export class BeanieApp {
       this.topbarIsland.bind(this.root);
       this.screensaverIsland.bind(this.root);
       this.derekStreamIsland.bind(this.root);
+      this.syncPresentationActivity();
       return;
     }
     const bean = this.selectedBean();
@@ -6871,6 +7216,7 @@ export class BeanieApp {
     this.bindDetailChart();
     this.bindShotStagesChart();
     this.bindCalibratorChart();
+    this.syncPresentationActivity();
     restoreFocus(this.root, focus);
     this.focusNotesEditor();
   }
@@ -8114,7 +8460,7 @@ export class BeanieApp {
     });
     if (this.settingsLocal) return;
     try {
-      await gateway.updateCalibration(resolved);
+      await this.runExactMachineCommand(() => gateway.updateCalibration(resolved));
     } catch (error) {
       console.error('[Beanie] Per-profile flow calibration apply failed', error);
     }
@@ -8156,7 +8502,7 @@ export class BeanieApp {
     }
     this.setState({ status: 'Taring scale…' });
     try {
-      await gateway.tareScale();
+      await this.runExactCommand('scale', () => gateway.tareScale());
       this.setState({ status: 'Scale tared' });
     } catch (error) {
       console.error('[Beanie] Scale tare failed', error);
@@ -8197,7 +8543,8 @@ export class BeanieApp {
     }
 
     try {
-      const display = await gateway.setDisplayBrightness(brightness);
+      const display = await this.setGatewayBrightnessLatest(brightness);
+      if (!display) return;
       this.patchBundle({ display });
       this.setState({ status: 'Brightness saved' });
     } catch (error) {
@@ -8209,6 +8556,7 @@ export class BeanieApp {
 
   private async requestMachineState(state: string): Promise<void> {
     const result = await this.settingsController.requestMachineState({ state, local: this.settingsLocal });
+    if (this.disposed) return;
     this.setState({ status: result.status });
     if (result.sleepRequested) {
       // An explicit sleep ends a wake-app override so the screen can re-dim and
@@ -8525,7 +8873,9 @@ export class BeanieApp {
     }
 
     try {
-      await gateway.updateSettings({ blockOnNoScale: enabled });
+      await this.runExactCommand('gateway-settings', () =>
+        gateway.updateSettings({ blockOnNoScale: enabled })
+      );
       if (!enabled) this.noScaleShotWarningUntilMs = 0;
       this.setState({
         modal: enabled ? this.state.modal : null,
@@ -8603,6 +8953,13 @@ function promoteBean(beans: Bean[], beanId: string): Bean[] {
   const bean = beans.find((item) => item.id === beanId);
   if (!bean) return beans;
   return [bean, ...beans.filter((item) => item.id !== beanId)];
+}
+
+function calibrationBundle(bundle: SettingsBundle, flowMultiplier: number): SettingsBundle {
+  return {
+    ...bundle,
+    calibration: { ...bundle.calibration, flowMultiplier }
+  };
 }
 
 function keepKeys<T>(record: Record<string, T>, keys: Set<string>): Record<string, T> {

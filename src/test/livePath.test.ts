@@ -168,6 +168,21 @@ run('a new live session cannot inherit a throttled final frame', () => {
   readouts.dispose();
 });
 
+run('live readouts retain the latest hidden frame and paint it only after resume', () => {
+  const fixture = liveFixture();
+  const readouts = new LiveReadouts();
+  readouts.bind(fixture.root as unknown as HTMLElement);
+  readouts.update(liveModel({ elapsedSeconds: 1 }));
+  equal(fixture.values[0]!.textContent, '1.0s');
+
+  readouts.suspend();
+  readouts.update(liveModel({ elapsedSeconds: 8 }));
+  equal(fixture.values[0]!.textContent, '1.0s');
+  readouts.resume();
+  equal(fixture.values[0]!.textContent, '8.0s');
+  readouts.dispose();
+});
+
 run('the live owner rebuilds stage rows when a new profile reuses the rail', () => {
   const fixture = liveFixture();
   const readouts = new LiveReadouts();

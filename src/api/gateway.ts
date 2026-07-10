@@ -100,6 +100,11 @@ export class GatewayRequestError extends Error {
   }
 }
 
+export interface GatewayMutationRequestOptions {
+  /** Forwarded for servers that provide replay-safe mutation receipts. */
+  idempotencyKey?: string;
+}
+
 // Every gateway request is guarded by a timeout so a hung gateway can never
 // wedge the UI forever. reaprime can sit on a workflow PUT for up to its ~10s
 // BLE write timeout (plus a reconnect attempt) when the DE1 is asleep, so the
@@ -317,10 +322,17 @@ export const gateway = {
         body: JSON.stringify(toGatewayBatchBody(batch))
       }
     ).then(fromGatewayBatch),
-  updateBatch: (id: string, batch: Partial<BeanBatch>) =>
+  updateBatch: (
+    id: string,
+    batch: Partial<BeanBatch>,
+    options: GatewayMutationRequestOptions = {}
+  ) =>
     fetchJson<BeanBatch>('batches', `/api/v1/bean-batches/${encodeURIComponent(id)}`, readBatch, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : {})
+      },
       body: JSON.stringify(toGatewayBatchBody(batch))
     }).then(fromGatewayBatch),
   deleteBatch: (id: string) =>

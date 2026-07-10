@@ -327,6 +327,8 @@ export class LiveChart {
   private cssHeight = 0;
   private dpr = 1;
   private disposed = false;
+  private suspended = false;
+  private hoverEnabled = false;
   private hoverProbeAttached = false;
   private animationFrame: number | null = null;
   private pendingResize = false;
@@ -381,11 +383,13 @@ export class LiveChart {
     );
     this.hideMaxTimeLabel = options.hideMaxTimeLabel ?? false;
     LiveChart.canvasOwners.set(canvas, this);
-    if (options.hover) this.attachHoverProbe();
+    this.hoverEnabled = options.hover ?? false;
+    if (this.hoverEnabled) this.attachHoverProbe();
     this.attachInvalidationSources();
   }
 
   private attachInvalidationSources(): void {
+    if (this.disposed || this.suspended) return;
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(this.handleLayoutSource);
       this.resizeObserver.observe(this.canvas);
@@ -435,11 +439,12 @@ export class LiveChart {
   }
 
   private documentVisible(): boolean {
-    return typeof document === 'undefined' || document.visibilityState !== 'hidden';
+    return !this.suspended &&
+      (typeof document === 'undefined' || document.visibilityState !== 'hidden');
   }
 
   private attachHoverProbe(): void {
-    if (this.disposed || this.hoverProbeAttached) return;
+    if (this.disposed || this.suspended || this.hoverProbeAttached) return;
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
     if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
     this.canvas.addEventListener('pointermove', this.handlePointerMove);
@@ -472,8 +477,12 @@ export class LiveChart {
   setOptions(options: LiveChartOptions): void {
     if (this.disposed) return;
     if (options.hideMaxTimeLabel != null) this.hideMaxTimeLabel = options.hideMaxTimeLabel;
-    if (options.hover === true) this.attachHoverProbe();
+    if (options.hover === true) {
+      this.hoverEnabled = true;
+      this.attachHoverProbe();
+    }
     if (options.hover === false) {
+      this.hoverEnabled = false;
       const hadHoverPoint = this.hoverPoint != null;
       this.detachHoverProbe();
       this.hoverPoint = null;
@@ -574,6 +583,48 @@ export class LiveChart {
 
   get isDisposed(): boolean {
     return this.disposed;
+  }
+
+  get isSuspended(): boolean {
+    return this.suspended;
+  }
+
+  /**
+   * Stop all paints for a semantically hidden canvas and return its native
+   * backing store immediately. The latest model is retained for resume.
+   */
+  suspend(): void {
+    if (this.disposed || this.suspended) return;
+    this.suspended = true;
+    this.detachHoverProbe();
+    this.detachInvalidationSources();
+    if (this.animationFrame != null) {
+      if (typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+        window.cancelAnimationFrame(this.animationFrame);
+      }
+      this.animationFrame = null;
+    }
+    this.pendingPaint = true;
+    this.pendingResize = true;
+    this.pendingThemeRefresh = true;
+    this.hoverPoint = null;
+    this.cssWidth = 0;
+    this.cssHeight = 0;
+    this.dpr = 1;
+    if (LiveChart.canvasOwners.get(this.canvas) === this) {
+      this.canvas.width = 1;
+      this.canvas.height = 1;
+    }
+  }
+
+  /** Reattach invalidation sources and schedule one complete layout repaint. */
+  resume(): void {
+    if (this.disposed || !this.suspended) return;
+    this.suspended = false;
+    this.attachInvalidationSources();
+    if (this.hoverEnabled) this.attachHoverProbe();
+    this.invalidate('layout');
+    this.invalidate('theme');
   }
 
   /**

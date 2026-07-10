@@ -209,6 +209,50 @@ run('render channel reset drops old-session work and makes the new session immed
   deepEqual(commits, ['session-one', 'session-two']);
 });
 
+run('render channel suspension retains only the latest model without scheduling work', () => {
+  const scheduler = new FakeScheduler();
+  const commits: string[] = [];
+  const channel = new RenderChannel<string>({
+    minIntervalMs: 100,
+    scheduler,
+    commit: (model) => commits.push(model)
+  });
+
+  channel.suspend();
+  channel.offer('old');
+  channel.offer('latest');
+  equal(channel.isSuspended, true);
+  equal(scheduler.pendingCount, 0);
+  deepEqual(commits, []);
+
+  channel.resume();
+  equal(channel.isSuspended, false);
+  deepEqual(commits, ['latest']);
+  equal(scheduler.pendingCount, 0);
+});
+
+run('render channel suspension cancels a trailing timer and resumes from the latest value', () => {
+  const scheduler = new FakeScheduler();
+  const commits: string[] = [];
+  const channel = new RenderChannel<string>({
+    minIntervalMs: 100,
+    scheduler,
+    commit: (model) => commits.push(model)
+  });
+
+  channel.offer('first');
+  channel.offer('pending');
+  equal(scheduler.pendingCount, 1);
+  channel.suspend();
+  channel.offer('latest');
+  equal(scheduler.pendingCount, 0);
+
+  scheduler.advance(100);
+  deepEqual(commits, ['first']);
+  channel.resume();
+  deepEqual(commits, ['first', 'latest']);
+});
+
 run('render channel validates its interval', () => {
   throws(() => new RenderChannel({ minIntervalMs: 0, commit: () => undefined }));
   throws(() => new RenderChannel({ minIntervalMs: -1, commit: () => undefined }));

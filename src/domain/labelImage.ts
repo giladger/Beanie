@@ -8,8 +8,17 @@
  * tested); the actual decode + canvas encode is browser-only.
  */
 
+import {
+  BoundedImageTranscoder,
+  DEFAULT_IMAGE_MAX_EDGE,
+  DEFAULT_IMAGE_MAX_PIXELS,
+  boundedImageDimensions
+} from '../platform/imageTranscoder';
+
 /** Long-edge target that keeps fine print (roast-date stamps) legible. */
-const DEFAULT_MAX_EDGE = 2000;
+const DEFAULT_MAX_EDGE = DEFAULT_IMAGE_MAX_EDGE;
+
+const imageTranscoder = new BoundedImageTranscoder();
 
 /** A downscaled photo ready to send (and to preview as a thumbnail). */
 export interface CapturedImage {
@@ -30,16 +39,7 @@ export function scaledDimensions(
   height: number,
   maxEdge: number
 ): { width: number; height: number } {
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-    return { width: 0, height: 0 };
-  }
-  const longEdge = Math.max(width, height);
-  if (longEdge <= maxEdge) return { width: Math.round(width), height: Math.round(height) };
-  const scale = maxEdge / longEdge;
-  return {
-    width: Math.max(1, Math.round(width * scale)),
-    height: Math.max(1, Math.round(height * scale))
-  };
+  return boundedImageDimensions(width, height, maxEdge, Number.MAX_VALUE);
 }
 
 /** Browser-only: decode a picked file, downscale it, and re-encode as JPEG. */
@@ -48,54 +48,18 @@ export async function fileToScaledImage(
   maxEdge = DEFAULT_MAX_EDGE,
   quality = 0.85
 ): Promise<CapturedImage> {
-  const decoded = await decodeImage(file);
-  try {
-    const { width, height } = scaledDimensions(decoded.width, decoded.height, maxEdge);
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext('2d');
-    if (!context) throw new Error('Canvas is not available');
-    context.drawImage(decoded.source, 0, 0, width, height);
-    const dataUrl = canvas.toDataURL('image/jpeg', quality);
-    return { mime: 'image/jpeg', base64: dataUrl.slice(dataUrl.indexOf(',') + 1), dataUrl };
-  } finally {
-    decoded.release();
-  }
-}
-
-interface DecodedImage {
-  source: CanvasImageSource;
-  width: number;
-  height: number;
-  release: () => void;
-}
-
-/**
- * Decode a picked file. `from-image` keeps the EXIF rotation — phone photos
- * are usually portrait only via EXIF, and sideways text scans badly. The
- * `<img>` fallback covers what `createImageBitmap` can't decode (notably HEIC
- * on Safari) and browsers that choke on the orientation option.
- */
-async function decodeImage(file: Blob): Promise<DecodedImage> {
-  try {
-    const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
-    return { source: bitmap, width: bitmap.width, height: bitmap.height, release: () => bitmap.close() };
-  } catch {
-    const url = URL.createObjectURL(file);
-    try {
-      const image = new Image();
-      image.src = url;
-      await image.decode();
-      return {
-        source: image,
-        width: image.naturalWidth,
-        height: image.naturalHeight,
-        release: () => URL.revokeObjectURL(url)
-      };
-    } catch (error) {
-      URL.revokeObjectURL(url);
-      throw error;
-    }
-  }
+  const edge = Number.isFinite(maxEdge) && maxEdge > 0 ? maxEdge : DEFAULT_MAX_EDGE;
+  const result = await imageTranscoder.transcode(file, {
+    maxEdge: edge,
+    // Preserve the public helper's historical edge-only sizing while retaining
+    // the shared host's explicit backing-store budget.
+    maxPixels: Math.max(DEFAULT_IMAGE_MAX_PIXELS, Math.ceil(edge) ** 2),
+    mimeType: 'image/jpeg',
+    quality
+  });
+  return {
+    mime: result.mime,
+    base64: result.dataUrl.slice(result.dataUrl.indexOf(',') + 1),
+    dataUrl: result.dataUrl
+  };
 }

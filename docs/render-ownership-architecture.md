@@ -1,12 +1,11 @@
 # Render ownership architecture
 
-_Decision date: 2026-07-10 · Status: partially implemented target architecture_
+_Decision date: 2026-07-10 · Status: implemented; device soak remains an operational release gate_
 
 This document defines how Beanie renders continuously changing machine data
 without allowing WebSocket rate, DOM mutation rate, or GPU resource lifetime to
-become coupled. It is the architectural follow-up to
-[the WebView GPU OOM investigation](webview-gpu-oom-investigation.md) and the
-[render modernization plan](render-modernization-plan.md).
+become coupled. It codifies the architecture adopted after on-device WebView
+memory failures exposed implicit render and resource ownership.
 
 The central rule is:
 
@@ -30,12 +29,12 @@ that contract from the code delivered with this decision.
 | Topbar | Landed | Complete stat models, source-unit hysteresis, an opaque sole-writer island, atomic text/class/title/ARIA commits, and remount-safe current-model ordering. |
 | Water alert band | Landed | Soft-alert display projection is stabilized in raw millimetres before the tank lookup; the machine's hard `needsWater` state remains immediate. |
 | Live readouts | Landed as one combined island | A 10 Hz channel gates text/classes, owns the morph-opaque readouts and rail, resets between shots, observes rail layout, and performs stage work only on stage/reason revisions. Splitting numeric/stage models remains optional cleanup. |
-| Charts | Landed resource contract | Exclusive canvas ownership, independent invalidation, resize/DPR/theme/visibility sources, model keys including profile identity, backing-store caps, listener/observer cleanup, and 1×1 teardown. The active live composite still uses the app's existing RAF to build its latest model. |
+| Charts | Landed | Exclusive canvas ownership, independent invalidation, resize/DPR/theme/visibility sources, model keys including profile identity, backing-store caps, listener/observer cleanup, suspension, and 1×1 teardown. The app's competing live RAF owner has been removed. |
 | Screensaver | Landed shared lifecycle | App orchestration schedules only while a visible photo surface is active; `ScreensaverIsland` owns both clocks and image DOM/resources, load/error generations, crossfade cleanup, and one-photo reconciliation. Imports close every `ImageBitmap` in `finally`. |
 | Other hot surfaces | Landed | Derek token streaming is a complete, session-reset 20 Hz island; profile slider labels have a named render owner. |
 | Async flow ownership | Landed for reviewed flows | Monotonic operation epochs/request identities prevent Derek, scanner, and profile save/import continuations from crossing close/reopen sessions. |
-| Enforcement | Partial | AST tests reject presentation DOM writes in `app.ts` and controllers; the existing markup guard permits intentional sinks only under `src/render`. Repository-wide dependency/native-resource enforcement is still future work. |
-| Telemetry store | Pending | Canonical telemetry remains in `AppState`; socket callbacks now publish to render/projector boundaries without owning DOM. A standalone revisioned `TelemetryStore` is a later extraction, not a prerequisite for these ownership fixes. |
+| Enforcement | Landed with named debt | AST tests reject presentation DOM writes in `app.ts` and controllers; the markup guard permits intentional sinks only under `src/render`; the dependency policy enforces layer directions, exact debt, and runtime acyclicity. |
+| Telemetry store | Landed | Five supervised sockets publish validated frames into a standalone, revisioned `TelemetryStore`. Lossless channel subscribers feed shot/domain policy while bounded render owners consume projected state. |
 | Acceptance | Pending on hardware | Local tests/build and browser verification are part of this change. The release WebView soak and Android graphics measurements remain an operational release gate. |
 
 The extracted scanner and profile flows are UI coordinators today: they still
@@ -919,10 +918,11 @@ user):
 - the real shot saves every measurement and the final UI matches the final
   telemetry state.
 
-Acceptance artifacts are committed to the OOM investigation: build commit,
-device/app versions, timestamps, conditions, raw sample table, mutation/draw
-counts, and a conclusion. A short flat window is useful smoke coverage but does
-not replace the eight-hour soak that matches the original failure timescale.
+Acceptance artifacts belong in release evidence rather than incremental
+implementation commits: build commit, device/app versions, timestamps,
+conditions, raw sample table, mutation/draw counts, and a conclusion. A short
+flat window is useful smoke coverage but does not replace the eight-hour soak
+that matches the original failure timescale.
 
 ## Process-restart mitigation is a separate layer
 
@@ -989,8 +989,8 @@ commit budget, and does zero stage work between stage/decision changes.
 2. Give each binder a complete model key and let `LiveChart` own
    layout/DPR/theme/visibility sources.
 3. Replace canvas-identity early returns with independent invalidation.
-4. Keep the existing live composite RAF for now; unify it with chart
-   invalidation if double-draw instrumentation shows meaningful overlap.
+4. Publish the active live composite through the chart's own invalidation
+   scheduler; do not maintain a second app-level RAF owner.
 5. Stress mount/unmount and theme/layout changes.
 
 Exit gate: chart instance reuse is preserved, every required invalidation draws
@@ -1007,7 +1007,7 @@ once, and teardown returns resources/counts to baseline.
 Exit gate: no more than two display leases, no callbacks after disposal, and no
 per-photo Graphics staircase.
 
-### Phase 5 — Telemetry store and enforcement — **partial**
+### Phase 5 — Telemetry store and enforcement — **landed**
 
 1. Finish replacing direct `AppState` mutation in socket handlers with the
    telemetry store and explicit structural events.
@@ -1022,7 +1022,7 @@ resource writes fail CI, and the dependency graph follows this document.
 
 1. Run the idle-visible, screensaver-photo, and active-use protocols above on a
    release bundle.
-2. Commit measurements and conclusions to the investigation docs.
+2. Record measurements and conclusions in the release evidence.
 3. Only after the idle path is proven flat, decide with the Reaprime owner
    whether a safe sleeping-time process restart is still warranted for retained
    active-use allocations.

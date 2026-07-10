@@ -10237,6 +10237,11 @@ p {
   font-size: 0.92rem;
 }
 
+.derek-answer-streaming {
+  display: block;
+  white-space: pre-wrap;
+}
+
 .derek-answer p,
 .derek-answer ul,
 .derek-answer ol {

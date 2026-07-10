@@ -2,7 +2,7 @@ import { RenderChannel } from './renderChannel';
 
 export interface DerekStreamViewModel {
   readonly sessionId: number;
-  readonly answerHtml: string;
+  readonly answerText: string;
   readonly phase: string;
   readonly showShimmer: boolean;
 }
@@ -22,7 +22,7 @@ interface DerekStreamElements {
  */
 export class DerekStreamIsland {
   private elements: DerekStreamElements | null = null;
-  private answerHtml = '';
+  private answerText = '';
   private phase = '';
   private showShimmer = false;
   private sessionId: number | null = null;
@@ -30,7 +30,7 @@ export class DerekStreamIsland {
     minIntervalMs: 50,
     equals: (previous, next) =>
       previous.sessionId === next.sessionId &&
-      previous.answerHtml === next.answerHtml &&
+      previous.answerText === next.answerText &&
       previous.phase === next.phase &&
       previous.showShimmer === next.showShimmer,
     commit: (model) => this.commit(model)
@@ -50,7 +50,7 @@ export class DerekStreamIsland {
     this.elements = next;
     // A newly mounted modal is already authoritative template output. Seed the
     // gates from it; never replay a previous ask into a newly opened modal.
-    this.answerHtml = next?.answer.innerHTML ?? '';
+    this.answerText = next?.answer.textContent ?? '';
     this.phase = next?.phase.textContent ?? '';
     this.showShimmer = next ? !next.shimmer.hidden : false;
   }
@@ -63,10 +63,18 @@ export class DerekStreamIsland {
     this.channel.offer(model);
   }
 
+  suspend(): void {
+    this.channel.suspend();
+  }
+
+  resume(): void {
+    this.channel.resume();
+  }
+
   dispose(): void {
     this.channel.dispose();
     this.elements = null;
-    this.answerHtml = '';
+    this.answerText = '';
     this.phase = '';
     this.showShimmer = false;
     this.sessionId = null;
@@ -75,9 +83,9 @@ export class DerekStreamIsland {
   private commit(model: DerekStreamViewModel): void {
     const elements = this.elements;
     if (!elements) return;
-    if (this.answerHtml !== model.answerHtml) {
-      this.answerHtml = model.answerHtml;
-      elements.answer.innerHTML = model.answerHtml;
+    if (this.answerText !== model.answerText) {
+      this.answerText = model.answerText;
+      elements.answer.textContent = model.answerText;
       if (elements.body && elements.body.scrollTop !== elements.body.scrollHeight) {
         elements.body.scrollTop = elements.body.scrollHeight;
       }

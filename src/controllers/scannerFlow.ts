@@ -12,7 +12,8 @@ import {
 import { isDecentAppWebView } from '../appShell';
 import { renderQrSvg } from '../components/qr';
 import { beanLabel } from '../domain/beanWorkflow';
-import { fileToScaledImage, type CapturedImage } from '../domain/labelImage';
+import { type CapturedImage } from '../domain/labelImage';
+import type { ImageTranscoder } from '../platform/imageTranscoder';
 import {
   buildLabelScanPrompt,
   canonicalizeDraft,
@@ -34,6 +35,8 @@ import { demoLabelEnrich, demoLabelScan } from '../mock/demo';
 import { batchFieldsFromForm, beanFieldsFromForm } from '../domain/beanForm';
 import type { LabelScan } from '../domain/labelScan';
 
+const MAX_SCANNER_IMAGES = 4;
+
 // The label scanner: photo capture/handoff, Gemini extraction + enrichment,
 // the review form, and saving the result as a bean + batch. Extracted
 // vertically from app.ts; ScannerFlowHost below is the full coupling surface
@@ -51,7 +54,8 @@ export interface ScannerFlowHost {
 export class ScannerFlow {
   constructor(
     private readonly host: ScannerFlowHost,
-    private readonly beanWorkflow: BeanWorkflowController
+    private readonly beanWorkflow: BeanWorkflowController,
+    private readonly imageTranscoder: ImageTranscoder
   ) {}
 
   scannerClickActions(): Record<string, ClickActionHandler> {
@@ -210,10 +214,37 @@ export class ScannerFlow {
   }
 
   async addScannerPhotos(files: File[]): Promise<void> {
-    if (!this.host.state().scanner) return;
+    const scannerAtStart = this.host.state().scanner;
+    if (!scannerAtStart) return;
     const session = this.scannerSession;
-    // Per-file isolation: one unreadable photo must not drop the others.
-    const results = await Promise.allSettled(files.map((file) => fileToScaledImage(file)));
+    const capacity = Math.max(0, MAX_SCANNER_IMAGES - scannerAtStart.images.length);
+    const selected = files.slice(0, capacity);
+    if (selected.length === 0) {
+      this.host.setState({ status: `Scanner keeps up to ${MAX_SCANNER_IMAGES} photos` });
+      return;
+    }
+    // One shared native-resource host keeps decode/canvas concurrency and the
+    // retained batch pixel budget bounded. Per-file failures stay isolated.
+    const transcoded = await this.imageTranscoder.transcodeBatch(selected, {
+      maxEdge: 2_000,
+      maxPixels: 4_000_000,
+      maxTotalPixels: 16_000_000,
+      concurrency: 1,
+      mimeType: 'image/jpeg',
+      quality: 0.85
+    });
+    const results: PromiseSettledResult<CapturedImage>[] = transcoded.map((result) =>
+      result.status === 'rejected'
+        ? result
+        : {
+            status: 'fulfilled',
+            value: {
+              mime: result.value.mime,
+              base64: result.value.dataUrl.slice(result.value.dataUrl.indexOf(',') + 1),
+              dataUrl: result.value.dataUrl
+            }
+          }
+    );
     if (!this.scannerSessionAlive(session)) return;
     const added: CapturedImage[] = results
       .filter((result): result is PromiseFulfilledResult<CapturedImage> => result.status === 'fulfilled')
@@ -227,6 +258,8 @@ export class ScannerFlow {
         results.find((result) => result.status === 'rejected')
       );
       this.host.setState({ status: failed === 1 ? 'Could not read one photo' : `Could not read ${failed} photos` });
+    } else if (selected.length < files.length) {
+      this.host.setState({ status: `Scanner keeps up to ${MAX_SCANNER_IMAGES} photos; extras skipped` });
     }
   }
 

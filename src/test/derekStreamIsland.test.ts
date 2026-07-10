@@ -59,29 +59,29 @@ run('Derek stream island gates token presentation and owns auto-scroll', () => {
   island.bind(root as unknown as HTMLElement);
   const model = {
     sessionId: 1,
-    answerHtml: '<p>Dial finer.</p>',
+    answerText: 'Dial finer.',
     phase: 'Reading the shot…',
     showShimmer: false
   };
   island.offer(model);
-  equal(answer.innerHTML, model.answerHtml);
+  equal(answer.textContent, model.answerText);
   equal(phase.textContent, model.phase);
   equal(body.scrollTop, body.scrollHeight);
 
-  const writes = answer.htmlWrites + phase.textWrites;
+  const writes = answer.textWrites + phase.textWrites;
   island.offer({ ...model });
-  equal(answer.htmlWrites + phase.textWrites, writes);
+  equal(answer.textWrites + phase.textWrites, writes);
 
   // A pending old-session frame is cancelled; the first frame of the next ask
   // paints immediately even though it arrives inside the 50 ms budget.
-  island.offer({ ...model, answerHtml: '<p>stale pending</p>' });
+  island.offer({ ...model, answerText: 'stale pending' });
   island.offer({
     sessionId: 2,
-    answerHtml: '<p>Fresh answer.</p>',
+    answerText: 'Fresh answer.',
     phase: 'Preparing suggestions…',
     showShimmer: true
   });
-  equal(answer.innerHTML, '<p>Fresh answer.</p>');
+  equal(answer.textContent, 'Fresh answer.');
   equal(shimmer.hidden, false);
   island.dispose();
 });

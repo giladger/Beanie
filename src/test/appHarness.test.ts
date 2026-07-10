@@ -178,6 +178,21 @@ await run('BeanieApp dispose is idempotent and removes delegated listeners', () 
   equal(root.listenerCount('touchmove'), 0);
 });
 
+await run('BeanieApp lifecycle is one-shot and cannot duplicate or revive disposed owners', () => {
+  const root = new FakeElement();
+  const app = new BeanieApp(root as unknown as HTMLElement);
+
+  app.start();
+  app.start();
+  equal(root.listenerCount('click'), 1);
+  equal(root.listenerCount('input'), 1);
+
+  app.dispose();
+  app.start();
+  equal(root.listenerCount('click'), 0);
+  equal(root.listenerCount('input'), 0);
+});
+
 await run('BeanieApp delegated click dispatch opens settings', async () => {
   const root = new FakeElement();
   const app = new BeanieApp(root as unknown as HTMLElement);

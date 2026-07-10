@@ -42,6 +42,7 @@ export class RenderChannel<Model> {
   private readonly scheduler: RenderChannelScheduler;
 
   private disposed = false;
+  private suspended = false;
   private timerArmed = false;
   private timerHandle: unknown;
   private hasPending = false;
@@ -93,6 +94,10 @@ export class RenderChannel<Model> {
     this.pendingModel = model;
     this.hasPending = true;
 
+    // A semantically hidden surface keeps only its newest complete model. It
+    // does not wake a timer or touch its render target until its owner resumes.
+    if (this.suspended) return;
+
     if (this.lastCommitMs == null) {
       this.flush();
       return;
@@ -108,7 +113,7 @@ export class RenderChannel<Model> {
 
   /** Immediately commits the pending latest model, if it differs. */
   flush(): void {
-    if (this.disposed || this.committing || !this.hasPending) return;
+    if (this.disposed || this.suspended || this.committing || !this.hasPending) return;
     this.cancelTimer();
 
     const model = this.pendingModel as Model;
@@ -165,6 +170,20 @@ export class RenderChannel<Model> {
     this.cancelTimer();
   }
 
+  /** Pause commits without losing the latest offered model. */
+  suspend(): void {
+    if (this.disposed || this.suspended) return;
+    this.suspended = true;
+    this.cancelTimer();
+  }
+
+  /** Resume commits and reconcile the one retained latest model. */
+  resume(): void {
+    if (this.disposed || !this.suspended) return;
+    this.suspended = false;
+    this.schedulePending();
+  }
+
   /**
    * Starts a fresh semantic stream without disposing the reusable channel.
    * Pending and equality history from the old session cannot cross the reset.
@@ -184,13 +203,17 @@ export class RenderChannel<Model> {
     return this.disposed;
   }
 
+  get isSuspended(): boolean {
+    return this.suspended;
+  }
+
   private armTimer(delayMs: number): void {
     if (this.timerArmed) return;
     this.timerArmed = true;
     this.timerHandle = this.scheduler.schedule(() => {
       this.timerArmed = false;
       this.timerHandle = undefined;
-      if (this.disposed || !this.hasPending || this.lastCommitMs == null) return;
+      if (this.disposed || this.suspended || !this.hasPending || this.lastCommitMs == null) return;
 
       // A custom scheduler is allowed to wake early. Preserve the rate bound
       // instead of assuming every timer has browser-perfect timing.
@@ -204,7 +227,7 @@ export class RenderChannel<Model> {
   }
 
   private schedulePending(): void {
-    if (!this.hasPending) return;
+    if (this.suspended || !this.hasPending) return;
     if (this.lastCommitMs == null) {
       this.flush();
       return;

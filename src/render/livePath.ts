@@ -76,10 +76,7 @@ export class LiveReadouts {
     if (railChanged) {
       this.railObserver?.disconnect();
       this.railObserver = null;
-      if (next.stageRail && typeof ResizeObserver !== 'undefined') {
-        this.railObserver = new ResizeObserver(() => this.refreshRailLayout(next.stageRail));
-        this.railObserver.observe(next.stageRail);
-      }
+      this.attachRailObserver(next.stageRail);
     }
     // The rail DOM may have just been (re)built, so force the next readout
     // tick to repopulate every stage reason and re-center the current stage
@@ -94,7 +91,7 @@ export class LiveReadouts {
         )
       : [];
     this.refreshRailLayout(next.stageRail);
-    if (this.latest) this.commit(this.latest);
+    if (this.latest && !this.channel.isSuspended) this.commit(this.latest);
   }
 
   clear(): void {
@@ -135,6 +132,22 @@ export class LiveReadouts {
   /** Force the latest offered frame visible at a lifecycle boundary. */
   flush(): void {
     this.channel.flush();
+  }
+
+  suspend(): void {
+    this.channel.suspend();
+    this.railObserver?.disconnect();
+    this.railObserver = null;
+  }
+
+  resume(): void {
+    if (!this.channel.isSuspended) return;
+    const latest = this.latest;
+    this.channel.reset();
+    if (latest) this.channel.offer(latest);
+    this.attachRailObserver(this.els?.stageRail ?? null);
+    this.lastRailSize = null;
+    this.channel.resume();
   }
 
   dispose(): void {
@@ -213,7 +226,7 @@ export class LiveReadouts {
   }
 
   private refreshRailLayout(rail: HTMLElement | null): void {
-    if (!rail || rail !== this.els?.stageRail) return;
+    if (this.channel.isSuspended || !rail || rail !== this.els?.stageRail) return;
     const railSize = { scrollHeight: rail.scrollHeight, clientHeight: rail.clientHeight };
     if (
       this.lastRailSize != null &&
@@ -222,6 +235,17 @@ export class LiveReadouts {
     ) return;
     this.lastRailSize = railSize;
     setClass(rail, 'scrollable', rail.scrollHeight > rail.clientHeight + 1);
+  }
+
+  private attachRailObserver(rail: HTMLElement | null): void {
+    if (
+      this.channel.isSuspended ||
+      !rail ||
+      this.railObserver != null ||
+      typeof ResizeObserver === 'undefined'
+    ) return;
+    this.railObserver = new ResizeObserver(() => this.refreshRailLayout(rail));
+    this.railObserver.observe(rail);
   }
 
   private reconcileStageStructure(rail: HTMLElement, stageNames: readonly string[]): void {

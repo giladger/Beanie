@@ -37,7 +37,7 @@ export class TopbarIsland {
     // A newly mounted owner has template values but no committed island state.
     // Apply the latest complete model immediately; individual property gates
     // make this free when the template already matches.
-    if (changed && this.latest) this.commit(this.latest);
+    if (changed && this.latest && !this.channel.isSuspended) this.commit(this.latest);
   }
 
   offer(model: TopbarViewModel): void {
@@ -47,6 +47,21 @@ export class TopbarIsland {
 
   flush(): void {
     this.channel.flush();
+  }
+
+  suspend(): void {
+    this.channel.suspend();
+  }
+
+  resume(): void {
+    if (!this.channel.isSuspended) return;
+    const latest = this.latest;
+    // The shell may have replaced the opaque boundary while activity was
+    // suspended. Forget equality history and reconcile the current complete
+    // model; per-property gates keep surviving nodes silent.
+    this.channel.reset();
+    if (latest) this.channel.offer(latest);
+    this.channel.resume();
   }
 
   dispose(): void {

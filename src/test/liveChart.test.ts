@@ -304,6 +304,57 @@ run('LiveChart dispose cancels work, removes hover listeners, and releases the c
   );
 });
 
+run('LiveChart suspension releases its backing store and resumes with one layout paint', () => {
+  const scheduled: FrameRequestCallback[] = [];
+  const cancelled: number[] = [];
+  withFakeWindow(
+    {
+      matchMedia: (): MediaQueryList => ({ matches: true }) as MediaQueryList,
+      requestAnimationFrame: (callback: FrameRequestCallback): number => {
+        scheduled.push(callback);
+        return scheduled.length;
+      },
+      cancelAnimationFrame: (handle: number): void => {
+        cancelled.push(handle);
+      }
+    },
+    () => {
+      const harness = createCanvasHarness();
+      const chart = new LiveChart(harness.canvas, { hover: true });
+      let resizeCount = 0;
+      let drawCount = 0;
+      chart.resize = (): void => {
+        resizeCount += 1;
+      };
+      chart.draw = (): void => {
+        drawCount += 1;
+      };
+
+      chart.invalidate('model');
+      equal(scheduled.length, 1);
+      chart.suspend();
+      equal(chart.isSuspended, true);
+      equal(cancelled[0], 1);
+      equal(harness.canvas.width, 1);
+      equal(harness.canvas.height, 1);
+      equal(harness.listenerCount('pointermove'), 0);
+
+      // A dequeued pre-suspend callback cannot paint.
+      scheduled[0]!(0);
+      equal(drawCount, 0);
+
+      chart.resume();
+      equal(chart.isSuspended, false);
+      equal(scheduled.length, 2);
+      equal(harness.listenerCount('pointermove'), 1);
+      scheduled[1]!(0);
+      equal(resizeCount, 1);
+      equal(drawCount, 1);
+      chart.dispose();
+    }
+  );
+});
+
 run('LiveChart owns and disconnects its canvas resize observer', () => {
   let observed: Element | null = null;
   let disconnects = 0;

@@ -2,7 +2,7 @@
 // write markup into the app: a raw `innerHTML =` outside it re-introduces the
 // nuke-and-rebuild bug class (lost focus/scroll/canvas state) and, on the
 // in-process Android WebView, redundant repaints that leak GPU memory (see
-// docs/webview-gpu-oom-investigation.md). An imperative island that truly
+// docs/render-ownership-architecture.md). An imperative island that truly
 // needs one must carry a `// morph-exempt:` comment on an adjacent line
 // explaining why, so the exemption is visible in review.
 

@@ -52,7 +52,7 @@ run('asking renders the phase line and streamed text with the fence held back', 
   state = reduceDerekEvent(state, { type: 'delta', text: '**Try** finer.\n```json\n{"s' });
   const html = render(state);
   contains(html, 'Found 15 sources');
-  contains(html, '<strong>Try</strong> finer.');
+  contains(html, '**Try** finer.');
   contains(html, 'Preparing suggestions…');
   if (html.includes('```json')) throw new Error('raw fence must never render');
 });

@@ -211,6 +211,32 @@ await run('plugin settings save uses Reaprime POST endpoint', async () => {
   }));
 });
 
+await run('batch mutations forward durable idempotency keys to the gateway', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const restore = installFetchStub(calls, {
+    id: 'batch-1',
+    beanId: 'bean-1',
+    weightRemaining: 82
+  });
+  try {
+    await gateway.updateBatch(
+      'batch-1',
+      { beanId: 'bean-1', weightRemaining: 82 },
+      { idempotencyKey: 'pending-dose:v1:shot-1:batch-1' }
+    );
+  } finally {
+    restore();
+  }
+
+  equal(calls.length, 1);
+  equal(calls[0]!.url, '/api/v1/bean-batches/batch-1');
+  equal(calls[0]!.init?.method, 'PUT');
+  equal(
+    headerValue(calls[0]!.init?.headers, 'Idempotency-Key'),
+    'pending-dose:v1:shot-1:batch-1'
+  );
+});
+
 await run('visualizer verify calls plugin verifyCredentials endpoint', async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const restore = installFetchStub(calls, { valid: true });

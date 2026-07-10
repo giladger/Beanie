@@ -44,11 +44,9 @@ import {
   readShotDerek,
   type AppliedDerekTip
 } from '../domain/derekShot';
-import { renderAnswerMarkdown } from '../domain/answerMarkdown';
 import { applyProfileTweak } from '../domain/profileTweaks';
 import { clearPendingDerekTweak, writePendingDerekTweak } from '../domain/storage';
 import { saveProfile, selectProfileForDraft } from './profileEditorController';
-import { saveShotUpdate } from './shotMetadataController';
 import { phaseLabel, renderTweakPreview } from '../views/derekView';
 import type { DerekStreamViewModel } from '../render/derekStreamIsland';
 import type { Profile, ProfileRecord, ShotAnnotations, ShotRecord } from '../api/types';
@@ -68,7 +66,10 @@ export interface DerekFlowHost {
   disposed(): boolean;
   brewTempValue(): number | null;
   scheduleApply(): void;
-  bumpShotCacheGeneration(): void;
+  updateShotAnnotations(
+    shotId: string,
+    merge: (annotations: ShotAnnotations | null | undefined) => ShotAnnotations
+  ): Promise<ShotRecord>;
   loadShotRecipe(shotId: string, opts?: { skipDerekTip?: boolean }): void;
   findProfileByTitle(title: string): ProfileRecord | null;
 }
@@ -318,15 +319,16 @@ export class DerekFlow {
     asked: string
   ): Promise<void> {
     const shot = this.host.state().shots.find((item) => item.id === shotId);
-    if (!shot || !derek.displayText) return;
+    const answer = derek.displayText;
+    if (!shot || !answer) return;
     await this.persistShotDerekQuietly(
       shot,
-      annotationsWithDerekAnswer(shot.annotations, {
-        at: new Date().toISOString(),
-        asked,
-        answer: derek.displayText,
-        suggestions: derek.suggestions
-      }),
+      (annotations) => annotationsWithDerekAnswer(annotations, {
+          at: new Date().toISOString(),
+          asked,
+          answer,
+          suggestions: derek.suggestions
+        }),
       'Save Derek answer failed'
     );
   }
@@ -335,32 +337,17 @@ export class DerekFlow {
   // effects of the interactive shot-save path — this runs behind the modal.
   private async persistShotDerekQuietly(
     shot: ShotRecord,
-    annotations: ShotAnnotations,
+    merge: (annotations: ShotAnnotations | null | undefined) => ShotAnnotations,
     failureStatus: string
   ): Promise<void> {
     if (this.host.state().demo) return;
-    this.host.bumpShotCacheGeneration();
-    const result = await saveShotUpdate(
-      {
-        shot,
-        update: { annotations },
-        demo: false,
-        successStatus: this.host.state().status,
-        demoStatus: this.host.state().status,
-        failureStatus
-      },
-      {
-        updateShot: (id, update) => gateway.updateShot(id, update),
-        invalidateShotMutation: (id) => beanieCache.invalidateShotMutation(id),
-        putShotRecord: (saved) => beanieCache.putShotRecord(saved)
-      }
-    );
-    if (result.type === 'saved') {
+    try {
+      const saved = await this.host.updateShotAnnotations(shot.id, merge);
       this.host.setState({
-        shots: this.host.state().shots.map((item) => (item.id === result.shot.id ? result.shot : item))
+        shots: this.host.state().shots.map((item) => (item.id === saved.id ? saved : item))
       });
-    } else {
-      console.warn('[Beanie]', failureStatus, result.error);
+    } catch (error) {
+      console.warn('[Beanie]', failureStatus, error);
     }
   }
 
@@ -451,7 +438,7 @@ export class DerekFlow {
           };
           void this.persistShotDerekQuietly(
             shot,
-            annotationsWithAppliedTip(shot.annotations, tip),
+            (annotations) => annotationsWithAppliedTip(annotations, tip),
             'Save Derek tip failed'
           );
         }
@@ -619,9 +606,10 @@ function derekStreamViewModel(state: DerekState, sessionId: number): DerekStream
   const showShimmer = partialReachedSuggestions(state);
   return {
     sessionId,
-    // renderAnswerMarkdown escapes model output and is the sole sanitizer for
-    // the island's intentional innerHTML sink.
-    answerHtml: renderAnswerMarkdown(visiblePartial(state)),
+    // Stream plain text into a single text node. The completed answer is
+    // rendered as Markdown once by derekView, avoiding a growing HTML-tree
+    // replacement for every token batch.
+    answerText: visiblePartial(state),
     phase: showShimmer ? 'Preparing suggestions…' : phaseLabel(state),
     showShimmer
   };

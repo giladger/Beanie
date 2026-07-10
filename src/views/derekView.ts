@@ -132,7 +132,7 @@ function renderAsking(state: DerekState): string {
   return `
     <div class="derek-stream" id="derek-stream-island" data-morph-skip="derek-stream">
       <p class="derek-phase" id="derek-phase">${escapeHtml(phaseLabel(state))}</p>
-      <div class="derek-answer" id="derek-answer-stream">${renderAnswerMarkdown(partial)}</div>
+      <div class="derek-answer derek-answer-streaming" id="derek-answer-stream">${escapeHtml(partial)}</div>
       ${shimmer(partialReachedSuggestions(state))}
     </div>
     <div class="modal-actions derek-actions">
