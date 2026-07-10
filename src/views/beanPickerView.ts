@@ -112,7 +112,7 @@ function renderBeanPickerRow(
   const origin = bean.country ? `<small>${escapeHtml(bean.country)}</small>` : '';
   const meta = beanRowMeta(options.batches, options.averageDoseIn);
   return `
-    <button class="bean-row ${options.focused ? 'active' : ''} ${armed || hint ? 'has-second-tap-hint' : ''}" data-action="inspect-bean" data-id="${escapeAttr(bean.id)}">
+    <button id="bean-${escapeAttr(bean.id)}" class="bean-row ${options.focused ? 'active' : ''} ${armed || hint ? 'has-second-tap-hint' : ''}" data-action="inspect-bean" data-id="${escapeAttr(bean.id)}">
       <span>
         ${origin}
         <b>${escapeHtml(bean.roaster)}</b>
@@ -267,7 +267,7 @@ function renderStockRow(bean: Bean, batch: BeanBatch, ctx: StockRowContext): str
     ? renderStockEditPanel(bean, batch)
     : '';
   return `
-    <div class="stock-row-group">
+    <div class="stock-row-group" id="batch-${escapeAttr(batch.id)}">
       <div
         class="stock-row ${focused ? 'focused' : ''} ${finished ? 'finished' : ''}"
         role="button"

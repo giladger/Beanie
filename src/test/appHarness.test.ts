@@ -89,6 +89,8 @@ function installBrowserFakes(): void {
   const documentFake = {
     activeElement: null,
     documentElement,
+    // morphdom probes document.createElement('template') at import time.
+    createElement: () => new FakeElement(),
     querySelectorAll: () => [],
     querySelector: () => null
   };

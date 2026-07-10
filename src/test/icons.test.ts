@@ -23,7 +23,7 @@ const { fileURLToPath } = (await dynamicImport('node:url')) as {
 
 const srcDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-// Mirrors lucide's toPascalCase, which createIcons uses to match data-lucide
+// Mirrors lucide's toPascalCase, which icon() uses to match kebab-case
 // names against registered components ('log-in' -> 'LogIn', 'trash-2' -> 'Trash2').
 function toPascalCase(name: string): string {
   return name.replace(/(\w)(\w*)(_|-|\s*)/g, (_m, first: string, rest: string) => first.toUpperCase() + rest.toLowerCase());

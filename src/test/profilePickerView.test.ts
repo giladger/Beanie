@@ -288,12 +288,12 @@ run('profile picker show-hidden toggle is a header eye icon: crossed when hidden
   const off = renderProfilesPage({ ...base, showHidden: false });
   includes(off, 'data-action="toggle-show-hidden"');
   includes(off, 'Show hidden');
-  includes(off, 'data-lucide="eye-off"');
+  includes(off, 'data-icon="eye-off"');
 
   const on = renderProfilesPage({ ...base, showHidden: true });
   includes(on, 'Hide hidden profiles');
-  includes(on, 'data-lucide="eye"');
-  excludes(on, 'data-lucide="eye-off"');
+  includes(on, 'data-icon="eye"');
+  excludes(on, 'data-icon="eye-off"');
 });
 
 run('profile picker helpers shorten folder titles and normalize profile types', () => {

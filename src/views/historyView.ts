@@ -140,7 +140,7 @@ function renderShotListItem(
   const date = shotDateShortLabel(shot.timestamp);
   const freshness = shotFreshnessBadgeForShot(shot, batchForShotFreshness(shot, batchesByBean));
   const html = `
-    <button class="shot-item ${active ? 'active' : ''} ${comparing ? 'comparing' : ''} ${isDerekedShot(shot) ? 'dereked' : ''} ${hint ? 'has-second-tap-hint' : ''}" data-action="select-history-shot" data-id="${escapeAttr(shot.id)}">
+    <button id="shot-${escapeAttr(shot.id)}" class="shot-item ${active ? 'active' : ''} ${comparing ? 'comparing' : ''} ${isDerekedShot(shot) ? 'dereked' : ''} ${hint ? 'has-second-tap-hint' : ''}" data-action="select-history-shot" data-id="${escapeAttr(shot.id)}">
       <span class="shot-item-info">
         <span class="shot-item-recipe">${escapeHtml(recipeText)}${duration ? ` @ ${escapeHtml(duration)}` : ''}</span>
         ${isDerekedShot(shot) ? `<span class="derek-shot-mark" title="Has Derek dial-in notes">${icon('sparkles')}</span>` : ''}

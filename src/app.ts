@@ -38,7 +38,6 @@ import {
 import {
   capitalize,
   clockLabel,
-  defaultExitValueForApp,
   draftSignature,
   formatNumber,
   isBrewState,
@@ -97,36 +96,23 @@ import {
   clearPendingDerekTweak,
   readLastBeanId,
   readPendingDerekTweak,
-  readScanOnThisDevice,
   readStorageEventsMigrated,
   writeFavoriteBeans,
   writeFavoriteProfiles,
-  writeGeminiApiKey,
-  writeLastBeanId,
-  writePendingDerekTweak,
-  writeScanOnThisDevice
+  writeLastBeanId
+
 } from './domain/storage';
 import {
   demoBatches,
   demoBeans,
   demoGrinders,
-  demoLabelScan,
-  demoLabelEnrich,
   demoMachine,
   demoProfiles,
   demoShotsForBean,
   demoWorkflow
 } from './mock/demo';
-import { enrichLabel, GeminiError, isGeminiKeyError, scanLabel, verifyGeminiKey } from './api/gemini';
-import { fileToScaledImage, type CapturedImage } from './domain/labelImage';
+import { type CapturedImage } from './domain/labelImage';
 import {
-  buildLabelScanPrompt,
-  canonicalizeDraft,
-  countRoasterBeans,
-  findExistingBean,
-  labelScanToDraft,
-  lowConfidenceFields,
-  mergeEnrichment,
   type LabelScan,
   type LabelScanDraft,
   type LabelScanDraftField
@@ -135,9 +121,22 @@ import {
   renderLabelScannerModal as renderLabelScannerModalView,
   type LabelScannerStep
 } from './views/labelScannerView';
-import { buildHandoffUrl, isHandoffArrival } from './domain/labelScanHandoff';
-import { renderQrSvg } from './components/qr';
-import { icon, refreshIcons } from './components/icons';
+import { isHandoffArrival } from './domain/labelScanHandoff';
+import { icon } from './components/icons';
+import { captureFocus, morphRender, restoreFocus } from './render/renderer';
+import { LiveReadouts, TopbarStats } from './render/livePath';
+import { ScannerFlow } from './controllers/scannerFlow';
+import { ProfileEditorFlow } from './controllers/profileEditorFlow';
+import { waterTankMlFromMm } from './domain/waterTank';
+import {
+  batchFieldsFromForm,
+  beanFieldsFromForm,
+  beanFieldsUnchanged,
+  clampRemainingToWeight,
+  numberOrNullInput,
+  textOrNull
+} from './domain/beanForm';
+import { DerekFlow } from './controllers/derekFlow';
 import {
   backspaceInputDialogValue,
   clearInputDialogValue,
@@ -170,9 +169,6 @@ import {
   beanUsageForBean
 } from './controllers/beanWorkflowController';
 import {
-  editProfileEditorInput,
-  newProfileEditorInput,
-  saveProfile,
   selectProfileForDraft,
   toggleFavoriteProfile
 } from './controllers/profileEditorController';
@@ -220,27 +216,14 @@ import {
   type PluginConfigState
 } from './domain/pluginSettings';
 import {
-  addStep,
   createProfileEditorState,
-  duplicateStep,
-  moveStep,
-  nudgeSimpleProfileField,
-  nudgeStepField,
-  profileFromEditorState,
-  removeStep,
   renderEditorModeBar,
   renderProfileEditor,
-  selectStep,
-  setAdvancedTab,
   setAllLimiterRanges,
-  setEditorMode,
   setProfileMeta,
   setSimpleProfileField,
-  setSimpleProfileType,
   setStepExit,
   setStepField,
-  setStepPump,
-  setStepTransition,
   type ProfileEditorState,
   type SimpleProfileField
 } from './components/profileEditor';
@@ -298,53 +281,17 @@ import {
   writePendingDoses
 } from './domain/pendingDoses';
 import {
-  probeDerekRelay,
-  streamDerekAnswer,
-  DerekRequestError,
-  DerekStallError,
-  DerekUnavailableError,
-  type DerekEvent,
-  type DerekRelayAvailability
-} from './api/derek';
-import {
-  buildDialInContext,
-  composeDialInQuery,
-  suggestionTitle,
-  TASTE_CHIPS,
-  type DialInContext,
-  type DialInSuggestion
-} from './domain/dialIn';
-import { renderAnswerMarkdown } from './domain/answerMarkdown';
-import { applyProfileTweak } from './domain/profileTweaks';
-import {
-  beginAsk,
-  beginFollowUp,
-  canAskDerek,
-  downgradeUntweakableSuggestions,
-  failAsk,
-  finishAsk,
-  markUnavailable,
-  reduceDerekEvent,
-  restoreSavedAnswer,
-  selectSuggestion,
-  selectedSuggestion,
-  startDerek,
-  toggleTasteChip,
-  visiblePartial,
-  partialReachedSuggestions,
+
   type DerekState
 } from './controllers/derekController';
 import {
-  annotationsWithAppliedTip,
-  annotationsWithDerekAnswer,
-  latestDerekAnswer,
+
   readShotDerek,
   type AppliedDerekTip
 } from './domain/derekShot';
 import {
-  phaseLabel,
-  renderDerekModal as renderDerekModalView,
-  renderTweakPreview
+
+  renderDerekModal as renderDerekModalView
 } from './views/derekView';
 import {
   profileShortTitle,
@@ -533,7 +480,7 @@ interface ClickActionContext {
   value?: string;
 }
 
-type ClickActionHandler = (context: ClickActionContext) => void | Promise<void>;
+export type ClickActionHandler = (context: ClickActionContext) => void | Promise<void>;
 type ApplyState = 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
 // 'starting' = machine ramping up (substate preparingForShot), before flow;
 // 'active' = actually flowing (substate pouring); 'purging' = flow stopped but
@@ -550,24 +497,6 @@ type View =
 
 const initialSettingsPreferences = readSettingsPreferences();
 
-// Input types that aren't free-text entry — focus on these is a click target,
-// not a caret, so they're excluded from the across-render focus restore.
-const NON_TEXT_INPUT_TYPES = new Set([
-  'button', 'submit', 'reset', 'checkbox', 'radio', 'range', 'color', 'file', 'image', 'hidden'
-]);
-
-// A field the user types into: <textarea>, contenteditable, or a text-like
-// <input>. These are exactly the elements where losing focus mid-render is a
-// bug; buttons, steppers, toggles, and sliders are deliberately excluded.
-function isTextEntryElement(el: HTMLElement): boolean {
-  if (el instanceof HTMLTextAreaElement) return true;
-  if (el.isContentEditable) return true;
-  if (el instanceof HTMLInputElement) return !NON_TEXT_INPUT_TYPES.has(el.type);
-  return false;
-}
-
-// Scrollable containers whose scroll position must survive a re-render.
-const SCROLL_SELECTORS = ['.bean-picker-list', '.bean-picker-batch-list', '.shot-list', '.shot-bean-list', '.profile-list', '.page-body', '.settings-detail', '.phone-main', '.phone-list', '.pe-step-detail', '.pe-step-list'];
 const PHONE_MEDIA_QUERY = '(max-width: 640px), (max-height: 500px) and (max-width: 900px)';
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 15_000;
 // While the app is shown over a sleeping machine (wake-app zone), turn the screen
@@ -582,7 +511,7 @@ const SCALE_FRESH_WINDOW_MS = 5_000;
 const NO_SCALE_WARNING_VISIBLE_MS = 6_000;
 
 // Which editor field a tap-to-edit numpad dialog is bound to.
-interface ProfileEditTarget {
+export interface ProfileEditTarget {
   target: 'step-field' | 'simple-field' | 'exit' | 'meta' | 'limiter-range';
   key?: string;
   index?: number;
@@ -611,35 +540,7 @@ interface ProfileImportState {
   error: string | null;
 }
 
-// Turn a gateway failure into a short, user-facing import error. fetchJson
-// formats HTTP errors as "POST /path returned 500: <detail>"; the plugin's
-// detail is usually a JSON body like {"error":"..."}. Pull out the useful part.
-function importErrorMessage(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err);
-  const http = raw.match(/returned (\d+)(?::\s*([\s\S]*))?$/);
-  if (http) {
-    const detail = (http[2] ?? '').trim();
-    if (!detail) return `Import failed (HTTP ${http[1]})`;
-    try {
-      const parsed = JSON.parse(detail) as { error?: unknown };
-      if (parsed && typeof parsed.error === 'string') return parsed.error;
-    } catch {
-      // detail isn't JSON — use it verbatim
-    }
-    return detail;
-  }
-  return raw.trim() || 'Import failed';
-}
 
-// Pull the gateway's own explanation out of a failed save so the editor banner
-// can show *why* (e.g. 'Profile must have "tank_temperature"') rather than a
-// bare 'POST /api/v1/profiles returned 400'.
-function profileSaveErrorMessage(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  const detail = raw.match(/returned \d+:\s*([\s\S]+)$/);
-  if (detail) return detail[1]!.trim();
-  return raw.trim() || 'Save failed';
-}
 
 interface NumberEditTarget {
   target:
@@ -689,7 +590,7 @@ interface DeleteShotTarget {
   reclaim: ReclaimPlan | null;
 }
 
-interface LabelScannerState {
+export interface LabelScannerState {
   step: LabelScannerStep;
   handoff: boolean;
   qrSvg: string | null;
@@ -711,7 +612,7 @@ interface LabelScannerState {
   error: string | null;
 }
 
-interface AppState {
+export interface AppState {
   beans: Bean[];
   batchesByBean: Record<string, BeanBatch[]>;
   grinders: Grinder[];
@@ -854,15 +755,6 @@ interface DerekTweakChip {
   revertProfileId: string | null;
   /** …or reload this shot's recipe without the tip (recipe-level tips). */
   revertShotId: string | null;
-}
-
-interface LiveReadoutEls {
-  time: HTMLElement | null;
-  weight: HTMLElement | null;
-  pressure: HTMLElement | null;
-  flow: HTMLElement | null;
-  temp: HTMLElement | null;
-  stageRail: HTMLElement | null;
 }
 
 // Step names from a profile's raw steps[], for the live stage chip. Mirrors the
@@ -1010,11 +902,12 @@ export class BeanieApp {
   private shotStateRetryTimer: number | null = null;
   private pendingDoseRetryTimer: number | null = null;
   private pendingDoseFlushActive = false;
-  private derekAbort: AbortController | null = null;
-  /** Once probed, remembered for the session (the gateway rarely changes). */
-  private derekRelay: DerekRelayAvailability = 'unknown';
-  /** Context snapshot the open Derek modal composes queries from. */
-  private derekContext: DialInContext | null = null;
+  // Derek's modal/ask/apply flow lives in its own vertical (src/controllers/derekFlow.ts).
+  private readonly derekFlow: DerekFlow;
+  // The label scanner's capture/extract/review flow (src/controllers/scannerFlow.ts).
+  private readonly scannerFlow: ScannerFlow;
+  // The profile editor's dispatch/open/submit glue (src/controllers/profileEditorFlow.ts).
+  private readonly profileEditorFlow: ProfileEditorFlow;
   // Consecutive failed (re)connect attempts per socket, for backoff pacing.
   private machineSocketAttempts = 0;
   private scaleSocketAttempts = 0;
@@ -1023,6 +916,8 @@ export class BeanieApp {
   private shotStateSocketAttempts = 0;
   private shotRefreshTimer: number | null = null;
   private clockTimer: number | null = null;
+  // The gated + throttled top-bar readout writer (see src/render/livePath.ts).
+  private readonly topbarStats: TopbarStats;
   private saverPhotoTimer: number | null = null;
   // Slideshow/clock placement live outside AppState so their minute ticks
   // patch the overlay DOM in place instead of re-rendering the app.
@@ -1055,19 +950,12 @@ export class BeanieApp {
   private readonly liveShot = new LiveShotSession();
   private liveChart: LiveChart | null = null;
   private liveCanvas: HTMLCanvasElement | null = null;
-  private liveReadoutEls: LiveReadoutEls | null = null;
+  private readonly liveReadouts = new LiveReadouts();
   private liveRaf: number | null = null;
   private liveDirty = false;
   // Memoised parse of the active profile's steps for live stage-reason lookups.
   private cachedStepsProfile: Profile | null = null;
   private cachedSteps: EditorStep[] = [];
-  // Stage-marker count at the last rail reason patch, so the DOM is only touched
-  // when a stage actually advances rather than on every telemetry frame.
-  private lastStageReasonCount = -1;
-  // Stage index the rail last auto-centered on. Long profiles overflow the
-  // rail's height, so the current stage is scrolled into view on each change
-  // (and once per rebuild) — never per frame, so a user peek isn't fought.
-  private lastScrolledStage = -1;
   // Cached chart model for the selected history/calibrator shot. Building the
   // model walks the shot's full measurement array, which is too expensive to
   // repeat on every setState re-render. Measurements are immutable once saved,
@@ -1081,7 +969,11 @@ export class BeanieApp {
   private liveGhostModel: LiveChartModel | null = null;
   private liveGhostShotId: string | null = null;
   private detailChartCanvas: HTMLCanvasElement | null = null;
+  private detailChart: LiveChart | null = null;
   private shotStagesChartCanvas: HTMLCanvasElement | null = null;
+  private shotStagesChart: LiveChart | null = null;
+  private calibratorChartCanvas: HTMLCanvasElement | null = null;
+  private calibratorChart: LiveChart | null = null;
   // One-shot: focus the notes textarea on the render right after the modal opens.
   private pendingNotesFocus = false;
   private detailChartShotId: string | null = null;
@@ -1168,7 +1060,56 @@ export class BeanieApp {
   // over a region with no scrollable ancestor, and keep that for the gesture.
   private touchGestureLocked: boolean | null = null;
 
-  constructor(private readonly root: HTMLElement) {}
+  constructor(private readonly root: HTMLElement) {
+    this.derekFlow = new DerekFlow({
+      state: () => this.state,
+      setState: (next) => this.setState(next),
+      patchStateDerek: (derek) => {
+        this.state.derek = derek;
+      },
+      disposed: () => this.disposed,
+      brewTempValue: () => this.brewTempValue(),
+      scheduleApply: () => this.scheduleApply(),
+      bumpShotCacheGeneration: () => {
+        this.shotCacheGeneration += 1;
+      },
+      loadShotRecipe: (shotId, opts) => this.loadShotRecipe(shotId, opts),
+      findProfileByTitle: (title) => this.findProfileByTitle(title)
+    });
+    this.scannerFlow = new ScannerFlow(
+      {
+        state: () => this.state,
+        setState: (next) => this.setState(next),
+        selectBean: (beanId, options) => this.selectBean(beanId, options),
+        loadSettings: () => this.loadSettings()
+      },
+      this.beanWorkflow
+    );
+    this.profileEditorFlow = new ProfileEditorFlow(
+      {
+        state: () => this.state,
+        setState: (next) => this.setState(next),
+        scheduleApply: () => this.scheduleApply(),
+        requestNotesFocus: () => {
+          this.pendingNotesFocus = true;
+        }
+      },
+      root
+    );
+    this.topbarStats = new TopbarStats(root, () => {
+      const group = this.state.machine?.groupTemperature ?? null;
+      const steam = this.state.machine?.steamTemperature ?? null;
+      const waterMm = this.state.waterLevel;
+      return {
+        status: this.machineStatusStat(),
+        group: { text: temp(group), raw: group },
+        steam: { text: temp(steam), raw: steam },
+        // Raw in ml (the display unit) so the deadband speaks the same scale.
+        water: { text: water(waterMm), raw: waterMm == null ? null : waterTankMlFromMm(waterMm) },
+        scale: scaleStatLabel(this.state.scale)
+      };
+    });
+  }
 
   start(): void {
     this.disposed = false;
@@ -1194,7 +1135,7 @@ export class BeanieApp {
     void this.load();
     if (isHandoffArrival(location.search)) {
       history.replaceState(null, '', location.pathname);
-      void this.openLabelScanner({ fromHandoff: true });
+      void this.scannerFlow.openLabelScanner({ fromHandoff: true });
     }
   }
 
@@ -1220,8 +1161,9 @@ export class BeanieApp {
     if (this.displayRetryTimer != null) window.clearTimeout(this.displayRetryTimer);
     if (this.shotStateRetryTimer != null) window.clearTimeout(this.shotStateRetryTimer);
     if (this.pendingDoseRetryTimer != null) window.clearTimeout(this.pendingDoseRetryTimer);
-    this.derekAbort?.abort();
+    this.derekFlow.dispose();
     if (this.shotRefreshTimer != null) window.clearInterval(this.shotRefreshTimer);
+    this.topbarStats.dispose();
     if (this.clockTimer != null) window.clearTimeout(this.clockTimer);
     if (this.saverPhotoTimer != null) window.clearTimeout(this.saverPhotoTimer);
     if (this.beanRefreshTimer != null) window.clearInterval(this.beanRefreshTimer);
@@ -1653,7 +1595,7 @@ export class BeanieApp {
     const requestId = ++this.loadMoreRequestId;
     const offset = this.state.shots.length;
     const batch = this.selectedBatch();
-    this.setHistoryState({ shotsLoadingMore: true, status: 'Loading more shots' });
+    this.setState({ shotsLoadingMore: true, status: 'Loading more shots' });
     try {
       const { records } = await this.fetchShotPage(bean, batch, offset);
       if (
@@ -1670,7 +1612,7 @@ export class BeanieApp {
       // Never leave the flag stuck: it gates both pagination and the periodic
       // shot refresh. A newer request owns the flag, so only the latest clears.
       if (requestId === this.loadMoreRequestId && this.state.shotsLoadingMore) {
-        this.setHistoryState({ shotsLoadingMore: false });
+        this.setState({ shotsLoadingMore: false });
       }
     }
   }
@@ -1793,6 +1735,13 @@ export class BeanieApp {
       incoming.onload = null;
       incoming.classList.add('active');
       outgoing.classList.remove('active');
+      // Release the hidden layer's decoded bitmap once the 1.2s crossfade has
+      // finished — a data-URL src left on the faded-out <img> pins its GPU
+      // texture for the whole interval, which on the in-process WebView is
+      // memory that never comes back (docs/webview-gpu-oom-investigation.md).
+      window.setTimeout(() => {
+        if (!outgoing.classList.contains('active')) outgoing.removeAttribute('src');
+      }, 1500);
     };
     incoming.src = photos[this.saverPhotoIndex]!;
   }
@@ -2068,7 +2017,7 @@ export class BeanieApp {
   private selectHistoryShot(shotId: string): void {
     if (this.state.comparePicking) {
       const sameAsSelected = this.selectedHistoryShot()?.id === shotId;
-      this.setHistoryState({
+      this.setState({
         compareShotId: sameAsSelected ? this.state.compareShotId : shotId,
         comparePicking: false,
         status: sameAsSelected ? this.state.status : 'Comparing shots'
@@ -2079,7 +2028,7 @@ export class BeanieApp {
       this.loadShotRecipe(shotId);
       return;
     }
-    this.setHistoryState({
+    this.setState({
       detailShotId: shotId,
       secondTapHint: this.nextSecondTapHint('shot', shotId),
       status: 'Shot selected'
@@ -3128,13 +3077,16 @@ export class BeanieApp {
         if (level === this.state.waterLevel) return;
         this.state.waterLevel = level;
         // A soft-band crossing restyles the topbar + toggles the warning banner,
-        // so re-render; otherwise just patch the readout text cheaply.
+        // so re-render; otherwise go through the gated + throttled topbar
+        // writer. Never write the readout directly: the raw level differs on
+        // every frame (sensor noise), and an unconditional textContent write
+        // repaints even when the rendered string is identical — the same
+        // GPU-churn class as the b1d5a79 leak, on the water socket.
         if (this.syncWaterAlert()) {
           this.setState({});
           return;
         }
-        const el = this.root.querySelector<HTMLElement>('#stat-water');
-        if (el) el.textContent = water(level);
+        this.topbarStats.update();
       } catch (error) {
         console.warn('[Beanie] Bad water level frame', error);
       }
@@ -3233,7 +3185,7 @@ export class BeanieApp {
         // An advance decision can land just after the frame change already
         // patched the rail (two sockets, no ordering guarantee) — force the
         // next readout tick to repopulate the stage reasons.
-        this.lastStageReasonCount = -1;
+        this.liveReadouts.forceStageRefresh();
         // Once the pour has ended those ticks stop, so a stop decision landing
         // a beat after the snapshot socket ended the shot must repaint the
         // frozen panel itself (the final stage's reason comes from it). Patch
@@ -3366,7 +3318,7 @@ export class BeanieApp {
       this.setState({});
       return true;
     }
-    this.updateTopbarStats();
+    this.topbarStats.update();
     return true;
   }
 
@@ -3539,27 +3491,6 @@ export class BeanieApp {
     }, 4000);
   }
 
-  private updateTopbarStats(): void {
-    const machine = this.state.machine;
-    const scale = this.state.scale;
-    const set = (id: string, value: string) => {
-      const el = this.root.querySelector<HTMLElement>(`#${id}`);
-      if (el) el.textContent = value;
-    };
-    const status = this.machineStatusStat();
-    set('stat-machine', status.label);
-    // The tone class lives on the stat container; keep it in sync with the
-    // label so e.g. Heating→Ready recolors without a full render.
-    const statusEl = this.root.querySelector<HTMLElement>('#stat-machine');
-    if (statusEl?.parentElement) {
-      statusEl.parentElement.className = `top-stat${status.tone ? ` stat-tone-${status.tone}` : ''}`;
-    }
-    set('stat-group', temp(machine?.groupTemperature));
-    set('stat-steam', temp(machine?.steamTemperature));
-    set('stat-water', water(this.state.waterLevel));
-    set('stat-scale', scaleStatLabel(scale));
-  }
-
   private currentWaterAlert(): WaterAlertLevel {
     return waterAlertLevel({
       levelMm: this.state.waterLevel,
@@ -3658,7 +3589,7 @@ export class BeanieApp {
     if (!canvas) {
       this.liveChart = null;
       this.liveCanvas = null;
-      this.liveReadoutEls = null;
+      this.liveReadouts.clear();
       return;
     }
     if (canvas !== this.liveCanvas) {
@@ -3669,85 +3600,19 @@ export class BeanieApp {
         hover: true
       });
     }
-    this.liveReadoutEls = {
-      time: this.root.querySelector<HTMLElement>('#live-time'),
-      weight: this.root.querySelector<HTMLElement>('#live-weight'),
-      pressure: this.root.querySelector<HTMLElement>('#live-pressure'),
-      flow: this.root.querySelector<HTMLElement>('#live-flow'),
-      temp: this.root.querySelector<HTMLElement>('#live-temp'),
-      stageRail: this.root.querySelector<HTMLElement>('#live-stage-rail')
-    };
-    // The rail DOM was just (re)built, so force the next readout tick to
-    // repopulate every stage reason and re-center the current stage (a fresh
-    // rail starts scrolled to the top, hiding it on long profiles).
-    this.lastStageReasonCount = -1;
-    this.lastScrolledStage = -1;
+    this.liveReadouts.bind(this.root);
     this.drawLiveChart();
   }
 
   private updateLiveReadouts(): void {
-    const els = this.liveReadoutEls;
-    if (!els) return;
-    const latest = this.liveShot.latest;
-    if (els.time) els.time.textContent = `${this.liveShot.elapsedSeconds.toFixed(1)}s`;
-    if (els.weight) els.weight.textContent = formatNumber(latest.weight, 1);
-    if (els.pressure) els.pressure.textContent = formatNumber(latest.pressure, 1);
-    if (els.flow) els.flow.textContent = formatNumber(latest.flow, 1);
-    if (els.temp) {
-      els.temp.textContent =
-        latest.scaledTemperature == null ? '--' : (latest.scaledTemperature * 10).toFixed(1);
-    }
-    if (els.stageRail) {
-      // Item names are static for the shot; the timeline states (done/current/
-      // upcoming) move each frame, and a stage's actual advance reason fills
-      // in as a tinted chip the moment the next stage begins.
-      const current = this.currentStageIndex();
-      els.stageRail.querySelectorAll<HTMLElement>('.live-stage-item').forEach((item) => {
-        const index = Number(item.dataset.index);
-        item.classList.toggle('done', current != null && index < current);
-        item.classList.toggle('current', current != null && index === current);
-        item.classList.toggle('upcoming', current != null && index > current);
-      });
-      // Long profiles overflow the rail's height: fade the clipped edges and
-      // keep the current stage centered, scrolling only when it changes so a
-      // user peeking at other steps isn't fought over the scroll position.
-      const rail = els.stageRail;
-      rail.classList.toggle('scrollable', rail.scrollHeight > rail.clientHeight + 1);
-      if (current != null && current !== this.lastScrolledStage) {
-        // A freshly rebuilt rail (lastScrolledStage reset) starts at the top —
-        // land on the current stage instantly; a visible smooth scroll on
-        // every end-of-shot re-render reads as flicker. Live stage changes
-        // still glide.
-        const behavior: ScrollBehavior =
-          this.lastScrolledStage === -1 ? 'auto' : 'smooth';
-        this.lastScrolledStage = current;
-        const item = rail.querySelector<HTMLElement>(
-          `.live-stage-item[data-index="${current}"]`
-        );
-        if (item && typeof rail.scrollTo === 'function') {
-          rail.scrollTo({
-            top: item.offsetTop - (rail.clientHeight - item.clientHeight) / 2,
-            behavior
-          });
-        }
-      }
-      const markerCount = this.liveShot.snapshot.stageMarkers.length;
-      if (markerCount !== this.lastStageReasonCount) {
-        this.lastStageReasonCount = markerCount;
-        const reasons = this.liveStageReasons();
-        els.stageRail.querySelectorAll<HTMLElement>('.live-stage-reason').forEach((span) => {
-          const reason = reasons[Number(span.dataset.index)] ?? null;
-          // Animate only a chip that genuinely just appeared (empty → filled
-          // during the live patch); rebuilt rails render their chips already
-          // filled, so re-renders never replay the entrance.
-          const appeared = span.textContent === '' && Boolean(reason?.text);
-          span.textContent = reason?.text ?? '';
-          if (reason) span.dataset.kind = reason.kind;
-          else delete span.dataset.kind;
-          if (appeared) span.classList.add('fresh');
-        });
-      }
-    }
+    this.liveReadouts.update({
+      elapsedSeconds: this.liveShot.elapsedSeconds,
+      latest: this.liveShot.latest,
+      currentStage: this.currentStageIndex(),
+      stageMarkerCount: this.liveShot.snapshot.stageMarkers.length,
+      stageReasons: () => this.liveStageReasons(),
+      formatNumber
+    });
   }
 
   // The active profile's stages — name plus, once a stage has advanced, the
@@ -4252,14 +4117,14 @@ export class BeanieApp {
     const groups = [
       this.phoneClickActions(),
       this.beanClickActions(),
-      this.scannerClickActions(),
+      this.scannerFlow.scannerClickActions(),
       this.recipeClickActions(),
       this.shotClickActions(),
       this.machineClickActions(),
       this.settingsClickActions(),
       this.navigationClickActions(),
-      this.profileEditorClickActions(),
-      this.derekClickActions()
+      this.profileEditorFlow.profileEditorClickActions(),
+      this.derekFlow.derekClickActions()
     ];
     for (const group of groups) {
       for (const [action, handler] of Object.entries(group)) {
@@ -4440,86 +4305,6 @@ export class BeanieApp {
     };
   }
 
-  private scannerClickActions(): Record<string, ClickActionHandler> {
-    return {
-      'open-label-scanner': async () => {
-        await this.openLabelScanner();
-      },
-      'scanner-setup-here': () => {
-        // Remember the choice so this device scans on-device next time without
-        // showing the hand-off screen (it only takes effect once a key exists).
-        writeScanOnThisDevice(true);
-        this.setScanner({ handoff: false });
-      },
-      'scanner-use-phone': () => {
-        // Going back to the phone hand-off clears the per-device preference.
-        writeScanOnThisDevice(false);
-        this.setScanner({ handoff: true });
-      },
-      'scanner-verify-key': async ({ el }) => {
-        const input = el.closest('form')?.querySelector<HTMLInputElement>('input[name="apiKey"]');
-        const key = input?.value.trim() ?? '';
-        this.setScanner({ keyDraft: key, verifying: true, verifyMessage: null });
-        const result = await verifyGeminiKey(key);
-        this.setScanner({
-          verifying: false,
-          verifyMessage: { tone: result.ok ? 'good' : 'warn', text: result.message }
-        });
-      },
-      'scanner-change-key': () => {
-        this.setScanner({ step: 'onboard', keyDraft: readGeminiApiKey() ?? '', verifyMessage: null });
-      },
-      'scanner-remove-photo': ({ index }) => {
-        const scanner = this.state.scanner;
-        const removeAt = Number(index);
-        if (scanner && Number.isInteger(removeAt)) {
-          this.setScanner({ images: scanner.images.filter((_, position) => position !== removeAt) });
-        }
-      },
-      'scanner-extract': async () => {
-        await this.runScannerExtraction();
-      },
-      'scanner-rescan': () => {
-        // Also the Cancel button while extracting — abort whatever is in flight.
-        this.cancelScannerWork();
-        this.setScanner({ step: 'capture', scan: null, draft: null, error: null, saving: false, webFields: [], enriching: false });
-      },
-      'scanner-enrich': async () => {
-        await this.runScannerEnrich();
-      },
-    };
-  }
-
-  private setScanner(patch: Partial<LabelScannerState>): void {
-    if (!this.state.scanner) return;
-    this.setState({ scanner: { ...this.state.scanner, ...patch } });
-  }
-
-  /**
-   * Scanner requests are tied to a session id so a response that arrives after
-   * the modal was closed (or reopened) can't write into the new session, and an
-   * AbortController so closing/cancelling actually stops the network call.
-   */
-  private scannerSession = 0;
-  private scannerRequest: AbortController | null = null;
-
-  /** Abort in-flight scanner network work and invalidate its session. */
-  private cancelScannerWork(): void {
-    this.scannerSession++;
-    this.scannerRequest?.abort();
-    this.scannerRequest = null;
-  }
-
-  /** Fresh signal for one scanner request, bound to the current session. */
-  private beginScannerRequest(): { signal: AbortSignal; session: number } {
-    this.scannerRequest?.abort();
-    this.scannerRequest = new AbortController();
-    return { signal: this.scannerRequest.signal, session: this.scannerSession };
-  }
-
-  private scannerSessionAlive(session: number): boolean {
-    return session === this.scannerSession && this.state.scanner != null;
-  }
 
   /**
    * Push a synced setting's current value to the gateway store. Optimistic: the
@@ -4702,313 +4487,6 @@ export class BeanieApp {
     this.setState({ storeError: false });
   }
 
-  /**
-   * Open the scanner. The Decent tablet (whose webview user agent is exactly
-   * "Decent") can't take photos well, so it hands off to a phone via QR. A phone
-   * or normal browser — including the one that scanned the QR — runs the flow
-   * on-device. Demo and the QR-arrival both go straight to the on-device flow.
-   */
-  private async openLabelScanner(options: { fromHandoff?: boolean } = {}): Promise<void> {
-    this.cancelScannerWork();
-    // The Gemini key lives in the store; make sure settings have loaded.
-    await this.loadSettings();
-    const hasKey = readGeminiApiKey() != null;
-    // A tablet that has chosen "Set up on this device" (and has a key) skips the
-    // hand-off entirely and scans on-device from then on.
-    const scanHere = hasKey && readScanOnThisDevice();
-    const handoff = isDecentAppWebView() && options.fromHandoff !== true && !this.state.demo && !scanHere;
-    // Build the QR from the gateway's LAN IP (the tablet webview is on localhost).
-    const handoffUrl = handoff ? buildHandoffUrl(location.href, await gateway.lanAddress()) : null;
-    this.setState({
-      modal: 'label-scanner',
-      scanner: {
-        step: handoff ? 'onboard' : this.state.demo || hasKey ? 'capture' : 'onboard',
-        handoff,
-        qrSvg: handoffUrl ? renderQrSvg(handoffUrl) : null,
-        qrUrl: handoffUrl,
-        keyDraft: '',
-        verifying: false,
-        verifyMessage: null,
-        images: [],
-        scan: null,
-        draft: null,
-        lowConfidence: [],
-        webFields: [],
-        enriching: false,
-        existingBeanId: null,
-        existingBeanLabel: null,
-        roasterBeanCount: 0,
-        saving: false,
-        error: null
-      }
-    });
-  }
-
-  private async addScannerPhotos(files: File[]): Promise<void> {
-    if (!this.state.scanner) return;
-    // Per-file isolation: one unreadable photo must not drop the others.
-    const results = await Promise.allSettled(files.map((file) => fileToScaledImage(file)));
-    if (!this.state.scanner) return;
-    const added: CapturedImage[] = results
-      .filter((result): result is PromiseFulfilledResult<CapturedImage> => result.status === 'fulfilled')
-      .map((result) => result.value);
-    const failed = results.length - added.length;
-    if (added.length > 0) this.setScanner({ images: [...this.state.scanner.images, ...added] });
-    if (failed > 0) {
-      console.error(
-        '[Beanie] Could not prepare photo',
-        results.find((result) => result.status === 'rejected')
-      );
-      this.setState({ status: failed === 1 ? 'Could not read one photo' : `Could not read ${failed} photos` });
-    }
-  }
-
-  private async runScannerExtraction(): Promise<void> {
-    const scanner = this.state.scanner;
-    if (!scanner) return;
-    if (!this.state.demo && readGeminiApiKey() == null) {
-      this.setScanner({
-        step: 'onboard',
-        handoff: false,
-        verifyMessage: { tone: 'warn', text: 'Add your Gemini API key first.' }
-      });
-      return;
-    }
-    const { signal, session } = this.beginScannerRequest();
-    this.setScanner({ step: 'extracting', error: null });
-    try {
-      const scan: LabelScan = this.state.demo
-        ? demoLabelScan()
-        : await scanLabel(
-            scanner.images.map((image) => ({ mime: image.mime, base64: image.base64 })),
-            readGeminiApiKey() ?? '',
-            { signal, prompt: buildLabelScanPrompt(this.state.beans) }
-          );
-      if (!this.scannerSessionAlive(session)) return;
-      const draft = canonicalizeDraft(labelScanToDraft(scan), this.state.beans);
-      const existing = findExistingBean(this.state.beans, draft.roaster, draft.name);
-      this.setScanner({
-        step: 'review',
-        scan,
-        draft,
-        lowConfidence: [...lowConfidenceFields(scan)],
-        webFields: [],
-        enriching: false,
-        existingBeanId: existing?.id ?? null,
-        existingBeanLabel: existing ? beanLabel(existing) : null,
-        roasterBeanCount: countRoasterBeans(this.state.beans, draft.roaster)
-      });
-      // Look up the roaster's site in the background — the review form is
-      // already editable while it searches.
-      void this.runScannerEnrich({ auto: true });
-    } catch (error) {
-      if (signal.aborted || !this.scannerSessionAlive(session)) return;
-      console.error('[Beanie] Label scan failed', error);
-      if (isGeminiKeyError(error)) {
-        // The stored key went bad — back to onboarding instead of a dead retry loop.
-        this.setScanner({
-          step: 'onboard',
-          handoff: false,
-          keyDraft: readGeminiApiKey() ?? '',
-          verifyMessage: { tone: 'warn', text: 'Gemini rejected your API key — check it and save again.' }
-        });
-        return;
-      }
-      const message = error instanceof GeminiError ? error.message : 'Could not read the label — try again.';
-      this.setScanner({ step: 'error', error: message });
-    }
-  }
-
-  /** The review form's live values, falling back to the stored draft. */
-  private readScannerReviewDraft(): LabelScanDraft | null {
-    const form = document.querySelector<HTMLFormElement>('form[data-form="scanner-review"]');
-    if (!form) return this.state.scanner?.draft ?? null;
-    const data = new FormData(form);
-    const get = (name: string): string => String(data.get(name) ?? '');
-    return {
-      roaster: get('roaster'),
-      name: get('name'),
-      country: get('country'),
-      region: get('region'),
-      processing: get('processing'),
-      notes: get('notes'),
-      roastDate: get('roastDate'),
-      roastLevel: get('roastLevel'),
-      weight: get('weight')
-    };
-  }
-
-  /**
-   * Look up the roaster's site and fold extra detail into the draft. Runs
-   * automatically when the review opens (auto: failures stay quiet — the
-   * button is still there to retry) and from the enrich button (manual:
-   * failures surface in the status line). The merge reads the live form so
-   * edits made while it searches are never clobbered.
-   */
-  private async runScannerEnrich(options: { auto?: boolean } = {}): Promise<void> {
-    const scanner = this.state.scanner;
-    if (!scanner || scanner.enriching || scanner.step !== 'review') return;
-    const base = this.readScannerReviewDraft();
-    if (!base) return;
-    if (!base.roaster.trim() || !base.name.trim()) {
-      if (!options.auto) this.setState({ status: 'Add a roaster and bean name to enrich.' });
-      return;
-    }
-
-    const { signal, session } = this.beginScannerRequest();
-    this.setScanner({ enriching: true });
-    try {
-      const enrichment = this.state.demo
-        ? demoLabelEnrich()
-        : await enrichLabel(
-            { roaster: base.roaster, name: base.name, country: base.country },
-            readGeminiApiKey() ?? '',
-            { signal }
-          );
-      if (!this.scannerSessionAlive(session) || this.state.scanner?.step !== 'review') return;
-      const current = this.readScannerReviewDraft() ?? base;
-      const merged = mergeEnrichment(current, enrichment);
-      this.withScannerFocusKept(() =>
-        this.setScanner({
-          enriching: false,
-          draft: merged.draft,
-          webFields: [...new Set([...(this.state.scanner?.webFields ?? []), ...merged.webFields])]
-        })
-      );
-      if (!options.auto && merged.webFields.length === 0) this.setState({ status: 'No extra details found.' });
-    } catch (error) {
-      if (signal.aborted || !this.scannerSessionAlive(session)) return;
-      console.error('[Beanie] Enrich failed', error);
-      this.setScanner({ enriching: false });
-      if (!options.auto) {
-        const message = error instanceof GeminiError ? error.message : 'Could not reach the roaster — try again.';
-        this.setState({ status: message });
-      }
-    }
-  }
-
-  /**
-   * Re-rendering replaces the review form's inputs; when a background enrich
-   * lands mid-typing, put the caret back where it was.
-   */
-  private withScannerFocusKept(render: () => void): void {
-    const active = document.activeElement;
-    const focused =
-      (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) &&
-      active.closest('form[data-form="scanner-review"]')
-        ? { name: active.name, start: active.selectionStart, end: active.selectionEnd }
-        : null;
-    render();
-    if (!focused) return;
-    const next = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(
-      `form[data-form="scanner-review"] [name="${focused.name}"]`
-    );
-    if (!next) return;
-    next.focus();
-    try {
-      if (focused.start != null && focused.end != null) next.setSelectionRange(focused.start, focused.end);
-    } catch {
-      // date/number inputs don't support selection ranges
-    }
-  }
-
-  private saveScannerKey(form: HTMLFormElement): void {
-    const key = String(new FormData(form).get('apiKey') ?? '').trim();
-    if (!key) {
-      this.setScanner({ verifyMessage: { tone: 'warn', text: 'Enter your API key first.' } });
-      return;
-    }
-    // writeGeminiApiKey is a synced write — it pushes to the store itself.
-    writeGeminiApiKey(key);
-    this.setScanner({ step: 'capture', keyDraft: '', verifyMessage: null });
-  }
-
-  private async submitScannerReview(form: HTMLFormElement): Promise<void> {
-    const scanner = this.state.scanner;
-    if (!scanner) return;
-    const data = new FormData(form);
-    const beanFields = beanFieldsFromForm(data);
-    if (!beanFields.roaster || !beanFields.name) {
-      this.setState({ status: 'Add a roaster and a bean name.' });
-      return;
-    }
-
-    // Stop a still-running background enrich from re-rendering the form mid-save.
-    this.cancelScannerWork();
-    this.setScanner({ saving: true, error: null, enriching: false });
-
-    const existing =
-      (scanner.existingBeanId ? this.state.beans.find((bean) => bean.id === scanner.existingBeanId) : null) ??
-      findExistingBean(this.state.beans, beanFields.roaster, beanFields.name);
-
-    let beanId: string;
-    let beans = this.state.beans;
-    let batchesByBean = this.state.batchesByBean;
-
-    if (existing) {
-      beanId = existing.id;
-    } else {
-      const saved = await this.beanWorkflow.saveBean(
-        { beans, batchesByBean, editingId: null, fields: beanFields, demo: this.state.demo, nowMs: Date.now() },
-        {
-          createBean: (input) => gateway.createBean(input),
-          updateBean: (id, input) => gateway.updateBean(id, input),
-          putBeans: (next) => beanieCache.putBeans(next),
-          putBeanBatches: (id, batches) => beanieCache.putBeanBatches(id, batches)
-        }
-      );
-      if (saved.type === 'failed') {
-        console.error('[Beanie] Scanner save bean failed', saved.error);
-        this.setScanner({ saving: false, step: 'error', error: saved.status });
-        return;
-      }
-      beanId = saved.bean.id;
-      beans = saved.beans;
-      batchesByBean = saved.batchesByBean;
-    }
-
-    const bean = existing ?? beans.find((item) => item.id === beanId);
-    if (!bean) {
-      this.setScanner({ saving: false, step: 'error', error: 'Could not save the bean.' });
-      return;
-    }
-
-    const batchInput = batchFieldsFromForm(data, beanId);
-    batchInput.weightRemaining = batchInput.weight;
-
-    const created = await this.beanWorkflow.createBatch(
-      {
-        bean,
-        batchesByBean,
-        selectedBeanId: this.state.selectedBeanId,
-        selectedBatchId: this.state.selectedBatchId,
-        batchInput,
-        demo: this.state.demo,
-        nowMs: Date.now()
-      },
-      {
-        createBatch: (id, input) => gateway.createBatch(id, input),
-        putBeanBatches: (id, batches) => beanieCache.putBeanBatches(id, batches)
-      }
-    );
-
-    if (created.type === 'failed') {
-      console.error('[Beanie] Scanner add batch failed', created.error);
-      this.setState({ beans, batchesByBean });
-      this.setScanner({ saving: false, step: 'error', error: created.status });
-      return;
-    }
-
-    this.setState({
-      beans,
-      batchesByBean: created.batchesByBean,
-      selectedBatchId: created.batch.id,
-      modal: null,
-      scanner: null,
-      status: existing ? 'Added a bag from the label' : 'Added a bean from the label'
-    });
-    await this.selectBean(beanId, { apply: false, preferWorkflow: false });
-  }
 
   private renderLabelScannerModal(): string {
     const scanner = this.state.scanner;
@@ -5133,13 +4611,13 @@ export class BeanieApp {
         await this.loadMoreShots();
       },
       'toggle-compare-pick': () => {
-        this.setHistoryState({
+        this.setState({
           comparePicking: !this.state.comparePicking,
           status: this.state.comparePicking ? this.state.status : 'Pick a shot to compare'
         });
       },
       'clear-compare-shot': () => {
-        this.setHistoryState({ compareShotId: null, comparePicking: false });
+        this.setState({ compareShotId: null, comparePicking: false });
       },
     };
   }
@@ -5267,8 +4745,8 @@ export class BeanieApp {
         if (!value) return;
         this.setState({ settingsSection: value });
         // A section switch should open at the top, not inherit the prior
-        // section's scroll (which restoreScroll would otherwise carry over now
-        // that .settings-detail is scroll-preserved across re-renders).
+        // section's scroll (the morphing render preserves the surviving
+        // element's scroll position).
         const detail = this.root.querySelector<HTMLElement>('.settings-detail');
         if (detail) detail.scrollTop = 0;
       },
@@ -5285,8 +4763,8 @@ export class BeanieApp {
         if (id) await this.verifyPluginConfig(id);
       },
       'settings-change-scanner-key': async () => {
-        await this.openLabelScanner();
-        this.setScanner({
+        await this.scannerFlow.openLabelScanner();
+        this.scannerFlow.setScanner({
           step: 'onboard',
           handoff: false,
           keyDraft: readGeminiApiKey() ?? '',
@@ -5505,7 +4983,7 @@ export class BeanieApp {
           });
           return;
         }
-        if (this.state.scanner) this.cancelScannerWork();
+        if (this.state.scanner) this.scannerFlow.cancelScannerWork();
         this.setState({
           modal: null,
           scanner: null,
@@ -5533,128 +5011,6 @@ export class BeanieApp {
     };
   }
 
-  private profileEditorClickActions(): Record<string, ClickActionHandler> {
-    return {
-      'pe-edit-value': ({ el }) => {
-        this.openProfileValueDialog(el);
-      },
-      'pe-edit-notes': () => {
-        if (this.state.profileEditor) {
-          this.pendingNotesFocus = true;
-          this.setState({ modal: 'notes-editor' });
-        }
-      },
-      'pe-notes-save': () => {
-        this.commitProfileNotes();
-      },
-      'new-profile': () => {
-        this.openNewProfileEditor();
-      },
-      'open-import-profile': () => {
-        this.openImportProfile();
-      },
-      'import-profile-submit': () => {
-        void this.submitImportProfile();
-      },
-      'edit-profile': ({ id }) => {
-        if (id) this.openProfileEditor(id);
-      },
-      'save-profile': async () => {
-        await this.submitProfileEditor();
-      },
-      'pe-add-step': () => {
-        this.editorDispatch(addStep);
-      },
-      'pe-duplicate-step': ({ index }) => {
-        if (index != null) this.editorDispatch((pe) => duplicateStep(pe, Number(index)));
-      },
-      'pe-remove-step': ({ index }) => {
-        if (index != null) this.editorDispatch((pe) => removeStep(pe, Number(index)));
-      },
-      'pe-move-step': ({ index, value }) => {
-        if (index != null) this.editorDispatch((pe) => moveStep(pe, Number(index), value === '1' ? 1 : -1));
-      },
-      'pe-select-step': ({ index }) => {
-        if (index != null) this.editorDispatch((pe) => selectStep(pe, Number(index)));
-      },
-      'pe-step-pump': ({ index, value }) => {
-        if (index != null) this.editorDispatch((pe) => setStepPump(pe, Number(index), value === 'flow' ? 'flow' : 'pressure'));
-      },
-      'pe-step-transition': ({ index, value }) => {
-        if (index != null) this.editorDispatch((pe) => setStepTransition(pe, Number(index), value === 'smooth' ? 'smooth' : 'fast'));
-      },
-      'pe-step-sensor-toggle': ({ index }) => {
-        if (index != null) {
-          this.editorDispatch((pe) => {
-            const step = pe.steps[Number(index)];
-            return setStepField(pe, Number(index), 'sensor', step?.sensor === 'water' ? 'coffee' : 'water');
-          });
-        }
-      },
-      'pe-step-transition-toggle': ({ index }) => {
-        if (index != null) {
-          this.editorDispatch((pe) => {
-            const step = pe.steps[Number(index)];
-            return setStepTransition(pe, Number(index), step?.transition === 'smooth' ? 'fast' : 'smooth');
-          });
-        }
-      },
-      'pe-step-nudge': ({ el, index }) => {
-        if (index != null && el.dataset.key) {
-          this.editorDispatch((pe) =>
-            nudgeStepField(pe, Number(index), el.dataset.key as StepFieldKey, Number(el.dataset.delta ?? '0'))
-          );
-        }
-      },
-      'pe-simple-nudge': ({ el }) => {
-        if (el.dataset.key) {
-          this.editorDispatch((pe) =>
-            nudgeSimpleProfileField(pe, el.dataset.key as SimpleProfileField, Number(el.dataset.delta ?? '0'))
-          );
-        }
-      },
-      'pe-set-mode': ({ value }) => {
-        this.editorDispatch((pe) => setEditorMode(pe, value === 'basic' ? 'basic' : 'advanced'));
-      },
-      'pe-set-simple-type': ({ value }) => {
-        this.editorDispatch((pe) => setSimpleProfileType(pe, value === 'flow' ? 'flow' : 'pressure'));
-      },
-      'pe-advanced-tab': ({ value }) => {
-        this.editorDispatch((pe) => setAdvancedTab(pe, value === 'limits' ? 'limits' : 'steps'));
-      },
-      'pe-step-exit-nudge': ({ el, index }) => {
-        if (index != null) {
-          this.editorDispatch((pe) => {
-            const step = pe.steps[Number(index)];
-            const type = el.dataset.type === 'flow' ? 'flow' : 'pressure';
-            const condition = el.dataset.condition === 'under' ? 'under' : 'over';
-            const current = step?.exit?.type === type && step.exit.condition === condition
-              ? step.exit.value
-              : defaultExitValueForApp(type, condition);
-            return setStepExit(pe, Number(index), {
-              type,
-              condition,
-              value: Math.max(0, Number((current + Number(el.dataset.delta ?? '0')).toFixed(1)))
-            });
-          });
-        }
-      },
-      'pe-step-exit-preset': ({ el, index }) => {
-        if (index != null) {
-          this.editorDispatch((pe) =>
-            setStepExit(pe, Number(index), {
-              type: el.dataset.type === 'flow' ? 'flow' : 'pressure',
-              condition: el.dataset.condition === 'under' ? 'under' : 'over',
-              value: Number(el.dataset.value ?? '0') || 0
-            })
-          );
-        }
-      },
-      'pe-step-exit-clear': ({ index }) => {
-        if (index != null) this.editorDispatch((pe) => setStepExit(pe, Number(index), null));
-      },
-    };
-  }
 
   private onInput(event: Event): void {
     const target = event.target as HTMLInputElement | HTMLTextAreaElement;
@@ -5733,66 +5089,11 @@ export class BeanieApp {
     });
   }
 
-  private editorDispatch(fn: (pe: ProfileEditorState) => ProfileEditorState): void {
-    const pe = this.state.profileEditor;
-    if (!pe) return;
-    this.setState({ profileEditor: fn(pe) });
-  }
 
-  private openProfileEditor(id: string): void {
-    const input = editProfileEditorInput(this.state.profiles, id);
-    if (input.type === 'missing') return;
-    this.openProfileEditorInput(input.editingProfileId, input.profile);
-  }
 
-  private openNewProfileEditor(): void {
-    const input = newProfileEditorInput();
-    if (input.type === 'missing') return;
-    this.openProfileEditorInput(input.editingProfileId, input.profile);
-  }
 
-  private openImportProfile(): void {
-    this.setState({ modal: 'import-profile', profileImport: { code: '', busy: false, error: null } });
-  }
 
-  // Import a profile from a Visualizer share code via the bundled plugin, then
-  // refresh the list and focus the new profile so it shows in the preview pane.
-  // Importing does not select it onto the machine — the user presses Select.
-  private async submitImportProfile(): Promise<void> {
-    const current = this.state.profileImport;
-    if (!current || current.busy) return;
-    const input = this.root.querySelector<HTMLInputElement>('[data-action="import-profile-input"]');
-    const code = (input?.value ?? '').trim();
-    if (!code) {
-      this.setState({ profileImport: { code: '', busy: false, error: 'Enter a share code.' } });
-      return;
-    }
-    this.setState({ profileImport: { code, busy: true, error: null } });
-    try {
-      const result = await gateway.importProfileFromVisualizer(code);
-      await beanieCache.invalidateProfileMutation(result.profileId ?? undefined);
-      const profiles = await gateway.profiles();
-      await beanieCache.putProfiles(profiles);
-      this.setState({
-        profiles,
-        modal: null,
-        profileImport: null,
-        profileFocusId: result.profileId ?? this.state.profileFocusId,
-        status: result.profileTitle ? `Imported ${result.profileTitle}` : 'Profile imported'
-      });
-    } catch (err) {
-      this.setState({ profileImport: { code, busy: false, error: importErrorMessage(err) } });
-    }
-  }
 
-  private openProfileEditorInput(editingProfileId: string | null, profile: Profile | null): void {
-    this.setState({
-      view: 'profile-editor',
-      editingProfileId,
-      profileEditor: createProfileEditorState(profile),
-      profileEdit: null
-    });
-  }
 
   // `commit` is false for `input` events, true for `change`. A range slider
   // fires `input` continuously while dragging; re-rendering on each one replaces
@@ -5866,105 +5167,7 @@ export class BeanieApp {
     return pe;
   }
 
-  private validateProfileEditor(pe: ProfileEditorState): string | null {
-    if (!pe.title.trim()) return 'Add a preset name before saving';
-    if (pe.steps.length === 0) return 'Profile needs at least one step';
-    return null;
-  }
 
-  private async submitProfileEditor(): Promise<void> {
-    const pe = this.state.profileEditor;
-    if (!pe) return;
-    const problem = this.validateProfileEditor(pe);
-    if (problem) {
-      this.setState({ status: problem, profileEditor: { ...pe, saveNotice: { tone: 'error', message: problem } } });
-      return;
-    }
-    const profile = profileFromEditorState(pe);
-    const editingId = this.state.editingProfileId;
-    const cloneOfDefault = Boolean(editingId) && this.state.profiles.find((item) => item.id === editingId)?.isDefault === true;
-    this.setState({
-      busy: true,
-      status: cloneOfDefault ? 'Saving a copy' : 'Saving profile',
-      profileEditor: { ...pe, saveNotice: null }
-    });
-
-    const result = await saveProfile({
-      profiles: this.state.profiles,
-      editingId,
-      profile,
-      demo: this.state.demo,
-      nowMs: Date.now()
-    }, {
-      createProfile: (input) => gateway.createProfile(input),
-      updateProfile: (id, input) => gateway.updateProfile(id, input),
-      loadProfiles: () => gateway.profiles(),
-      invalidateProfileMutation: (profileId) => beanieCache.invalidateProfileMutation(profileId),
-      putProfiles: (profiles) => beanieCache.putProfiles(profiles),
-      restoreProfile: (id) => gateway.setProfileVisibility(id, 'visible').then(() => {})
-    });
-
-    if (result.type === 'failed') {
-      console.error('[Beanie] Save profile failed', result.error);
-      const editor = this.state.profileEditor;
-      this.setState({
-        busy: false,
-        status: result.status,
-        profileEditor: editor
-          ? { ...editor, saveNotice: { tone: 'error', message: profileSaveErrorMessage(result.error) } }
-          : editor
-      });
-      return;
-    }
-
-    // A `deduped` save created nothing new — the gateway content-hash-dedupes by
-    // brew settings (ignoring title), so the settings already match an existing
-    // profile. Keep the editor open with the notice rather than implying a fresh
-    // profile appeared or loading something the user didn't mean to create.
-    if (result.deduped) {
-      const editor = this.state.profileEditor;
-      const savedTitle = result.profiles.find((item) => item.id === result.profileId)?.profile.title;
-      const notice = {
-        tone: 'error' as const,
-        message: savedTitle
-          ? `These settings already match the existing profile "${savedTitle}". Change a setting to save a separate profile.`
-          : 'These settings already match an existing profile. Change a setting to save a separate profile.'
-      };
-      this.setState({
-        profiles: result.profiles,
-        editingProfileId: result.profileId,
-        profileFocusId: result.profileId,
-        busy: false,
-        status: result.status,
-        profileEditor: editor ? { ...editor, dirty: false, saveNotice: notice } : editor
-      });
-      return;
-    }
-
-    // A successful save loads the profile straight away and returns to the
-    // workbench: edits to the active profile go live immediately, and a freshly
-    // created one is ready to brew without a separate load step.
-    const selection = selectProfileForDraft({
-      draft: this.state.draft,
-      profiles: result.profiles,
-      grinders: this.state.grinders,
-      profileId: result.profileId
-    });
-    this.setState({
-      profiles: result.profiles,
-      draft: selection.draft,
-      view: 'workbench',
-      profileEditor: null,
-      editingProfileId: null,
-      profileFocusId: result.profileId,
-      profileSearch: '',
-      // Loading a profile replaces whatever Derek tweak was staged (matches pickProfile).
-      derekTweakChip: null,
-      busy: false,
-      status: result.status
-    });
-    this.scheduleApply();
-  }
 
   private toggleFavoriteProfile(id: string): void {
     const { favoriteProfileIds: favoriteProfiles } = toggleFavoriteProfile({
@@ -6147,7 +5350,7 @@ export class BeanieApp {
       const input = target as HTMLInputElement;
       const files = Array.from(input.files ?? []);
       input.value = '';
-      if (files.length > 0) void this.addScannerPhotos(files);
+      if (files.length > 0) void this.scannerFlow.addScannerPhotos(files);
       return;
     }
     if (target.dataset.action === 'bean-picker-batch-field') {
@@ -6246,12 +5449,12 @@ export class BeanieApp {
     }
     if (form.dataset.form === 'scanner-onboard') {
       event.preventDefault();
-      this.saveScannerKey(form);
+      this.scannerFlow.saveScannerKey(form);
       return;
     }
     if (form.dataset.form === 'scanner-review') {
       event.preventDefault();
-      await this.submitScannerReview(form);
+      await this.scannerFlow.submitScannerReview(form);
       return;
     }
   }
@@ -7087,45 +6290,6 @@ export class BeanieApp {
     this.scheduleApply();
   }
 
-  // Tap a control's value → numpad dialog bound to that editor field.
-  private openProfileValueDialog(el: HTMLElement): void {
-    const target = el.dataset.target;
-    if (!target) return;
-    const value = el.dataset.value ?? '0';
-    const title = el.dataset.title ?? 'Value';
-    const unit = el.dataset.unit ?? '';
-    const min = Number(el.dataset.min ?? '0');
-    const max = Number(el.dataset.max ?? '100');
-    const step = Number(el.dataset.step ?? '1');
-    const digits = step < 1 ? 1 : 0;
-
-    this.setState({
-      modal: 'edit-number',
-      machineEdit: null,
-      profileEdit: {
-        target: target as ProfileEditTarget['target'],
-        key: el.dataset.key,
-        index: el.dataset.index != null ? Number(el.dataset.index) : undefined,
-        type: el.dataset.type === 'flow' ? 'flow' : el.dataset.type === 'pressure' ? 'pressure' : undefined,
-        condition: el.dataset.condition === 'under' ? 'under' : el.dataset.condition === 'over' ? 'over' : undefined
-      },
-      editDialog: createInputDialog({
-        field: 'temperature',
-        kind: 'grind',
-        title,
-        value,
-        unit,
-        min,
-        max,
-        step,
-        bigStep: step < 1 ? 1 : Math.max(5, step * 5),
-        digits,
-        helper: `Between ${min} and ${max}`,
-        maxLength: 6,
-        recentValues: []
-      })
-    });
-  }
 
   private openNumberEditDialog(el: HTMLElement): void {
     const target = el.dataset.target as NumberEditTarget['target'] | undefined;
@@ -7240,18 +6404,6 @@ export class BeanieApp {
     });
   }
 
-  // The notes modal is an uncontrolled textarea (read at save, like the machine
-  // label modal), so its typed text lives only in the DOM until the user saves.
-  private commitProfileNotes(): void {
-    const pe = this.state.profileEditor;
-    if (!pe) {
-      this.setState({ modal: null });
-      return;
-    }
-    const input = this.root.querySelector<HTMLTextAreaElement>('[data-action="pe-notes-input"]');
-    const notes = input?.value ?? pe.notes;
-    this.setState({ profileEditor: setProfileMeta(pe, 'notes', notes), modal: null });
-  }
 
   private async applyMachinePreset(name: string, presetId: string): Promise<void> {
     const plan = applyMachinePresetPlan({
@@ -7615,24 +6767,23 @@ export class BeanieApp {
 
   private render(): void {
     if (!this.state.settingsLoaded) {
-      this.root.innerHTML = `
-        <div class="app-shell">
+      morphRender(
+        this.root,
+        `<div class="app-shell">
           <div class="settings-boot">
             <div class="settings-boot-spinner"></div>
             <p>Loading settings…</p>
           </div>
-        </div>
-      `;
+        </div>`
+      );
       return;
     }
     const bean = this.selectedBean();
-    const focus = this.captureFocus();
-    const beanFormDrafts = this.captureBeanFormDrafts();
-    const scroll = this.captureScroll();
+    const focus = captureFocus();
     const isPhone = this.isPhoneLayout();
     const renderPhone = isPhone && (this.state.view === 'workbench' || this.state.view === 'settings');
     const isPage = this.state.view !== 'workbench' && !renderPhone;
-    this.root.innerHTML = `
+    const html = `
       <div class="app-shell ${renderPhone ? 'app-shell-phone' : isPage ? 'app-shell-page' : ''}">
         ${renderPhone ? this.renderPhoneApp(bean) : isPage ? this.renderPage() : this.renderWorkbench(bean)}
         ${this.renderLivePanel()}
@@ -7644,16 +6795,15 @@ export class BeanieApp {
         ${this.renderStoreErrorOverlay()}
       </div>
     `;
-    refreshIcons();
+    morphRender(this.root, html);
     this.bindLiveElements();
     this.bindDetailChart();
     this.bindShotStagesChart();
     this.bindCalibratorChart();
-    this.restoreBeanFormDrafts(beanFormDrafts);
-    this.restoreFocus(focus);
-    this.restoreScroll(scroll);
+    restoreFocus(this.root, focus);
     this.focusNotesEditor();
   }
+
 
   // When the notes modal has just opened, drop the caret into the textarea (at the
   // end of any existing text) so the keyboard comes up ready to type. One-shot so
@@ -7720,27 +6870,8 @@ export class BeanieApp {
       ratioLabel: formatRatio(ratioFor(this.state.draft.dose, this.state.draft.yield)),
       brewTempLabel: brewTemp == null ? '--' : brewTemp.toFixed(1),
       settingsHtml,
-      derekEnabled: this.derekEnabled()
+      derekEnabled: this.derekFlow.derekEnabled()
     });
-  }
-
-  // Re-rendering replaces innerHTML, which resets the scroll position of every
-  // scrollable container. Capture and restore it synchronously (before paint)
-  // so a re-render never visibly jumps the list/page back to the top.
-  private captureScroll(): Record<string, number> {
-    const map: Record<string, number> = {};
-    for (const selector of SCROLL_SELECTORS) {
-      const el = this.root.querySelector<HTMLElement>(selector);
-      if (el && el.scrollTop > 0) map[selector] = el.scrollTop;
-    }
-    return map;
-  }
-
-  private restoreScroll(map: Record<string, number>): void {
-    for (const selector of Object.keys(map)) {
-      const el = this.root.querySelector<HTMLElement>(selector);
-      if (el) el.scrollTop = map[selector]!;
-    }
   }
 
   private renderWorkbench(bean: Bean | null): string {
@@ -7772,7 +6903,7 @@ export class BeanieApp {
           : null,
         cleaningDue: cleaningDueNow,
         asleep: this.state.asleep,
-        derekEnabled: this.derekEnabled()
+        derekEnabled: this.derekFlow.derekEnabled()
       },
       hero: this.heroViewModel(bean),
       recipe: {
@@ -7851,15 +6982,15 @@ export class BeanieApp {
     const canvas = this.root.querySelector<HTMLCanvasElement>('#detail-canvas');
     const shot = canvas ? this.selectedHistoryShot() : null;
     if (!canvas || !shot) {
+      this.detailChart = null;
       this.detailChartCanvas = null;
       this.detailChartShotId = null;
       this.detailChartCompareShotId = null;
       return;
     }
     const compare = this.compareShotForDetailChart();
-    // innerHTML re-renders replace the canvas, so the chart usually has to
-    // re-attach; only skip when the same element survived with the same shots
-    // and the cached models are still valid for those shots' measurements.
+    // Skip when the same canvas survived with the same shots and the cached
+    // models are still valid for those shots' measurements.
     const cachedModel = this.shotChartModelCache;
     const compareCacheValid =
       compare == null
@@ -7869,6 +7000,7 @@ export class BeanieApp {
           this.compareChartModelCache.measurements === compare.measurements;
     if (
       canvas === this.detailChartCanvas &&
+      this.detailChart != null &&
       shot.id === this.detailChartShotId &&
       cachedModel?.shotId === shot.id &&
       cachedModel.measurements === shot.measurements &&
@@ -7876,10 +7008,17 @@ export class BeanieApp {
     ) {
       return;
     }
+    // Reuse the chart instance while the canvas element survives: LiveChart's
+    // constructor attaches hover listeners to the canvas, so re-constructing on
+    // a surviving canvas would stack them.
+    const chart =
+      canvas === this.detailChartCanvas && this.detailChart != null
+        ? this.detailChart
+        : new LiveChart(canvas, { detailed: true, pixelScale: 3, hover: true });
+    this.detailChart = chart;
     this.detailChartCanvas = canvas;
     this.detailChartShotId = shot.id;
     this.detailChartCompareShotId = compare?.id ?? null;
-    const chart = new LiveChart(canvas, { detailed: true, pixelScale: 3, hover: true });
     const model = this.shotChartModel(shot);
     chart.setModel(compare ? overlayComparisonModel(model, this.compareChartModel(compare)) : model);
     // Draw after layout so the canvas has its CSS box for DPR sizing.
@@ -7897,18 +7036,25 @@ export class BeanieApp {
   // cached one the detail chart uses (markers included), just drawn larger.
   private bindShotStagesChart(): void {
     if (this.state.modal !== 'shot-stages') {
+      this.shotStagesChart = null;
       this.shotStagesChartCanvas = null;
       return;
     }
     const canvas = this.root.querySelector<HTMLCanvasElement>('#shot-stages-canvas');
     const shot = canvas ? this.selectedHistoryShot() : null;
     if (!canvas || !shot) {
+      this.shotStagesChart = null;
       this.shotStagesChartCanvas = null;
       return;
     }
-    if (canvas === this.shotStagesChartCanvas) return;
-    this.shotStagesChartCanvas = canvas;
+    // The model is fixed for a given canvas + shot, so a surviving canvas means
+    // there's nothing to redo — and never re-construct a LiveChart on a
+    // surviving canvas (the constructor attaches hover listeners; see
+    // bindDetailChart).
+    if (canvas === this.shotStagesChartCanvas && this.shotStagesChart != null) return;
     const chart = new LiveChart(canvas, { detailed: true, pixelScale: 3, hover: true });
+    this.shotStagesChart = chart;
+    this.shotStagesChartCanvas = canvas;
     chart.setModel(this.shotChartModel(shot));
     // Draw after layout so the canvas has its CSS box for DPR sizing.
     window.requestAnimationFrame(() => {
@@ -7940,9 +7086,17 @@ export class BeanieApp {
   }
 
   private bindCalibratorChart(): void {
-    if (this.state.view !== 'flow-calibrator') return;
+    if (this.state.view !== 'flow-calibrator') {
+      this.calibratorChart = null;
+      this.calibratorChartCanvas = null;
+      return;
+    }
     const canvas = this.root.querySelector<HTMLCanvasElement>('#flow-cal-canvas');
-    if (!canvas) return;
+    if (!canvas) {
+      this.calibratorChart = null;
+      this.calibratorChartCanvas = null;
+      return;
+    }
     const shot = this.flowCalibrationSelectedShot();
     if (!shot) return;
     // Show the two calibration lines — machine flow and scale (weight) flow —
@@ -7969,105 +7123,19 @@ export class BeanieApp {
         }
         return item;
       });
-    const chart = new LiveChart(canvas, { detailed: true, pixelScale: 3, hover: true });
+    // Reuse the instance while the canvas survives (see bindDetailChart); the
+    // model is re-set every time because the preview factor tracks the draft.
+    const chart =
+      canvas === this.calibratorChartCanvas && this.calibratorChart != null
+        ? this.calibratorChart
+        : new LiveChart(canvas, { detailed: true, pixelScale: 3, hover: true });
+    this.calibratorChart = chart;
+    this.calibratorChartCanvas = canvas;
     chart.setModel({ ...model, series });
     window.requestAnimationFrame(() => {
       chart.resize();
       chart.draw();
     });
-  }
-
-  // render() replaces the whole DOM, so any focused text field is destroyed on
-  // every state change. This keeps the caret alive across that rebuild for ALL
-  // text-entry fields automatically — there's no allow-list to keep in sync, so
-  // new fields work by default. Opt a field out with data-no-focus-restore.
-  private captureFocus(): { selector: string; start: number | null; value: string | null } | null {
-    const active = document.activeElement as HTMLElement | null;
-    if (!active || !isTextEntryElement(active)) return null;
-    if (active.dataset.noFocusRestore != null) return null;
-    // Anchor the restore selector on the most stable identifier the field has.
-    const name = active.getAttribute('name');
-    const anchor = active.dataset.action != null
-      ? `[data-action="${active.dataset.action}"]`
-      : name
-      ? `[name="${name}"]`
-      : active.id
-      ? `#${CSS.escape(active.id)}`
-      : null;
-    if (!anchor) return null;
-    const batchForm = active.closest<HTMLFormElement>('[data-form="bean-picker-batch"]');
-    const parts = batchForm?.dataset.batchId != null
-      ? [`[data-form="bean-picker-batch"][data-batch-id="${batchForm.dataset.batchId}"] ${anchor}`]
-      : [anchor];
-    if (active.dataset.field != null) parts.push(`[data-field="${active.dataset.field}"]`);
-    if (active.dataset.index != null) parts.push(`[data-index="${active.dataset.index}"]`);
-    if (active.dataset.key != null) parts.push(`[data-key="${active.dataset.key}"]`);
-    // Add name as a disambiguator only when it isn't already the anchor.
-    if (active.dataset.action != null && name != null) parts.push(`[name="${name}"]`);
-    if (active.dataset.type != null) parts.push(`[data-type="${active.dataset.type}"]`);
-    if (active.dataset.condition != null) parts.push(`[data-condition="${active.dataset.condition}"]`);
-    const input = active as HTMLInputElement | HTMLTextAreaElement;
-    const start = typeof input.selectionStart === 'number' ? input.selectionStart : null;
-    // Capture the in-progress value too. These fields are uncontrolled, so a
-    // background re-render (water band crossing, sleep/wake, refresh timers)
-    // would otherwise reset typed-but-uncommitted text back to the saved value.
-    const value = typeof input.value === 'string' ? input.value : null;
-    return { selector: parts.join(''), start, value };
-  }
-
-  private restoreFocus(focus: { selector: string; start: number | null; value: string | null } | null): void {
-    if (!focus) return;
-    // Only restore when the selector still resolves to exactly one field, so an
-    // ambiguous match can never drop the caret into the wrong box.
-    const matches = this.root.querySelectorAll<HTMLInputElement>(focus.selector);
-    if (matches.length !== 1) return;
-    const el = matches[0];
-    if (focus.value != null && el.value !== focus.value) el.value = focus.value;
-    el.focus();
-    if (focus.start != null) {
-      try {
-        el.setSelectionRange(focus.start, focus.start);
-      } catch {
-        /* not a text input */
-      }
-    }
-  }
-
-  // The bean create/edit form fields are uncontrolled — their text lives only in
-  // the DOM until the form is submitted or blurred. captureFocus preserves the
-  // one focused field, but a background re-render (bean/settings poll, telemetry,
-  // an auto-save round-trip) rebuilds the whole form from the *saved* bean and
-  // snaps every other edited-but-uncommitted field back to its old value, which
-  // reads as an old<->new flicker. So snapshot every dirty field (value differs
-  // from the rendered default) across the open bean form(s) and reapply it after
-  // the rebuild. Clean fields are left untouched so they still adopt fresh values
-  // (a just-saved edit, or a change synced from another device).
-  private captureBeanFormDrafts(): Array<{ id: string; values: Map<string, string> }> {
-    const drafts: Array<{ id: string; values: Map<string, string> }> = [];
-    const forms = this.root.querySelectorAll<HTMLFormElement>('form[data-form="bean-picker-bean"]');
-    for (const form of Array.from(forms)) {
-      const values = new Map<string, string>();
-      for (const el of Array.from(form.querySelectorAll<HTMLElement>('[name]'))) {
-        if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) continue;
-        if (el.name && el.value !== el.defaultValue) values.set(el.name, el.value);
-      }
-      if (values.size > 0) drafts.push({ id: form.dataset.id ?? '', values });
-    }
-    return drafts;
-  }
-
-  private restoreBeanFormDrafts(drafts: Array<{ id: string; values: Map<string, string> }>): void {
-    if (drafts.length === 0) return;
-    const forms = this.root.querySelectorAll<HTMLFormElement>('form[data-form="bean-picker-bean"]');
-    for (const form of Array.from(forms)) {
-      const draft = drafts.find((entry) => entry.id === (form.dataset.id ?? ''));
-      if (!draft) continue;
-      for (const el of Array.from(form.querySelectorAll<HTMLElement>('[name]'))) {
-        if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) continue;
-        const value = draft.values.get(el.name);
-        if (value != null && el.value !== value) el.value = value;
-      }
-    }
   }
 
   private renderSleepOverlay(): string {
@@ -8234,7 +7302,7 @@ export class BeanieApp {
       shotsLoadingMore: this.state.shotsLoadingMore,
       secondTapHint: this.state.secondTapHint,
       batchesByBean: this.state.batchesByBean,
-      derekEnabled: this.derekEnabled()
+      derekEnabled: this.derekFlow.derekEnabled()
     });
   }
 
@@ -8242,475 +7310,6 @@ export class BeanieApp {
     return selectHistoryShot(this.state.shots, this.state.detailShotId);
   }
 
-  // --- Derek dial-in helper -------------------------------------------------
-
-  private derekClickActions(): Record<string, ClickActionHandler> {
-    return {
-      'derek-dial-in': ({ id }) => {
-        this.openDerek('shot', id ?? this.state.detailShotId);
-      },
-      'derek-open': () => {
-        this.openDerek('general', null);
-      },
-      'derek-taste': ({ id }) => {
-        if (this.state.derek && id) this.setState({ derek: toggleTasteChip(this.state.derek, id) });
-      },
-      'derek-toggle-context': () => {
-        const derek = this.state.derek;
-        if (derek) this.setState({ derek: { ...derek, showContext: !derek.showContext } });
-      },
-      'derek-ask': () => {
-        void this.askDerek();
-      },
-      'derek-cancel': () => {
-        this.derekAbort?.abort();
-        if (this.state.derek) this.setState({ derek: { ...this.state.derek, step: 'compose' } });
-      },
-      'derek-back': () => {
-        if (this.state.derek) this.setState({ derek: { ...this.state.derek, step: 'compose' } });
-      },
-      'derek-close': () => {
-        this.closeDerek();
-      },
-      'derek-pick-suggestion': ({ id }) => {
-        const index = Number(id);
-        if (this.state.derek && Number.isInteger(index)) {
-          this.setState({ derek: selectSuggestion(this.state.derek, index) });
-        }
-      },
-      'derek-apply': () => {
-        void this.applyDerekSuggestion();
-      },
-      'derek-follow-up': () => {
-        if (this.state.derek) this.setState({ derek: beginFollowUp(this.state.derek) });
-      },
-      'derek-revert-tweak': () => {
-        this.revertDerekTweak();
-      }
-    };
-  }
-
-  private derekEnabled(): boolean {
-    return !this.state.demo && this.derekRelay !== 'missing';
-  }
-
-  private openDerek(source: 'shot' | 'general', shotId: string | null): void {
-    if (this.state.demo) {
-      this.setState({ status: 'Derek needs a live gateway — not available in demo' });
-      return;
-    }
-    this.derekContext = this.buildDerekContext(source, shotId);
-    let derek = startDerek(source, shotId);
-    if (this.derekRelay === 'missing') {
-      derek = markUnavailable(derek);
-    } else if (source === 'shot' && shotId) {
-      // Reopen straight onto the answer saved on this shot, if there is one —
-      // "Ask again" starts a fresh compose.
-      const shot = this.state.shots.find((item) => item.id === shotId) ?? null;
-      const saved = latestDerekAnswer(shot);
-      if (saved) {
-        const restored = restoreSavedAnswer(derek, saved, readShotDerek(shot).applied?.summary ?? null);
-        derek = downgradeUntweakableSuggestions(restored, this.currentDerekProfile());
-      }
-    }
-    this.setState({ modal: 'derek', derek });
-    if (this.derekRelay === 'unknown') {
-      void probeDerekRelay().then((availability) => {
-        this.derekRelay = availability;
-        if (availability === 'missing' && this.state.modal === 'derek' && this.state.derek) {
-          this.setState({ derek: markUnavailable(this.state.derek) });
-        }
-      });
-    }
-  }
-
-  private closeDerek(): void {
-    this.derekAbort?.abort();
-    this.derekAbort = null;
-    this.derekContext = null;
-    this.setState({ modal: null, derek: null });
-  }
-
-  // A shot-sourced ask describes THAT shot (its own recipe and telemetry); a
-  // general ask carries the current bean/recipe as background context.
-  private buildDerekContext(source: 'shot' | 'general', shotId: string | null): DialInContext {
-    const shot = shotId ? (this.state.shots.find((item) => item.id === shotId) ?? null) : null;
-    const beanId = shot?.workflow?.context?.beanId ?? this.state.selectedBeanId;
-    const bean = this.state.beans.find((item) => item.id === beanId) ?? null;
-    const batchId = shot?.workflow?.context?.beanBatchId ?? this.state.selectedBatchId;
-    const batch = bean
-      ? ((this.state.batchesByBean[bean.id] ?? []).find((item) => item.id === batchId) ?? null)
-      : null;
-    const grinderId = shot?.workflow?.context?.grinderId ?? this.state.draft.grinderId;
-    const grinder = this.state.grinders.find((item) => item.id === grinderId) ?? null;
-    return buildDialInContext({
-      shot,
-      bean,
-      batch,
-      grinder,
-      recipe:
-        source === 'general'
-          ? {
-              doseG: this.state.draft.dose,
-              yieldG: this.state.draft.yield,
-              temperatureC: this.brewTempValue()
-            }
-          : null,
-      profileTitle: source === 'general' ? (this.state.draft.profileTitle ?? null) : null
-    });
-  }
-
-  private derekContextChips(): string[] {
-    const context = this.derekContext;
-    if (!context) return [];
-    const chips: string[] = [];
-    if (context.bean?.name) {
-      chips.push([context.bean.name, context.bean.roastLevel].filter(Boolean).join(' · '));
-    }
-    if (context.grinder?.model || context.grinder?.setting) {
-      chips.push(
-        [context.grinder.model, context.grinder.setting ? `@ ${context.grinder.setting}` : null]
-          .filter(Boolean)
-          .join(' ')
-      );
-    }
-    const recipe = context.recipe;
-    if (recipe.doseG != null || recipe.yieldG != null) {
-      chips.push(
-        `${recipe.doseG ?? '?'}g → ${recipe.yieldG ?? '?'}g${recipe.temperatureC != null ? ` @ ${recipe.temperatureC}°C` : ''}`
-      );
-    }
-    if (context.shot?.durationS != null) {
-      chips.push(
-        `shot: ${Math.round(context.shot.durationS)}s${context.shot.peakPressureBar != null ? `, ${round(context.shot.peakPressureBar, 1)} bar peak` : ''}`
-      );
-    }
-    if (context.profileTitle) chips.push(context.profileTitle);
-    return chips;
-  }
-
-  private async askDerek(): Promise<void> {
-    const derek = this.state.derek;
-    if (!derek || !canAskDerek(derek)) return;
-    const context = this.derekContext ?? this.buildDerekContext(derek.source, derek.shotId);
-    this.derekContext = context;
-    const query = composeDialInQuery(context, {
-      tasteChipIds: derek.tasteChipIds,
-      note: derek.note,
-      freeQuestion: derek.question.trim() ? derek.question : null
-    });
-
-    const asking = beginAsk(derek, query);
-    const seq = asking.askSeq;
-    this.setState({ derek: asking });
-
-    this.derekAbort?.abort();
-    const abort = new AbortController();
-    this.derekAbort = abort;
-    try {
-      const result = await streamDerekAnswer(
-        { query },
-        { signal: abort.signal, onEvent: (event) => this.handleDerekEvent(seq, event) }
-      );
-      if (!this.derekAskCurrent(seq)) return;
-      const finished = finishAsk(this.state.derek!, result, context);
-      const ready = downgradeUntweakableSuggestions(finished, this.currentDerekProfile());
-      this.setState({ derek: ready });
-      // Keep the answer on the shot it was asked about, so it can be reopened
-      // later (and synced across devices with the shot itself).
-      if (result && ready.source === 'shot' && ready.shotId && ready.displayText) {
-        void this.saveDerekAnswerOnShot(ready.shotId, ready, this.derekAskedLabel(derek));
-      }
-    } catch (error) {
-      if (!this.derekAskCurrent(seq)) return;
-      if (error instanceof DerekUnavailableError) {
-        this.derekRelay = 'missing';
-        this.setState({ derek: markUnavailable(this.state.derek!) });
-        return;
-      }
-      // The user closing/cancelling aborts the fetch — that's not a failure.
-      if (abort.signal.aborted && !(error instanceof DerekStallError)) return;
-      console.warn('[Beanie] Derek ask failed', error);
-      const message =
-        error instanceof DerekRequestError && error.status === 429
-          ? 'Derek is busy — try again in a minute.'
-          : error instanceof DerekStallError
-            ? 'Derek stopped responding mid-answer.'
-            : "Derek isn't reachable right now.";
-      this.setState({ derek: failAsk(this.state.derek!, message) });
-    }
-  }
-
-  // One line describing what was asked, for the saved-answer record.
-  private derekAskedLabel(state: DerekState): string {
-    const question = state.question.trim();
-    if (question) return question;
-    const labels = state.tasteChipIds
-      .map((id) => TASTE_CHIPS.find((chip) => chip.id === id)?.label)
-      .filter((label): label is string => Boolean(label));
-    return [labels.join(', '), state.note.trim()].filter(Boolean).join(' · ') || 'Take a look at this shot';
-  }
-
-  private async saveDerekAnswerOnShot(
-    shotId: string,
-    derek: DerekState,
-    asked: string
-  ): Promise<void> {
-    const shot = this.state.shots.find((item) => item.id === shotId);
-    if (!shot || !derek.displayText) return;
-    await this.persistShotDerekQuietly(
-      shot,
-      annotationsWithDerekAnswer(shot.annotations, {
-        at: new Date().toISOString(),
-        asked,
-        answer: derek.displayText,
-        suggestions: derek.suggestions
-      }),
-      'Save Derek answer failed'
-    );
-  }
-
-  // Update a shot's Derek annotations without the modal-closing/busy side
-  // effects of the interactive shot-save path — this runs behind the modal.
-  private async persistShotDerekQuietly(
-    shot: ShotRecord,
-    annotations: ShotAnnotations,
-    failureStatus: string
-  ): Promise<void> {
-    if (this.state.demo) return;
-    this.shotCacheGeneration += 1;
-    const result = await saveShotUpdate(
-      {
-        shot,
-        update: { annotations },
-        demo: false,
-        successStatus: this.state.status,
-        demoStatus: this.state.status,
-        failureStatus
-      },
-      {
-        updateShot: (id, update) => gateway.updateShot(id, update),
-        invalidateShotMutation: (id) => beanieCache.invalidateShotMutation(id),
-        putShotRecord: (saved) => beanieCache.putShotRecord(saved)
-      }
-    );
-    if (result.type === 'saved') {
-      this.setState({
-        shots: this.state.shots.map((item) => (item.id === result.shot.id ? result.shot : item))
-      });
-    } else {
-      console.warn('[Beanie]', failureStatus, result.error);
-    }
-  }
-
-  private derekAskCurrent(seq: number): boolean {
-    return (
-      !this.disposed &&
-      this.state.modal === 'derek' &&
-      this.state.derek?.askSeq === seq &&
-      this.state.derek.step === 'asking'
-    );
-  }
-
-  private handleDerekEvent(seq: number, event: DerekEvent): void {
-    if (!this.derekAskCurrent(seq)) return;
-    const derek = this.state.derek!;
-    if (event.type === 'delta') {
-      // Hot path: a full re-render per token would rebuild the whole app for
-      // every word, so append to the state in place and patch the DOM directly
-      // (same pattern as the live-shot readouts).
-      this.state.derek = reduceDerekEvent(derek, event);
-      this.patchDerekStream(this.state.derek);
-      return;
-    }
-    if (event.type === 'result') return; // askDerek() folds the result in.
-    this.setState({ derek: reduceDerekEvent(derek, event) });
-  }
-
-  private patchDerekStream(derek: DerekState): void {
-    const answer = document.getElementById('derek-answer-stream');
-    if (answer) {
-      answer.innerHTML = renderAnswerMarkdown(visiblePartial(derek));
-      const body = answer.closest('.derek-body');
-      if (body) body.scrollTop = body.scrollHeight;
-    }
-    const phase = document.getElementById('derek-phase');
-    if (phase) {
-      phase.textContent = partialReachedSuggestions(derek)
-        ? 'Preparing suggestions…'
-        : phaseLabel(derek);
-    }
-  }
-
-  private async applyDerekSuggestion(): Promise<void> {
-    const derek = this.state.derek;
-    if (!derek || derek.applying) return;
-    const suggestion = selectedSuggestion(derek);
-    if (!suggestion) return;
-    this.setState({ derek: { ...derek, applying: true } });
-    try {
-      const applied = await this.performDerekApply(suggestion);
-      if (!this.state.derek) return;
-      // Remember the change so the shot pulled with it gets stamped — the next
-      // ask then opens with "this shot was pulled after making this change".
-      const beanId = this.state.selectedBeanId;
-      if (beanId) {
-        writePendingDerekTweak({ beanId, summary: applied.summary, at: new Date().toISOString() });
-      }
-      const derekState = this.state.derek;
-      this.setState({
-        derek: { ...derekState, applying: false, appliedSummary: applied.summary },
-        derekTweakChip: {
-          summary: applied.summary,
-          parameter: suggestion.parameter,
-          revertProfileId: applied.revertProfileId ?? null,
-          revertShotId: derekState.shotId
-        },
-        status: `Next shot: ${applied.summary}`
-      });
-      this.scheduleApply();
-      // Record the chosen tip on the shot it came from: loading that shot's
-      // recipe later re-applies it.
-      if (derekState.source === 'shot' && derekState.shotId && suggestion.target != null) {
-        const shot = this.state.shots.find((item) => item.id === derekState.shotId);
-        if (shot) {
-          const tip: AppliedDerekTip = {
-            parameter: suggestion.parameter,
-            target: suggestion.target,
-            unit: suggestion.unit,
-            summary: applied.summary,
-            at: new Date().toISOString(),
-            ...(applied.appliedProfileId ? { profileId: applied.appliedProfileId } : {}),
-            ...(applied.appliedProfileTitle ? { profileTitle: applied.appliedProfileTitle } : {})
-          };
-          void this.persistShotDerekQuietly(
-            shot,
-            annotationsWithAppliedTip(shot.annotations, tip),
-            'Save Derek tip failed'
-          );
-        }
-      }
-    } catch (error) {
-      console.error('[Beanie] Apply Derek suggestion failed', error);
-      if (this.state.derek) {
-        this.setState({
-          derek: { ...this.state.derek, applying: false },
-          status: error instanceof Error ? error.message : 'Could not apply the change'
-        });
-      }
-    }
-  }
-
-  private async performDerekApply(suggestion: DialInSuggestion): Promise<{
-    summary: string;
-    revertProfileId?: string | null;
-    appliedProfileId?: string | null;
-    appliedProfileTitle?: string | null;
-  }> {
-    const { parameter, target } = suggestion;
-    if (parameter === 'grind' && target != null) {
-      this.setState({ draft: { ...this.state.draft, grinderSetting: String(target) } });
-      return { summary: suggestionTitle(suggestion) };
-    }
-    if (parameter === 'dose' || parameter === 'yield' || parameter === 'brew_temperature') {
-      const value = typeof target === 'number' ? target : Number(target);
-      if (!Number.isFinite(value)) throw new Error('The suggested value is not a number');
-      const patch =
-        parameter === 'dose'
-          ? { dose: value }
-          : parameter === 'yield'
-            ? { yield: value }
-            : { brewTemp: value };
-      this.setState({ draft: { ...this.state.draft, ...patch } });
-      return { summary: suggestionTitle(suggestion) };
-    }
-    if (parameter === 'profile') {
-      const record = this.findProfileByTitle(String(target ?? ''));
-      if (!record) throw new Error(`"${String(target)}" isn't in your profile library`);
-      const selection = selectProfileForDraft({
-        draft: this.state.draft,
-        profiles: this.state.profiles,
-        grinders: this.state.grinders,
-        profileId: record.id
-      });
-      this.setState({ draft: selection.draft });
-      return {
-        summary: `Profile → ${record.profile.title ?? 'profile'}`,
-        appliedProfileId: record.id,
-        appliedProfileTitle: record.profile.title ?? null
-      };
-    }
-
-    // Profile-level knob: build the tweaked variant and point the recipe at it.
-    const profile = this.currentDerekProfile();
-    if (!profile) throw new Error('No profile loaded to tweak');
-    const tweak = applyProfileTweak(profile, suggestion);
-    if (!tweak) throw new Error("This profile can't take that change automatically");
-
-    const saved = await saveProfile(
-      {
-        profiles: this.state.profiles,
-        editingId: null,
-        profile: tweak.profile,
-        demo: this.state.demo,
-        nowMs: Date.now()
-      },
-      {
-        createProfile: (input) => gateway.createProfile(input),
-        updateProfile: (id, input) => gateway.updateProfile(id, input),
-        loadProfiles: () => gateway.profiles(),
-        invalidateProfileMutation: (profileId) => beanieCache.invalidateProfileMutation(profileId),
-        putProfiles: (profiles) => beanieCache.putProfiles(profiles),
-        restoreProfile: (id) => gateway.setProfileVisibility(id, 'visible').then(() => {})
-      }
-    );
-    if (saved.type === 'failed') throw new Error('Saving the tweaked profile failed');
-    const revertProfileId = this.state.draft.profileId ?? null;
-    const selection = selectProfileForDraft({
-      draft: this.state.draft,
-      profiles: saved.profiles,
-      grinders: this.state.grinders,
-      profileId: saved.profileId
-    });
-    this.setState({ profiles: saved.profiles, draft: selection.draft });
-    return {
-      summary: tweak.summary,
-      revertProfileId,
-      appliedProfileId: saved.profileId,
-      appliedProfileTitle:
-        saved.profiles.find((item) => item.id === saved.profileId)?.profile.title ??
-        tweak.profile.title ??
-        null
-    };
-  }
-
-  private revertDerekTweak(): void {
-    const chip = this.state.derekTweakChip;
-    if (!chip) return;
-    clearPendingDerekTweak();
-    if (chip.revertProfileId) {
-      const selection = selectProfileForDraft({
-        draft: this.state.draft,
-        profiles: this.state.profiles,
-        grinders: this.state.grinders,
-        profileId: chip.revertProfileId
-      });
-      this.setState({
-        draft: selection.draft,
-        derekTweakChip: null,
-        status: 'Back to the original profile'
-      });
-      this.scheduleApply();
-      return;
-    }
-    if (chip.revertShotId) {
-      // Recipe-level tip: reload the source shot's recipe as it really was.
-      this.loadShotRecipe(chip.revertShotId, { skipDerekTip: true });
-      this.setState({ derekTweakChip: null, status: 'Back to the shot recipe' });
-      return;
-    }
-    this.setState({ derekTweakChip: null, status: 'Derek change unpinned' });
-  }
 
   private findProfileByTitle(title: string): ProfileRecord | null {
     const wanted = title.trim().toLowerCase();
@@ -8727,32 +7326,17 @@ export class BeanieApp {
     );
   }
 
-  private currentDerekProfile(): Profile | null {
-    return this.state.draft.profile ?? this.state.workflow?.profile ?? null;
-  }
 
   private renderDerekModal(): string {
     const derek = this.state.derek;
     if (!derek) return '';
     return renderDerekModalView({
       state: derek,
-      contextChips: this.derekContextChips(),
-      tweakPreviews: this.derekTweakPreviews(derek)
+      contextChips: this.derekFlow.derekContextChips(),
+      tweakPreviews: this.derekFlow.derekTweakPreviews(derek)
     });
   }
 
-  // Before/after sparkline per profile-tweak card. Recomputed on render: at
-  // most four applyProfileTweak calls over ≤20 steps — negligible.
-  private derekTweakPreviews(derek: DerekState): Array<string | null> {
-    if (derek.step !== 'done' || derek.suggestions.length === 0) return [];
-    const profile = this.currentDerekProfile();
-    if (!profile) return [];
-    return derek.suggestions.map((suggestion) => {
-      if (suggestion.kind !== 'profile') return null;
-      const tweak = applyProfileTweak(profile, suggestion);
-      return tweak ? renderTweakPreview(profile, tweak.profile) : null;
-    });
-  }
 
   private renderModal(): string {
     if (this.state.modal === 'derek') return this.renderDerekModal();
@@ -9887,39 +8471,6 @@ export class BeanieApp {
     this.render();
   }
 
-  // State changes whose visible effect is confined to the workbench history
-  // panel (shot selection, compare mode, pagination) re-render only
-  // that panel. A full innerHTML rebuild costs O(whole app) and resets scroll
-  // and focus everywhere, which a list tap shouldn't pay for. Falls back to a
-  // full render whenever the panel isn't on screen (phone layout shows status
-  // text outside the panel, other views/modals don't show it at all).
-  private setHistoryState(next: Partial<AppState>): void {
-    if (this.disposed) return;
-    const panel = this.isPhoneLayout() ? null : this.root.querySelector<HTMLElement>('.history-panel');
-    if (!panel) {
-      this.setState(next);
-      return;
-    }
-    this.state = { ...this.state, ...next };
-
-    const list = panel.querySelector<HTMLElement>('.shot-list');
-    const scrollTop = list?.scrollTop ?? 0;
-    const template = document.createElement('template');
-    template.innerHTML = this.renderHistory();
-    const fresh = template.content.firstElementChild as HTMLElement | null;
-    if (!fresh) {
-      this.render();
-      return;
-    }
-    panel.replaceWith(fresh);
-    refreshIcons();
-    this.bindDetailChart();
-    if (scrollTop > 0) {
-      const freshList = fresh.querySelector<HTMLElement>('.shot-list');
-      if (freshList) freshList.scrollTop = scrollTop;
-    }
-  }
-
 }
 
 function promoteBean(beans: Bean[], beanId: string): Bean[] {
@@ -10175,17 +8726,7 @@ function shotFieldLabel(field: ShotEditField): string {
   return labels[field];
 }
 
-function textOrNull(value: FormDataEntryValue | null): string | null {
-  const text = String(value ?? '').trim();
-  return text ? text : null;
-}
 
-function numberOrNullInput(value: FormDataEntryValue | null): number | null {
-  const text = String(value ?? '').trim();
-  if (!text) return null;
-  const parsed = Number(text);
-  return Number.isFinite(parsed) ? parsed : null;
-}
 
 function decimalPlaces(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -10193,57 +8734,10 @@ function decimalPlaces(value: number): number {
   return fraction.length;
 }
 
-function beanFieldsFromForm(data: FormData): Partial<Bean> {
-  return {
-    roaster: String(data.get('roaster') ?? '').trim(),
-    name: String(data.get('name') ?? '').trim(),
-    country: textOrNull(data.get('country')),
-    region: textOrNull(data.get('region')),
-    processing: textOrNull(data.get('processing')),
-    notes: textOrNull(data.get('notes'))
-  };
-}
 
-function beanFieldsUnchanged(fields: Partial<Bean>, bean: Bean): boolean {
-  return (
-    normalizeBeanField(fields.roaster) === normalizeBeanField(bean.roaster) &&
-    normalizeBeanField(fields.name) === normalizeBeanField(bean.name) &&
-    normalizeBeanField(fields.country) === normalizeBeanField(bean.country) &&
-    normalizeBeanField(fields.region) === normalizeBeanField(bean.region) &&
-    normalizeBeanField(fields.processing) === normalizeBeanField(bean.processing) &&
-    normalizeBeanField(fields.notes) === normalizeBeanField(bean.notes)
-  );
-}
 
-function normalizeBeanField(value: unknown): string {
-  return String(value ?? '').trim();
-}
 
-// Only the fields the form actually edits go into the patch. The gateway merges
-// partial bodies, so anything echoed from the previous batch (notably the
-// freeze/thaw history, which no batch form edits) would overwrite concurrent
-// changes from another device.
-function batchFieldsFromForm(data: FormData, beanId: string, fallback?: BeanBatch): Partial<BeanBatch> {
-  const weight = data.has('weight') ? numberOrNullInput(data.get('weight')) : fallback?.weight ?? null;
-  const weightRemaining = data.has('weightRemaining')
-    ? numberOrNullInput(data.get('weightRemaining'))
-    : fallback?.weightRemaining ?? null;
-  return {
-    beanId,
-    roastDate: textOrNull(data.get('roastDate')),
-    roastLevel: textOrNull(data.get('roastLevel')),
-    weight,
-    // A bag can't hold more than its size, so "left" is capped at the bag weight.
-    weightRemaining: clampRemainingToWeight(weightRemaining, weight)
-  };
-}
 
-// "Grams left" can never exceed the bag's size. When both are known numbers,
-// pull a too-high remaining down to the bag weight; otherwise leave it as-is.
-function clampRemainingToWeight(remaining: number | null, weight: number | null): number | null {
-  if (typeof remaining === 'number' && typeof weight === 'number' && remaining > weight) return weight;
-  return remaining;
-}
 
 function isFinishedBatch(batch: BeanBatch): boolean {
   return typeof batch.weightRemaining === 'number' && Number.isFinite(batch.weightRemaining) && batch.weightRemaining < 5;

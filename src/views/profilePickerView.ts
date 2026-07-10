@@ -184,7 +184,7 @@ function renderProfileRow(
   const tooltip = armed && showLoadHint;
   const status = active ? 'Selected' : armed && !tooltip ? 'Tap again' : '';
   return `
-    <div class="profile-row ${active ? 'active' : ''} ${focused ? 'focused' : ''} ${tooltip ? 'has-second-tap-hint' : ''}">
+    <div id="profile-${escapeAttr(record.id)}" class="profile-row ${active ? 'active' : ''} ${focused ? 'focused' : ''} ${tooltip ? 'has-second-tap-hint' : ''}">
       <button type="button" class="profile-pick" data-action="focus-profile" data-id="${escapeAttr(record.id)}">
         <span class="profile-row-title">${favorite ? '<span class="profile-row-fav">★</span> ' : ''}${escapeHtml(shortTitle)}</span>
       </button>
@@ -266,7 +266,7 @@ function renderHiddenSection(model: ProfilePickerViewModel): string {
 function renderHiddenRow(record: ProfileRecord): string {
   const title = profileShortTitle(record.profile.title ?? record.id);
   return `
-    <div class="profile-row profile-row-hidden">
+    <div id="profile-hidden-${escapeAttr(record.id)}" class="profile-row profile-row-hidden">
       <span class="profile-row-title">${escapeHtml(title)}</span>
       <div class="profile-row-actions">
         ${record.isDefault ? '' : renderDeleteButton(record.id)}
