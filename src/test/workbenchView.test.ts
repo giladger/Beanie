@@ -36,6 +36,7 @@ run('workbench renders topbar metrics, hero bean actions, recipe controls, and h
   includes(html, '3 days off roast');
   includes(html, 'data-field="dose" data-delta="-0.5"');
   includes(html, 'data-field="grinderSetting" data-delta="-0.25"');
+  excludes(html, 'recipe-apply-chip');
   includes(html, '&lt;history&gt;');
   excludes(html, '<history>');
 });
@@ -85,6 +86,18 @@ run('workbench hides remaining/age chips and machine commands when model says un
 run('workbench hides the topbar clock when the preference turns it off', () => {
   const html = renderWorkbench(model({ topbar: { ...model().topbar, clock: null } }));
   excludes(html, 'id="top-clock"');
+});
+
+run('workbench exposes recipe apply progress and failures beside the profile', () => {
+  const base = model();
+  const pending = renderWorkbench(model({ recipe: { ...base.recipe, applyState: 'pending' } }));
+  includes(pending, 'recipe-apply-chip pending');
+  includes(pending, '>Applying…</span>');
+  excludes(pending, 'recipe-apply-chip pending" role="status');
+
+  const failed = renderWorkbench(model({ recipe: { ...base.recipe, applyState: 'failed' } }));
+  includes(failed, 'recipe-apply-chip alert');
+  includes(failed, '>Apply failed</span>');
 });
 
 run('page header escapes the title and back value while preserving action html', () => {
@@ -211,7 +224,8 @@ function model(overrides: Partial<WorkbenchViewModel> = {}): WorkbenchViewModel 
       },
       grinderStep: 0.25,
       ratioLabel: '1:2.3',
-      brewTempLabel: '93.0'
+      brewTempLabel: '93.0',
+      applyState: 'idle'
     },
     historyHtml: '&lt;history&gt;'
   };

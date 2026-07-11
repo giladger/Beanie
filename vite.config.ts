@@ -7,6 +7,10 @@ const env =
 
 const gatewayHost = env.GATEWAY_HOST ?? 'decent:8080';
 const gitCommit = env.GIT_COMMIT ?? 'dev';
+const requestedVitePort = Number(env.VITE_PORT ?? 5173);
+const vitePort = Number.isInteger(requestedVitePort) && requestedVitePort > 0 && requestedVitePort <= 65535
+  ? requestedVitePort
+  : 5173;
 
 export default defineConfig({
   base: './',
@@ -16,7 +20,11 @@ export default defineConfig({
     __BUILD_TIME__: JSON.stringify(new Date().toISOString())
   },
   server: {
-    cors: true,
+    // Keep the development server private unless the developer deliberately
+    // chooses an explicit `*:lan` script for an on-device workflow.
+    host: '127.0.0.1',
+    port: vitePort,
+    strictPort: true,
     proxy: {
       '/api': {
         target: `http://${gatewayHost}`,
@@ -28,5 +36,9 @@ export default defineConfig({
         changeOrigin: true
       }
     }
+  },
+  preview: {
+    host: '127.0.0.1',
+    strictPort: true
   }
 });

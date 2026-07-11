@@ -95,6 +95,33 @@ await run('background task reports failures and remains schedulable', async () =
   task.dispose();
 });
 
+await run('stopped background task can be restarted later', async () => {
+  const scheduler = new FakeScheduler();
+  let calls = 0;
+  const task = new BackgroundTask({
+    intervalMs: 10,
+    scheduler,
+    run: () => {
+      calls += 1;
+    }
+  });
+
+  task.start();
+  equal(scheduler.pending.size, 1);
+  task.stop();
+  equal(scheduler.pending.size, 0);
+  task.trigger();
+  await tick();
+  equal(calls, 0);
+
+  task.start();
+  equal(scheduler.pending.size, 1);
+  scheduler.fireNext();
+  await tick();
+  equal(calls, 1);
+  task.dispose();
+});
+
 function tick(): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, 0));
 }

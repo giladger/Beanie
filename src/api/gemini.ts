@@ -157,27 +157,34 @@ export async function scanLabel(
   if (images.length === 0) throw new GeminiError('Add at least one photo of the bag');
   if (!apiKey.trim()) throw new GeminiError('Add your Gemini API key first');
   const body = buildGeminiRequest(images, options.prompt ?? LABEL_SCAN_PROMPT);
-  const payload = await postGenerateContent(modelUrl(options.model, apiKey), body, options);
+  const payload = await postGenerateContent(modelUrl(options.model), apiKey, body, options);
   return parseGeminiResponse(payload);
 }
 
 /** Validate a key cheaply by listing models. Returns a tone-able result; never throws. */
 export async function verifyGeminiKey(
   apiKey: string,
-  options: { signal?: AbortSignal } = {}
+  options: { signal?: AbortSignal; timeoutMs?: number } = {}
 ): Promise<{ ok: boolean; message: string }> {
   const trimmed = apiKey.trim();
   if (!trimmed) return { ok: false, message: 'Enter a key first.' };
+  const attempt = requestDeadline(options.signal, options.timeoutMs ?? 15_000);
   try {
-    const response = await fetch(`${GEMINI_BASE}/models?key=${encodeURIComponent(trimmed)}`, {
-      signal: options.signal
+    const response = await fetch(`${GEMINI_BASE}/models`, {
+      headers: { 'x-goog-api-key': trimmed },
+      signal: attempt.signal
     });
     if (response.ok) return { ok: true, message: 'Key works.' };
     const payload = await response.json().catch(() => null);
     const message = stringOr(asRecord(asRecord(payload)?.error)?.message, `Key rejected (${response.status}).`);
     return { ok: false, message };
   } catch {
-    return { ok: false, message: 'Could not reach Gemini — check your connection.' };
+    return {
+      ok: false,
+      message: attempt.timedOut() ? 'Gemini key check timed out — try again.' : 'Could not reach Gemini — check your connection.'
+    };
+  } finally {
+    attempt.done();
   }
 }
 
@@ -233,7 +240,7 @@ export async function enrichLabel(
 ): Promise<LabelScanEnrichment> {
   if (!apiKey.trim()) throw new GeminiError('Add your Gemini API key first');
   const body = buildEnrichRequest(buildEnrichPrompt(input));
-  const payload = await postGenerateContent(modelUrl(options.model, apiKey), body, options);
+  const payload = await postGenerateContent(modelUrl(options.model), apiKey, body, options);
 
   const json = extractJsonObject(candidateText(payload));
   if (!json) throw new GeminiError("Couldn't find details for that coffee");
@@ -244,18 +251,21 @@ export async function enrichLabel(
   }
 }
 
-function modelUrl(model: string | undefined, apiKey: string): string {
-  return `${GEMINI_BASE}/models/${encodeURIComponent(model ?? GEMINI_LABEL_MODEL)}:generateContent?key=${encodeURIComponent(
-    apiKey.trim()
-  )}`;
+function modelUrl(model: string | undefined): string {
+  return `${GEMINI_BASE}/models/${encodeURIComponent(model ?? GEMINI_LABEL_MODEL)}:generateContent`;
 }
 
 /** POST a generateContent body, retrying transient failures on the backoff schedule. */
-async function postGenerateContent(url: string, body: unknown, options: TransportOptions): Promise<unknown> {
+async function postGenerateContent(
+  url: string,
+  apiKey: string,
+  body: unknown,
+  options: TransportOptions
+): Promise<unknown> {
   const delays = options.retryDelaysMs ?? RETRY_DELAYS_MS;
   for (let attempt = 0; ; attempt++) {
     try {
-      return await postOnce(url, body, options);
+      return await postOnce(url, apiKey, body, options);
     } catch (error) {
       if (!(error instanceof GeminiError) || !error.transient || attempt >= delays.length) throw error;
       await sleep(delays[attempt]!, options.signal);
@@ -264,34 +274,59 @@ async function postGenerateContent(url: string, body: unknown, options: Transpor
 }
 
 /** One POST attempt with the caller's signal chained onto a local deadline. */
-async function postOnce(url: string, body: unknown, options: TransportOptions): Promise<unknown> {
-  // Chain by hand — AbortSignal.any is newer than the tablet's webview.
-  const attempt = new AbortController();
-  const timer = setTimeout(() => attempt.abort(), options.timeoutMs ?? ATTEMPT_TIMEOUT_MS);
-  const onAbort = (): void => attempt.abort();
-  options.signal?.addEventListener('abort', onAbort, { once: true });
-
-  let response: Response;
+async function postOnce(url: string, apiKey: string, body: unknown, options: TransportOptions): Promise<unknown> {
+  const attempt = requestDeadline(options.signal, options.timeoutMs ?? ATTEMPT_TIMEOUT_MS);
   try {
-    response = await fetch(url, {
+    const response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      // Keep credentials out of URLs, browser history, logs, and error text.
+      // Google's API reference specifies x-goog-api-key for every request.
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey.trim() },
       body: JSON.stringify(body),
       signal: attempt.signal
     });
+    // Keep the same deadline and caller cancellation active through the body;
+    // fetch resolves at headers, while response.json() can still stall.
+    const payload = await response.json().catch((error: unknown) => {
+      if (attempt.signal.aborted) throw error;
+      return null;
+    });
+    if (!response.ok) throw statusError(payload, response.status);
+    return payload;
   } catch (error) {
     // A caller-initiated abort is not a failure — let it propagate as-is.
     if (options.signal?.aborted) throw error;
-    if (attempt.signal.aborted) throw new GeminiError('Gemini took too long to answer — try again');
+    if (attempt.timedOut()) throw new GeminiError('Gemini took too long to answer — try again');
+    if (error instanceof GeminiError) throw error;
     throw new GeminiError('Could not reach Gemini — check your connection', null, true);
   } finally {
-    clearTimeout(timer);
-    options.signal?.removeEventListener('abort', onAbort);
+    attempt.done();
   }
+}
 
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) throw statusError(payload, response.status);
-  return payload;
+/** AbortSignal.any-compatible deadline for older tablet WebViews. */
+function requestDeadline(caller: AbortSignal | undefined, timeoutMs: number): {
+  signal: AbortSignal;
+  timedOut(): boolean;
+  done(): void;
+} {
+  const controller = new AbortController();
+  let deadline = false;
+  const onAbort = (): void => controller.abort(caller?.reason);
+  if (caller?.aborted) onAbort();
+  else caller?.addEventListener('abort', onAbort, { once: true });
+  const timer = setTimeout(() => {
+    deadline = true;
+    controller.abort();
+  }, timeoutMs);
+  return {
+    signal: controller.signal,
+    timedOut: () => deadline,
+    done: () => {
+      clearTimeout(timer);
+      caller?.removeEventListener('abort', onAbort);
+    }
+  };
 }
 
 /** Map an HTTP failure to a user-facing error; rate limits and overloads are transient. */

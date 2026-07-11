@@ -108,7 +108,7 @@ function renderOnboard(model: LabelScannerViewModel): string {
         <input type="password" name="apiKey" autocomplete="off" spellcheck="false" placeholder="AIza…" value="${escapeAttr(model.keyDraft)}" />
       </label>
       ${renderMessage(model.verifyMessage)}
-      <p class="label-scanner-fineprint">Your key stays on this device. Free-tier scans may be used by Google to improve its models, so don't scan anything sensitive.</p>
+      <p class="label-scanner-fineprint">Your key stays on this device. When you scan, Beanie sends the selected label photos, its extraction instructions, and up to 60 active roaster/bean names from your library directly to Google Gemini. Website enrichment also sends the extracted coffee identity and may use Google Search. Don't scan anything sensitive.</p>
       <div class="label-scanner-actions">
         <button type="button" class="secondary-button" data-action="scanner-verify-key" ${model.verifying ? 'disabled' : ''}>${model.verifying ? 'Checking…' : 'Test key'}</button>
         <button type="submit" class="primary-button">${icon('check')}<span>Save &amp; continue</span></button>
@@ -125,6 +125,7 @@ function renderCapture(model: LabelScannerViewModel): string {
     <div class="label-scanner-capture">
       ${model.demo ? '<p class="scan-demo-note">Demo mode — extraction returns a sample bag.</p>' : ''}
       <p>Add a clear photo of the front, plus the back if it shows the roast date or weight.</p>
+      ${model.demo ? '' : '<p class="label-scanner-fineprint">Extract sends the selected, device-downscaled photos and limited library naming context directly to Google Gemini.</p>'}
       <label class="scan-add-photos">
         ${icon('camera')}<span>Add photos</span>
         <input type="file" accept="image/*" multiple data-action="scanner-add-photos" />

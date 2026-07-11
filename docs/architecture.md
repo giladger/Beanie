@@ -33,6 +33,12 @@ At runtime the app loop is:
 7. `BeanieApp` applies those outcomes to state, DOM, timers, sockets, or local
    UI flow.
 
+Startup has two separate fallback concepts. Cached resources came from the
+user's gateway and retain cached/offline provenance while the app retries the
+live source. `src/mock/` is explicit demo/sample data; entering demo mode must
+be visible and demo mutations must remain simulated. Do not relabel a cached
+gateway snapshot as demo or make demo defaults appear to be the user's data.
+
 The live shot path is intentionally more direct for performance:
 
 - WebSocket frames are ingested by the app shell.
@@ -77,6 +83,8 @@ Examples:
 - `machineService.ts`: machine service progress and presentation helpers.
 - `cleaning.ts`: cleaning counters/profile resolution/local storage.
 - `liveShot.ts`: live shot state machine and graph model inputs.
+- `resourceState.ts`: shared source/writability metadata for independently
+  loaded resources.
 - `settingsModel.ts`: declarative settings UI model.
 - `shotRecord.ts`: service-shot filtering.
 
@@ -105,11 +113,16 @@ Current controller map:
 | --- | --- |
 | `beanWorkflowController.ts` | Bean selection, bean/batch/grinder mutation policy, optimistic rollback, cache invalidation decisions. |
 | `cleaningWorkflowController.ts` | Cleaning start blockers, cleaning workflow creation/load result, finish/count/profile-pick plans. |
+| `cleaningWizardController.ts` | Cleaning wizard step transitions and action completion. |
+| `derekController.ts` / `derekFlow.ts` | Derek question state, streaming lifecycle, suggestions, and saved-answer restoration. |
+| `doseMutationReconciler.ts` | Durable dose-deduction replay and conflict-safe reconciliation. |
 | `liveShotController.ts` | Shot completion matching, polling, fallback, and shot-end routing decisions. |
 | `machineExecutionController.ts` | Machine command preflight, hot-water weight stop orchestration, steam workflow padding/restore, command gateway sequencing. |
 | `machineServiceController.ts` | Machine service progress/timer/stop-request state transitions. |
 | `machineSettingsWorkflowController.ts` | Steam/water/flush workflow persistence, preset/value planning, steam purge readback, settings patch planning. |
 | `profileEditorController.ts` | Profile save persistence, favorite profile policy, profile picker/editor input decisions. |
+| `profileEditorFlow.ts` | Profile editor session ownership and UI-facing orchestration. |
+| `scannerFlow.ts` | Scanner onboarding, image conversion, Gemini request lifecycle, review, and save orchestration. |
 | `settingsController.ts` | Reaprime settings/account/device/plugin operations. |
 | `shotMetadataController.ts` | Shot score/edit persistence, demo behavior, cache update/failure decisions. |
 
@@ -197,8 +210,9 @@ should still live in `src/domain/`.
 
 ### `src/mock/`
 
-Demo data for offline/development behavior. Keep it realistic enough for UI and
-workflow tests to exercise normal app paths.
+Bundled demo/sample data. Keep it realistic enough for UI and workflow tests to
+exercise normal app paths, but keep its source explicit. Cached gateway data is
+the normal offline-continuity path and does not belong here.
 
 ### `src/test/`
 
@@ -420,6 +434,24 @@ it is truly UI/application state. If the state is owned by a controller, prefer
 the controller returning the next value instead of hiding mutable state inside
 the controller.
 
+### Resource Provenance
+
+When a screen combines independent reads, source is part of the state rather
+than an incidental status string. Use the shared resource-state types for
+`gateway`, `cache`, `default`, and `demo` sources and carry writability with the
+result.
+
+In particular, `settingsController.loadSettingsBundle()` loads each gateway
+settings endpoint independently. A failed endpoint can contribute a safe
+default so the settings shell remains navigable, but that section is marked
+unavailable and read-only. A working endpoint remains live and writable. The
+aggregate settings state is `degraded` when any section uses a default; it does
+not become demo merely because one endpoint failed.
+
+The same rule applies to future repositories: return data plus per-resource
+source metadata, preserve cached provenance when fresh data is missing, and do
+not infer that a fallback is writable.
+
 ### Status Strings
 
 Status strings are user-facing. Keep them close to the workflow that decides
@@ -481,6 +513,15 @@ Run all tests with:
 npm test
 ```
 
+Run the real-browser startup smoke test with:
+
+```bash
+npm run test:browser
+```
+
+Playwright builds the application and serves `dist/`, so this gate exercises
+the production bundle and relative asset paths rather than Vite's source graph.
+
 Build/typecheck with:
 
 ```bash
@@ -523,6 +564,8 @@ Before considering a change done:
 - Are views pure?
 - Are status strings tested when they encode policy?
 - Does demo mode follow the same visible state path as remote mode?
+- Is cached/default/demo provenance visible and are non-authoritative defaults
+  read-only?
 - Are failure paths tested?
 - Does the live shot path avoid unnecessary full renders?
 - Did `npm test` and `npm run build` pass?

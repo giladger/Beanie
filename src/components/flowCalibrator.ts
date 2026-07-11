@@ -40,7 +40,8 @@ export interface FlowCalibratorModel {
 export function renderFlowCalibrator(
   shots: ShotRecord[],
   model: FlowCalibratorModel,
-  busy: boolean
+  busy: boolean,
+  writable = true
 ): string {
   const selected = shots.find((shot) => shot.id === model.selectedShotId) ?? shots[0] ?? null;
 
@@ -58,7 +59,7 @@ export function renderFlowCalibrator(
           }
         </div>
         <div class="flow-cal-detail">
-          ${selected ? renderShotDetail(selected, model, busy) : '<p class="flow-cal-empty">Select a shot to calibrate against.</p>'}
+          ${selected ? renderShotDetail(selected, model, busy, writable) : '<p class="flow-cal-empty">Select a shot to calibrate against.</p>'}
         </div>
       </div>
     </main>
@@ -89,7 +90,7 @@ function renderShotRow(shot: ShotRecord, active: boolean): string {
   `;
 }
 
-function renderShotDetail(shot: ShotRecord, model: FlowCalibratorModel, busy: boolean): string {
+function renderShotDetail(shot: ShotRecord, model: FlowCalibratorModel, busy: boolean, writable: boolean): string {
   const recorded = recordedFlowMultiplier(shot);
   const draft = roundCalibration(model.draft);
   const global = roundCalibration(model.global);
@@ -138,15 +139,15 @@ function renderShotDetail(shot: ShotRecord, model: FlowCalibratorModel, busy: bo
           <button type="button" data-action="flow-cal-adjust" data-delta="0.01" aria-label="Increase flow calibration">${icon('plus')}</button>
         </div>
         <div class="flow-cal-saves">
-          <button type="button" class="flow-cal-save" data-action="flow-cal-save-global" data-value="${draft}" ${globalDirty && !busy ? '' : 'disabled'}>${icon('save')}<span>Save as default</span></button>
+          <button type="button" class="flow-cal-save" data-action="flow-cal-save-global" data-value="${draft}" ${writable && globalDirty && !busy ? '' : 'disabled'}>${icon('save')}<span>Save as default</span></button>
           ${
             title == null
               ? ''
-              : `<button type="button" class="flow-cal-save flow-cal-save-profile" data-action="flow-cal-save-profile" data-value="${draft}" ${profileDirty && !busy ? '' : 'disabled'}>${icon('save')}<span>${clearsOverride ? 'Clear override for' : 'Save for'} ${escapeHtml(title)}</span></button>`
+              : `<button type="button" class="flow-cal-save flow-cal-save-profile" data-action="flow-cal-save-profile" data-value="${draft}" ${writable && profileDirty && !busy ? '' : 'disabled'}>${icon('save')}<span>${clearsOverride ? 'Clear override for' : 'Save for'} ${escapeHtml(title)}</span></button>`
           }
         </div>
       </div>
-      <small class="flow-cal-control-note">${escapeHtml(formatMultiplier(active))} active on the machine</small>
+      <small class="flow-cal-control-note">${writable ? `${escapeHtml(formatMultiplier(active))} active on the machine` : 'Read-only until machine calibration and synced preferences are available'}</small>
     </div>
   `;
 }

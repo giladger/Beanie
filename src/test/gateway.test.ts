@@ -322,6 +322,52 @@ await run('decent account login includes gateway error body in request errors', 
   throw new Error('Expected Decent account login to fail');
 });
 
+await run('gateway timeout remains active while a successful JSON body is read', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const restoreFetch = installHangingBodyFetch(calls, 200);
+  const restoreDeadlines = shortenGatewayDeadlines();
+  try {
+    const error = await expectGatewayReject(gateway.workflow());
+    equal(error.issue.kind, 'network');
+    equal(error.issue.message, 'GET /api/v1/workflow timed out');
+    equal(calls[0]!.init?.signal?.aborted, true);
+  } finally {
+    restoreDeadlines();
+    restoreFetch();
+  }
+});
+
+await run('gateway timeout remains active while an HTTP error body is read', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const restoreFetch = installHangingBodyFetch(calls, 401);
+  const restoreDeadlines = shortenGatewayDeadlines();
+  try {
+    const error = await expectGatewayReject(
+      gateway.loginDecentAccount('user@example.com', 'wrong')
+    );
+    equal(error.issue.kind, 'network');
+    equal(error.issue.statusCode, undefined);
+    equal(error.issue.message, 'POST /api/v1/account/decent/login timed out');
+  } finally {
+    restoreDeadlines();
+    restoreFetch();
+  }
+});
+
+await run('gateway store timeout remains active while its JSON body is read', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const restoreFetch = installHangingBodyFetch(calls, 200);
+  const restoreDeadlines = shortenGatewayDeadlines();
+  try {
+    const error = await expectRejectWithWatchdog(gateway.storeGet('beanie', 'settings'));
+    equal(error instanceof DOMException && error.name === 'AbortError', true);
+    equal(calls[0]!.init?.signal?.aborted, true);
+  } finally {
+    restoreDeadlines();
+    restoreFetch();
+  }
+});
+
 await run('decent account logout deletes account endpoint', async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const restore = installFetchStub(calls, {});
@@ -457,6 +503,73 @@ function installFetchStub(
     (globalThis as unknown as { window?: unknown }).window = previousWindow;
     (globalThis as unknown as { location?: unknown }).location = previousLocation;
   };
+}
+
+function installHangingBodyFetch(
+  calls: Array<{ url: string; init?: RequestInit }>,
+  status: number
+): () => void {
+  const previousFetch = globalThis.fetch;
+  const previousWindow = (globalThis as unknown as { window?: unknown }).window;
+  const previousLocation = (globalThis as unknown as { location?: unknown }).location;
+  (globalThis as unknown as { window: { BEANIE_GATEWAY?: string } }).window = {};
+  (globalThis as unknown as { location: { port: string; protocol: string; hostname: string; origin: string } }).location = {
+    port: '',
+    protocol: 'http:',
+    hostname: 'localhost',
+    origin: ''
+  };
+  globalThis.fetch = async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(url), init });
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const abort = () => controller.error(new DOMException('aborted', 'AbortError'));
+        if (init?.signal?.aborted) abort();
+        else init?.signal?.addEventListener('abort', abort, { once: true });
+      }
+    });
+    return new Response(stream, {
+      status,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  };
+  return () => {
+    globalThis.fetch = previousFetch;
+    (globalThis as unknown as { window?: unknown }).window = previousWindow;
+    (globalThis as unknown as { location?: unknown }).location = previousLocation;
+  };
+}
+
+function shortenGatewayDeadlines(): () => void {
+  const previous = globalThis.setTimeout;
+  globalThis.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) =>
+    previous(handler, delay === 20000 || delay === 2500 ? 10 : delay, ...args)) as typeof setTimeout;
+  return () => {
+    globalThis.setTimeout = previous;
+  };
+}
+
+async function expectGatewayReject(promise: Promise<unknown>): Promise<GatewayRequestError> {
+  const error = await expectRejectWithWatchdog(promise);
+  if (error instanceof GatewayRequestError) return error;
+  throw new Error(`Expected GatewayRequestError, received ${String(error)}`);
+}
+
+async function expectRejectWithWatchdog(promise: Promise<unknown>): Promise<unknown> {
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        watchdog = setTimeout(() => reject(new Error('Request did not settle after its deadline')), 250);
+      })
+    ]);
+  } catch (error) {
+    return error;
+  } finally {
+    if (watchdog !== undefined) clearTimeout(watchdog);
+  }
+  throw new Error('Expected request to fail');
 }
 
 function silenceWarn(): () => void {

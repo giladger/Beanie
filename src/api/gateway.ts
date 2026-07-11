@@ -112,15 +112,38 @@ export interface GatewayMutationRequestOptions {
 // processing — but it always settles instead of hanging.
 const REQUEST_TIMEOUT_MS = 20000;
 
-// Respect an explicit caller signal; otherwise attach a timeout signal.
-function requestTimeout(existing?: AbortSignal | null): {
-  signal: AbortSignal | undefined;
+// Compose an explicit caller signal with the request deadline. Keeping our own
+// controller means a caller can still cancel immediately without disabling the
+// safety timeout for a request that otherwise hangs.
+function requestTimeout(existing?: AbortSignal | null, timeoutMs = REQUEST_TIMEOUT_MS): {
+  signal: AbortSignal;
+  timedOut: () => boolean;
+  callerAborted: () => boolean;
   done: () => void;
 } {
-  if (existing) return { signal: existing, done: () => {} };
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  return { signal: controller.signal, done: () => clearTimeout(timer) };
+  let abortSource: 'caller' | 'timeout' | null = null;
+  const abortFromCaller = () => {
+    if (abortSource !== null) return;
+    abortSource = 'caller';
+    controller.abort(existing?.reason);
+  };
+  if (existing?.aborted) abortFromCaller();
+  else existing?.addEventListener('abort', abortFromCaller, { once: true });
+  const timer = setTimeout(() => {
+    if (abortSource !== null) return;
+    abortSource = 'timeout';
+    controller.abort();
+  }, timeoutMs);
+  return {
+    signal: controller.signal,
+    timedOut: () => abortSource === 'timeout',
+    callerAborted: () => abortSource === 'caller',
+    done: () => {
+      clearTimeout(timer);
+      existing?.removeEventListener('abort', abortFromCaller);
+    }
+  };
 }
 
 function isAbort(cause: unknown): boolean {
@@ -135,52 +158,63 @@ async function fetchJson<T>(
 ): Promise<T> {
   const method = init?.method ?? 'GET';
   const timeout = requestTimeout(init?.signal);
-  let res: Response;
   try {
-    res = await fetch(`${gatewayHttpOrigin()}${path}`, { ...init, signal: timeout.signal });
-  } catch (cause) {
-    const message = isAbort(cause) ? `${method} ${path} timed out` : `Could not reach ${path}`;
-    throw requestError(resource, path, method, 'network', message, cause);
-  } finally {
-    timeout.done();
-  }
+    let res: Response;
+    try {
+      res = await fetch(`${gatewayHttpOrigin()}${path}`, { ...init, signal: timeout.signal });
+    } catch (cause) {
+      throwGatewayTransportError(resource, path, method, timeout, cause);
+    }
 
-  if (!res.ok) {
-    const detail = await responseErrorDetail(res);
-    throw requestError(
-      resource,
-      path,
-      method,
-      'http',
-      detail ? `${method} ${path} returned ${res.status}: ${detail}` : `${method} ${path} returned ${res.status}`,
-      undefined,
-      res.status
-    );
-  }
-
-  let body: unknown;
-  try {
-    body = await res.json();
-  } catch (cause) {
-    throw requestError(resource, path, method, 'malformed', `${method} ${path} returned invalid JSON`, cause);
-  }
-
-  try {
-    return guard(body);
-  } catch (cause) {
-    if (cause instanceof ApiValidationError) {
+    if (!res.ok) {
+      let detail: string | null;
+      try {
+        detail = await responseErrorDetail(res);
+      } catch (cause) {
+        throwGatewayTransportError(resource, path, method, timeout, cause);
+      }
       throw requestError(
         resource,
         path,
         method,
-        'malformed',
-        `${method} ${path} returned a malformed ${cause.label} response`,
-        cause,
+        'http',
+        detail ? `${method} ${path} returned ${res.status}: ${detail}` : `${method} ${path} returned ${res.status}`,
         undefined,
-        cause.issues.map((issue) => `${issue.path}: ${issue.message}`)
+        res.status
       );
     }
-    throw cause;
+
+    let body: unknown;
+    try {
+      body = await res.json();
+    } catch (cause) {
+      if (timeout.timedOut() || timeout.callerAborted() || isAbort(cause)) {
+        throwGatewayTransportError(resource, path, method, timeout, cause);
+      }
+      throw requestError(resource, path, method, 'malformed', `${method} ${path} returned invalid JSON`, cause);
+    }
+
+    try {
+      return guard(body);
+    } catch (cause) {
+      if (cause instanceof ApiValidationError) {
+        throw requestError(
+          resource,
+          path,
+          method,
+          'malformed',
+          `${method} ${path} returned a malformed ${cause.label} response`,
+          cause,
+          undefined,
+          cause.issues.map((issue) => `${issue.path}: ${issue.message}`)
+        );
+      }
+      throw cause;
+    }
+  } finally {
+    // The response body remains connected to the request signal after headers
+    // arrive. Keep the deadline armed until parsing/validation has settled.
+    timeout.done();
   }
 }
 
@@ -191,37 +225,54 @@ async function fetchEmpty(
 ): Promise<void> {
   const method = init?.method ?? 'GET';
   const timeout = requestTimeout(init?.signal);
-  let res: Response;
   try {
-    res = await fetch(`${gatewayHttpOrigin()}${path}`, { ...init, signal: timeout.signal });
-  } catch (cause) {
-    const message = isAbort(cause) ? `${method} ${path} timed out` : `Could not reach ${path}`;
-    throw requestError(resource, path, method, 'network', message, cause);
-  } finally {
-    timeout.done();
-  }
+    let res: Response;
+    try {
+      res = await fetch(`${gatewayHttpOrigin()}${path}`, { ...init, signal: timeout.signal });
+    } catch (cause) {
+      throwGatewayTransportError(resource, path, method, timeout, cause);
+    }
 
-  if (!res.ok) {
-    const detail = await responseErrorDetail(res);
-    throw requestError(
-      resource,
-      path,
-      method,
-      'http',
-      detail ? `${method} ${path} returned ${res.status}: ${detail}` : `${method} ${path} returned ${res.status}`,
-      undefined,
-      res.status
-    );
+    if (!res.ok) {
+      let detail: string | null;
+      try {
+        detail = await responseErrorDetail(res);
+      } catch (cause) {
+        throwGatewayTransportError(resource, path, method, timeout, cause);
+      }
+      throw requestError(
+        resource,
+        path,
+        method,
+        'http',
+        detail ? `${method} ${path} returned ${res.status}: ${detail}` : `${method} ${path} returned ${res.status}`,
+        undefined,
+        res.status
+      );
+    }
+  } finally {
+    // Error bodies are part of the request too; do not disarm after headers.
+    timeout.done();
   }
 }
 
+function throwGatewayTransportError(
+  resource: ApiResourceName,
+  path: string,
+  method: string,
+  timeout: { timedOut: () => boolean; callerAborted: () => boolean },
+  cause: unknown
+): never {
+  if (timeout.callerAborted() && !timeout.timedOut()) throw cause;
+  // Only our deadline earns the "timed out" diagnosis. A response stream can
+  // also fail with AbortError for transport reasons unrelated to our timer.
+  const timedOut = timeout.timedOut();
+  const message = timedOut ? `${method} ${path} timed out` : `Could not reach ${path}`;
+  throw requestError(resource, path, method, 'network', message, cause);
+}
+
 async function responseErrorDetail(res: Response): Promise<string | null> {
-  let text = '';
-  try {
-    text = await res.text();
-  } catch {
-    return null;
-  }
+  const text = await res.text();
   const trimmed = text.trim();
   if (!trimmed) return null;
   try {
@@ -450,17 +501,17 @@ export const gateway = {
   // tablet webview is on localhost, so it can't know its own LAN address). Reads
   // `localIp` from /api/v1/info; fail-soft (null) on any error or older gateways.
   lanAddress: async (): Promise<string | null> => {
+    const timeout = requestTimeout(undefined, 2500);
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 2500);
-      const res = await fetch(`${gatewayHttpOrigin()}/api/v1/info`, { signal: controller.signal });
-      clearTimeout(timer);
+      const res = await fetch(`${gatewayHttpOrigin()}/api/v1/info`, { signal: timeout.signal });
       if (!res.ok) return null;
       const data: unknown = await res.json().catch(() => null);
       const ip = (data as { localIp?: unknown } | null)?.localIp;
       return typeof ip === 'string' && ip.trim() ? ip.trim() : null;
     } catch {
       return null;
+    } finally {
+      timeout.done();
     }
   },
 
@@ -469,41 +520,37 @@ export const gateway = {
   // means the key is absent (returns undefined), but a network/timeout/server
   // error throws so callers can surface it instead of silently losing data.
   storeGet: async (namespace: string, key: string): Promise<unknown> => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2500);
-    let res: Response;
+    const timeout = requestTimeout(undefined, 2500);
     try {
-      res = await fetch(
+      const res = await fetch(
         `${gatewayHttpOrigin()}/api/v1/store/${encodeURIComponent(namespace)}/${encodeURIComponent(key)}`,
-        { signal: controller.signal }
+        { signal: timeout.signal }
       );
+      if (res.status === 404) return undefined;
+      if (!res.ok) throw new Error(`Gateway store GET ${namespace}/${key} failed: ${res.status}`);
+      return (await res.json()) as unknown;
     } finally {
-      clearTimeout(timer);
+      timeout.done();
     }
-    if (res.status === 404) return undefined;
-    if (!res.ok) throw new Error(`Gateway store GET ${namespace}/${key} failed: ${res.status}`);
-    return (await res.json()) as unknown;
   },
   // Bulk read of a whole namespace in one request (?full=1) instead of one GET
   // per key. Returns the {key: value} map, or null when the gateway is too old
   // to support the flag — older builds ignore it and return the key list (an
   // array), so callers fall back to per-key gets.
   storeGetAll: async (namespace: string): Promise<Record<string, unknown> | null> => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2500);
-    let res: Response;
+    const timeout = requestTimeout(undefined, 2500);
     try {
-      res = await fetch(
+      const res = await fetch(
         `${gatewayHttpOrigin()}/api/v1/store/${encodeURIComponent(namespace)}?full=1`,
-        { signal: controller.signal }
+        { signal: timeout.signal }
       );
+      if (!res.ok) throw new Error(`Gateway store GET-all ${namespace} failed: ${res.status}`);
+      const data = (await res.json()) as unknown;
+      if (data === null || typeof data !== 'object' || Array.isArray(data)) return null;
+      return data as Record<string, unknown>;
     } finally {
-      clearTimeout(timer);
+      timeout.done();
     }
-    if (!res.ok) throw new Error(`Gateway store GET-all ${namespace} failed: ${res.status}`);
-    const data = (await res.json()) as unknown;
-    if (data === null || typeof data !== 'object' || Array.isArray(data)) return null;
-    return data as Record<string, unknown>;
   },
   storeSet: async (namespace: string, key: string, value: unknown): Promise<void> => {
     const controller = new AbortController();

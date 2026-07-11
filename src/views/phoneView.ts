@@ -142,7 +142,7 @@ const APPLY_CHIP: Record<string, { cls: string; text: string }> = {
 
 function applyChip(state: PhoneShellModel['applyState']): string {
   const info = APPLY_CHIP[state];
-  return info ? `<span class="phone-apply-chip ${info.cls}" role="status">${info.text}</span>` : '';
+  return info ? `<span class="phone-apply-chip ${info.cls}">${info.text}</span>` : '';
 }
 
 function renderPhoneRecipe(model: PhoneShellModel): string {

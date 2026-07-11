@@ -14,9 +14,9 @@ export const SETTINGS_STORE_NAMESPACE = 'beanie';
 
 // --- synced setting keys ------------------------------------------------------
 //
-// Theme is deliberately absent — it stays per-browser in localStorage (see
-// settings.ts). The Gemini key keeps a legacy store key (STORE_KEY_OVERRIDES)
-// so its existing store value isn't orphaned.
+// Theme and credentials are deliberately absent — they stay on this device.
+// In particular, never add the Gemini API key here: storage.ts owns its
+// device-local value and deletes the historic gateway copy during migration.
 export const uiScaleKey = 'beanie.settings.ui-scale';
 export const waterSoftKey = 'beanie.settings.water-soft-ml';
 export const wakeAppZoneEnabledKey = 'beanie.settings.wake-app-zone';
@@ -39,7 +39,6 @@ export const cleaningStateKey = 'beanie.cleaning.state';
 export const cleaningOverrideKey = 'beanie.cleaning.profile-id';
 export const cleaningThresholdKey = 'beanie.cleaning.threshold';
 export const secondTapHintKey = 'beanie.second-tap-hint-v3';
-export const geminiApiKeyKey = 'beanie.gemini-api-key';
 
 export const inputDialogRecentKinds = ['dose', 'yield', 'ratio', 'grind', 'temperature'] as const;
 export const inputDialogRecentKeyPrefix = 'beanie.input-dialog-recents.';
@@ -68,18 +67,13 @@ export const SYNCED_SETTING_KEYS: readonly string[] = [
   cleaningOverrideKey,
   cleaningThresholdKey,
   secondTapHintKey,
-  geminiApiKeyKey,
   ...inputDialogRecentKeys
 ];
 
 const syncedKeySet = new Set(SYNCED_SETTING_KEYS);
 
-const STORE_KEY_OVERRIDES: Record<string, string> = {
-  [geminiApiKeyKey]: 'geminiApiKey'
-};
-
 function storeKeyFor(localKey: string): string {
-  return STORE_KEY_OVERRIDES[localKey] ?? localKey;
+  return localKey;
 }
 
 // --- in-memory cache + write-through -----------------------------------------
@@ -97,28 +91,32 @@ export function getSyncedItem(key: string): string | null {
 // The app wires this to push a key's current value to the gateway store (and to
 // hard-fail loudly when that push fails). Until it's set — before start() runs,
 // or in demo mode — writes update the in-memory cache only.
-export type StorePushHandler = (storeKey: string, value: string | null) => void;
+export type StorePushHandler = (storeKey: string, value: string | null) => boolean | void;
 let pushHandler: StorePushHandler | null = null;
 
 export function setStorePushHandler(handler: StorePushHandler | null): void {
   pushHandler = handler;
 }
 
-function notifyStore(key: string, value: string | null): void {
-  if (!syncedKeySet.has(key)) return;
-  pushHandler?.(storeKeyFor(key), value);
+function notifyStore(key: string, value: string | null): boolean {
+  if (!syncedKeySet.has(key)) return true;
+  return pushHandler?.(storeKeyFor(key), value) !== false;
 }
 
 /** Set a setting in the in-memory cache AND push it to the gateway store. */
-export function setSyncedItem(key: string, value: string): void {
+export function setSyncedItem(key: string, value: string): boolean {
+  // The app can reject writes while no authoritative store snapshot exists.
+  // Do that before touching the cache so fallback defaults never become truth.
+  if (!notifyStore(key, value)) return false;
   cache.set(key, value);
-  notifyStore(key, value);
+  return true;
 }
 
 /** Clear a setting from the in-memory cache AND delete it from the store. */
-export function removeSyncedItem(key: string): void {
+export function removeSyncedItem(key: string): boolean {
+  if (!notifyStore(key, null)) return false;
   cache.delete(key);
-  notifyStore(key, null);
+  return true;
 }
 
 /** Keys currently held in the cache (for the settings "reset" action). */
@@ -155,45 +153,62 @@ async function fetchBulk(gateway: SettingsStoreGateway): Promise<Record<string, 
 export async function loadAllFromStore(gateway: SettingsStoreGateway): Promise<void> {
   // One bulk request when supported; per-key gets otherwise.
   const bulk = await fetchBulk(gateway);
-  await Promise.all(
+  const loaded = await Promise.all(
     SYNCED_SETTING_KEYS.map(async (key) => {
       const storeKey = storeKeyFor(key);
       const remote = bulk ? bulk[storeKey] : await gateway.storeGet(SETTINGS_STORE_NAMESPACE, storeKey);
       if (typeof remote === 'string') {
-        cache.set(key, remote);
-        return;
+        return [key, remote] as const;
       }
       // TRANSITIONAL (remove after rollout): seed the store from any value left
       // in this device's old localStorage so existing settings aren't lost when
       // moving off localStorage.
       const legacy = readLegacyLocal(key);
       if (legacy !== null) {
-        cache.set(key, legacy);
         await gateway.storeSet(SETTINGS_STORE_NAMESPACE, storeKey, legacy);
+        removeLegacyLocal(key);
+        return [key, legacy] as const;
       } else {
-        cache.delete(key);
+        return [key, null] as const;
       }
     })
   );
+  // Commit only after every read (and any legacy seed) succeeded. A partial
+  // outage must never leave a mixed cache that looks like a successful load.
+  for (const [key, value] of loaded) {
+    if (value === null) cache.delete(key);
+    else cache.set(key, value);
+  }
 }
 
 /**
  * Re-fetch every key from the store and apply changes to the cache. Returns the
  * keys whose value actually changed, so the app can re-render only when needed.
  */
-export async function pollFromStore(gateway: SettingsStoreGateway): Promise<string[]> {
+export function pollFromStore(gateway: SettingsStoreGateway): Promise<string[]>;
+export function pollFromStore(
+  gateway: SettingsStoreGateway,
+  canCommit: () => boolean
+): Promise<string[] | null>;
+export async function pollFromStore(
+  gateway: SettingsStoreGateway,
+  canCommit: () => boolean = () => true
+): Promise<string[] | null> {
   const bulk = await fetchBulk(gateway);
-  const changed: string[] = [];
-  await Promise.all(
+  const loaded = await Promise.all(
     SYNCED_SETTING_KEYS.map(async (key) => {
       const remote = bulk ? bulk[storeKeyFor(key)] : await gateway.storeGet(SETTINGS_STORE_NAMESPACE, storeKeyFor(key));
-      const next = typeof remote === 'string' ? remote : null;
-      if (next === getSyncedItem(key)) return;
-      if (next === null) cache.delete(key);
-      else cache.set(key, next);
-      changed.push(key);
+      return [key, typeof remote === 'string' ? remote : null] as const;
     })
   );
+  const changed: string[] = [];
+  if (!canCommit()) return null;
+  for (const [key, next] of loaded) {
+    if (next === getSyncedItem(key)) continue;
+    if (next === null) cache.delete(key);
+    else cache.set(key, next);
+    changed.push(key);
+  }
   return changed;
 }
 
@@ -206,5 +221,15 @@ function readLegacyLocal(key: string): string | null {
     return localStorage.getItem(key.split('.').join(':'));
   } catch {
     return null;
+  }
+}
+
+function removeLegacyLocal(key: string): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.removeItem(key.split('.').join(':'));
+  } catch {
+    // A successful remote seed remains authoritative even if obsolete local
+    // browser storage cannot be cleaned up on this host.
   }
 }

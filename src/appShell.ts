@@ -274,6 +274,25 @@ export interface SleepOverlayModel {
   zonePosition: WakeAppZonePosition;
 }
 
+export interface PresentationOcclusionInput {
+  asleep: boolean;
+  appAwake: boolean;
+  usesWebSleepControls: boolean;
+  saverPreview: boolean;
+  documentHidden: boolean;
+}
+
+/**
+ * Whether application presentation is semantically hidden. A sleeping machine
+ * only occludes Beanie inside the embedded Decent webview; a normal browser
+ * deliberately keeps the workbench visible and active while the machine sleeps.
+ */
+export function presentationOccluded(input: PresentationOcclusionInput): boolean {
+  return input.documentHidden ||
+    input.saverPreview ||
+    (input.asleep && !input.appAwake && !input.usesWebSleepControls);
+}
+
 /**
  * Decide what the sleep screen shows. The black wake-the-machine overlay only
  * appears inside the Decent app webview (a browser already shows the app while
@@ -287,7 +306,13 @@ export function sleepOverlayModel(input: {
   wakeAppZoneEnabled: boolean;
   wakeAppZonePosition: WakeAppZonePosition;
 }): SleepOverlayModel {
-  const showOverlay = input.asleep && !input.appAwake && !input.usesWebSleepControls;
+  const showOverlay = presentationOccluded({
+    asleep: input.asleep,
+    appAwake: input.appAwake,
+    usesWebSleepControls: input.usesWebSleepControls,
+    saverPreview: false,
+    documentHidden: false
+  });
   return {
     showOverlay,
     showWakeAppZone: showOverlay && input.wakeAppZoneEnabled,

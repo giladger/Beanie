@@ -914,6 +914,179 @@ p {
   border-left: 1px solid color-mix(in srgb, var(--ink) 9%, transparent);
 }
 
+.profile-label-actions {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.recipe-apply-chip {
+  min-height: 20px;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 13%, transparent);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.recipe-apply-chip.pending {
+  background: color-mix(in srgb, var(--teal) 16%, transparent);
+  color: var(--teal);
+}
+
+.recipe-apply-chip.ok {
+  background: color-mix(in srgb, var(--green) 15%, transparent);
+  color: var(--green);
+}
+
+.recipe-apply-chip.warn,
+.recipe-apply-chip.alert {
+  background: color-mix(in srgb, var(--amber) 17%, transparent);
+  color: var(--amber);
+}
+
+.settings-resource-warning {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--line));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--amber) 10%, var(--panel));
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.settings-resource-warning span {
+  color: var(--muted);
+}
+
+.runtime-mode-banner {
+  position: fixed;
+  z-index: 45;
+  top: calc(var(--topbar) + 7px);
+  left: 50%;
+  max-width: min(680px, calc(100vw - 24px));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--amber) 55%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg) 90%, var(--amber) 10%);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  font-size: 11px;
+  transform: translateX(-50%);
+}
+
+.runtime-mode-banner strong {
+  flex: none;
+  color: var(--amber);
+  font-weight: 950;
+  letter-spacing: 0.03em;
+}
+
+.runtime-mode-banner span {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-mode-banner button {
+  flex: none;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--line));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 900;
+}
+
+.operation-feedback {
+  position: fixed;
+  z-index: 46;
+  right: 12px;
+  bottom: 12px;
+  max-width: min(520px, calc(100vw - 24px));
+  padding: 8px 11px;
+  border: 1px solid color-mix(in srgb, var(--teal) 45%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg) 90%, var(--teal) 10%);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.operation-feedback.alert {
+  border-color: color-mix(in srgb, var(--amber) 55%, var(--line));
+  background: color-mix(in srgb, var(--bg) 90%, var(--amber) 10%);
+  color: var(--amber);
+}
+
+.bootstrap-failure {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.bootstrap-failure-card {
+  width: min(620px, 100%);
+  display: grid;
+  gap: 16px;
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.bootstrap-failure-card button {
+  justify-self: start;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--teal);
+  color: #092622;
+  font: inherit;
+  font-weight: 900;
+}
+
+.bootstrap-failure-card code {
+  display: block;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+
+@media (max-width: 640px), (max-height: 500px) and (max-width: 900px) {
+  .runtime-mode-banner {
+    top: calc(8px + var(--sa-top));
+    max-width: calc(100vw - 16px - var(--sa-left) - var(--sa-right));
+  }
+
+  .runtime-mode-banner span {
+    display: none;
+  }
+
+  .operation-feedback {
+    bottom: calc(72px + var(--sa-bottom));
+  }
+}
+
 .select-control:first-child {
   border-left: 0;
 }
@@ -6719,6 +6892,12 @@ p {
   background: var(--teal);
 }
 
+.settings-toggle input:disabled + span {
+  opacity: 0.45;
+  cursor: not-allowed;
+  filter: saturate(0.45);
+}
+
 .settings-shell-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -10512,4 +10691,53 @@ p {
   color: var(--muted);
   font-weight: 400;
   font-size: 0.78rem;
+}
+
+/* Keyboard focus must remain visible even inside controls whose component
+   styles remove the browser default outline. */
+:where(button, input, select, textarea, [role="button"], [tabindex]):focus-visible {
+  outline: 3px solid var(--accent) !important;
+  outline-offset: 2px !important;
+}
+
+/* Toggle inputs are visually hidden, so draw their focus ring on the track. */
+.settings-toggle input:focus-visible + span {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+  }
+}
+
+/* Persistent runtime-mode banners reserve their own visual lane instead of
+   covering the first workbench/settings controls. Kept at the end so the
+   responsive page-shell rules above cannot overwrite the reservation. */
+.app-shell.has-runtime-banner:not(.app-shell-phone) > .workbench,
+.app-shell.has-runtime-banner.app-shell-page > .page-body {
+  padding-top: 42px;
+}
+
+/* Keep the focused dialog above persistent banners and transient feedback.
+   Water, sleep, and store-error overlays intentionally retain higher layers. */
+.modal-backdrop {
+  z-index: 60;
+}
+
+.modal-backdrop.water-alert-backdrop {
+  z-index: 80;
+}
+
+@media (max-width: 640px), (max-height: 500px) and (max-width: 900px) {
+  .app-shell-phone.has-runtime-banner .phone-main {
+    padding-top: calc(46px + var(--sa-top));
+  }
 }

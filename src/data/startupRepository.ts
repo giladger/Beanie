@@ -1,5 +1,6 @@
 import { loadGatewayStartup } from '../api/gateway';
 import type {
+  ApiResource,
   Bean,
   GatewayStartupSnapshot,
   Grinder,
@@ -37,15 +38,65 @@ export async function loadGatewayStartupWithCache(
   const startup = await (options.loadStartup ?? loadGatewayStartup)({ latestShotQuery });
   await cacheStartupData(startup.data, latestShotQuery, options.cache);
   const cached = await cachedStartupData(latestShotQuery, options.cache);
+  const workflow = mergeStartupResource(
+    startup.resources.workflow,
+    startup.data.workflow,
+    cached.workflow
+  );
+  const beans = mergeStartupResource(startup.resources.beans, startup.data.beans, cached.beans);
+  const grinders = mergeStartupResource(
+    startup.resources.grinders,
+    startup.data.grinders,
+    cached.grinders
+  );
+  const profiles = mergeStartupResource(
+    startup.resources.profiles,
+    startup.data.profiles,
+    cached.profiles
+  );
+  const shots = mergeStartupResource(
+    startup.resources.shots,
+    startup.data.latestShots,
+    cached.latestShots
+  );
+
   return {
     ...startup,
+    resources: {
+      workflow: workflow.resource,
+      beans: beans.resource,
+      grinders: grinders.resource,
+      profiles: profiles.resource,
+      shots: shots.resource
+    },
     data: {
-      workflow: startup.data.workflow ?? cached.workflow,
-      beans: startup.data.beans ?? cached.beans,
-      grinders: startup.data.grinders ?? cached.grinders,
-      profiles: startup.data.profiles ?? cached.profiles,
-      latestShots: startup.data.latestShots ?? cached.latestShots
+      workflow: workflow.data,
+      beans: beans.data,
+      grinders: grinders.data,
+      profiles: profiles.data,
+      latestShots: shots.data
     }
+  };
+}
+
+function mergeStartupResource<T>(
+  resource: ApiResource<T>,
+  gatewayData: T | undefined,
+  cachedData: T | undefined
+): { resource: ApiResource<T>; data: T | undefined } {
+  if (gatewayData !== undefined || cachedData === undefined) {
+    return { resource, data: gatewayData };
+  }
+
+  return {
+    resource: {
+      resource: resource.resource,
+      status: 'loaded',
+      source: 'cache',
+      data: cachedData,
+      receivedAt: new Date().toISOString()
+    },
+    data: cachedData
   };
 }
 
@@ -78,8 +129,8 @@ export async function cachedStartupData(
   return {
     workflow: workflow ?? undefined,
     beans: beans.length > 0 ? beans : undefined,
-    grinders,
-    profiles,
+    grinders: grinders.length > 0 ? grinders : undefined,
+    profiles: profiles.length > 0 ? profiles : undefined,
     latestShots: latestShots ?? undefined
   };
 }

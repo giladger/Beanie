@@ -223,6 +223,76 @@ await run('BeanieApp delegated click dispatch opens the profile picker', async (
   app.dispose();
 });
 
+await run('queued machine mutations re-check live authority at dispatch', async () => {
+  const root = new FakeElement();
+  const app = new BeanieApp(root as unknown as HTMLElement);
+  const harness = app as unknown as {
+    setState(next: Record<string, unknown>): void;
+    runExactMachineCommand<T>(
+      run: () => T | PromiseLike<T>,
+      options?: { allowOfflineStop?: boolean }
+    ): Promise<T>;
+  };
+  harness.setState({ startupPhase: 'connected', demo: false });
+
+  let releaseFirst!: () => void;
+  const first = harness.runExactMachineCommand(
+    () => new Promise<void>((resolve) => { releaseFirst = resolve; })
+  );
+  await flushAsync();
+  let secondRuns = 0;
+  const second = harness.runExactMachineCommand(() => {
+    secondRuns += 1;
+    return 'sent';
+  });
+  harness.setState({ startupPhase: 'offline-cache' });
+  releaseFirst();
+  await first;
+
+  let rejected = false;
+  try {
+    await second;
+  } catch {
+    rejected = true;
+  }
+  equal(rejected, true);
+  equal(secondRuns, 0);
+
+  let stopRuns = 0;
+  await harness.runExactMachineCommand(() => { stopRuns += 1; }, { allowOfflineStop: true });
+  equal(stopRuns, 1);
+  app.dispose();
+});
+
+await run('an offline Wake rejection keeps the sleeping presentation intact', async () => {
+  const root = new FakeElement();
+  const app = new BeanieApp(root as unknown as HTMLElement);
+  const harness = app as unknown as {
+    setState(next: Record<string, unknown>): void;
+    machineClickActions(): Record<string, () => void | Promise<void>>;
+  };
+  const hostWindow = window as typeof window & { __DECENT_HOST__?: unknown };
+
+  hostWindow.__DECENT_HOST__ = {};
+  harness.setState({
+    settingsLoaded: true,
+    startupPhase: 'offline-cache',
+    gatewayLinkDown: true,
+    demo: false,
+    asleep: true,
+    appAwake: false,
+    loading: false
+  });
+  includes(root.innerHTML, 'aria-label="Wake machine"');
+
+  await harness.machineClickActions().wake?.();
+
+  includes(root.innerHTML, 'aria-label="Wake machine"');
+  includes(root.innerHTML, 'Machine controls are read-only until live data reconnects');
+  delete hostWindow.__DECENT_HOST__;
+  app.dispose();
+});
+
 async function run(name: string, fn: () => void | Promise<void>): Promise<void> {
   try {
     await fn();

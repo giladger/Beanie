@@ -59,6 +59,7 @@ import {
   machineStatusView,
   nonNegativeNumber,
   positiveNumber,
+  presentationOccluded,
   round,
   scaleConnected,
   sleepOverlayModel,
@@ -84,6 +85,7 @@ import {
   profileBaseTemperature,
   ratioFor,
   recipeFromShot,
+  recipeFromWorkflow,
   roastAgeLabel,
   selectInitialBean,
   shotFilterForBean,
@@ -95,10 +97,12 @@ import {
   readFavoriteBeans,
   readFavoriteProfiles,
   readGeminiApiKey,
+  clearGeminiApiKey,
   clearPendingDerekTweak,
   readLastBeanId,
   readPendingDerekTweak,
   readStorageEventsMigrated,
+  migrateLegacyGeminiApiKey,
   writeFavoriteBeans,
   writeFavoriteProfiles,
   writeLastBeanId
@@ -176,9 +180,16 @@ import {
   SETTINGS_SPEC,
   coerceFieldValue,
   demoSettingsBundle,
+  fieldValue,
   setBundleField,
   type SettingsBundle
 } from './domain/settingsModel';
+import {
+  settingsResourceStates,
+  settingsResourceWritable,
+  type SettingsResourceKey,
+  type SettingsResourceStates
+} from './domain/resourceState';
 import type { DecentAccountStatus, DisplayState, PluginSettings } from './api/settings';
 import { readDisplayState } from './api/settings';
 import { createSettingsController } from './controllers/settingsController';
@@ -286,7 +297,7 @@ import {
   type LiveTelemetryIdleDecision
 } from './domain/liveTelemetry';
 import { beanieCache } from './domain/cache';
-import { loadGatewayStartupWithCache } from './data/startupRepository';
+import { cachedStartupData, loadGatewayStartupWithCache } from './data/startupRepository';
 import {
   fetchShotPage as fetchShotPageFromRepository,
   loadLatestBeanUsage,
@@ -373,10 +384,9 @@ import {
   isClockFormat,
   isWakeAppZonePosition,
   readSettingsPreferences,
-  resetBeanieCache,
   type SettingsPreferences,
   type WakeAppZonePosition,
-  writeSettingsPreferences
+  writeSettingsPreferencePatch
 } from './domain/settings';
 import {
   SCREENSAVER_CLOCK_MOVE_INTERVAL_MS,
@@ -678,8 +688,11 @@ export interface AppState {
   storeError: boolean;
   // False until settings have loaded from the store on boot; drives the spinner.
   settingsLoaded: boolean;
+  /** Initial gateway KV load succeeded; synced preferences are safe to edit. */
+  settingsStoreAvailable: boolean;
   settingsSearch: string;
   demo: boolean;
+  startupPhase: 'starting' | 'connecting' | 'connected' | 'limited' | 'offline-cache' | 'demo' | 'retrying';
   loading: boolean;
   busy: boolean;
   status: string;
@@ -688,7 +701,9 @@ export interface AppState {
   phoneTab: PhoneTab;
   settingsSection: string;
   settingsBundle: SettingsBundle | null;
-  settingsSource: 'gateway' | 'demo' | 'loading' | null;
+  settingsSource: 'gateway' | 'degraded' | 'demo' | 'loading' | null;
+  /** Per-endpoint provenance; fallback defaults are visible but never writable. */
+  settingsResources: SettingsResourceStates | null;
   pluginConfig: PluginConfigState | null;
   decentAccount: DecentAccountStatus | null;
   decentAccountSource: 'loading' | 'gateway' | 'demo' | 'unavailable' | null;
@@ -909,8 +924,10 @@ export class BeanieApp {
     settingsPreferences: initialSettingsPreferences,
     storeError: false,
     settingsLoaded: false,
+    settingsStoreAvailable: false,
     settingsSearch: '',
     demo: false,
+    startupPhase: 'starting',
     loading: true,
     busy: false,
     status: 'Starting',
@@ -920,6 +937,7 @@ export class BeanieApp {
     settingsSection: 'app',
     settingsBundle: null,
     settingsSource: null,
+    settingsResources: null,
     pluginConfig: null,
     decentAccount: null,
     decentAccountSource: null,
@@ -1024,6 +1042,11 @@ export class BeanieApp {
     intervalMs: SETTINGS_SYNC_INTERVAL_MS,
     run: () => this.syncFromGateway()
   });
+  private readonly startupRetryTask = new BackgroundTask({
+    intervalMs: 30_000,
+    run: () => this.retryStartupConnection(),
+    onError: (error) => console.warn('[Beanie] Startup reconnect failed', error)
+  });
   private readonly workflowCommands = new WorkflowCommandCoordinator<string>();
   // Updated inside the serialized gateway command before its promise settles.
   // The coordinator may start the next physical command before the caller's UI
@@ -1056,11 +1079,15 @@ export class BeanieApp {
   private disposeDrain: Promise<void> | null = null;
   // Memoised so the boot settings load runs once; the scanner awaits it too.
   private settingsLoadPromise: Promise<void> | null = null;
+  private settingsBundleLoadPromise: Promise<void> | null = null;
+  private startupLoadInFlight = false;
   // Setting pushes that failed; keyed by store key so a Retry re-sends each.
   private readonly failedStoreWrites = new Map<string, string | null>();
   // Latest desired value guards completion callbacks from older in-flight
   // writes; queued values themselves are coalesced by workflowCommands.
   private readonly desiredStoreWrites = new Map<string, string | null>();
+  private settingsStoreMutationRevision = 0;
+  private readonly settingsMutationRevisions = new Map<string, number>();
   private shotRefreshInFlight = false;
   private beanRefreshInFlight = false;
   private beanUsageRefreshRequestId = 0;
@@ -1129,6 +1156,8 @@ export class BeanieApp {
   // after it (otherwise the two PUTs race and the screen can stay black).
   private sleepDimPromise: Promise<void> | null = null;
   private wakeZonePreviewTimer: number | null = null;
+  private statusFeedbackTimer: number | null = null;
+  private statusFeedbackUntilMs = 0;
   private wakeAppIdleTimer: number | null = null;
   private applyAfterWake = false;
   private lastPresenceHeartbeatMs = 0;
@@ -1205,6 +1234,7 @@ export class BeanieApp {
     this.presentationActivity.add(this.shotRefreshTask);
     this.presentationActivity.add(this.beanRefreshTask);
     this.presentationActivity.add(this.settingsSyncTask);
+    this.presentationActivity.add(this.startupRetryTask);
     this.machineStream = new SocketSupervisor<MachineSnapshot>({
       url: () => `${gatewayWsOrigin()}/ws/v1/machine/snapshot`,
       socketFactory: browserWebSocketFactory,
@@ -1218,7 +1248,14 @@ export class BeanieApp {
         if (this.state.gatewayLinkDown) this.handleGatewayReconnected();
       },
       onClose: ({ willRetry }) => {
-        if (willRetry && !this.state.gatewayLinkDown) this.setState({ gatewayLinkDown: true });
+        if (willRetry && !this.state.gatewayLinkDown) {
+          this.setState({
+            gatewayLinkDown: true,
+            startupPhase: this.state.demo ? 'demo' : 'offline-cache',
+            status: this.state.demo ? this.state.status : 'Offline — showing last-known data while reconnecting'
+          });
+          if (!this.state.demo) this.startupRetryTask.start();
+        }
       },
       onFailure: (failure) => {
         if (failure.phase === 'decode') console.warn('[Beanie] Bad machine frame', failure.error);
@@ -1309,6 +1346,7 @@ export class BeanieApp {
     this.appScope.own(this.shotRefreshTask);
     this.appScope.own(this.beanRefreshTask);
     this.appScope.own(this.settingsSyncTask);
+    this.appScope.own(this.startupRetryTask);
     this.appScope.own(this.workflowCommands);
     this.appScope.own(this.applyAuthority);
     this.appScope.own(this.loadMoreAuthority);
@@ -1408,6 +1446,7 @@ export class BeanieApp {
     this.appScope.dispose();
     this.telemetryStore.dispose();
     if (this.applyTimer != null) window.clearTimeout(this.applyTimer);
+    if (this.statusFeedbackTimer != null) window.clearTimeout(this.statusFeedbackTimer);
     this.derekFlow.dispose();
     this.scannerFlow.cancelScannerWork();
     this.screensaverImportGeneration += 1;
@@ -1549,13 +1588,51 @@ export class BeanieApp {
   }
 
   private async load(): Promise<void> {
+    if (this.startupLoadInFlight || this.disposed) return;
+    this.startupLoadInFlight = true;
+    let hadUsableData = this.state.workflow != null && this.state.beans.length > 0;
     const prevSignature = this.state.appliedSignature;
-    this.setState({ loading: true, status: 'Loading Decent.app data' });
+    this.setState({
+      loading: true,
+      startupPhase: hadUsableData ? 'retrying' : 'connecting',
+      status: hadUsableData ? 'Reconnecting to Decent.app…' : 'Loading Decent.app data'
+    });
     // Settings live only in the gateway store now — load them (the spinner shows
     // until this resolves) before rendering real content.
     await this.loadSettings();
     try {
       const latestShotQuery = new URLSearchParams({ limit: '50', offset: '0', order: 'desc' });
+      if (!hadUsableData) {
+        const cached = await cachedStartupData(latestShotQuery, beanieCache);
+        if (cached.workflow && cached.beans && cached.beans.length > 0 && !this.disposed) {
+          const selected = selectInitialBean(
+            cached.beans,
+            cached.workflow,
+            readLastBeanId(),
+            cached.latestShots?.items[0]
+          );
+          const grinders = cached.grinders ?? [];
+          const profiles = cached.profiles ?? [];
+          this.machineWorkflowShadow = cached.workflow;
+          this.machineWorkflowDesired = cached.workflow;
+          this.setState({
+            workflow: cached.workflow,
+            beans: cached.beans,
+            beanUsageAt: beanUsageFromShots(cached.beans, cached.latestShots?.items ?? [], {}),
+            grinders,
+            profiles,
+            selectedBeanId: selected?.id ?? null,
+            draft: normalizeDraft(recipeFromWorkflow(cached.workflow), profiles, grinders),
+            appliedSignature: workflowSignature(cached.workflow),
+            demo: false,
+            startupPhase: 'offline-cache',
+            gatewayLinkDown: true,
+            loading: false,
+            status: 'Offline — showing cached data while reconnecting'
+          });
+          hadUsableData = true;
+        }
+      }
       const startup = await loadGatewayStartupWithCache(latestShotQuery, { cache: beanieCache });
       const workflow = startup.data.workflow;
       const beans = startup.data.beans;
@@ -1570,16 +1647,21 @@ export class BeanieApp {
         limit: Number(latestShotQuery.get('limit') ?? 0),
         offset: Number(latestShotQuery.get('offset') ?? 0)
       };
-      const machineInfo = await gateway.machineInfo().catch((error) => {
-        console.warn('[Beanie] Could not load machine info', error);
-        return null;
-      });
-      const machine = await gateway.machineState().catch((error) => {
-        console.warn('[Beanie] Could not load machine state', error);
-        return null;
-      });
+      const [machineInfo, machine] = await Promise.all([
+        gateway.machineInfo().catch((error) => {
+          console.warn('[Beanie] Could not load machine info', error);
+          return null;
+        }),
+        gateway.machineState().catch((error) => {
+          console.warn('[Beanie] Could not load machine state', error);
+          return null;
+        })
+      ]);
       if (this.disposed) return;
       const machineSleeping = machine?.state?.state === 'sleeping';
+      const offlineWithCache = startup.status === 'gateway-unavailable';
+      const limited = startup.status === 'partial-failure';
+      const recoveringFromDemo = this.state.demo;
 
       this.machineWorkflowShadow = workflow;
       this.machineWorkflowDesired = workflow;
@@ -1593,20 +1675,44 @@ export class BeanieApp {
         machine,
         asleep: machineSleeping,
         demo: false,
+        startupPhase: offlineWithCache ? 'offline-cache' : limited ? 'limited' : 'connected',
+        gatewayLinkDown: offlineWithCache,
         loading: false,
-        status: machineSleeping ? 'Machine asleep' : startupStatusLabel(startup.status)
+        status: machineSleeping ? 'Machine asleep' : startupStatusLabel(startup.status),
+        ...(recoveringFromDemo
+          ? {
+              settingsBundle: null,
+              settingsSource: null,
+              settingsResources: null,
+              settingsStoreAvailable: false,
+              pluginConfig: null,
+              decentAccountSource: null
+            }
+          : {})
       });
-      void this.refreshBeanUsage(beans);
-      this.noteUserActivity();
-
+      if (recoveringFromDemo) {
+        this.settingsLoadPromise = null;
+        void this.loadSettings().then(() => {
+          if (this.state.view === 'settings' || this.state.phoneTab === 'settings') void this.loadReaSettings();
+        });
+      }
+      if (offlineWithCache) {
+        // Cached startup is read-only continuity. Do not immediately fire bean
+        // refreshes, heartbeats, selection writes, or machine settings calls at
+        // a gateway the startup snapshot already proved unavailable.
+        this.startLiveStreams();
+        this.startupRetryTask.start();
+        return;
+      }
       const selected = selectInitialBean(beans, workflow, readLastBeanId(), latestShots.items[0]);
       if (selected) {
         const wantsStartupApply = !this.workflowMatchesBean(selected);
         await this.selectBean(selected.id, {
-          apply: wantsStartupApply && !machineSleeping,
-          preferWorkflow: true
+          apply: !limited && wantsStartupApply && !machineSleeping,
+          preferWorkflow: true,
+          remember: !limited
         });
-        if (wantsStartupApply && machineSleeping) {
+        if (!limited && wantsStartupApply && machineSleeping) {
           this.applyAfterWake = true;
           this.setState({ applyState: 'stale', status: 'Machine asleep — tap Wake to load recipe' });
         }
@@ -1614,17 +1720,50 @@ export class BeanieApp {
       if (prevSignature != null && workflowSignature(workflow) !== prevSignature) {
         this.setState({ applyState: 'stale', status: 'Workflow changed on the machine' });
       }
+      if (limited) {
+        // Mixed gateway/cache startup is presentation-only until every source
+        // is authoritative. In particular, never auto-apply a recipe chosen
+        // from a cached shot or enforce a machine mode from partial data.
+        this.startLiveStreams();
+        this.shotRefreshTask.start();
+        this.beanRefreshTask.start();
+        this.startupRetryTask.start();
+        return;
+      }
+      void this.refreshBeanUsage(beans);
+      this.noteUserActivity();
       void this.enforceGatewayTrackingMode();
       void this.loadMachineControlState();
       this.startLiveStreams();
       this.shotRefreshTask.start();
       this.beanRefreshTask.start();
+      this.startupRetryTask.stop();
       void this.migrateStorageEventsOnce();
     } catch (error) {
       if (this.disposed) return;
       console.warn('[Beanie] Gateway unavailable; using demo data', error);
-      this.loadDemo();
+      if (hadUsableData) {
+        const demo = this.state.demo;
+        this.setState({
+          loading: false,
+          startupPhase: demo ? 'demo' : 'offline-cache',
+          gatewayLinkDown: !demo,
+          status: demo
+            ? 'DEMO — sample data · gateway still unavailable'
+            : 'Offline — showing cached data · retrying automatically'
+        });
+        this.startupRetryTask.start();
+      } else {
+        this.loadDemo();
+      }
+    } finally {
+      this.startupLoadInFlight = false;
     }
+  }
+
+  private async retryStartupConnection(): Promise<void> {
+    if (this.disposed || this.state.startupPhase === 'connected') return;
+    await this.load();
   }
 
   /**
@@ -1671,9 +1810,12 @@ export class BeanieApp {
         flushTimeout: demoWorkflow.rinseData?.duration
       },
       demo: true,
+      startupPhase: 'demo',
+      gatewayLinkDown: false,
       loading: false,
-      status: 'Demo data'
+      status: 'DEMO — sample data · gateway unavailable'
     });
+    this.startupRetryTask.start();
     void this.selectBean(demoBeans[0]!.id, { apply: false, preferWorkflow: true });
   }
 
@@ -1691,16 +1833,22 @@ export class BeanieApp {
 
   private async selectBean(
     beanId: string,
-    options: { apply: boolean; preferWorkflow: boolean; preferredBatchId?: string | null }
+    options: { apply: boolean; preferWorkflow: boolean; preferredBatchId?: string | null; remember?: boolean }
   ): Promise<void> {
-    const selection = this.beanWorkflow.beginBeanSelection(beanId, this.state.beans, { writeLastBeanId });
+    const canApply = options.apply && (this.state.demo || this.state.startupPhase === 'connected');
+    const selection = this.beanWorkflow.beginBeanSelection(beanId, this.state.beans, {
+      writeLastBeanId: options.remember === false ? () => {} : writeLastBeanId
+    });
     if (!selection) return;
     // A staged Derek tweak belongs to the bean it was suggested for.
     this.setState({ ...selection.state, derekTweakChip: null });
 
     const result = await this.beanWorkflow.completeBeanSelection({
       selection,
-      options,
+      options: {
+        preferWorkflow: options.preferWorkflow,
+        preferredBatchId: options.preferredBatchId
+      },
       beans: this.state.beans,
       workflow: this.state.workflow,
       profiles: this.state.profiles,
@@ -1731,10 +1879,10 @@ export class BeanieApp {
       busy: false,
       applyState: 'idle',
       appliedSignature: workflowSignature(this.state.workflow),
-      status: result.status
+      status: options.apply && !canApply ? 'Coffee selected; recipe is read-only until live data reconnects' : result.status
     });
 
-    if (options.apply) {
+    if (canApply) {
       await this.applyDraft();
     }
   }
@@ -2152,6 +2300,11 @@ export class BeanieApp {
     const bean = this.selectedBean();
     if (!bean) return;
 
+    if (!this.state.demo && this.state.startupPhase !== 'connected') {
+      this.setState({ applyState: 'stale', status: 'Recipe changes are read-only until live data reconnects' });
+      return;
+    }
+
     if (!this.state.demo && this.machineIsSleeping()) {
       this.applyAfterWake = true;
       this.setState({ applyState: 'stale', status: 'Machine asleep — tap Wake to apply' });
@@ -2193,7 +2346,11 @@ export class BeanieApp {
         { policy: 'latest-wins', coalesceKey: 'recipe' },
         async () => {
           const workflow = await this.updateGatewayWorkflowInOwnedLane(update);
-          if (persistCalibration) await gateway.updateCalibration(calibrationTarget);
+          if (persistCalibration) {
+            this.assertLiveMachineAuthority();
+            await gateway.updateCalibration(calibrationTarget);
+          }
+          this.assertLiveMachineAuthority();
           return workflow;
         }
       );
@@ -2244,7 +2401,11 @@ export class BeanieApp {
           return;
         }
         console.error('[Beanie] Apply failed', error);
-        operation.commit(() => this.setState({ applyState: 'failed', status: 'Apply failed' }));
+        operation.commit(() => this.setState(
+          this.hasLiveMachineAuthority()
+            ? { applyState: 'failed', status: 'Apply failed' }
+            : { applyState: 'stale', status: 'Recipe not applied — reconnect to continue' }
+        ));
       }
     } finally {
       operation.finish();
@@ -2267,8 +2428,14 @@ export class BeanieApp {
     throw new Error(`${resourceKey} command ${outcome.status}`);
   }
 
-  private runExactMachineCommand<Value>(run: () => Value | PromiseLike<Value>): Promise<Value> {
-    return this.runExactCommand('machine', run);
+  private runExactMachineCommand<Value>(
+    run: () => Value | PromiseLike<Value>,
+    options: { allowOfflineStop?: boolean } = {}
+  ): Promise<Value> {
+    return this.runExactCommand('machine', () => {
+      if (!options.allowOfflineStop) this.assertLiveMachineAuthority();
+      return run();
+    });
   }
 
   private updateWorkflowExact(workflow: Workflow): Promise<Workflow> {
@@ -2278,9 +2445,20 @@ export class BeanieApp {
 
   /** Caller must own the machine lane or be the command that is acquiring it. */
   private async updateGatewayWorkflowInOwnedLane(workflow: Workflow): Promise<Workflow> {
+    this.assertLiveMachineAuthority();
     const saved = await gateway.updateWorkflow(workflow);
     this.machineWorkflowShadow = saved;
     return saved;
+  }
+
+  private hasLiveMachineAuthority(): boolean {
+    return this.state.demo || this.state.startupPhase === 'connected';
+  }
+
+  private assertLiveMachineAuthority(): void {
+    if (!this.hasLiveMachineAuthority()) {
+      throw new Error('Live machine authority is unavailable');
+    }
   }
 
   private machineIsSleeping(): boolean {
@@ -2292,6 +2470,12 @@ export class BeanieApp {
   private scheduleApply(): void {
     const bean = this.selectedBean();
     if (!bean) return;
+    if (!this.state.demo && this.state.startupPhase !== 'connected') {
+      if (this.applyTimer != null) window.clearTimeout(this.applyTimer);
+      this.applyTimer = null;
+      this.setState({ applyState: 'stale', status: 'Recipe changes are read-only until live data reconnects' });
+      return;
+    }
     // Desired workflow changes at edit time, not 200ms later when the debounce
     // fires. A physical Shot command can now capture and persist this exact
     // draft even if the timer has not run yet.
@@ -2303,6 +2487,7 @@ export class BeanieApp {
       draft.profile,
       this.state.workflow
     );
+    if (this.state.applyState !== 'pending') this.setState({ applyState: 'pending' });
     if (this.applyTimer != null) window.clearTimeout(this.applyTimer);
     this.applyTimer = window.setTimeout(() => {
       this.applyTimer = null;
@@ -2804,8 +2989,16 @@ export class BeanieApp {
   // simulated it), false when a preflight block or gateway failure stopped it.
   private async machineAction(
     state: MachineState,
-    opts: { skipScaleCheck?: boolean } = {}
+    opts: { skipScaleCheck?: boolean; allowOfflineStop?: boolean } = {}
   ): Promise<boolean> {
+    // Starting a mode from cached/mixed state can replay a stale workflow as
+    // soon as only the command endpoint recovers. Keep the fail-safe idle/stop
+    // command available, but require a fully authoritative startup for starts.
+    const allowOfflineStop = state === 'idle' && opts.allowOfflineStop === true;
+    if (!this.hasLiveMachineAuthority() && !allowOfflineStop) {
+      this.setState({ status: 'Machine controls are read-only until live data reconnects' });
+      return false;
+    }
     const preflight = machineActionPreflight({
       state,
       skipScaleCheck: opts.skipScaleCheck === true,
@@ -2850,6 +3043,9 @@ export class BeanieApp {
       'machine',
       { policy: 'exact-fifo' },
       async () => {
+        if (!this.hasLiveMachineAuthority() && !allowOfflineStop) {
+          return { type: 'authority-blocked' as const };
+        }
         // Safety inputs are observations, not desired configuration. Re-check
         // them at dispatch after any queued workflow writes have completed.
         const dispatchPreflight = machineActionPreflight({
@@ -2869,12 +3065,16 @@ export class BeanieApp {
           const workflow = await this.updateGatewayWorkflowInOwnedLane(prepared.workflow);
           dispatchCommand = { ...prepared, workflow };
           if (preparedCalibration != null && !this.settingsLocal) {
+            this.assertLiveMachineAuthority();
             await gateway.updateCalibration(preparedCalibration);
           }
         }
+        if (!this.hasLiveMachineAuthority() && !allowOfflineStop) {
+          return { type: 'authority-blocked' as const };
+        }
         return {
           type: 'command' as const,
-          command: await this.sendMachineActionInOwnedLane(dispatchCommand)
+          command: await this.sendMachineActionInOwnedLane(dispatchCommand, { allowOfflineStop })
         };
       }
     );
@@ -2884,6 +3084,10 @@ export class BeanieApp {
         : new Error(`Machine action ${coordinated.status}`);
       console.error('[Beanie] Machine action did not run', error);
       this.setState({ busy: false, status: 'Machine command failed' });
+      return false;
+    }
+    if (coordinated.value.type === 'authority-blocked') {
+      this.setState({ busy: false, status: 'Machine controls are read-only until live data reconnects' });
       return false;
     }
     if (coordinated.value.type === 'blocked') {
@@ -2913,13 +3117,19 @@ export class BeanieApp {
 
   /** Caller must already own the `machine` workflow-command lane. */
   private sendMachineActionInOwnedLane(
-    command: Parameters<typeof sendMachineActionCommand>[0]
+    command: Parameters<typeof sendMachineActionCommand>[0],
+    options: { allowOfflineStop?: boolean } = {}
   ): Promise<SendMachineActionCommandResult> {
     return sendMachineActionCommand(command, {
       // These adapters deliberately bypass the coordinator: the enclosing
       // compound command owns the lane and nesting would deadlock it.
       updateWorkflow: (nextWorkflow) => this.updateGatewayWorkflowInOwnedLane(nextWorkflow),
-      requestState: (nextState) => gateway.requestState(nextState),
+      requestState: (nextState) => {
+        if (!(options.allowOfflineStop === true && nextState === 'idle')) {
+          this.assertLiveMachineAuthority();
+        }
+        return gateway.requestState(nextState);
+      },
       isNoScaleShotBlockError
     });
   }
@@ -2968,6 +3178,10 @@ export class BeanieApp {
   // presses the GHC, reaprime sees a cleaning profile and skips the no-scale
   // block. finishCleaningCycle() restores the recipe once the pull completes.
   private async runCleaningCycle(opts: { startShot?: boolean } = {}): Promise<void> {
+    if (!this.state.demo && this.state.startupPhase !== 'connected') {
+      this.setState({ status: 'Cleaning is read-only until live data reconnects' });
+      return;
+    }
     const startShot = opts.startShot !== false;
     const plan = cleaningStartPlan({
       busy: this.state.busy,
@@ -3267,7 +3481,8 @@ export class BeanieApp {
   }
 
   private machineStatusStat(): MachineStatusView {
-    if (this.state.gatewayLinkDown && !this.state.demo) return { label: 'Offline', tone: 'alert' };
+    if (this.state.demo) return { label: 'Demo', tone: 'alert' };
+    if (this.state.gatewayLinkDown) return { label: 'Offline', tone: 'alert' };
     if (Date.now() < this.noScaleShotWarningUntilMs) return { label: NO_SCALE_MACHINE_STATUS, tone: 'alert' };
     return machineStatusView(this.state.machine, this.state.loading);
   }
@@ -3301,7 +3516,7 @@ export class BeanieApp {
 
   private async toggleMachineCommand(state: MachineState): Promise<void> {
     const active = this.state.machine?.state?.state === state;
-    await this.machineAction(active ? 'idle' : state);
+    await this.machineAction(active ? 'idle' : state, { allowOfflineStop: active });
   }
 
   private observeSleepBrightnessState(sleeping: boolean): void {
@@ -3478,7 +3693,7 @@ export class BeanieApp {
   private async stopMachineService(): Promise<void> {
     const service = machineServiceState(this.state.machine?.state?.state) ?? this.machineService.service;
     if (!service) {
-      await this.machineAction('idle');
+      await this.machineAction('idle', { allowOfflineStop: true });
       return;
     }
 
@@ -3499,7 +3714,7 @@ export class BeanieApp {
     }
 
     try {
-      await this.runExactMachineCommand(() => gateway.requestState('idle'));
+      await this.runExactMachineCommand(() => gateway.requestState('idle'), { allowOfflineStop: true });
       if (this.disposed) return;
       this.setState({ busy: false, status: 'Stop requested' });
       this.armMachineStopFeedbackTimer();
@@ -3546,6 +3761,7 @@ export class BeanieApp {
   // down (shots pulled from another UI, beans edited, machine state moved).
   private handleGatewayReconnected(): void {
     this.setState({ gatewayLinkDown: false, status: 'Gateway reconnected' });
+    if (this.state.startupPhase === 'offline-cache') this.startupRetryTask.trigger();
     void this.refreshBeans({ force: true });
     void this.refreshBeanUsage();
     void this.refreshVisibleShots();
@@ -3810,7 +4026,7 @@ export class BeanieApp {
     if (state !== 'steam') return;
     this.machineService.markTimedSteamStopRequested(Date.now());
     try {
-      await this.runExactMachineCommand(() => gateway.requestState('idle'));
+      await this.runExactMachineCommand(() => gateway.requestState('idle'), { allowOfflineStop: true });
       if (this.disposed) return;
       this.setState({ status: 'Timed steam stop requested' });
       this.armMachineStopFeedbackTimer();
@@ -3838,6 +4054,10 @@ export class BeanieApp {
   private async extendMachineServiceDuration(seconds: number): Promise<void> {
     const service = machineServiceState(this.state.machine?.state?.state) ?? this.machineService.service;
     if (!service || this.state.demo) return;
+    if (this.state.startupPhase !== 'connected') {
+      this.setState({ status: 'Add time is unavailable until live data reconnects' });
+      return;
+    }
     const currentTarget = machineServiceTargetSeconds(
       service,
       this.currentSteamSettings(),
@@ -4712,12 +4932,24 @@ export class BeanieApp {
 
 
   /**
-   * Push a synced setting's current value to the gateway store. Optimistic: the
-   * local cache was already updated by the writer, so on failure we surface a
-   * blocking overlay (hard-fail) rather than silently diverging from the store.
+   * Accept and push a synced setting's next value. The domain writer updates
+   * its cache immediately after this returns true; on transport failure we
+   * surface a blocking overlay rather than silently diverging from the store.
    */
-  private pushSettingToStore(storeKey: string, value: string | null): void {
-    if (this.state.demo) return;
+  private pushSettingToStore(storeKey: string, value: string | null): boolean {
+    if (this.state.demo) return true;
+    if (!this.state.settingsStoreAvailable) {
+      // Domain writers update their own view state after returning. Re-read the
+      // untouched authoritative cache on the next microtask to roll that view
+      // state back without allowing a default-derived write through.
+      queueMicrotask(() => {
+        if (this.disposed || this.state.settingsStoreAvailable) return;
+        this.applyLoadedSettings(false);
+        this.setState({ status: 'Synced settings are unavailable — no change was saved' });
+      });
+      return false;
+    }
+    this.settingsStoreMutationRevision += 1;
     this.desiredStoreWrites.set(storeKey, value);
     const push = this.workflowCommands.submit(
       `store:${storeKey}`,
@@ -4745,6 +4977,7 @@ export class BeanieApp {
         if (!this.state.storeError) this.setState({ storeError: true });
       }
     });
+    return true;
   }
 
   /**
@@ -4763,24 +4996,37 @@ export class BeanieApp {
 
   private async runLoadSettings(): Promise<void> {
     if (this.state.demo) {
-      this.applyLoadedSettings();
+      this.applyLoadedSettings(true);
       return;
     }
     try {
       await loadAllFromStore(gateway);
       if (this.disposed) return;
-      this.applyLoadedSettings();
-      this.settingsSyncTask.start();
+      try {
+        await migrateLegacyGeminiApiKey(gateway);
+      } catch (error) {
+        // Do not make all preferences unavailable because a best-effort secret
+        // cleanup failed. The next real startup retries the migration.
+        console.warn('[Beanie] Legacy scanner key cleanup failed; will retry', error);
+      }
+      this.applyLoadedSettings(true);
     } catch (error) {
-      console.warn('[Beanie] Settings load failed; using defaults', error);
-      if (!this.disposed) this.applyLoadedSettings();
+      console.warn('[Beanie] Settings load failed; keeping the last trustworthy values or defaults', error);
+      // A failed first load has no trustworthy store snapshot. A later failed
+      // reload must not discard a snapshot that was already loaded cleanly.
+      if (!this.disposed) this.applyLoadedSettings(this.state.settingsStoreAvailable);
+    } finally {
+      // Initial failure is recoverable: keep polling instead of making the
+      // fallback defaults sticky for the lifetime of the app.
+      if (!this.disposed) this.settingsSyncTask.start();
     }
   }
 
   /** Re-derive settings-backed state from the in-memory cache and render. */
-  private applyLoadedSettings(): void {
+  private applyLoadedSettings(storeAvailable = this.state.settingsStoreAvailable): void {
     this.setState({
       settingsLoaded: true,
+      settingsStoreAvailable: storeAvailable,
       settingsPreferences: readSettingsPreferences(),
       favoriteProfiles: readFavoriteProfiles(),
       favoriteBeans: readFavoriteBeans(),
@@ -4801,7 +5047,12 @@ export class BeanieApp {
    * and immediately on window focus.
    */
   private async syncFromGateway(): Promise<void> {
-    if (this.presentationActivity.isSuspended || this.disposed) return;
+    if (
+      this.presentationActivity.isSuspended ||
+      this.disposed ||
+      this.state.startupPhase === 'offline-cache' ||
+      this.state.startupPhase === 'retrying'
+    ) return;
     await this.pollSettings();
     await this.resyncWorkflowAndBean();
   }
@@ -4809,9 +5060,20 @@ export class BeanieApp {
   /** Live sync: re-poll the settings store; re-render only if something changed. */
   private async pollSettings(): Promise<void> {
     if (this.state.demo || this.disposed) return;
+    const storeWritePending = () => this.workflowCommands.snapshot.resources.some(
+      (resource) => String(resource.key).startsWith('store:')
+    );
+    if (storeWritePending()) return;
+    const revision = this.settingsStoreMutationRevision;
     try {
-      const changed = await pollFromStore(gateway);
-      if (changed.length > 0 && !this.disposed) this.applyLoadedSettings();
+      const changed = await pollFromStore(
+        gateway,
+        () => revision === this.settingsStoreMutationRevision && !storeWritePending()
+      );
+      if (changed === null) return;
+      if (!this.disposed && (!this.state.settingsStoreAvailable || changed.length > 0)) {
+        this.applyLoadedSettings(true);
+      }
     } catch (error) {
       console.warn('[Beanie] Settings poll failed', error);
     }
@@ -4894,9 +5156,13 @@ export class BeanieApp {
   private syncPresentationActivity(): void {
     const documentHidden =
       typeof document !== 'undefined' && document.visibilityState === 'hidden';
-    const overlayOccludesApp =
-      (this.state.asleep && !this.state.appAwake) || this.state.saverPreview;
-    const suspended = documentHidden || overlayOccludesApp;
+    const suspended = presentationOccluded({
+      asleep: this.state.asleep,
+      appAwake: this.state.appAwake,
+      usesWebSleepControls: this.usesWebSleepControls(),
+      saverPreview: this.state.saverPreview,
+      documentHidden
+    });
     this.presentationActivity.setSuspended(suspended);
     // A chart can be mounted by a later shell morph while the coordinator is
     // already suspended. Reconcile dynamic resources on every bind pass.
@@ -4918,9 +5184,19 @@ export class BeanieApp {
     }
   }
 
-  private dismissStoreError(): void {
-    this.failedStoreWrites.clear();
-    this.setState({ storeError: false });
+  private async dismissStoreError(): Promise<void> {
+    const failedKeys = [...this.failedStoreWrites.keys()];
+    try {
+      await pollFromStore(gateway);
+      if (this.disposed) return;
+      for (const key of failedKeys) this.desiredStoreWrites.delete(key);
+      this.failedStoreWrites.clear();
+      this.applyLoadedSettings(true);
+      this.setState({ storeError: false, status: 'Gateway settings restored' });
+    } catch (error) {
+      console.warn('[Beanie] Could not restore gateway settings', error);
+      this.setState({ status: 'Could not reload gateway settings — retry when connected' });
+    }
   }
 
 
@@ -5131,7 +5407,6 @@ export class BeanieApp {
         await this.machineAction('sleeping');
       },
       'wake': async () => {
-        this.setState({ asleep: false, appAwake: false });
         await this.machineAction('idle');
         if (this.applyAfterWake && !this.machineIsSleeping()) {
           this.applyAfterWake = false;
@@ -5153,11 +5428,14 @@ export class BeanieApp {
 
   private settingsClickActions(): Record<string, ClickActionHandler> {
     return {
+      'retry-startup': async () => {
+        await this.retryStartupConnection();
+      },
       'retry-store-write': () => {
         this.retryFailedStoreWrites();
       },
-      'dismiss-store-error': () => {
-        this.dismissStoreError();
+      'dismiss-store-error': async () => {
+        await this.dismissStoreError();
       },
       'open-settings': () => {
         this.openSettingsPage();
@@ -5189,6 +5467,12 @@ export class BeanieApp {
       'settings-reset-machine': async () => {
         await this.resetMachineSettings();
       },
+      'settings-reload-resources': async () => {
+        this.setState({ settingsSource: 'loading', status: 'Reloading settings…' });
+        this.settingsLoadPromise = null;
+        await this.loadSettings();
+        await this.loadReaSettings();
+      },
       'settings-plugin-config': async ({ id }) => {
         if (id) await this.togglePluginConfig(id);
       },
@@ -5206,6 +5490,10 @@ export class BeanieApp {
           keyDraft: readGeminiApiKey() ?? '',
           verifyMessage: null
         });
+      },
+      'settings-remove-scanner-key': () => {
+        clearGeminiApiKey();
+        this.setState({ status: 'Gemini key removed from this device' });
       },
       'settings-account-login': async () => {
         await this.loginDecentAccount();
@@ -5274,6 +5562,12 @@ export class BeanieApp {
         await this.clearScreensaverPhotos();
       },
       'settings-reset-cache': async () => {
+        if (
+          typeof window.confirm === 'function' &&
+          !window.confirm('Clear downloaded offline data from this device? Synced settings and personal photos will be kept.')
+        ) {
+          return;
+        }
         await this.resetLocalCache();
       },
     };
@@ -5297,7 +5591,9 @@ export class BeanieApp {
         ? this.state.settingsSource
         : this.state.demo
           ? 'demo'
-          : 'loading'
+          : 'loading',
+      settingsResources: this.state.settingsResources
+        ?? (this.state.demo ? settingsResourceStates('demo') : null)
     });
     void this.loadReaSettings();
     void this.loadDecentAccount();
@@ -5310,7 +5606,9 @@ export class BeanieApp {
         ? this.state.settingsSource
         : this.state.demo
           ? 'demo'
-          : 'loading'
+          : 'loading',
+      settingsResources: this.state.settingsResources
+        ?? (this.state.demo ? settingsResourceStates('demo') : null)
     });
     void this.loadReaSettings();
     void this.loadDecentAccount();
@@ -6928,6 +7226,10 @@ export class BeanieApp {
     rinseData: RinseData,
     status: string
   ): Promise<void> {
+    if (!this.state.demo && this.state.startupPhase !== 'connected') {
+      this.setState({ status: 'Machine settings are read-only until live data reconnects' });
+      return;
+    }
     const plan = buildMachineWorkflowPlan({
       workflow: this.state.workflow,
       steamSettings,
@@ -6948,7 +7250,10 @@ export class BeanieApp {
       writeHotWaterWeightTarget: (value) => writeHotWaterWeightTarget(value),
       // This multi-endpoint plan is submitted as one lane command below.
       updateWorkflow: (workflow) => this.updateGatewayWorkflowInOwnedLane(workflow),
-      updateMachineSettings: (patch) => gateway.updateMachineSettings(patch),
+      updateMachineSettings: (patch) => {
+        this.assertLiveMachineAuthority();
+        return gateway.updateMachineSettings(patch);
+      },
       logDirectMachineUpdateFailure: (error) => {
         console.error('[Beanie] Direct machine settings update failed', error);
       }
@@ -7229,7 +7534,9 @@ export class BeanieApp {
     const topbarStats = this.topbarViewModel();
     this.topbarIsland.offer(topbarStats);
     const html = `
-      <div class="app-shell ${renderPhone ? 'app-shell-phone' : isPage ? 'app-shell-page' : ''}">
+      <div class="app-shell ${renderPhone ? 'app-shell-phone' : isPage ? 'app-shell-page' : ''} ${this.hasRuntimeModeBanner() ? 'has-runtime-banner' : ''}">
+        ${this.renderRuntimeModeBanner()}
+        ${this.renderOperationFeedback()}
         ${renderPhone ? this.renderPhoneApp(bean) : isPage ? this.renderPage() : this.renderWorkbench(bean, topbarStats)}
         ${this.renderLivePanel()}
         ${this.renderModal()}
@@ -7303,7 +7610,13 @@ export class BeanieApp {
           this.state.pluginConfig,
           this.decentAccountPanelState(),
           ['app', 'brew', 'machine', 'power', 'account', 'plugins', 'connection', 'danger'],
-          { phone: true, flowCalibration: this.flowCalibrationDisplay() }
+          {
+            phone: true,
+            flowCalibration: this.flowCalibrationDisplay(),
+            resourceStates: this.state.settingsResources,
+            syncedPreferencesWritable: this.state.demo || this.state.settingsStoreAvailable,
+            scannerKeySet: readGeminiApiKey() != null
+          }
         )
       : '';
     return renderPhoneShell({
@@ -7360,6 +7673,7 @@ export class BeanieApp {
         grinderStep: this.grinderStep(),
         ratioLabel: formatRatio(ratioFor(draft.dose, draft.yield)),
         brewTempLabel: brewTemp == null ? '--' : `${brewTemp.toFixed(1)}`,
+        applyState: this.state.applyState,
         derekTweak: this.state.derekTweakChip
           ? {
               summary: this.state.derekTweakChip.summary,
@@ -7702,14 +8016,41 @@ export class BeanieApp {
       <div class="store-error-overlay" role="alertdialog" aria-modal="true" aria-labelledby="store-error-title">
         <div class="store-error-dialog">
           <h2 id="store-error-title">Couldn't save to the machine</h2>
-          <p>${count} ${noun} didn't reach the gateway. Your change is held on this device but isn't synced across your devices.</p>
+          <p>${count} ${noun} didn't reach the gateway. The change is shown temporarily here but is not saved or synced.</p>
           <div class="store-error-actions">
             <button type="button" class="store-error-retry" data-action="retry-store-write">Retry</button>
-            <button type="button" class="store-error-dismiss" data-action="dismiss-store-error">Keep local copy</button>
+            <button type="button" class="store-error-dismiss" data-action="dismiss-store-error">Discard and reload</button>
           </div>
         </div>
       </div>
     `;
+  }
+
+  private renderRuntimeModeBanner(): string {
+    if (!this.hasRuntimeModeBanner()) return '';
+    if (this.state.startupPhase === 'retrying') {
+      return `<div class="runtime-mode-banner retrying" role="status"><strong>Reconnecting…</strong><span>Keeping the current data visible.</span></div>`;
+    }
+    const demo = this.state.startupPhase === 'demo' || this.state.demo;
+    const limited = this.state.startupPhase === 'limited';
+    return `
+      <div class="runtime-mode-banner ${demo ? 'demo' : limited ? 'limited' : 'offline'}" role="status">
+        <strong>${demo ? 'DEMO · sample data' : limited ? 'LIMITED · mixed data' : 'OFFLINE · cached data'}</strong>
+        <span>${demo ? 'Machine actions are simulated and changes are not saved.' : limited ? 'Some resources are cached or unavailable; Beanie is retrying them.' : 'Data may be stale; machine changes can fail until the gateway returns.'}</span>
+        <button type="button" data-action="retry-startup">Retry now</button>
+      </div>`;
+  }
+
+  private hasRuntimeModeBanner(): boolean {
+    return this.state.startupPhase !== 'connected' && this.state.startupPhase !== 'connecting';
+  }
+
+  private renderOperationFeedback(): string {
+    if (Date.now() >= this.statusFeedbackUntilMs) return '';
+    const status = this.state.status.trim();
+    if (!status) return '';
+    const alert = /fail|couldn['’]t|unavailable|error|not sent|reverted/i.test(status);
+    return `<div class="operation-feedback ${alert ? 'alert' : ''}" role="status" aria-live="polite">${escapeHtml(status)}</div>`;
   }
 
   private renderLivePanel(): string {
@@ -7947,7 +8288,12 @@ export class BeanieApp {
         this.state.pluginConfig,
         this.decentAccountPanelState(),
         undefined,
-        { flowCalibration: this.flowCalibrationDisplay() }
+        {
+          flowCalibration: this.flowCalibrationDisplay(),
+          resourceStates: this.state.settingsResources,
+          syncedPreferencesWritable: this.state.demo || this.state.settingsStoreAvailable,
+          scannerKeySet: readGeminiApiKey() != null
+        }
       )}
     `;
   }
@@ -7970,7 +8316,8 @@ export class BeanieApp {
           profileOverride: override,
           selectedShotId: selected?.id ?? null
         },
-        this.state.busy
+        this.state.busy,
+        this.state.demo || (this.state.settingsStoreAvailable && this.settingsResourceWritable('calibration'))
       )}
     `;
   }
@@ -8219,6 +8566,7 @@ export class BeanieApp {
       query: this.state.settingsSearch,
       preferences: this.state.settingsPreferences,
       demo: this.state.demo,
+      connected: this.state.startupPhase === 'connected' && !this.state.gatewayLinkDown,
       loading: this.state.loading,
       status: this.state.status,
       gatewayHost: gatewayHttpOrigin() || location.origin,
@@ -8291,21 +8639,38 @@ export class BeanieApp {
     return grinder?.settingBigStep ?? 1;
   }
 
-  // Load the reaprime-backed settings bundle when the Settings view opens.
-  // Each endpoint falls back to a demo default so a missing machine/battery
-  // never blanks the screen; in demo mode the whole bundle is local.
-  private async loadReaSettings(): Promise<void> {
-    if (this.state.settingsBundle && this.state.settingsSource !== 'loading') return;
-    const result = await this.settingsController.loadSettingsBundle(this.state.demo);
+  // Load the reaprime-backed settings bundle when Settings or a workbench
+  // device action first needs it. Concurrent callers share the same request so
+  // a top-bar Connect tap cannot race the Settings view's provenance load.
+  private loadReaSettings(): Promise<void> {
+    if (
+      this.state.settingsBundle &&
+      (this.state.settingsSource === 'gateway' || this.state.settingsSource === 'demo')
+    ) return Promise.resolve();
+    if (this.settingsBundleLoadPromise) return this.settingsBundleLoadPromise;
+    const load = this.runLoadReaSettings();
+    this.settingsBundleLoadPromise = load;
+    const clearLoad = () => {
+      if (this.settingsBundleLoadPromise === load) this.settingsBundleLoadPromise = null;
+    };
+    void load.then(clearLoad, clearLoad);
+    return load;
+  }
+
+  private async runLoadReaSettings(): Promise<void> {
+    let result: Awaited<ReturnType<typeof this.settingsController.loadSettingsBundle>>;
+    result = await this.settingsController.loadSettingsBundle(this.state.demo);
+    if (this.disposed) return;
     this.setState({
       settingsBundle: result.bundle,
       settingsSource: result.source,
+      settingsResources: result.resources,
       status: result.status ?? this.state.status
     });
     // Ground the per-profile global default from the machine's real calibration
     // the first time we see it, so profiles without an override keep the user's
     // existing calibration instead of being reset to 1.0.
-    if (result.source === 'gateway' && readFlowCalibrationGlobal() == null) {
+    if (result.source === 'gateway' && this.state.settingsStoreAvailable && readFlowCalibrationGlobal() == null) {
       const seed = result.bundle.calibration.flowMultiplier;
       if (typeof seed === 'number' && Number.isFinite(seed) && seed > 0) {
         writeFlowCalibrationGlobal(roundCalibration(seed));
@@ -8322,6 +8687,10 @@ export class BeanieApp {
     return this.state.demo || this.state.settingsSource === 'demo';
   }
 
+  private settingsResourceWritable(resource: SettingsResourceKey): boolean {
+    return this.settingsLocal || settingsResourceWritable(this.state.settingsResources, resource);
+  }
+
   private openFlowCalibrator(): void {
     this.setState({
       view: 'flow-calibrator',
@@ -8331,6 +8700,8 @@ export class BeanieApp {
         : this.state.demo
           ? 'demo'
           : 'loading',
+      settingsResources: this.state.settingsResources
+        ?? (this.state.demo ? settingsResourceStates('demo') : null),
       flowCalDraft: null,
       flowCalBase: null,
       flowCalShotId: null,
@@ -8416,6 +8787,10 @@ export class BeanieApp {
   // profile with its own value is never changed by editing the default.
   private async saveFlowCalibrationGlobal(raw: number): Promise<void> {
     if (!Number.isFinite(raw)) return;
+    if (!this.state.demo && (!this.state.settingsStoreAvailable || !this.settingsResourceWritable('calibration'))) {
+      this.setState({ status: 'Flow calibration is read-only until live settings are available' });
+      return;
+    }
     const value = roundCalibration(clampCalibration(raw));
     writeFlowCalibrationGlobal(value);
     await this.commitCalibrationConfig(value, 'Default flow calibration saved');
@@ -8426,6 +8801,10 @@ export class BeanieApp {
   // the default). The machine re-syncs to the active profile afterwards.
   private async saveFlowCalibrationProfile(raw: number): Promise<void> {
     if (!Number.isFinite(raw)) return;
+    if (!this.state.demo && (!this.state.settingsStoreAvailable || !this.settingsResourceWritable('calibration'))) {
+      this.setState({ status: 'Flow calibration is read-only until live settings are available' });
+      return;
+    }
     const selected = this.flowCalibrationSelectedShot();
     const profileTitle = selected ? shotProfileTitle(selected) : null;
     if (!profileTitle) return;
@@ -8495,6 +8874,7 @@ export class BeanieApp {
   // from what's live — the "changes when that profile is used" behaviour. Called
   // from applyDraft once the workflow (and thus the profile) has been applied.
   private async applyProfileFlowCalibration(profileTitle: string | null): Promise<void> {
+    if (!this.settingsResourceWritable('calibration')) return;
     const resolved = this.resolveProfileFlowCalibration(profileTitle);
     if (resolved == null || resolved === this.currentFlowCalibrationMultiplier()) return;
     const bundle = this.state.settingsBundle ?? demoSettingsBundle();
@@ -8511,6 +8891,10 @@ export class BeanieApp {
   }
 
   private async scanDevices(): Promise<void> {
+    if (!this.settingsResourceWritable('devices')) {
+      this.setState({ status: 'Device list is unavailable — reconnect and reload Settings' });
+      return;
+    }
     this.setState({ status: 'Scanning for devices…' });
     const result = await this.settingsController.scanDevices(this.settingsLocal);
     if (result.devices) this.patchBundle({ devices: result.devices });
@@ -8518,6 +8902,17 @@ export class BeanieApp {
   }
 
   private async connectPreferredDevices(): Promise<void> {
+    // The workbench exposes this action before Settings has necessarily opened.
+    // Load endpoint provenance on demand so a live gateway is not rejected just
+    // because the settings bundle has not yet been inspected this session.
+    if (!this.settingsLocal && this.state.settingsResources == null) {
+      this.setState({ status: 'Loading device settings…' });
+      await this.loadReaSettings();
+    }
+    if (!this.settingsResourceWritable('devices') || !this.settingsResourceWritable('rea')) {
+      this.setState({ status: 'Preferred devices are unavailable — reconnect and reload Settings' });
+      return;
+    }
     this.setState({ status: 'Searching for preferred devices…' });
     const result = await this.settingsController.connectPreferredDevices({
       local: this.settingsLocal,
@@ -8556,6 +8951,10 @@ export class BeanieApp {
 
   private async connectDevice(id: string, connect: boolean): Promise<void> {
     if (!id) return;
+    if (!this.settingsResourceWritable('devices')) {
+      this.setState({ status: 'Device list is unavailable — no change was sent' });
+      return;
+    }
     this.setState({ status: connect ? 'Connecting…' : 'Disconnecting…' });
     const result = await this.settingsController.connectDevice({
       id,
@@ -8570,7 +8969,12 @@ export class BeanieApp {
   private async setDisplayBrightness(raw: string): Promise<void> {
     const parsed = parseNumberInput(raw);
     if (parsed == null) return;
+    if (!this.settingsResourceWritable('display')) {
+      this.setState({ status: 'Display settings are unavailable — no change was sent' });
+      return;
+    }
     const brightness = Math.max(0, Math.min(100, Math.round(parsed)));
+    const mutation = this.beginSettingsMutation('display');
     const current = this.state.settingsBundle?.display ?? demoSettingsBundle().display;
     this.patchBundle({
       display: {
@@ -8589,16 +8993,23 @@ export class BeanieApp {
     try {
       const display = await this.setGatewayBrightnessLatest(brightness);
       if (!display) return;
+      if (!this.isCurrentSettingsMutation('display', mutation)) return;
       this.patchBundle({ display });
       this.setState({ status: 'Brightness saved' });
     } catch (error) {
       console.error('[Beanie] Display brightness change failed', error);
+      if (!this.isCurrentSettingsMutation('display', mutation)) return;
+      this.patchBundle({ display: current });
       await this.refreshDisplayStateSilently();
-      this.setState({ status: 'Brightness save failed' });
+      this.setState({ status: 'Brightness save failed — change reverted' });
     }
   }
 
   private async requestMachineState(state: string): Promise<void> {
+    if (!this.hasLiveMachineAuthority()) {
+      this.setState({ status: 'Machine controls are read-only until live data reconnects' });
+      return;
+    }
     const result = await this.settingsController.requestMachineState({ state, local: this.settingsLocal });
     if (this.disposed) return;
     this.setState({ status: result.status });
@@ -8629,6 +9040,10 @@ export class BeanieApp {
   }
 
   private async addWakeSchedule(time: string): Promise<void> {
+    if (!this.settingsResourceWritable('schedules')) {
+      this.setState({ status: 'Wake schedules are unavailable — reconnect and reload Settings' });
+      return;
+    }
     const result = await this.settingsController.addWakeSchedule({
       time,
       local: this.settingsLocal,
@@ -8639,21 +9054,54 @@ export class BeanieApp {
   }
 
   private async deleteWakeSchedule(id: string): Promise<void> {
-    const remaining = (this.state.settingsBundle?.schedules ?? []).filter((s) => s.id !== id);
+    if (!this.settingsResourceWritable('schedules')) {
+      this.setState({ status: 'Wake schedules are unavailable — no change was sent' });
+      return;
+    }
+    const previous = this.state.settingsBundle?.schedules ?? [];
+    const deleted = previous.find((schedule) => schedule.id === id) ?? null;
+    const deletedIndex = previous.findIndex((schedule) => schedule.id === id);
+    const mutationKey = `schedule:${id}`;
+    const mutation = this.beginSettingsMutation(mutationKey);
+    const remaining = previous.filter((s) => s.id !== id);
     this.patchBundle({ schedules: remaining });
     const result = await this.settingsController.deleteWakeSchedule({ id, local: this.settingsLocal });
+    if (!this.isCurrentSettingsMutation(mutationKey, mutation)) return;
+    if (!result.ok && deleted) {
+      const current = this.state.settingsBundle?.schedules ?? [];
+      if (!current.some((schedule) => schedule.id === id)) {
+        const restored = [...current];
+        restored.splice(Math.max(0, Math.min(deletedIndex, restored.length)), 0, deleted);
+        this.patchBundle({ schedules: restored });
+      }
+    }
     if (result.status) this.setState({ status: result.status });
   }
 
   private async toggleWakeSchedule(id: string, enabled: boolean): Promise<void> {
-    const schedules = (this.state.settingsBundle?.schedules ?? []).map((s) =>
+    if (!this.settingsResourceWritable('schedules')) {
+      this.setState({ status: 'Wake schedules are unavailable — no change was sent' });
+      return;
+    }
+    const previous = this.state.settingsBundle?.schedules ?? [];
+    const previousSchedule = previous.find((schedule) => schedule.id === id) ?? null;
+    const mutationKey = `schedule:${id}`;
+    const mutation = this.beginSettingsMutation(mutationKey);
+    const schedules = previous.map((s) =>
       s.id === id ? { ...s, enabled } : s
     );
     this.patchBundle({ schedules });
     try {
       await this.settingsController.toggleWakeSchedule({ id, enabled, local: this.settingsLocal });
     } catch {
-      this.setState({ status: 'Could not update schedule' });
+      if (!this.isCurrentSettingsMutation(mutationKey, mutation)) return;
+      if (previousSchedule) {
+        const current = this.state.settingsBundle?.schedules ?? [];
+        this.patchBundle({
+          schedules: current.map((schedule) => schedule.id === id ? { ...schedule, enabled: previousSchedule.enabled } : schedule)
+        });
+      }
+      this.setState({ status: 'Could not update schedule — change reverted' });
     }
   }
 
@@ -8761,17 +9209,35 @@ export class BeanieApp {
   }
 
   private async togglePlugin(id: string, enable: boolean): Promise<void> {
-    const plugins = (this.state.settingsBundle?.plugins ?? []).map((p) =>
+    if (!this.settingsResourceWritable('plugins')) {
+      this.setState({ status: 'Plugin status is unavailable — no change was sent' });
+      return;
+    }
+    const previous = this.state.settingsBundle?.plugins ?? [];
+    const previousPlugin = previous.find((plugin) => plugin.id === id) ?? null;
+    const mutationKey = `plugin-toggle:${id}`;
+    const mutation = this.beginSettingsMutation(mutationKey);
+    const plugins = previous.map((p) =>
       p.id === id ? { ...p, loaded: enable } : p
     );
     this.patchBundle({ plugins });
     if (this.settingsLocal) return;
     try {
-      await (enable ? gateway.enablePlugin(id) : gateway.disablePlugin(id));
+      await this.runExactCommand(`plugin:${id}`, () =>
+        enable ? gateway.enablePlugin(id) : gateway.disablePlugin(id)
+      );
+      if (!this.isCurrentSettingsMutation(mutationKey, mutation)) return;
       this.setState({ status: enable ? 'Plugin enabled' : 'Plugin disabled' });
     } catch (error) {
       console.error('[Beanie] Plugin toggle failed', error);
-      this.setState({ status: 'Plugin change failed' });
+      if (!this.isCurrentSettingsMutation(mutationKey, mutation)) return;
+      if (previousPlugin) {
+        const current = this.state.settingsBundle?.plugins ?? [];
+        this.patchBundle({
+          plugins: current.map((plugin) => plugin.id === id ? { ...plugin, loaded: previousPlugin.loaded } : plugin)
+        });
+      }
+      this.setState({ status: 'Plugin change failed — change reverted' });
     }
   }
 
@@ -8781,8 +9247,16 @@ export class BeanieApp {
       return;
     }
     if (!pluginSettingsSpec(id)) return;
-    const settings = await this.settingsController.loadPluginSettings({ local: this.settingsLocal, id });
-    this.setState({ pluginConfig: this.makePluginConfig(id, settings) });
+    if (!this.settingsResourceWritable('plugins')) {
+      this.setState({ status: 'Plugin settings are unavailable — reconnect and try again' });
+      return;
+    }
+    const result = await this.settingsController.loadPluginSettings({ local: this.settingsLocal, id });
+    if (!result.settings) {
+      this.setState({ pluginConfig: null, status: 'Plugin settings could not be loaded — nothing was changed' });
+      return;
+    }
+    this.setState({ pluginConfig: this.makePluginConfig(id, result.settings) });
   }
 
   private makePluginConfig(id: string, settings: PluginSettings): PluginConfigState {
@@ -8797,6 +9271,10 @@ export class BeanieApp {
   private updatePluginField(key: string, raw: string | boolean): void {
     const config = this.state.pluginConfig;
     if (!config) return;
+    if (!this.settingsResourceWritable('plugins')) {
+      this.setState({ status: 'Plugin settings are unavailable — no change was made' });
+      return;
+    }
     const field = pluginSettingsSpec(config.id)?.fields.find((candidate) => candidate.key === key);
     if (!field) return;
     let value: string | number | boolean;
@@ -8816,6 +9294,10 @@ export class BeanieApp {
   private async savePluginConfig(id: string): Promise<void> {
     const config = this.state.pluginConfig;
     if (!config || normalizePluginId(config.id) !== normalizePluginId(id)) return;
+    if (!this.settingsResourceWritable('plugins')) {
+      this.setState({ status: 'Plugin settings are unavailable — nothing was saved' });
+      return;
+    }
     const pluginId = config.id;
     const spec = pluginSettingsSpec(pluginId);
     if (!spec) return;
@@ -8863,6 +9345,10 @@ export class BeanieApp {
   private async verifyPluginConfig(id: string): Promise<void> {
     const config = this.state.pluginConfig;
     if (!config || normalizePluginId(config.id) !== normalizePluginId(id)) return;
+    if (!this.settingsResourceWritable('plugins')) {
+      this.setState({ status: 'Plugin settings are unavailable — verification was not sent' });
+      return;
+    }
     const pluginId = config.id;
     if (config.dirty) {
       this.setState({ pluginConfig: { ...config, verify: { tone: 'warn', message: 'Save your changes before verifying.' } } });
@@ -8886,14 +9372,26 @@ export class BeanieApp {
       (candidate) => candidate.group === group && candidate.key === key
     );
     if (!field) return;
+    if (!this.settingsResourceWritable(field.group)) {
+      this.setState({ status: `${field.label} is unavailable — reconnect and reload Settings` });
+      return;
+    }
     const value = coerceFieldValue(field, raw);
+    const previousValue = fieldValue(bundle, field);
+    const mutationKey = `field:${field.group}:${key}`;
+    const mutation = this.beginSettingsMutation(mutationKey);
     this.setState({ settingsBundle: setBundleField(bundle, field, value), status: 'Setting updated' });
     if (this.settingsLocal) return; // local-only without a gateway
     try {
       await this.persistSetting(field.group, key, value);
     } catch (error) {
       console.error('[Beanie] Update setting failed', error);
-      this.setState({ status: 'Setting update failed' });
+      if (!this.isCurrentSettingsMutation(mutationKey, mutation)) return;
+      const current = this.state.settingsBundle;
+      this.setState({
+        settingsBundle: current ? setBundleField(current, field, previousValue) : current,
+        status: 'Setting update failed — change reverted'
+      });
     }
   }
 
@@ -8938,9 +9436,23 @@ export class BeanieApp {
     return this.settingsController.persistSetting(group, key, value);
   }
 
+  private beginSettingsMutation(key: string): number {
+    const revision = (this.settingsMutationRevisions.get(key) ?? 0) + 1;
+    this.settingsMutationRevisions.set(key, revision);
+    return revision;
+  }
+
+  private isCurrentSettingsMutation(key: string, revision: number): boolean {
+    return this.settingsMutationRevisions.get(key) === revision;
+  }
+
   private async resetMachineSettings(): Promise<void> {
     const bundle = this.state.settingsBundle;
     if (!bundle) return;
+    if (!(['de1', 'advanced', 'calibration'] as const).every((key) => this.settingsResourceWritable(key))) {
+      this.setState({ status: 'Machine settings are unavailable — reset was not sent' });
+      return;
+    }
     try {
       const result = await this.settingsController.resetMachineSettings({
         local: this.state.demo || this.state.settingsSource === 'demo',
@@ -8953,10 +9465,15 @@ export class BeanieApp {
   }
 
   private updateSettingsPreferences(next: Partial<SettingsPreferences>): void {
+    const changesSyncedPreference = Object.keys(next).some((key) => key !== 'theme');
+    if (changesSyncedPreference && !this.state.demo && !this.state.settingsStoreAvailable) {
+      this.setState({ status: 'Synced preferences are unavailable — no change was saved' });
+      return;
+    }
     const themeChanged = next.theme != null && next.theme !== this.state.settingsPreferences.theme;
     const scaleChanged = next.uiScale != null && next.uiScale !== this.state.settingsPreferences.uiScale;
     const settingsPreferences = { ...this.state.settingsPreferences, ...next };
-    writeSettingsPreferences(settingsPreferences);
+    writeSettingsPreferencePatch(next);
     applySettingsPreferences(settingsPreferences);
     this.setState({
       settingsPreferences,
@@ -8973,20 +9490,30 @@ export class BeanieApp {
   }
 
   private async resetLocalCache(): Promise<void> {
-    const cleared = resetBeanieCache();
     await beanieCache.clear();
-    // The cache reset targets synced/demo data; the user's screensaver photos
-    // are device content, so put them back.
+    // Device cache cleanup must never mutate gateway-backed preferences or
+    // credentials. The user's screensaver photos are device content too, so
+    // restore them after clearing downloaded offline snapshots.
     if (this.state.screensaverPhotos.length > 0) {
       await beanieCache.putObject(SCREENSAVER_PHOTOS_CACHE_KEY, this.state.screensaverPhotos);
     }
-    this.setState({
-      status: cleared === 0 ? 'Cache reset' : `Reset ${cleared} local item${cleared === 1 ? '' : 's'}`
-    });
+    this.setState({ status: 'Device cache cleared — synced settings were kept' });
   }
 
   private setState(next: Partial<AppState>): void {
     if (this.disposed) return;
+    if (typeof next.status === 'string' && next.status !== this.state.status) {
+      const status = next.status.trim();
+      const structural = /^(Starting|Loading|Connected|Offline|DEMO)/.test(status);
+      if (!structural) {
+        this.statusFeedbackUntilMs = Date.now() + 4_000;
+        if (this.statusFeedbackTimer != null) window.clearTimeout(this.statusFeedbackTimer);
+        this.statusFeedbackTimer = window.setTimeout(() => {
+          this.statusFeedbackTimer = null;
+          if (!this.disposed) this.render();
+        }, 4_050);
+      }
+    }
     this.state = { ...this.state, ...next };
     this.render();
   }

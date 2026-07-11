@@ -1,6 +1,7 @@
 import {
   isWakeAppZonePosition,
   readSettingsPreferences,
+  writeSettingsPreferencePatch,
   writeSettingsPreferences
 } from '../domain/settings';
 import { clearSyncedCache, setStorePushHandler } from '../domain/settingsStore';
@@ -52,6 +53,22 @@ await run('clock and screensaver preferences default sensibly and round-trip', (
   equal(next.clockFormat, '24h');
   equal(next.screensaverMode, 'photos-clock');
   equal(next.screensaverBrightness, 60);
+});
+
+await run('preference patches push only the synced field that changed', () => {
+  clearSyncedCache();
+  const pushes: Array<[string, string | null]> = [];
+  setStorePushHandler((key, value) => {
+    pushes.push([key, value]);
+  });
+
+  writeSettingsPreferencePatch({ theme: 'dark' });
+  equal(pushes.length, 0);
+
+  writeSettingsPreferencePatch({ uiScale: 'large' });
+  equal(pushes.length, 1);
+  equal(pushes[0]![0], 'beanie.settings.ui-scale');
+  equal(pushes[0]![1], 'large');
 });
 
 await run('isWakeAppZonePosition accepts the four edges and rejects others', () => {

@@ -176,7 +176,7 @@ export class ScannerFlow {
   async openLabelScanner(options: { fromHandoff?: boolean } = {}): Promise<void> {
     this.cancelScannerWork();
     const session = this.scannerSession;
-    // The Gemini key lives in the store; make sure settings have loaded.
+    // Wait for startup so the one-time legacy gateway-key migration has run.
     await this.host.loadSettings();
     if (!this.scannerSessionCurrent(session)) return;
     const hasKey = readGeminiApiKey() != null;
@@ -424,7 +424,7 @@ export class ScannerFlow {
       this.setScanner({ verifyMessage: { tone: 'warn', text: 'Enter your API key first.' } });
       return;
     }
-    // writeGeminiApiKey is a synced write — it pushes to the store itself.
+    // Credentials are device-local and never enter the synced settings store.
     writeGeminiApiKey(key);
     this.setScanner({ step: 'capture', keyDraft: '', verifyMessage: null });
   }

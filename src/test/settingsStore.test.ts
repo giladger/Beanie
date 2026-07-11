@@ -1,6 +1,5 @@
 import {
   clearSyncedCache,
-  geminiApiKeyKey,
   getSyncedItem,
   loadAllFromStore,
   pollFromStore,
@@ -18,7 +17,9 @@ const pushes: Array<[string, string | null]> = [];
 function resetEnv(): void {
   clearSyncedCache();
   pushes.length = 0;
-  setStorePushHandler((key, value) => pushes.push([key, value]));
+  setStorePushHandler((key, value) => {
+    pushes.push([key, value]);
+  });
 }
 
 class FakeGateway implements SettingsStoreGateway {
@@ -53,6 +54,17 @@ class FakeBulkGateway implements SettingsStoreGateway {
   }
 }
 
+class FailingGateway extends FakeGateway {
+  constructor(private readonly failingKey: string) {
+    super();
+  }
+
+  override async storeGet(namespace: string, key: string): Promise<unknown> {
+    if (key === this.failingKey) throw new Error('store unavailable');
+    return super.storeGet(namespace, key);
+  }
+}
+
 await run('setSyncedItem caches the value and pushes it', () => {
   resetEnv();
   setSyncedItem(uiScaleKey, 'large');
@@ -70,14 +82,6 @@ await run('removeSyncedItem clears the cache and pushes null', () => {
   equal(getSyncedItem(uiScaleKey), null);
   equal(pushes.length, 1);
   equal(pushes[0]![1], null);
-});
-
-await run('the Gemini key pushes under its legacy store key', () => {
-  resetEnv();
-  setSyncedItem(geminiApiKeyKey, 'abc');
-  equal(getSyncedItem(geminiApiKeyKey), 'abc');
-  equal(pushes[0]![0], 'geminiApiKey');
-  equal(pushes[0]![1], 'abc');
 });
 
 await run('a non-synced key caches but never pushes', () => {
@@ -102,6 +106,15 @@ await run('no pushes once the handler is detached', () => {
   equal(pushes.length, 0);
 });
 
+await run('a rejected push leaves the authoritative cache untouched', () => {
+  resetEnv();
+  setSyncedItem(uiScaleKey, 'large');
+  setStorePushHandler(() => false);
+  const accepted = setSyncedItem(uiScaleKey, 'compact');
+  equal(accepted, false);
+  equal(getSyncedItem(uiScaleKey), 'large');
+});
+
 await run('a domain writer pushes through setSyncedItem', () => {
   resetEnv();
   writeFlowCalibrationGlobal(1.2);
@@ -118,15 +131,26 @@ await run('loadAllFromStore fills the cache from the store', async () => {
   equal(getSyncedItem(uiScaleKey), 'large');
 });
 
+await run('a failed settings load leaves the prior cache intact', async () => {
+  resetEnv();
+  setSyncedItem(uiScaleKey, 'large');
+  const gateway = new FailingGateway('beanie.settings.water-soft-ml');
+  gateway.gets.set(uiScaleKey, 'compact');
+  await rejects(() => loadAllFromStore(gateway));
+  equal(getSyncedItem(uiScaleKey), 'large');
+});
+
 await run('loadAllFromStore seeds the store from a legacy localStorage value', async () => {
   resetEnv();
   // Pre-migration devices stored under the OLD colon key name.
-  installFakeLocalStorage(new Map([['beanie:settings:ui-scale', 'compact']]));
+  const legacy = new Map([['beanie:settings:ui-scale', 'compact']]);
+  installFakeLocalStorage(legacy);
   const gateway = new FakeGateway(); // store empty
   await loadAllFromStore(gateway);
   // Legacy value adopted into the cache (under the new key) and pushed up.
   equal(getSyncedItem(uiScaleKey), 'compact');
   equal(gateway.sets.some(([key, value]) => key === uiScaleKey && value === 'compact'), true);
+  equal(legacy.has('beanie:settings:ui-scale'), false);
   uninstallFakeLocalStorage();
 });
 
@@ -150,13 +174,22 @@ await run('pollFromStore reports nothing when the store matches the cache', asyn
   equal(changed.length, 0);
 });
 
+await run('a failed settings poll applies no partial remote values', async () => {
+  resetEnv();
+  setSyncedItem(uiScaleKey, 'large');
+  const gateway = new FailingGateway('beanie.settings.water-soft-ml');
+  gateway.gets.set(uiScaleKey, 'compact');
+  await rejects(() => pollFromStore(gateway));
+  equal(getSyncedItem(uiScaleKey), 'large');
+});
+
 await run('loadAllFromStore uses the bulk endpoint and skips per-key gets', async () => {
   resetEnv();
-  const gateway = new FakeBulkGateway({ [uiScaleKey]: 'large', geminiApiKey: 'abc' });
+  const gateway = new FakeBulkGateway({ [uiScaleKey]: 'large', geminiApiKey: 'legacy-secret' });
   await loadAllFromStore(gateway);
   equal(getSyncedItem(uiScaleKey), 'large');
-  // The Gemini key is read from the bulk map under its legacy store key.
-  equal(getSyncedItem(geminiApiKeyKey), 'abc');
+  // Credentials are intentionally ignored by the synced settings cache.
+  equal(getSyncedItem('beanie.gemini-api-key'), null);
   equal(gateway.storeGetCalls, 0);
 });
 
@@ -177,7 +210,10 @@ function installFakeLocalStorage(values: Map<string, string>): void {
   Object.defineProperty(globalThis, 'localStorage', {
     configurable: true,
     writable: true,
-    value: { getItem: (key: string) => values.get(key) ?? null }
+    value: {
+      getItem: (key: string) => values.get(key) ?? null,
+      removeItem: (key: string) => values.delete(key)
+    }
   });
 }
 
@@ -199,4 +235,13 @@ function equal<T>(actual: T, expected: T): void {
   if (actual !== expected) {
     throw new Error(`Expected ${String(expected)}, received ${String(actual)}`);
   }
+}
+
+async function rejects(fn: () => Promise<unknown>): Promise<void> {
+  try {
+    await fn();
+  } catch {
+    return;
+  }
+  throw new Error('Expected promise to reject');
 }

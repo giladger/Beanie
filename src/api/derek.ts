@@ -62,6 +62,22 @@ export class DerekStallError extends Error {
   }
 }
 
+/** The request stayed active but exceeded the absolute end-to-end budget. */
+export class DerekDeadlineError extends DerekRequestError {
+  constructor() {
+    super(0, 'Derek took too long to finish the answer');
+    this.name = 'DerekDeadlineError';
+  }
+}
+
+/** A malformed or unexpectedly large relay response crossed a memory bound. */
+export class DerekResponseLimitError extends DerekRequestError {
+  constructor(message = "Derek's answer was larger than Beanie can safely display") {
+    super(0, message);
+    this.name = 'DerekResponseLimitError';
+  }
+}
+
 // Raw `event:`/`data:` pair as it appears on the wire.
 export interface SseMessage {
   event: string;
@@ -73,8 +89,16 @@ export interface SseMessage {
 // yields complete messages. Handles CRLF, multi-line `data:` (joined with
 // newlines per the SSE spec), and ignores comment lines and fields we don't
 // use (`id:`, `retry:`).
-export function createSseDecoder(): { push(chunk: string): SseMessage[] } {
+export interface SseDecoderOptions {
+  /** Maximum characters retained for one incomplete SSE event. */
+  maxBufferChars?: number;
+}
+
+const DEFAULT_MAX_EVENT_CHARS = 256 * 1024;
+
+export function createSseDecoder(options: SseDecoderOptions = {}): { push(chunk: string): SseMessage[] } {
   let buffer = '';
+  const maxBufferChars = positiveLimit(options.maxBufferChars, DEFAULT_MAX_EVENT_CHARS);
   return {
     push(chunk: string): SseMessage[] {
       buffer += chunk;
@@ -84,11 +108,17 @@ export function createSseDecoder(): { push(chunk: string): SseMessage[] } {
       buffer = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
       let boundary = buffer.indexOf('\n\n');
       while (boundary !== -1) {
+        if (boundary > maxBufferChars) {
+          throw new DerekResponseLimitError('Derek returned an oversized streaming event');
+        }
         const block = buffer.slice(0, boundary);
         buffer = buffer.slice(boundary + 2);
         const message = readSseBlock(block);
         if (message) messages.push(message);
         boundary = buffer.indexOf('\n\n');
+      }
+      if (buffer.length > maxBufferChars) {
+        throw new DerekResponseLimitError('Derek returned an oversized streaming event');
       }
       return messages;
     }
@@ -189,21 +219,27 @@ export type DerekRelayAvailability = 'available' | 'missing' | 'unknown';
 // failure is inconclusive — the gateway may just be rebooting — so the caller
 // should keep the feature visible and let a real ask surface the error.
 export async function probeDerekRelay(
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: typeof fetch = fetch,
+  timeoutMs = 10_000
 ): Promise<DerekRelayAvailability> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetchImpl(
       `${gatewayHttpOrigin()}/api/v1/derek/answers/stream`,
       withSkinProxyToken({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: '{}'
+        body: '{}',
+        signal: controller.signal
       })
     );
     void response.body?.cancel().catch(() => {});
     return response.status === 404 ? 'missing' : 'available';
   } catch {
     return 'unknown';
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -217,11 +253,19 @@ export interface StreamDerekOptions {
    * would kill every answer.
    */
   stallMs?: number;
+  /** Absolute end-to-end budget, even while the relay keeps emitting events. */
+  totalMs?: number;
+  /** Maximum characters retained for one incomplete SSE event. */
+  maxEventChars?: number;
+  /** Maximum cumulative streamed answer characters and final answer length. */
+  maxAnswerChars?: number;
   /** Injectable for tests. */
   fetchImpl?: typeof fetch;
 }
 
 const DEFAULT_STALL_MS = 45000;
+const DEFAULT_TOTAL_MS = 3 * 60 * 1000;
+const DEFAULT_MAX_ANSWER_CHARS = 100 * 1024;
 
 // Ask Derek a question and stream the answer. Resolves with the final result,
 // or null when the stream ended cleanly without one (treat as interrupted).
@@ -231,14 +275,19 @@ export async function streamDerekAnswer(
   options: StreamDerekOptions
 ): Promise<DerekResult | null> {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const stallMs = options.stallMs ?? DEFAULT_STALL_MS;
+  const stallMs = positiveLimit(options.stallMs, DEFAULT_STALL_MS);
+  const totalMs = positiveLimit(options.totalMs, DEFAULT_TOTAL_MS);
+  const maxAnswerChars = positiveLimit(options.maxAnswerChars, DEFAULT_MAX_ANSWER_CHARS);
 
-  // One internal controller aborts the fetch for both cancel reasons; `stalled`
-  // disambiguates ours from the caller's.
+  // One internal controller aborts the fetch for every stop reason. The flags
+  // disambiguate our two deadlines from caller cancellation, whose original
+  // rejection remains untouched.
   const controller = new AbortController();
   let stalled = false;
-  const onCallerAbort = () => controller.abort();
-  options.signal?.addEventListener('abort', onCallerAbort, { once: true });
+  let deadlineExceeded = false;
+  const onCallerAbort = () => controller.abort(options.signal?.reason);
+  if (options.signal?.aborted) onCallerAbort();
+  else options.signal?.addEventListener('abort', onCallerAbort, { once: true });
 
   let stallTimer: ReturnType<typeof setTimeout> | null = null;
   const armStallTimer = () => {
@@ -248,28 +297,26 @@ export async function streamDerekAnswer(
       controller.abort();
     }, stallMs);
   };
+  const deadlineTimer = setTimeout(() => {
+    deadlineExceeded = true;
+    controller.abort();
+  }, totalMs);
 
   try {
-    let response: Response;
     armStallTimer();
-    try {
-      response = await fetchImpl(
-        `${gatewayHttpOrigin()}/api/v1/derek/answers/stream`,
-        withSkinProxyToken({
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-          signal: controller.signal
-        })
-      );
-    } catch (cause) {
-      if (stalled) throw new DerekStallError();
-      throw cause;
-    }
+    const response = await fetchImpl(
+      `${gatewayHttpOrigin()}/api/v1/derek/answers/stream`,
+      withSkinProxyToken({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      })
+    );
 
     if (response.status === 404) throw new DerekUnavailableError();
     if (!response.ok) {
-      const detail = await response.text().catch(() => '');
+      const detail = await response.text();
       throw new DerekRequestError(
         response.status,
         detail ? `Derek returned ${response.status}: ${detail.slice(0, 300)}` : `Derek returned ${response.status}`
@@ -279,29 +326,46 @@ export async function streamDerekAnswer(
 
     const reader = response.body.getReader();
     const textDecoder = new TextDecoder();
-    const sse = createSseDecoder();
+    const sse = createSseDecoder({ maxBufferChars: options.maxEventChars });
     let result: DerekResult | null = null;
+    let streamedAnswerChars = 0;
 
     for (;;) {
-      let read: ReadableStreamReadResult<Uint8Array>;
-      try {
-        read = await reader.read();
-      } catch (cause) {
-        if (stalled) throw new DerekStallError();
-        throw cause;
-      }
+      const read = await reader.read();
       if (read.done) break;
-      armStallTimer();
       for (const message of sse.push(textDecoder.decode(read.value, { stream: true }))) {
+        // A complete relay event, including a future event we do not yet
+        // understand, proves the stream is making semantic progress. Raw bytes
+        // alone do not: an attacker cannot drip-feed one unbounded event.
+        armStallTimer();
         const event = readDerekEvent(message);
         if (!event) continue;
+        if (event.type === 'delta') {
+          streamedAnswerChars += event.text.length;
+          if (streamedAnswerChars > maxAnswerChars) throw new DerekResponseLimitError();
+        } else if (event.type === 'result' && event.result.answerText.length > maxAnswerChars) {
+          throw new DerekResponseLimitError();
+        }
         options.onEvent(event);
         if (event.type === 'result') result = event.result;
       }
     }
     return result;
+  } catch (cause) {
+    // Locally detected protocol/consumer failures must also tear down the
+    // network stream instead of leaving an unread response alive in the
+    // background. Timer/caller aborts have already done so.
+    if (!controller.signal.aborted) controller.abort();
+    if (deadlineExceeded) throw new DerekDeadlineError();
+    if (stalled) throw new DerekStallError();
+    throw cause;
   } finally {
     if (stallTimer != null) clearTimeout(stallTimer);
+    clearTimeout(deadlineTimer);
     options.signal?.removeEventListener('abort', onCallerAbort);
   }
+}
+
+function positiveLimit(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
 }

@@ -12,8 +12,12 @@ main();
 
 function main() {
   assertGitRepo();
-  if (!dryRun && !allowDirty) assertCleanWorktree();
+  if (!dryRun) {
+    if (allowDirty) assertNoTrackedChanges();
+    else assertCleanWorktree();
+  }
   fetchTags(remote);
+  assertReleaseBranch(remote);
 
   const tags = semverTags();
   const latest = tags.at(-1) ?? null;
@@ -37,18 +41,66 @@ function main() {
 
   if (dryRun) {
     console.log(`ok - would bump project version to ${next.slice(1)}`);
+    console.log('ok - would validate release notes, tests, build, and manifests');
     console.log(`ok - would commit, tag, and push ${next}${latest ? ` from ${latest.tag}` : ''}`);
     return;
   }
 
   const nextVersion = next.slice(1);
-  updateProjectVersion(nextVersion);
+  assertReleaseNotes(next);
+
+  const versionFiles = ['package.json', 'package-lock.json', 'public/manifest.json'];
+  const originals = new Map(versionFiles.map((filePath) => [filePath, readFileSync(filePath, 'utf8')]));
+
+  try {
+    updateProjectVersion(nextVersion);
+    validateRelease();
+  } catch (error) {
+    restoreFiles(originals);
+    fail(`Release validation failed; restored version files. ${commandError(error)}`);
+  }
+
   git(['add', 'package.json', 'package-lock.json', 'public/manifest.json']);
   git(['commit', '-m', `Release ${next}`]);
   git(['tag', '-a', next, '-m', `Release ${next}`]);
-  git(['push', remote, 'HEAD']);
-  git(['push', remote, next]);
+  git(['push', '--atomic', remote, 'HEAD', next]);
   console.log(`ok - bumped project version, committed, tagged, and pushed ${next}`);
+}
+
+function assertReleaseNotes(tag) {
+  const changelog = readFileSync('CHANGELOG.md', 'utf8');
+  const heading = new RegExp(`^##\\s+${escapeRegExp(tag)}(?:\\s+-\\s+.*)?\\s*$`, 'm');
+  const match = heading.exec(changelog);
+  if (!match) fail(`No CHANGELOG.md section found for ${tag}.`);
+
+  const bodyStart = match.index + match[0].length;
+  const rest = changelog.slice(bodyStart);
+  const nextHeading = rest.search(/^##\s+/m);
+  const notes = (nextHeading === -1 ? rest : rest.slice(0, nextHeading)).trim();
+  if (!notes) fail(`CHANGELOG.md section for ${tag} is empty.`);
+}
+
+function validateRelease() {
+  run('npm', ['test']);
+  run('npm', ['run', 'test:browser']);
+  run('npm', ['run', 'build']);
+  run('npm', ['run', 'validate:manifest']);
+}
+
+function run(command, args) {
+  execFileSync(command, args, { stdio: 'inherit' });
+}
+
+function restoreFiles(files) {
+  for (const [filePath, contents] of files) writeFileSync(filePath, contents);
+}
+
+function commandError(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function optionValue(name) {
@@ -94,8 +146,24 @@ function assertCleanWorktree() {
   }
 }
 
+function assertNoTrackedChanges() {
+  const status = git(['status', '--porcelain', '--untracked-files=no'], { silent: true });
+  if (status.trim() !== '') {
+    fail('--allow-dirty permits untracked files only. Commit or stash tracked changes before releasing.');
+  }
+}
+
 function fetchTags(remoteName) {
-  git(['fetch', remoteName, '--tags']);
+  git(['fetch', remoteName, '--tags', 'main']);
+}
+
+function assertReleaseBranch(remoteName) {
+  const branch = git(['branch', '--show-current'], { silent: true }).trim();
+  if (branch !== 'main') fail(`Releases must be created from main, not ${branch || 'detached HEAD'}.`);
+  const behind = Number(git(['rev-list', '--count', `HEAD..${remoteName}/main`], { silent: true }).trim());
+  if (!Number.isFinite(behind) || behind !== 0) {
+    fail(`Local main is behind or diverged from ${remoteName}/main. Update it before releasing.`);
+  }
 }
 
 function semverTags() {

@@ -1,4 +1,5 @@
 import { BeanieApp } from './app';
+import { renderBootstrapFailure } from './render/bootstrapFailure';
 import './styles.css';
 
 declare global {
@@ -38,4 +39,8 @@ async function bootstrap(): Promise<void> {
 
 void bootstrap().catch((error) => {
   console.error('[Beanie] Bootstrap failed', error);
+  renderBootstrapFailure(root, error);
+  root.querySelector<HTMLElement>('[data-action="bootstrap-reload"]')?.addEventListener('click', () => {
+    location.reload();
+  }, { once: true });
 });

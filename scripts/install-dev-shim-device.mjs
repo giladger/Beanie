@@ -76,7 +76,7 @@ for (const serial of targets) {
 
 console.log('');
 console.log('next:');
-console.log('  1. start Vite if it is not already running:   npm run dev');
+console.log('  1. start Vite on the LAN if it is not running: npm run dev:lan');
 console.log('  2. on the tablet, return to the dashboard and reopen the skin');
 console.log('  3. edit src/* — changes hot-reload on the device (no rebuild, no re-push)');
 if (anyBackup) {

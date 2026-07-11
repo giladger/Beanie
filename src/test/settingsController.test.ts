@@ -22,6 +22,7 @@ await run('settings controller loads a full settings bundle with fallback status
 
   const demo = await controller.loadSettingsBundle(true);
   equal(demo.source, 'demo');
+  equal(demo.resources.rea.source, 'demo');
   equal(demo.status, null);
 
   const remote = await controller.loadSettingsBundle(false);
@@ -30,8 +31,11 @@ await run('settings controller loads a full settings bundle with fallback status
 
   gateway.failSettings = true;
   const fallback = await controller.loadSettingsBundle(false);
-  equal(fallback.source, 'demo');
-  equal(fallback.status, 'Settings unavailable — showing defaults');
+  equal(fallback.source, 'degraded');
+  equal(fallback.resources.rea.source, 'default');
+  equal(fallback.resources.rea.writable, false);
+  equal(fallback.resources.de1.source, 'gateway');
+  equal(fallback.status, '1 settings section is unavailable — defaults are read-only');
 });
 
 await run('settings controller reports preferred scale connection status', async () => {
@@ -103,7 +107,8 @@ await run('settings controller loads, saves, and verifies plugin settings', asyn
   const controller = createSettingsController(gateway);
 
   const loaded = await controller.loadPluginSettings({ local: false, id: 'visualizer' });
-  equal(loaded.values.Username, 'person@example.com');
+  equal(loaded.source, 'gateway');
+  equal(loaded.settings?.values.Username, 'person@example.com');
 
   const saved = await controller.savePluginSettings({
     local: false,
@@ -116,7 +121,7 @@ await run('settings controller loads, saves, and verifies plugin settings', asyn
   const verified = await controller.verifyPluginSettings({
     local: false,
     id: 'visualizer',
-    settings: loaded
+    settings: loaded.settings!
   });
   equal(verified.tone, 'good');
   equal(verified.message, 'Credentials verified');
@@ -127,6 +132,11 @@ await run('settings controller loads, saves, and verifies plugin settings', asyn
     settings: { values: { Username: '' }, secretsSet: {} }
   });
   equal(demoVerify.tone, 'warn');
+
+  gateway.failPluginSettings = true;
+  const unavailable = await controller.loadPluginSettings({ local: false, id: 'visualizer' });
+  equal(unavailable.source, 'unavailable');
+  equal(unavailable.settings, null);
 });
 
 await run('settings controller toggles wake schedules through the gateway only when remote', async () => {
@@ -140,7 +150,11 @@ await run('settings controller toggles wake schedules through the gateway only w
   equal(gateway.calls.scheduleToggle, 1);
 });
 
-function fakeGateway(): SettingsControllerGateway & { calls: Record<string, number>; failSettings: boolean } {
+function fakeGateway(): SettingsControllerGateway & {
+  calls: Record<string, number>;
+  failSettings: boolean;
+  failPluginSettings: boolean;
+} {
   const devices: SettingsBundle['devices'] = [
     { id: 'scale-1', name: 'Scale', type: 'scale', state: 'connected' },
     { id: 'machine-1', name: 'DE1', type: 'machine', state: 'connected' }
@@ -160,6 +174,7 @@ function fakeGateway(): SettingsControllerGateway & { calls: Record<string, numb
   return {
     calls,
     failSettings: false,
+    failPluginSettings: false,
     settings: async function (this: { failSettings: boolean }) {
       if (this.failSettings) throw new Error('settings unavailable');
       return demoSettingsBundle().rea;
@@ -185,10 +200,13 @@ function fakeGateway(): SettingsControllerGateway & { calls: Record<string, numb
     logoutDecentAccount: async () => {
       calls.logout += 1;
     },
-    pluginSettings: async () => ({
-      values: { Username: 'person@example.com', Password: 'secret' },
-      secretsSet: { Password: true }
-    }),
+    pluginSettings: async function (this: { failPluginSettings: boolean }) {
+      if (this.failPluginSettings) throw new Error('plugin settings unavailable');
+      return {
+        values: { Username: 'person@example.com', Password: 'secret' },
+        secretsSet: { Password: true }
+      };
+    },
     updatePluginSettings: async () => {
       calls.pluginSave += 1;
     },

@@ -8,7 +8,8 @@ import {
   GeminiError,
   isGeminiKeyError,
   parseGeminiResponse,
-  scanLabel
+  scanLabel,
+  verifyGeminiKey
 } from '../api/gemini';
 
 run('builds a generateContent body with image parts before the text prompt', () => {
@@ -140,6 +141,70 @@ await runAsync('scanLabel refuses an empty API key before touching the network',
   } catch (error) {
     if (!(error instanceof GeminiError)) throw new Error(`Expected GeminiError, got ${String(error)}`);
     equal(error.message.includes('API key'), true);
+  }
+});
+
+await runAsync('Gemini authentication uses a header and never places the key in the URL', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    equal(url.includes('secret-key'), false);
+    equal(url.includes('?key='), false);
+    equal(new Headers(init?.headers).get('x-goog-api-key'), 'secret-key');
+    return Promise.resolve(httpResponse(200, okResponse(JSON.stringify({ bean: {}, batch: {}, meta: {} }))));
+  }) as typeof fetch;
+  try {
+    await scanLabel([{ mime: 'image/jpeg', base64: 'AAA' }], 'secret-key', { retryDelaysMs: [] });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+await runAsync('scanLabel keeps its deadline active while reading the response body', async () => {
+  const originalFetch = globalThis.fetch;
+  let aborted = false;
+  globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+    const signal = init?.signal;
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => new Promise((_resolve, reject) => {
+        signal?.addEventListener('abort', () => {
+          aborted = true;
+          const error = new Error('aborted');
+          error.name = 'AbortError';
+          reject(error);
+        }, { once: true });
+      })
+    } as Response);
+  }) as typeof fetch;
+  try {
+    await scanLabel([{ mime: 'image/jpeg', base64: 'AAA' }], 'key', { timeoutMs: 5, retryDelaysMs: [] });
+    throw new Error('Expected scanLabel to time out');
+  } catch (error) {
+    if (!(error instanceof GeminiError)) throw new Error(`Expected GeminiError, got ${String(error)}`);
+    equal(error.message.includes('too long'), true);
+    equal(aborted, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+await runAsync('Gemini key verification has an internal deadline', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => new Promise((_resolve, reject) => {
+    init?.signal?.addEventListener('abort', () => {
+      const error = new Error('aborted');
+      error.name = 'AbortError';
+      reject(error);
+    }, { once: true });
+  })) as typeof fetch;
+  try {
+    const result = await verifyGeminiKey('key', { timeoutMs: 5 });
+    equal(result.ok, false);
+    equal(result.message.includes('timed out'), true);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 

@@ -325,7 +325,7 @@ export type ApiRuntimeStatus =
   | 'gateway-unavailable'
   | 'partial-failure';
 
-export type ApiDataSource = 'gateway' | 'demo';
+export type ApiDataSource = 'gateway' | 'cache' | 'demo';
 
 export type ApiResourceName =
   | 'workflow'

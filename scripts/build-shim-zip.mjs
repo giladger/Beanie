@@ -11,8 +11,8 @@
 // download it straight onto the tablet and feed it to the installer.
 //
 // Usage:
-//   node scripts/build-shim-zip.mjs            (or: npm run skin:shim:zip)
-//   node scripts/build-shim-zip.mjs --no-serve (just write the zip and exit)
+//   node scripts/build-shim-zip.mjs            (or: npm run skin:shim:zip:lan)
+//   node scripts/build-shim-zip.mjs --no-serve (or: npm run skin:shim:zip)
 //
 // Env overrides:
 //   VITE_DEV_ORIGIN   full Vite origin embedded in the shim, e.g. http://10.0.0.63:5173
@@ -83,8 +83,8 @@ console.log(`ok - wrote:       ${outZip} (${(zipBuf.length / 1024).toFixed(1)} K
 
 if (!serve) {
   console.log('');
-  console.log('next: in Decent.app\'s skin installer, paste the zip URL into the source field');
-  console.log('      (the box you\'d normally type a repo into), then run `npm run dev`.');
+  console.log('next: run `npm run skin:shim:zip:lan` to serve the zip to a device,');
+  console.log('      or host the generated file yourself. The device also needs `npm run dev:lan`.');
   process.exit(0);
 }
 
@@ -121,7 +121,7 @@ server.listen(servePort, '0.0.0.0', () => {
   if (serveHost) console.log(qrAnsi(url));
   console.log('');
   console.log('next:');
-  console.log('  1. start Vite if it is not already running:  npm run dev');
+  console.log('  1. start Vite on the LAN if it is not running: npm run dev:lan');
   console.log('  2. open Decent.app\'s skin installer on the machine and paste the URL above');
   console.log('     into the source field (the box you\'d normally type a repo into).');
   console.log('     Decent fetches the zip itself — the QR just helps you copy the URL over.');

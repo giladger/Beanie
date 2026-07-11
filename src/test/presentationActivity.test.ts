@@ -1,4 +1,5 @@
 import { PresentationActivityCoordinator } from '../runtime/presentationActivity';
+import { presentationOccluded } from '../appShell';
 
 run('presentation activity suspends in reverse order and resumes in mount order', () => {
   const activity = new PresentationActivityCoordinator();
@@ -74,6 +75,39 @@ run('one broken target cannot strand the remaining lifecycle owners', () => {
     'resume:last'
   ]);
   equal(errors.length, 2);
+});
+
+run('presentation activity stays live for a visible sleeping browser and suspends an embedded sleep screen', () => {
+  const activity = new PresentationActivityCoordinator();
+  const calls: string[] = [];
+  activity.add({
+    suspend: () => calls.push('suspend'),
+    resume: () => calls.push('resume')
+  });
+  const base = {
+    asleep: true,
+    appAwake: false,
+    usesWebSleepControls: true,
+    saverPreview: false,
+    documentHidden: false
+  };
+
+  activity.setSuspended(presentationOccluded(base));
+  equal(activity.isSuspended, false);
+  deepEqual(calls, []);
+
+  activity.setSuspended(presentationOccluded({ ...base, usesWebSleepControls: false }));
+  equal(activity.isSuspended, true);
+  deepEqual(calls, ['suspend']);
+
+  activity.setSuspended(presentationOccluded({ ...base, usesWebSleepControls: false, appAwake: true }));
+  equal(activity.isSuspended, false);
+  deepEqual(calls, ['suspend', 'resume']);
+
+  activity.setSuspended(presentationOccluded({ ...base, saverPreview: true }));
+  activity.setSuspended(presentationOccluded({ ...base, documentHidden: true }));
+  equal(activity.isSuspended, true);
+  deepEqual(calls, ['suspend', 'resume', 'suspend']);
 });
 
 function run(name: string, fn: () => void): void {

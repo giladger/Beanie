@@ -33,6 +33,15 @@ the items deliberately deferred, so future work can pick them up with context.
   to the same per-field bounds as the edit dialog; empty-string account email
   no longer reads as logged in; aborted Gemini calls propagate instead of
   reporting a network failure.
+- July stabilization follow-up: settings reads now retain per-endpoint
+  provenance and make unavailable/default sections read-only; failed plugin
+  settings loads no longer synthesize demo credentials; workflow apply status
+  is visible on tablet as well as phone; gateway timeouts cover body parsing;
+  and Derek streaming has bounded duration, buffer, and answer sizes.
+- Security/operations follow-up: local Vite and preview default to loopback,
+  on-device commands opt into LAN binding explicitly, validation runs for pull
+  requests/main, and release publication is isolated from the read-only build
+  job. Gemini keys are device-local and legacy gateway copies are removed.
 - Resilience/cleanup: collection guards drop invalid items (one bad gateway row
   no longer throws the app into demo mode at startup); dead
   `bean-editor`/`batch-editor` views, the constant-true `autoLoad` flag, and the
@@ -46,36 +55,26 @@ the items deliberately deferred, so future work can pick them up with context.
 Per docs/architecture.md, workflow policy should leave `BeanieApp`. The biggest
 liftable chunks, none DOM/timer-coupled:
 
-1. **Label scanner controller** (`syncGeminiKey`, `openLabelScanner`,
-   `addScannerPhotos`, `runScannerExtraction`, `runScannerEnrich`,
-   `saveScannerKey`, `submitScannerReview` — app.ts, ~230 lines). Gateway-KV
-   key sync policy, handoff decisions, demo/remote Gemini splits, and the
-   resolve-bean → save → create-batch pipeline belong in a
-   `labelScannerController` returning discriminated results.
-2. **`freezeBatchPortion`** (app.ts, ~70 lines). The only batch flow bypassing
+1. **`freezeBatchPortion`** (app.ts, ~70 lines). The only batch flow bypassing
    `BeanWorkflowController`; has a partial-failure hole (createBatch succeeds,
    updateBatch fails → frozen batch exists remotely but never lands in state).
-3. **`applyDraft`** (app.ts, ~66 lines). The core dial-in apply policy
+2. **`applyDraft`** (app.ts, ~66 lines). The core dial-in apply policy
    (request-id guards, draft-signature staleness, demo split, cache
    write-through) is fully testable with injected deps; the debounce timer
    stays in the shell.
-4. **Shot-end pipeline** (`saveFreshnessForCompletedShot` first — a textbook
+3. **Shot-end pipeline** (`saveFreshnessForCompletedShot` first — a textbook
    `shotMetadataController` job; the optimistic list-merge policy in
    `onShotEnded`/`refreshShotsAfterLiveShot` later).
-5. **`deleteShot`** → `shotMetadataController`; **`savePluginConfig`** secret
+4. **`deleteShot`** → `shotMetadataController`; **`savePluginConfig`** secret
    merge → `domain/pluginSettings`; small optimistic one-offs
    (`setNoScaleBlock`, `setMachineRefillLevel`, `togglePlugin`, …) → their
    matching controllers.
-6. **Shared demo/remote save helper.** Six controller save flows repeat the
+5. **Shared demo/remote save helper.** Six controller save flows repeat the
    same skeleton (demo id minting, `(demo)` status suffix, fail-soft cache
    write). A `saveWithDemoFallback` helper would collapse ~150 lines.
-7. **Settings bundle source honesty.** `loadSettingsBundle` reports
-   `source: 'gateway'` when only `gateway.settings()` succeeded; per-section
-   fallback should be surfaced instead of demo DE1 values appearing editable
-   under a "Connected" banner.
-8. **Profile (de)serialization out of `profileEditor.ts`** (the
+6. **Profile (de)serialization out of `profileEditor.ts`** (the
    `readStep`/`writeStep`/alias tables, ~200 lines) into `domain/profileModel`.
-9. **`hotWaterDataForNativeWorkflow`** and the thrice-duplicated
+7. **`hotWaterDataForNativeWorkflow`** and the thrice-duplicated
    `positiveNumber`/`formatNumber` helpers → `domain/waterSettings`.
 
 ## Deferred — smaller cleanups
@@ -96,9 +95,6 @@ liftable chunks, none DOM/timer-coupled:
 - `shotGraphModel` computes `maxY`/`hasData`/`missingSeries` that production
   discards; the fixed `maxY: 12` silently clips spikes — consider
   `Math.max(12, model.maxY)`.
-- Gateway requests have no timeout (`fetchJson`/`fetchEmpty`); one hung request
-  stalls a single-flight refresh loop for minutes. Needs care around large
-  uploads before adding a default abort.
 - Consecutive `setState` calls in `machineAction`/`wake`/`stopHotWaterAtWeight`
   cause 2–4 full innerHTML rebuilds per action — coalesce where statuses allow.
 - `cache.ts` writes `schemaVersion` per entry but never reads it — check on

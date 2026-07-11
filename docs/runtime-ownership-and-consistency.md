@@ -343,7 +343,8 @@ Every change to these owners must keep the following gates green:
 - full TypeScript and application test suite;
 - executable dependency and render ownership guards;
 - production build and manifest validation;
-- browser smoke test across workbench, settings, scanner, Derek, and charts;
+- production-bundle browser smoke test for failed startup, explicit demo and
+  cached/offline provenance, Settings usability, and blocked offline writes;
 - release WebView soak with `dumpsys meminfo`, requiring flat JavaScript and
   Graphics trends while idle/asleep and bounded recovery after active use.
 

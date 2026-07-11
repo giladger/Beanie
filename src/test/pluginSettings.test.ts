@@ -13,6 +13,7 @@ import {
 import { renderSettingsShell, type DecentAccountPanelState } from '../components/SettingsShell';
 import { demoSettingsBundle } from '../domain/settingsModel';
 import type { SettingsShellModel } from '../domain/settings';
+import { settingsResourceStates } from '../domain/resourceState';
 
 run('readPluginSettings keeps scalar values and boolean secret flags', () => {
   const parsed = readPluginSettings({
@@ -122,6 +123,7 @@ run('phone settings use native number inputs and expose scanner key setup', () =
   const html = renderSettingsShell(settingsModel(), 'app', bundle, null, accountPanel(), ['app'], { phone: true });
 
   equal(html.includes('data-action="settings-change-scanner-key"'), true);
+  equal(html.includes('data-action="settings-remove-scanner-key"'), true);
   equal(html.includes('data-action="settings-display-brightness"'), true);
   equal(html.includes('data-action="open-number-edit"'), false);
 
@@ -130,6 +132,97 @@ run('phone settings use native number inputs and expose scanner key setup', () =
   equal(machineHtml.includes('data-action="settings-water-soft"'), true);
   equal(machineHtml.includes('data-action="settings-machine-refill"'), true);
   equal(machineHtml.includes('data-action="open-number-edit"'), false);
+});
+
+run('fallback settings name their provenance and disable only unavailable resources', () => {
+  const bundle = demoSettingsBundle();
+  const resources = settingsResourceStates('gateway');
+  resources.presence = { source: 'default', writable: false, message: 'read failed' };
+  const html = renderSettingsShell(settingsModel(), 'power', bundle, null, accountPanel(), ['power'], {
+    resourceStates: resources
+  });
+
+  equal(html.includes('Some settings could not be loaded.'), true);
+  equal(html.includes('data-action="settings-reload-resources"'), true);
+  equal(html.includes('presence values shown below are safe defaults and are read-only'), true);
+  equal(html.includes('data-group="presence" data-key="userPresenceEnabled"'), true);
+  equal(html.includes('data-group="presence" data-key="userPresenceEnabled" data-type="toggle" aria-labelledby="settings-control-field-presence-userpresenceenabled-label" disabled'), true);
+  equal(html.includes('data-group="rea" data-key="chargingMode" data-type="select" aria-labelledby="settings-control-field-rea-chargingmode-label" disabled'), false);
+});
+
+run('unavailable synced preferences are named and disabled while local theme remains usable', () => {
+  const html = renderSettingsShell(settingsModel(), 'app', demoSettingsBundle(), null, accountPanel(), ['app'], {
+    syncedPreferencesWritable: false
+  });
+
+  equal(html.includes('synced Beanie preferences values shown below are safe defaults and are read-only'), true);
+  equal(html.includes('data-action="settings-reload-resources"'), true);
+  equal(html.includes('data-action="settings-ui-scale" data-value="standard" aria-pressed="true" disabled'), true);
+  equal(html.includes('data-action="settings-topbar-clock"'), true);
+  equal(html.includes('data-action="settings-topbar-clock" checked aria-labelledby="settings-control-appearance-topbar-clock-label" aria-describedby="settings-control-appearance-topbar-clock-description" disabled'), true);
+  equal(html.includes('data-action="settings-theme" data-value="system" aria-pressed="true" disabled'), false);
+});
+
+run('settings controls reference stable visible label and help ids', () => {
+  const bundle = demoSettingsBundle();
+  const powerHtml = renderSettingsShell(settingsModel(), 'power', bundle, null, accountPanel(), ['power']);
+
+  const sleepLabel = 'settings-control-field-presence-sleeptimeoutminutes-label';
+  const sleepDescription = 'settings-control-field-presence-sleeptimeoutminutes-description';
+  const sleepValue = 'settings-control-field-presence-sleeptimeoutminutes-value';
+  equal(powerHtml.includes(`id="${sleepLabel}">Sleep after`), true);
+  equal(powerHtml.includes(`id="${sleepDescription}">0 = never`), true);
+  equal(
+    powerHtml.includes(`aria-labelledby="${sleepLabel} ${sleepValue}" aria-describedby="${sleepDescription}"`),
+    true
+  );
+  equal(powerHtml.includes(`id="${sleepValue}"`), true);
+
+  const timeLabel = 'settings-control-field-rea-nightmodesleeptime-label';
+  equal(powerHtml.includes(`id="${timeLabel}">Night mode starts`), true);
+  equal(powerHtml.includes(`aria-labelledby="${timeLabel}"`), true);
+
+  const appHtml = renderSettingsShell(settingsModel(), 'app', bundle, null, accountPanel(), ['app']);
+  const themeLabel = 'settings-control-appearance-theme-label';
+  const themeDescription = 'settings-control-appearance-theme-description';
+  equal(appHtml.includes(`id="${themeLabel}">Theme`), true);
+  equal(
+    appHtml.includes(`role="group" aria-labelledby="${themeLabel}" aria-describedby="${themeDescription}"`),
+    true
+  );
+  const clockLabel = 'settings-control-appearance-topbar-clock-label';
+  equal(appHtml.includes(`data-action="settings-topbar-clock" checked aria-labelledby="${clockLabel}"`), true);
+});
+
+run('account and plugin credentials reference their visible field copy', () => {
+  const bundle = demoSettingsBundle();
+  const accountHtml = renderSettingsShell(settingsModel(), 'account', bundle, null, accountPanel(), ['account']);
+  equal(
+    accountHtml.includes('data-key="email" value="" autocomplete="username" spellcheck="false" aria-labelledby="settings-control-account-email-label" aria-describedby="settings-control-account-email-description"'),
+    true
+  );
+
+  bundle.plugins = [
+    { id: 'visualizer.reaplugin', name: 'Visualizer upload', author: 'Decent', version: '1.0.0', loaded: true, autoLoad: true }
+  ];
+  const config: PluginConfigState = {
+    id: 'visualizer.reaplugin',
+    settings: { values: {}, secretsSet: { Password: true } },
+    draft: { Password: '' },
+    secretEdited: {},
+    dirty: false,
+    saving: false,
+    verify: null
+  };
+  const pluginHtml = renderSettingsShell(settingsModel(), 'plugins', bundle, config, accountPanel(), ['plugins']);
+  const passwordLabel = 'settings-control-plugin-visualizer-reaplugin-password-label';
+  const passwordDescription = 'settings-control-plugin-visualizer-reaplugin-password-description';
+  equal(pluginHtml.includes(`id="${passwordLabel}">Password`), true);
+  equal(pluginHtml.includes(`id="${passwordDescription}">Leave blank to keep the saved password.`), true);
+  equal(
+    pluginHtml.includes(`aria-labelledby="${passwordLabel}" aria-describedby="${passwordDescription}"`),
+    true
+  );
 });
 
 run('phone plugin number fields use native inputs instead of the number dialog', () => {

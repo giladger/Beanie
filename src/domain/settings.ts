@@ -129,6 +129,8 @@ export interface BuildSettingsShellModelOptions {
   query: string;
   preferences: SettingsPreferences;
   demo: boolean;
+  /** False when the shell is presenting cached/limited last-known data. */
+  connected?: boolean;
   loading: boolean;
   status: string;
   gatewayHost: string;
@@ -171,16 +173,23 @@ export function readSettingsPreferences(): SettingsPreferences {
 }
 
 export function writeSettingsPreferences(next: SettingsPreferences): void {
+  writeSettingsPreferencePatch(next);
+}
+
+/** Write only fields the user actually changed, avoiding unrelated store writes. */
+export function writeSettingsPreferencePatch(next: Partial<SettingsPreferences>): void {
   // Theme is per-browser (localStorage); the rest sync via the store.
-  writeLocalTheme(next.theme);
-  setSyncedItem(uiScaleKey, next.uiScale);
-  setSyncedItem(waterSoftKey, String(next.waterSoftLimitMl));
-  setSyncedItem(wakeAppZoneEnabledKey, String(next.wakeAppZoneEnabled));
-  setSyncedItem(wakeAppZonePositionKey, next.wakeAppZonePosition);
-  setSyncedItem(topbarClockKey, String(next.topbarClock));
-  setSyncedItem(clockFormatKey, next.clockFormat);
-  setSyncedItem(screensaverModeKey, next.screensaverMode);
-  setSyncedItem(screensaverBrightnessKey, String(next.screensaverBrightness));
+  if (next.theme !== undefined) writeLocalTheme(next.theme);
+  if (next.uiScale !== undefined) setSyncedItem(uiScaleKey, next.uiScale);
+  if (next.waterSoftLimitMl !== undefined) setSyncedItem(waterSoftKey, String(next.waterSoftLimitMl));
+  if (next.wakeAppZoneEnabled !== undefined) setSyncedItem(wakeAppZoneEnabledKey, String(next.wakeAppZoneEnabled));
+  if (next.wakeAppZonePosition !== undefined) setSyncedItem(wakeAppZonePositionKey, next.wakeAppZonePosition);
+  if (next.topbarClock !== undefined) setSyncedItem(topbarClockKey, String(next.topbarClock));
+  if (next.clockFormat !== undefined) setSyncedItem(clockFormatKey, next.clockFormat);
+  if (next.screensaverMode !== undefined) setSyncedItem(screensaverModeKey, next.screensaverMode);
+  if (next.screensaverBrightness !== undefined) {
+    setSyncedItem(screensaverBrightnessKey, String(next.screensaverBrightness));
+  }
 }
 
 export function applySettingsPreferences(preferences: SettingsPreferences): void {
@@ -235,6 +244,17 @@ function buildGatewayStatus(options: BuildSettingsShellModelOptions): GatewaySta
     return {
       label: 'Demo mode',
       detail: 'Gateway unavailable; using seeded local data',
+      host: options.gatewayHost,
+      tone: 'warn',
+      machine: machineLabel(options.machine),
+      scale: scaleLabel(options.scale)
+    };
+  }
+
+  if (options.connected === false) {
+    return {
+      label: 'Not connected',
+      detail: options.status,
       host: options.gatewayHost,
       tone: 'warn',
       machine: machineLabel(options.machine),

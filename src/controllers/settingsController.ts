@@ -13,6 +13,12 @@ import type {
 import { demoDecentAccountStatus, demoPluginSettings } from '../api/settings';
 import { demoSettingsBundle } from '../domain/settingsModel';
 import type { SettingsBundle } from '../domain/settingsModel';
+import {
+  settingsResourceStates,
+  unavailableSettingsResources,
+  type SettingsResourceKey,
+  type SettingsResourceStates
+} from '../domain/resourceState';
 
 export interface SettingsControllerGateway {
   settings(): Promise<SettingsBundle['rea']>;
@@ -50,7 +56,8 @@ export interface SettingsControllerGateway {
 export interface SettingsController {
   loadSettingsBundle(demo: boolean): Promise<{
     bundle: SettingsBundle;
-    source: 'gateway' | 'demo';
+    source: 'gateway' | 'degraded' | 'demo';
+    resources: SettingsResourceStates;
     status: string | null;
   }>;
   scanDevices(local: boolean): Promise<{ devices: SettingsBundle['devices'] | null; status: string }>;
@@ -70,7 +77,7 @@ export interface SettingsController {
     local: boolean;
     current: WakeSchedule[];
   }): Promise<{ schedules: WakeSchedule[] | null; status: string | null }>;
-  deleteWakeSchedule(input: { id: string; local: boolean }): Promise<{ status: string | null }>;
+  deleteWakeSchedule(input: { id: string; local: boolean }): Promise<{ ok: boolean; status: string | null }>;
   toggleWakeSchedule(input: { id: string; enabled: boolean; local: boolean }): Promise<void>;
   loadDecentAccount(input: {
     local: boolean;
@@ -84,7 +91,10 @@ export interface SettingsController {
   logoutDecentAccount(input: {
     local: boolean;
   }): Promise<{ account: DecentAccountStatus; source: 'demo' | 'gateway'; message: AccountMessage }>;
-  loadPluginSettings(input: { local: boolean; id: string }): Promise<PluginSettings>;
+  loadPluginSettings(input: { local: boolean; id: string }): Promise<{
+    settings: PluginSettings | null;
+    source: 'gateway' | 'demo' | 'unavailable';
+  }>;
   savePluginSettings(input: {
     local: boolean;
     id: string;
@@ -108,27 +118,38 @@ export function createSettingsController(gateway: SettingsControllerGateway): Se
   return {
     async loadSettingsBundle(demo) {
       const fallback = demoSettingsBundle();
-      if (demo) return { bundle: fallback, source: 'demo', status: null };
-      let source: 'gateway' | 'demo' = 'gateway';
+      if (demo) {
+        return { bundle: fallback, source: 'demo', resources: settingsResourceStates('demo'), status: null };
+      }
+      const resources = settingsResourceStates('gateway');
+      const fallbackFor = <K extends SettingsResourceKey>(key: K, value: SettingsBundle[K]): SettingsBundle[K] => {
+        resources[key] = {
+          source: 'default',
+          writable: false,
+          message: 'Gateway read failed; showing a safe default'
+        };
+        return value;
+      };
       const [rea, de1, advanced, calibration, presence, display, skins, devices, plugins, schedules] = await Promise.all([
-        gateway.settings().catch(() => {
-          source = 'demo';
-          return fallback.rea;
-        }),
-        gateway.machineSettings().catch(() => fallback.de1),
-        gateway.machineAdvancedSettings().catch(() => fallback.advanced),
-        gateway.calibration().catch(() => fallback.calibration),
-        gateway.presenceSettings().catch(() => fallback.presence),
-        gateway.displayState().catch(() => fallback.display),
-        gateway.skins().catch(() => fallback.skins),
-        gateway.devices().catch(() => fallback.devices),
-        gateway.plugins().catch(() => fallback.plugins),
-        gateway.wakeSchedules().catch(() => fallback.schedules)
+        gateway.settings().catch(() => fallbackFor('rea', fallback.rea)),
+        gateway.machineSettings().catch(() => fallbackFor('de1', fallback.de1)),
+        gateway.machineAdvancedSettings().catch(() => fallbackFor('advanced', fallback.advanced)),
+        gateway.calibration().catch(() => fallbackFor('calibration', fallback.calibration)),
+        gateway.presenceSettings().catch(() => fallbackFor('presence', fallback.presence)),
+        gateway.displayState().catch(() => fallbackFor('display', fallback.display)),
+        gateway.skins().catch(() => fallbackFor('skins', fallback.skins)),
+        gateway.devices().catch(() => fallbackFor('devices', fallback.devices)),
+        gateway.plugins().catch(() => fallbackFor('plugins', fallback.plugins)),
+        gateway.wakeSchedules().catch(() => fallbackFor('schedules', fallback.schedules))
       ]);
+      const unavailable = unavailableSettingsResources(resources);
       return {
         bundle: { rea, de1, advanced, calibration, presence, display, skins, devices, plugins, schedules },
-        source,
-        status: source === 'gateway' ? null : 'Settings unavailable — showing defaults'
+        source: unavailable.length === 0 ? 'gateway' : 'degraded',
+        resources,
+        status: unavailable.length === 0
+          ? null
+          : `${unavailable.length} settings ${unavailable.length === 1 ? 'section is' : 'sections are'} unavailable — defaults are read-only`
       };
     },
 
@@ -201,12 +222,12 @@ export function createSettingsController(gateway: SettingsControllerGateway): Se
     },
 
     async deleteWakeSchedule({ id, local }) {
-      if (local) return { status: null };
+      if (local) return { ok: true, status: null };
       try {
         await gateway.deleteWakeSchedule(id);
-        return { status: null };
+        return { ok: true, status: null };
       } catch {
-        return { status: 'Could not delete schedule' };
+        return { ok: false, status: 'Could not delete schedule' };
       }
     },
 
@@ -275,11 +296,11 @@ export function createSettingsController(gateway: SettingsControllerGateway): Se
     },
 
     async loadPluginSettings({ local, id }) {
-      if (local) return demoPluginSettings(id);
+      if (local) return { settings: demoPluginSettings(id), source: 'demo' };
       try {
-        return await gateway.pluginSettings(id);
+        return { settings: await gateway.pluginSettings(id), source: 'gateway' };
       } catch {
-        return demoPluginSettings(id);
+        return { settings: null, source: 'unavailable' };
       }
     },
 

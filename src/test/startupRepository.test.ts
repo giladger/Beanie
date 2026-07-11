@@ -98,7 +98,7 @@ await run('cacheStartupData writes loaded startup resources and ignores write fa
   equal(cache.puts.includes('shots'), true);
 });
 
-await run('cachedStartupData returns cached essentials and empty optional collections', async () => {
+await run('cachedStartupData does not present empty collection defaults as cached data', async () => {
   const cache = new FakeStartupCache();
   cache.workflow = workflow;
 
@@ -106,51 +106,115 @@ await run('cachedStartupData returns cached essentials and empty optional collec
 
   equal(cached.workflow?.name, 'Current workflow');
   equal(cached.beans, undefined);
-  equal(JSON.stringify(cached.grinders), '[]');
-  equal(JSON.stringify(cached.profiles), '[]');
+  equal(cached.grinders, undefined);
+  equal(cached.profiles, undefined);
   equal(cached.latestShots, undefined);
 });
 
-await run('loadGatewayStartupWithCache fills missing gateway data from cache', async () => {
+await run('loadGatewayStartupWithCache fills failed resources from cache with truthful metadata', async () => {
   const cache = new FakeStartupCache();
   cache.workflow = workflow;
   cache.beans = beans;
   cache.grinders = grinders;
   cache.profiles = profiles;
   cache.latestShots = latestShots;
-  const startup = startupSnapshot({ grinders: [] });
+  const workflowIssue = failed<Workflow>('workflow', 'workflow unavailable');
+  const profilesIssue = failed<ProfileRecord[]>('profiles', 'profiles unavailable');
+  const shotsIssue = failed<PaginatedShots>('shots', 'shots unavailable');
+  const startup = startupSnapshot(
+    { beans: [], grinders },
+    {
+      workflow: workflowIssue,
+      beans: loaded('beans', []),
+      grinders: loaded('grinders', grinders),
+      profiles: profilesIssue,
+      shots: shotsIssue
+    },
+    [workflowIssue.issue, profilesIssue.issue, shotsIssue.issue]
+  );
 
-  const loaded = await loadGatewayStartupWithCache(latestQuery(), {
+  const loadedStartup = await loadGatewayStartupWithCache(latestQuery(), {
     cache,
     loadStartup: async () => startup
   });
 
-  equal(loaded.data.workflow?.name, 'Current workflow');
-  equal(loaded.data.beans?.[0]?.id, 'bean-1');
-  equal(JSON.stringify(loaded.data.grinders), '[]');
-  equal(loaded.data.profiles?.[0]?.id, 'profile-1');
-  equal(loaded.data.latestShots?.items[0]?.id, 'shot-1');
+  equal(loadedStartup.data.workflow?.name, 'Current workflow');
+  equal(JSON.stringify(loadedStartup.data.beans), '[]');
+  equal(loadedStartup.data.grinders?.[0]?.id, 'grinder-1');
+  equal(loadedStartup.data.profiles?.[0]?.id, 'profile-1');
+  equal(loadedStartup.data.latestShots?.items[0]?.id, 'shot-1');
+  equal(loadedStartup.resources.workflow.status, 'loaded');
+  equal(loadedStartup.resources.workflow.source, 'cache');
+  equal(loadedStartup.resources.beans.status, 'loaded');
+  equal(loadedStartup.resources.beans.source, 'gateway');
+  equal(loadedStartup.resources.grinders.status, 'loaded');
+  equal(loadedStartup.resources.grinders.source, 'gateway');
+  equal(loadedStartup.resources.profiles.status, 'loaded');
+  equal(loadedStartup.resources.profiles.source, 'cache');
+  equal(loadedStartup.resources.shots.status, 'loaded');
+  equal(loadedStartup.resources.shots.source, 'cache');
+  equal(loadedStartup.status, 'partial-failure');
+  equal(loadedStartup.issues, startup.issues);
+});
+
+await run('loadGatewayStartupWithCache leaves failed resources failed without proven cached data', async () => {
+  const cache = new FakeStartupCache();
+  const workflowIssue = failed<Workflow>('workflow', 'workflow unavailable');
+  const grindersIssue = failed<Grinder[]>('grinders', 'grinders unavailable');
+  const profilesIssue = failed<ProfileRecord[]>('profiles', 'profiles unavailable');
+  const startup = startupSnapshot(
+    { beans, latestShots },
+    {
+      workflow: workflowIssue,
+      beans: loaded('beans', beans),
+      grinders: grindersIssue,
+      profiles: profilesIssue,
+      shots: loaded('shots', latestShots)
+    },
+    [workflowIssue.issue, grindersIssue.issue, profilesIssue.issue]
+  );
+
+  const loadedStartup = await loadGatewayStartupWithCache(latestQuery(), {
+    cache,
+    loadStartup: async () => startup
+  });
+
+  equal(loadedStartup.data.workflow, undefined);
+  equal(loadedStartup.data.grinders, undefined);
+  equal(loadedStartup.data.profiles, undefined);
+  equal(loadedStartup.resources.workflow.status, 'failed');
+  equal(loadedStartup.resources.workflow.source, 'gateway');
+  equal(loadedStartup.resources.grinders.status, 'failed');
+  equal(loadedStartup.resources.grinders.source, 'gateway');
+  equal(loadedStartup.resources.profiles.status, 'failed');
+  equal(loadedStartup.resources.profiles.source, 'gateway');
+  equal(loadedStartup.status, 'partial-failure');
+  equal(loadedStartup.issues, startup.issues);
 });
 
 function latestQuery(): URLSearchParams {
   return new URLSearchParams({ limit: '1', offset: '0', order: 'desc' });
 }
 
-function startupSnapshot(data: GatewayStartupSnapshot['data']): GatewayStartupSnapshot {
+function startupSnapshot(
+  data: GatewayStartupSnapshot['data'],
+  resources: GatewayStartupSnapshot['resources'] = {
+    workflow: loaded('workflow', workflow),
+    beans: loaded('beans', beans),
+    grinders: loaded('grinders', grinders),
+    profiles: loaded('profiles', profiles),
+    shots: loaded('shots', latestShots)
+  },
+  issues: GatewayStartupSnapshot['issues'] = []
+): GatewayStartupSnapshot {
   return {
     mode: 'real',
     status: 'partial-failure',
     source: 'gateway',
     origin: 'http://gateway.test',
     fallbackToDemo: null,
-    issues: [],
-    resources: {
-      workflow: loaded('workflow', workflow),
-      beans: loaded('beans', beans),
-      grinders: loaded('grinders', grinders),
-      profiles: loaded('profiles', profiles),
-      shots: loaded('shots', latestShots)
-    },
+    issues,
+    resources,
     data
   };
 }
@@ -161,6 +225,18 @@ function loaded<T>(resource: ApiResource<T>['resource'], data: T): ApiResource<T
     status: 'loaded',
     source: 'gateway',
     data,
+    receivedAt: '2026-06-01T00:00:00.000Z'
+  };
+}
+
+function failed<T>(resource: ApiResource<T>['resource'], message: string): ApiResource<T> & {
+  status: 'failed';
+} {
+  return {
+    resource,
+    status: 'failed',
+    source: 'gateway',
+    issue: { resource, kind: 'network', message },
     receivedAt: '2026-06-01T00:00:00.000Z'
   };
 }

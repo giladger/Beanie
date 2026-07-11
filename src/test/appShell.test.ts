@@ -10,6 +10,7 @@ import {
   machineCommandsAvailable,
   machineStatus,
   machineStatusView,
+  presentationOccluded,
   scaleBatteryLow,
   scaleBatteryPercent,
   scaleConnected,
@@ -167,6 +168,29 @@ run('sleep overlay shows only in the webview and layers the wake-app zone when e
 
   // The zone never appears without the overlay (e.g. in a browser).
   equal(sleepOverlayModel({ ...base, usesWebSleepControls: true, wakeAppZoneEnabled: true }).showWakeAppZone, false);
+});
+
+run('presentation occlusion follows the surface users can actually see', () => {
+  const base = {
+    asleep: false,
+    appAwake: false,
+    usesWebSleepControls: true,
+    saverPreview: false,
+    documentHidden: false
+  };
+
+  // A normal browser remains visible while observing a sleeping machine.
+  equal(presentationOccluded({ ...base, asleep: true }), false);
+  // The embedded webview renders its sleep overlay and must suspend work below it.
+  equal(presentationOccluded({ ...base, asleep: true, usesWebSleepControls: false }), true);
+  // Waking only the embedded app reveals the workbench without waking the machine.
+  equal(
+    presentationOccluded({ ...base, asleep: true, appAwake: true, usesWebSleepControls: false }),
+    false
+  );
+  // Preview and document visibility occlude either host independently of sleep.
+  equal(presentationOccluded({ ...base, saverPreview: true }), true);
+  equal(presentationOccluded({ ...base, documentHidden: true }), true);
 });
 
 run('app shell command and chart helpers preserve app decisions', () => {

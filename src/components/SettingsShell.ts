@@ -31,6 +31,12 @@ import {
   waterLevelMl
 } from '../domain/waterAlert';
 import { MAX_SCREENSAVER_PHOTOS, screensaverShowsPhotos, type ScreensaverMode } from '../domain/screensaver';
+import {
+  settingsResourceStates,
+  settingsResourceWritable,
+  unavailableSettingsResources,
+  type SettingsResourceStates
+} from '../domain/resourceState';
 import type { PluginInfo } from '../api/settings';
 import type { DecentAccountStatus } from '../api/settings';
 import { escapeAttr, escapeHtml } from './html';
@@ -54,7 +60,22 @@ export interface FlowCalibrationDisplay {
 interface SettingsRenderOptions {
   phone?: boolean;
   flowCalibration?: FlowCalibrationDisplay;
+  resourceStates?: SettingsResourceStates | null;
+  /** Whether gateway-backed Beanie preferences can be changed safely. */
+  syncedPreferencesWritable?: boolean;
+  scannerKeySet?: boolean;
 }
+
+interface SettingControlA11y {
+  labelId: string;
+  descriptionId: string | null;
+  valueId: string;
+  attributes: string;
+  valueAttributes: string;
+  descriptionAttributes: string;
+}
+
+type SettingControlContent = string | ((a11y: SettingControlA11y) => string);
 
 export interface DecentAccountPanelState {
   status: DecentAccountStatus | null;
@@ -74,7 +95,13 @@ export function renderSettingsShell(
   allowedSectionIds?: string[],
   options: SettingsRenderOptions = {}
 ): string {
-  const allSections = settingsSections(model, bundle, pluginConfig, decentAccount, options);
+  // Production callers always pass provenance explicitly, including null while
+  // loading. Preserve the renderer's historic standalone/test default only
+  // when the property is genuinely omitted.
+  const renderOptions = Object.prototype.hasOwnProperty.call(options, 'resourceStates')
+    ? options
+    : { ...options, resourceStates: settingsResourceStates('gateway') };
+  const allSections = settingsSections(model, bundle, pluginConfig, decentAccount, renderOptions);
   const sections = allowedSectionIds?.length
     ? allSections.filter((section) => allowedSectionIds.includes(section.id))
     : allSections;
@@ -91,10 +118,43 @@ export function renderSettingsShell(
           .join('')}
       </nav>
       <section class="settings-detail">
+        ${renderResourceWarning(renderOptions.resourceStates ?? null, renderOptions.syncedPreferencesWritable !== false)}
         ${active.html}
       </section>
     </main>
   `;
+}
+
+function renderResourceWarning(states: SettingsResourceStates | null, syncedPreferencesWritable: boolean): string {
+  if (!states) {
+    return `
+      <div class="settings-resource-warning" role="status">
+        <strong>Machine settings are still loading.</strong>
+        <span>Controls below stay read-only until their live values are verified.</span>
+      </div>`;
+  }
+  const unavailable = states ? unavailableSettingsResources(states) : [];
+  if (unavailable.length === 0 && syncedPreferencesWritable) return '';
+  const labels: Record<(typeof unavailable)[number], string> = {
+    rea: 'app',
+    de1: 'machine',
+    advanced: 'advanced machine',
+    calibration: 'calibration',
+    presence: 'presence',
+    display: 'display',
+    skins: 'skins',
+    devices: 'devices',
+    plugins: 'plugins',
+    schedules: 'wake schedules'
+  };
+  const unavailableLabels = unavailable.map((key) => labels[key]);
+  if (!syncedPreferencesWritable) unavailableLabels.unshift('synced Beanie preferences');
+  return `
+    <div class="settings-resource-warning" role="status">
+      <strong>Some settings could not be loaded.</strong>
+      <span>${escapeHtml(unavailableLabels.join(', '))} values shown below are safe defaults and are read-only until Settings is reloaded.</span>
+      <button type="button" class="text-button" data-action="settings-reload-resources">${icon('refresh-cw')}<span>Retry</span></button>
+    </div>`;
 }
 
 function settingsSections(
@@ -111,7 +171,7 @@ function settingsSections(
     html: [
       renderSection('Status', renderGatewayRows(model)),
       bundle ? renderConnectionRuntimeSection(bundle) : '',
-      bundle ? renderDevicesSection(bundle) : ''
+      bundle ? renderDevicesSection(bundle, options) : ''
     ].join('')
   };
   const sections: SettingsSection[] = [
@@ -120,9 +180,9 @@ function settingsSections(
       title: 'App',
       terms: 'appearance theme ui skin update diagnostics about version brightness screen display sleep wake tap zone area machine asleep screensaver saver clock photos slideshow',
       html: [
-        renderSection('Beanie display', renderAppearanceRows(model.preferences)),
-        renderSection('Sleep screen', renderSleepScreenRows(model)),
-        renderSection('Bean scanner', renderScannerKeyRows()),
+        renderSection('Beanie display', renderAppearanceRows(model.preferences, options)),
+        renderSection('Sleep screen', renderSleepScreenRows(model, options)),
+        renderSection('Bean scanner', renderScannerKeyRows(options.scannerKeySet === true)),
         bundle ? renderDisplayRuntimeSection(bundle, options) : '',
         bundle ? renderSpecSectionById('app-skin', bundle, options) : '',
         renderSection('About', renderAboutRows(model))
@@ -176,7 +236,7 @@ function settingsSections(
         terms: 'danger advanced heater voltage refill kit firmware reset cache',
         html: [
           renderSpecSectionById('danger-zone', bundle, options),
-          renderSection('Local data', renderCacheResetRows(model), 'danger')
+          renderSection('Local data', renderCacheResetRows(), 'danger')
         ].join('')
       }
     );
@@ -195,20 +255,22 @@ function renderSpecSection(section: SettingsSpecSection, bundle: SettingsBundle,
   const rows = section.fields.map((field) => renderSettingsField(field, bundle, options)).join('');
   let extra = '';
   if (section.id === 'danger-zone') {
-    extra = renderDangerActions();
+    extra = renderDangerActions(options);
   } else if (section.id === 'power') {
-    extra = renderWakeSchedules(bundle);
+    extra = renderWakeSchedules(bundle, options);
   }
   return renderSection(section.title, rows + extra, section.tone);
 }
 
-function renderDevicesSection(bundle: SettingsBundle): string {
+function renderDevicesSection(bundle: SettingsBundle, options: SettingsRenderOptions): string {
+  const writable = settingsResourceWritable(options.resourceStates ?? null, 'devices');
+  const preferredWritable = writable && settingsResourceWritable(options.resourceStates ?? null, 'rea');
   const scan = settingControlRow(
     'Bluetooth devices',
     'Scan only, or let Decent.app connect preferred devices',
     `<div class="settings-inline-actions">
-      <button type="button" class="text-button" data-action="settings-scan-devices">${icon('refresh-cw')}<span>Scan</span></button>
-      <button type="button" class="text-button primary" data-action="settings-connect-preferred-devices">${icon('scale')}<span>Auto-connect</span></button>
+      <button type="button" class="text-button" data-action="settings-scan-devices" ${writable ? '' : 'disabled'}>${icon('refresh-cw')}<span>Scan</span></button>
+      <button type="button" class="text-button primary" data-action="settings-connect-preferred-devices" ${preferredWritable ? '' : 'disabled'}>${icon('scale')}<span>Auto-connect</span></button>
     </div>`
   );
   const preferred = `
@@ -216,7 +278,7 @@ function renderDevicesSection(bundle: SettingsBundle): string {
     ${settingReadout('Preferred scale', compactId(bundle.rea.preferredScaleId), 'Used for automatic scale reconnect', 'muted')}
   `;
   const rows = bundle.devices.length
-    ? bundle.devices.map(renderDeviceRow).join('')
+    ? bundle.devices.map((device) => renderDeviceRow(device, writable)).join('')
     : `<p class="settings-empty">No devices found yet — tap Scan to search.</p>`;
   return renderSection('Devices', scan + preferred + rows);
 }
@@ -239,39 +301,50 @@ function renderPowerRuntimeSection(bundle: SettingsBundle): string {
 function renderDisplayRuntimeSection(bundle: SettingsBundle, options: SettingsRenderOptions = {}): string {
   const display = bundle.display;
   const supported = display.platformSupported.brightness;
+  const writable = settingsResourceWritable(options.resourceStates ?? null, 'display');
   const requested = String(display.requestedBrightness);
   const detail = supported
     ? display.lowBatteryBrightnessActive
       ? `Actual ${display.brightness}% · low battery cap`
       : `Actual ${display.brightness}% · 100 = auto`
     : 'Brightness control is not available on this host';
-  const control = options.phone
-    ? phoneNumberInput({
-        action: 'settings-display-brightness',
-        value: requested,
-        min: 0,
-        max: 100,
-        step: 5,
-        unit: '%',
-        disabled: !supported
-      })
-    : `
-      <button
-        type="button"
-        class="settings-input number-edit-button settings-number-button"
-        data-action="open-number-edit"
-        data-target="display-brightness"
-        data-title="Screen brightness"
-        data-value="${escapeAttr(requested)}"
-        data-min="0"
-        data-max="100"
-        data-step="5"
-        data-unit="%"
-        ${supported ? '' : 'disabled'}
-      >
-        <span>${escapeHtml(requested)}</span><em class="settings-unit">%</em>
-      </button>`;
-  return renderSection('Display', settingControlRow('Screen brightness', detail, control));
+  return renderSection(
+    'Display',
+    settingControlRow(
+      'Screen brightness',
+      detail,
+      (a11y) => options.phone
+        ? phoneNumberInput({
+            action: 'settings-display-brightness',
+            value: requested,
+            min: 0,
+            max: 100,
+            step: 5,
+            unit: '%',
+            attrs: a11y.attributes,
+            disabled: !supported || !writable
+          })
+        : `
+          <button
+            type="button"
+            class="settings-input number-edit-button settings-number-button"
+            data-action="open-number-edit"
+            data-target="display-brightness"
+            data-title="Screen brightness"
+            data-value="${escapeAttr(requested)}"
+            data-min="0"
+            data-max="100"
+            data-step="5"
+            data-unit="%"
+            ${a11y.valueAttributes}
+            ${supported && writable ? '' : 'disabled'}
+          >
+            <span id="${a11y.valueId}">${escapeHtml(requested)}<em class="settings-unit">%</em></span>
+          </button>`,
+      '',
+      'display-brightness'
+    )
+  );
 }
 
 function compactId(value: string | null): string {
@@ -279,14 +352,14 @@ function compactId(value: string | null): string {
   return value.length > 18 ? `...${value.slice(-15)}` : value;
 }
 
-function renderDeviceRow(device: SettingsBundle['devices'][number]): string {
+function renderDeviceRow(device: SettingsBundle['devices'][number], writable: boolean): string {
   const connected = device.state === 'connected';
   const action = connected ? 'settings-disconnect-device' : 'settings-connect-device';
   const label = connected ? 'Disconnect' : 'Connect';
   return settingControlRow(
     device.name,
     `${device.type} · ${connected ? 'connected' : 'available'}`,
-    `<button type="button" class="text-button ${connected ? '' : 'primary'}" data-action="${action}" data-id="${escapeAttr(device.id)}">${escapeHtml(label)}</button>`
+    `<button type="button" class="text-button ${connected ? '' : 'primary'}" data-action="${action}" data-id="${escapeAttr(device.id)}" ${writable ? '' : 'disabled'}>${escapeHtml(label)}</button>`
   );
 }
 
@@ -352,14 +425,20 @@ function renderDecentAccountSection(account: DecentAccountPanelState): string {
       </div>
       ${message}`
     : `
-      <div class="settings-line">
-        <div><span>Email</span><small>Decent Espresso account email.</small></div>
-        <input class="settings-input settings-plugin-text" type="email" data-action="settings-account-field" data-key="email" value="${escapeAttr(account.emailDraft)}" autocomplete="username" spellcheck="false" />
-      </div>
-      <div class="settings-line">
-        <div><span>Password</span><small>Sent to the gateway for secure account linking.</small></div>
-        <input class="settings-input settings-plugin-text" type="password" data-action="settings-account-field" data-key="password" value="${escapeAttr(account.passwordDraft)}" autocomplete="current-password" spellcheck="false" />
-      </div>
+      ${settingControlRow(
+        'Email',
+        'Decent Espresso account email.',
+        (a11y) => `<input class="settings-input settings-plugin-text" type="email" data-action="settings-account-field" data-key="email" value="${escapeAttr(account.emailDraft)}" autocomplete="username" spellcheck="false" ${a11y.attributes} />`,
+        '',
+        'account-email'
+      )}
+      ${settingControlRow(
+        'Password',
+        'Sent to the gateway for secure account linking.',
+        (a11y) => `<input class="settings-input settings-plugin-text" type="password" data-action="settings-account-field" data-key="password" value="${escapeAttr(account.passwordDraft)}" autocomplete="current-password" spellcheck="false" ${a11y.attributes} />`,
+        '',
+        'account-password'
+      )}
       <div class="settings-plugin-config-actions">
         ${message || unavailable}
         <span class="settings-plugin-buttons">
@@ -370,7 +449,9 @@ function renderDecentAccountSection(account: DecentAccountPanelState): string {
   return renderSection('Decent Account', `${statusRow}${form}`);
 }
 
-function renderDangerActions(): string {
+function renderDangerActions(options: SettingsRenderOptions): string {
+  const resetDisabled = !(['de1', 'advanced', 'calibration'] as const)
+    .every((key) => settingsResourceWritable(options.resourceStates ?? null, key));
   return `
     <div class="settings-subsection settings-danger-actions">
       ${settingControlRow(
@@ -381,7 +462,7 @@ function renderDangerActions(): string {
       ${settingControlRow(
         'Reset machine settings',
         'Restore DE1 fan, heater, refill, calibration, and purge defaults',
-        `<button type="button" class="text-button danger" data-action="settings-reset-machine">${icon('rotate-ccw')}<span>Reset</span></button>`
+        `<button type="button" class="text-button danger" data-action="settings-reset-machine" ${resetDisabled ? 'disabled' : ''}>${icon('rotate-ccw')}<span>Reset</span></button>`
       )}
     </div>`;
 }
@@ -395,15 +476,18 @@ function renderPluginsSection(bundle: SettingsBundle, pluginConfig: PluginConfig
 function renderPluginRow(plugin: PluginInfo, pluginConfig: PluginConfigState | null, options: SettingsRenderOptions = {}): string {
   const spec = pluginSettingsSpec(plugin.id);
   const expanded = pluginConfig?.id === plugin.id;
+  const detail = [plugin.author, plugin.version ? `v${plugin.version}` : ''].filter(Boolean).join(' · ');
+  const a11y = settingControlA11y(`plugin-toggle-${plugin.id}`, detail !== '');
+  const disabled = !settingsResourceWritable(options.resourceStates ?? null, 'plugins');
   const configure = spec
-    ? `<button type="button" class="text-button" data-action="settings-plugin-config" data-id="${escapeAttr(plugin.id)}" aria-expanded="${expanded}">${icon(expanded ? 'x' : 'sliders-horizontal')}<span>${expanded ? 'Close' : 'Configure'}</span></button>`
+    ? `<button type="button" class="text-button" data-action="settings-plugin-config" data-id="${escapeAttr(plugin.id)}" aria-expanded="${expanded}" ${a11y.descriptionAttributes} ${disabled ? 'disabled' : ''}>${icon(expanded ? 'x' : 'sliders-horizontal')}<span>${expanded ? 'Close' : 'Configure'}</span></button>`
     : '';
-  const toggle = `<label class="settings-toggle"><input type="checkbox" data-action="settings-plugin-toggle" data-id="${escapeAttr(plugin.id)}" ${plugin.loaded ? 'checked' : ''} /><span></span></label>`;
+  const toggle = `<label class="settings-toggle"><input type="checkbox" data-action="settings-plugin-toggle" data-id="${escapeAttr(plugin.id)}" ${plugin.loaded ? 'checked' : ''} ${a11y.attributes} ${disabled ? 'disabled' : ''} /><span></span></label>`;
   const row = `
     <div class="settings-line">
       <div>
-        <span>${escapeHtml(plugin.name)}</span>
-        <small>${escapeHtml([plugin.author, plugin.version ? `v${plugin.version}` : ''].filter(Boolean).join(' · '))}</small>
+        <span id="${a11y.labelId}">${escapeHtml(plugin.name)}</span>
+        <small${a11y.descriptionId ? ` id="${a11y.descriptionId}"` : ''}>${escapeHtml(detail)}</small>
       </div>
       <span class="settings-plugin-actions">${configure}${toggle}</span>
     </div>`;
@@ -412,15 +496,16 @@ function renderPluginRow(plugin: PluginInfo, pluginConfig: PluginConfigState | n
 }
 
 function renderPluginConfig(spec: PluginSettingsSpec, config: PluginConfigState, options: SettingsRenderOptions = {}): string {
+  const disabled = !settingsResourceWritable(options.resourceStates ?? null, 'plugins');
   const help = spec.help ? `<p class="settings-plugin-help">${escapeHtml(spec.help)}</p>` : '';
   const fields = spec.fields.map((field) => renderPluginField(field, config, options)).join('');
   const verifyMsg = config.verify
     ? `<span class="settings-plugin-verify ${config.verify.tone}">${escapeHtml(config.verify.message)}</span>`
     : '';
   const verifyBtn = spec.supportsVerify
-    ? `<button type="button" class="text-button" data-action="settings-plugin-verify" data-id="${escapeAttr(config.id)}">${icon('refresh-cw')}<span>Verify</span></button>`
+    ? `<button type="button" class="text-button" data-action="settings-plugin-verify" data-id="${escapeAttr(config.id)}" ${disabled ? 'disabled' : ''}>${icon('refresh-cw')}<span>Verify</span></button>`
     : '';
-  const saveDisabled = config.dirty && !config.saving ? '' : 'disabled';
+  const saveDisabled = !disabled && config.dirty && !config.saving ? '' : 'disabled';
   const saveBtn = `<button type="button" class="text-button primary" data-action="settings-plugin-save" data-id="${escapeAttr(config.id)}" ${saveDisabled}>${icon('save')}<span>${config.saving ? 'Saving…' : 'Save'}</span></button>`;
   return `
     <div class="settings-plugin-config">
@@ -434,151 +519,171 @@ function renderPluginConfig(spec: PluginSettingsSpec, config: PluginConfigState,
 }
 
 function renderPluginField(field: PluginSettingField, config: PluginConfigState, options: SettingsRenderOptions = {}): string {
-  const base = `data-action="settings-plugin-field" data-key="${escapeAttr(field.key)}" data-type="${field.type}"`;
   const draftVal = config.draft[field.key];
-  let control: string;
-  if (field.type === 'toggle') {
-    control = `<label class="settings-toggle"><input type="checkbox" ${base} ${draftVal === true ? 'checked' : ''} /><span></span></label>`;
-  } else if (field.type === 'select') {
-    const current = String(draftVal ?? '');
-    control = `<select class="settings-select" ${base}>${(field.options ?? [])
-      .map((o) => `<option value="${escapeAttr(o.value)}" ${o.value === current ? 'selected' : ''}>${escapeHtml(o.label)}</option>`)
-      .join('')}</select>`;
-  } else if (field.type === 'number') {
-    const unit = field.unit ? `<em class="settings-unit">${escapeHtml(field.unit)}</em>` : '';
-    const value = String(draftVal ?? '');
-    control = options.phone
-      ? phoneNumberInput({
-          action: 'settings-plugin-field',
-          value,
-          min: field.min ?? 0,
-          max: field.max ?? 9999,
-          step: field.step ?? 1,
-          unit: field.unit ?? '',
-          attrs: `data-key="${escapeAttr(field.key)}" data-type="${field.type}"`
-        })
-      : `<button type="button" class="settings-input number-edit-button settings-number-button" data-action="open-number-edit" data-target="settings-plugin-field" data-key="${escapeAttr(field.key)}" data-title="${escapeAttr(field.label)}" data-value="${escapeAttr(value)}" data-min="${field.min ?? 0}" data-max="${field.max ?? 9999}" data-step="${field.step ?? 1}" data-unit="${escapeAttr(field.unit ?? '')}"><span>${escapeHtml(value || '--')}</span>${unit}</button>`;
-  } else {
-    // text / password
-    const inputType = field.type === 'password' ? 'password' : 'text';
-    const savedValue = config.settings.values[field.key];
-    const isSet = field.secret
-      ? config.settings.secretsSet[field.key] === true || (savedValue != null && String(savedValue) !== '')
-      : false;
-    const placeholder = field.secret
-      ? isSet
-        ? '•••••••• (saved)'
-        : 'Not set'
-      : field.placeholder ?? '';
-    // Secret fields render blank after save; while editing, keep the draft visible
-    // so a re-render does not wipe the user's typed password.
-    const val = field.secret
-      ? config.secretEdited[field.key]
-        ? escapeAttr(String(draftVal ?? ''))
-        : ''
-      : escapeAttr(String(draftVal ?? ''));
-    control = `<input class="settings-input settings-plugin-text" type="${inputType}" ${base} value="${val}" placeholder="${escapeAttr(placeholder)}" autocomplete="off" spellcheck="false" />`;
-  }
-  const help = field.help ? `<small>${escapeHtml(field.help)}</small>` : '';
-  return `
-    <div class="settings-line">
-      <div>
-        <span>${escapeHtml(field.label)}</span>
-        ${help}
-      </div>
-      ${control}
-    </div>`;
+  const disabled = !settingsResourceWritable(options.resourceStates ?? null, 'plugins');
+  return settingControlRow(
+    field.label,
+    field.help ?? '',
+    (a11y) => {
+      const base = `data-action="settings-plugin-field" data-key="${escapeAttr(field.key)}" data-type="${field.type}"${disabled ? ' disabled' : ''}`;
+      if (field.type === 'toggle') {
+        return `<label class="settings-toggle"><input type="checkbox" ${base} ${draftVal === true ? 'checked' : ''} ${a11y.attributes} /><span></span></label>`;
+      }
+      if (field.type === 'select') {
+        const current = String(draftVal ?? '');
+        return `<select class="settings-select" ${base} ${a11y.attributes}>${(field.options ?? [])
+          .map((option) => `<option value="${escapeAttr(option.value)}" ${option.value === current ? 'selected' : ''}>${escapeHtml(option.label)}</option>`)
+          .join('')}</select>`;
+      }
+      if (field.type === 'number') {
+        const unit = field.unit ? `<em class="settings-unit">${escapeHtml(field.unit)}</em>` : '';
+        const value = String(draftVal ?? '');
+        return options.phone
+          ? phoneNumberInput({
+              action: 'settings-plugin-field',
+              value,
+              min: field.min ?? 0,
+              max: field.max ?? 9999,
+              step: field.step ?? 1,
+              unit: field.unit ?? '',
+              attrs: `data-key="${escapeAttr(field.key)}" data-type="${field.type}" ${a11y.attributes}`,
+              disabled
+            })
+          : `<button type="button" class="settings-input number-edit-button settings-number-button" data-action="open-number-edit" data-target="settings-plugin-field" data-key="${escapeAttr(field.key)}" data-title="${escapeAttr(field.label)}" data-value="${escapeAttr(value)}" data-min="${field.min ?? 0}" data-max="${field.max ?? 9999}" data-step="${field.step ?? 1}" data-unit="${escapeAttr(field.unit ?? '')}" ${a11y.valueAttributes} ${disabled ? 'disabled' : ''}><span id="${a11y.valueId}">${escapeHtml(value || '--')}${unit}</span></button>`;
+      }
+
+      // text / password
+      const inputType = field.type === 'password' ? 'password' : 'text';
+      const savedValue = config.settings.values[field.key];
+      const isSet = field.secret
+        ? config.settings.secretsSet[field.key] === true || (savedValue != null && String(savedValue) !== '')
+        : false;
+      const placeholder = field.secret
+        ? isSet
+          ? '•••••••• (saved)'
+          : 'Not set'
+        : field.placeholder ?? '';
+      // Secret fields render blank after save; while editing, keep the draft visible
+      // so a re-render does not wipe the user's typed password.
+      const val = field.secret
+        ? config.secretEdited[field.key]
+          ? escapeAttr(String(draftVal ?? ''))
+          : ''
+        : escapeAttr(String(draftVal ?? ''));
+      return `<input class="settings-input settings-plugin-text" type="${inputType}" ${base} value="${val}" placeholder="${escapeAttr(placeholder)}" autocomplete="off" spellcheck="false" ${a11y.attributes} />`;
+    },
+    '',
+    `plugin-${config.id}-${field.key}`
+  );
 }
 
-function renderWakeSchedules(bundle: SettingsBundle): string {
+function renderWakeSchedules(bundle: SettingsBundle, options: SettingsRenderOptions): string {
+  const disabled = !settingsResourceWritable(options.resourceStates ?? null, 'schedules');
   const dayNames = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const fmtDays = (days: number[]): string => (days.length === 0 ? 'Every day' : days.map((d) => dayNames[d] ?? '').join(' '));
   const rows = bundle.schedules
-    .map(
-      (schedule) => `
+    .map((schedule) => {
+      const detail = `${fmtDays(schedule.daysOfWeek)}${schedule.keepAwakeFor ? ` · keep awake ${schedule.keepAwakeFor}m` : ''}`;
+      const a11y = settingControlA11y(`wake-schedule-${schedule.id}`, true);
+      return `
         <div class="settings-line">
           <div>
-            <span>${escapeHtml(schedule.time)}</span>
-            <small>${escapeHtml(fmtDays(schedule.daysOfWeek))}${schedule.keepAwakeFor ? ` · keep awake ${schedule.keepAwakeFor}m` : ''}</small>
+            <span id="${a11y.labelId}">${escapeHtml(schedule.time)}</span>
+            <small id="${a11y.descriptionId!}">${escapeHtml(detail)}</small>
           </div>
           <span class="settings-schedule-actions">
-            <label class="settings-toggle"><input type="checkbox" data-action="settings-schedule-toggle" data-id="${escapeAttr(schedule.id)}" ${schedule.enabled ? 'checked' : ''} /><span></span></label>
-            <button type="button" class="text-button" data-action="settings-schedule-delete" data-id="${escapeAttr(schedule.id)}" aria-label="Delete schedule">${icon('x')}</button>
+            <label class="settings-toggle"><input type="checkbox" data-action="settings-schedule-toggle" data-id="${escapeAttr(schedule.id)}" ${schedule.enabled ? 'checked' : ''} ${a11y.attributes} ${disabled ? 'disabled' : ''} /><span></span></label>
+            <button type="button" class="text-button" data-action="settings-schedule-delete" data-id="${escapeAttr(schedule.id)}" aria-label="Delete schedule" ${a11y.descriptionAttributes} ${disabled ? 'disabled' : ''}>${icon('x')}</button>
           </span>
-        </div>`
-    )
+        </div>`;
+    })
     .join('');
-  const add = `
-    <div class="settings-line">
-      <div><span>Add wake schedule</span><small>Wakes daily at the chosen time</small></div>
-      <span class="settings-schedule-add">
-        <input class="settings-input" type="time" data-action="settings-schedule-time" value="06:30" />
-        <button type="button" class="text-button primary" data-action="settings-schedule-add">${icon('plus')}<span>Add</span></button>
-      </span>
-    </div>`;
+  const add = settingControlRow(
+    'Add wake schedule',
+    'Wakes daily at the chosen time',
+    (a11y) => `<span class="settings-schedule-add">
+        <input class="settings-input" type="time" data-action="settings-schedule-time" value="06:30" ${a11y.attributes} ${disabled ? 'disabled' : ''} />
+        <button type="button" class="text-button primary" data-action="settings-schedule-add" ${a11y.descriptionAttributes} ${disabled ? 'disabled' : ''}>${icon('plus')}<span>Add</span></button>
+      </span>`,
+    '',
+    'wake-schedule-add'
+  );
   return `<div class="settings-subsection"><h4>Wake schedules</h4>${rows}${add}</div>`;
 }
 
 function renderSettingsField(field: SettingsField, bundle: SettingsBundle, options: SettingsRenderOptions = {}): string {
   const value = fieldValue(bundle, field);
-  const base = `data-action="settings-field" data-group="${field.group}" data-key="${escapeAttr(field.key)}" data-type="${field.type}"`;
-  let control = '';
-  if (field.type === 'toggle') {
-    control = `<label class="settings-toggle"><input type="checkbox" ${base} ${value === true ? 'checked' : ''} /><span></span></label>`;
-  } else if (field.type === 'select') {
-    const current = String(value ?? '');
-    const options = field.optionsFrom === 'skins'
-      ? bundle.skins.map((skin) => ({ value: skin.id, label: skin.name }))
-      : (field.options ?? []);
-    const hasCurrent = options.some((option) => option.value === current);
-    const unknown = !hasCurrent && field.unknownLabel && current !== ''
-      ? `<option value="${escapeAttr(current)}" selected disabled>${escapeHtml(field.unknownLabel)}</option>`
-      : '';
-    control = `<select class="settings-select" ${base}>${unknown}${options
-      .map((o) => `<option value="${escapeAttr(o.value)}" ${o.value === current ? 'selected' : ''}>${escapeHtml(o.label)}</option>`)
-      .join('')}</select>`;
-  } else if (field.type === 'time') {
-    control = `<input class="settings-input" type="time" ${base} value="${minutesToTime(typeof value === 'number' ? value : null)}" />`;
-  } else {
-    const num =
-      typeof value === 'number'
-        ? field.decimals != null
-          ? value.toFixed(field.decimals)
-          : String(value)
-        : '';
-    const unit = field.unit ? `<em class="settings-unit">${escapeHtml(field.unit)}</em>` : '';
-    control = options.phone
-      ? phoneNumberInput({
-          action: 'settings-field',
-          value: num,
-          min: field.min ?? 0,
-          max: field.max ?? 9999,
-          step: field.step ?? 1,
-          unit: field.unit ?? '',
-          attrs: `data-group="${field.group}" data-key="${escapeAttr(field.key)}" data-type="${field.type}"`
-        })
-      : `<button type="button" class="settings-input number-edit-button settings-number-button" data-action="open-number-edit" data-target="settings-field" data-group="${field.group}" data-key="${escapeAttr(field.key)}" data-title="${escapeAttr(field.label)}" data-value="${escapeAttr(num)}" data-min="${field.min ?? 0}" data-max="${field.max ?? 9999}" data-step="${field.step ?? 1}" data-unit="${escapeAttr(field.unit ?? '')}"><span>${escapeHtml(num || '--')}</span>${unit}</button>`;
-    if (field.group === 'calibration' && field.key === 'flowMultiplier') {
-      // Read-only: flow calibration is set in the Flow Calibrator (Graph), per
-      // profile or as the default. Show the resolved value and where it came from.
-      const fc = options.flowCalibration;
-      const display = (fc ? fc.value : typeof value === 'number' ? value : 1).toFixed(2);
-      const origin = fc
-        ? fc.origin === 'profile'
-          ? `from profile${fc.profileTitle ? ` · ${escapeHtml(fc.profileTitle)}` : ''}`
-          : 'from default'
-        : '';
-      control = `
-        <span class="settings-inline-actions">
-          <span class="settings-flow-cal" title="Set in the Flow Calibrator">
-            <strong>${escapeHtml(display)}×</strong>
-            ${origin ? `<em class="settings-flow-cal-origin">${origin}</em>` : ''}
-          </span>
-          <button type="button" class="text-button" data-action="open-flow-calibrator">${icon('sliders-horizontal')}<span>Graph</span></button>
-        </span>`;
-    }
-  }
-  return settingControlRow(field.label, field.help ?? '', control);
+  const disabled =
+    !settingsResourceWritable(options.resourceStates ?? null, field.group) ||
+    (field.optionsFrom === 'skins' && !settingsResourceWritable(options.resourceStates ?? null, 'skins'));
+  return settingControlRow(
+    field.label,
+    field.help ?? '',
+    (a11y) => {
+      const base = `data-action="settings-field" data-group="${field.group}" data-key="${escapeAttr(field.key)}" data-type="${field.type}" ${a11y.attributes} ${disabled ? 'disabled' : ''}`;
+      if (field.type === 'toggle') {
+        return `<label class="settings-toggle"><input type="checkbox" ${base} ${value === true ? 'checked' : ''} /><span></span></label>`;
+      }
+      if (field.type === 'select') {
+        const current = String(value ?? '');
+        const fieldOptions = field.optionsFrom === 'skins'
+          ? bundle.skins.map((skin) => ({ value: skin.id, label: skin.name }))
+          : (field.options ?? []);
+        const hasCurrent = fieldOptions.some((option) => option.value === current);
+        const unknown = !hasCurrent && field.unknownLabel && current !== ''
+          ? `<option value="${escapeAttr(current)}" selected disabled>${escapeHtml(field.unknownLabel)}</option>`
+          : '';
+        return `<select class="settings-select" ${base}>${unknown}${fieldOptions
+          .map((option) => `<option value="${escapeAttr(option.value)}" ${option.value === current ? 'selected' : ''}>${escapeHtml(option.label)}</option>`)
+          .join('')}</select>`;
+      }
+      if (field.type === 'time') {
+        return `<input class="settings-input" type="time" ${base} value="${minutesToTime(typeof value === 'number' ? value : null)}" />`;
+      }
+
+      const num =
+        typeof value === 'number'
+          ? field.decimals != null
+            ? value.toFixed(field.decimals)
+            : String(value)
+          : '';
+      if (field.group === 'calibration' && field.key === 'flowMultiplier') {
+        // Read-only: flow calibration is set in the Flow Calibrator (Graph), per
+        // profile or as the default. Show the resolved value and where it came from.
+        const fc = options.flowCalibration;
+        const display = (fc ? fc.value : typeof value === 'number' ? value : 1).toFixed(2);
+        const origin = fc
+          ? fc.origin === 'profile'
+            ? `from profile${fc.profileTitle ? ` · ${escapeHtml(fc.profileTitle)}` : ''}`
+            : 'from default'
+          : '';
+        return `
+          <span class="settings-inline-actions">
+            <span class="settings-flow-cal" title="Set in the Flow Calibrator">
+              <strong>${escapeHtml(display)}×</strong>
+              ${origin ? `<em class="settings-flow-cal-origin">${origin}</em>` : ''}
+            </span>
+            <button type="button" class="text-button" data-action="open-flow-calibrator" ${a11y.attributes} ${disabled ? 'disabled' : ''}>${icon('sliders-horizontal')}<span>Graph</span></button>
+          </span>`;
+      }
+
+      const unit = field.unit ? `<em class="settings-unit">${escapeHtml(field.unit)}</em>` : '';
+      return options.phone
+        ? phoneNumberInput({
+            action: 'settings-field',
+            value: num,
+            min: field.min ?? 0,
+            max: field.max ?? 9999,
+            step: field.step ?? 1,
+            unit: field.unit ?? '',
+            attrs: `data-group="${field.group}" data-key="${escapeAttr(field.key)}" data-type="${field.type}" ${a11y.attributes}`,
+            disabled
+          })
+        : `<button type="button" class="settings-input number-edit-button settings-number-button" data-action="open-number-edit" data-target="settings-field" data-group="${field.group}" data-key="${escapeAttr(field.key)}" data-title="${escapeAttr(field.label)}" data-value="${escapeAttr(num)}" data-min="${field.min ?? 0}" data-max="${field.max ?? 9999}" data-step="${field.step ?? 1}" data-unit="${escapeAttr(field.unit ?? '')}" ${a11y.valueAttributes} ${disabled ? 'disabled' : ''}><span id="${a11y.valueId}">${escapeHtml(num || '--')}${unit}</span></button>`;
+    },
+    '',
+    `field-${field.group}-${field.key}`
+  );
 }
 
 function renderGatewayRows(model: SettingsShellModel): string {
@@ -590,37 +695,44 @@ function renderGatewayRows(model: SettingsShellModel): string {
   `;
 }
 
-function renderAppearanceRows(preferences: SettingsPreferences): string {
+function renderAppearanceRows(preferences: SettingsPreferences, options: SettingsRenderOptions): string {
+  const syncedDisabled = options.syncedPreferencesWritable === false;
   return `
     ${settingControlRow(
       'Theme',
       'Skin color theme (tap a swatch to preview it live)',
-      themePicker(preferences.theme),
-      'settings-line-stack'
+      (a11y) => themePicker(preferences.theme, a11y.attributes),
+      'settings-line-stack',
+      'appearance-theme'
     )}
     ${settingControlRow(
       'UI scale',
       'Stored display density preference',
-      segmentedControl('settings-ui-scale', preferences.uiScale, [
-        ['compact', 'Compact'],
-        ['standard', 'Standard'],
-        ['large', 'Large']
-      ] satisfies Array<[UIScalePreference, string]>)
+      (a11y) => segmentedControl('settings-ui-scale', preferences.uiScale, [
+          ['compact', 'Compact'],
+          ['standard', 'Standard'],
+          ['large', 'Large']
+        ] satisfies Array<[UIScalePreference, string]>, a11y.attributes, syncedDisabled),
+      '',
+      'appearance-ui-scale'
     )}
     ${settingControlRow(
       'Topbar clock',
       'Show the wall clock in the top bar',
-      `<label class="settings-toggle"><input type="checkbox" data-action="settings-topbar-clock" ${preferences.topbarClock ? 'checked' : ''} /><span></span></label>`
+      (a11y) => `<label class="settings-toggle"><input type="checkbox" data-action="settings-topbar-clock" ${preferences.topbarClock ? 'checked' : ''} ${a11y.attributes} ${syncedDisabled ? 'disabled' : ''} /><span></span></label>`,
+      '',
+      'appearance-topbar-clock'
     )}
     ${settingControlRow(
       'Clock format',
       'Auto follows the tablet locale, which may ignore the Android 24-hour switch',
-      segmentedControl('settings-clock-format', preferences.clockFormat, [
-        ['auto', 'Auto'],
-        ['12h', '12h'],
-        ['24h', '24h']
-      ] satisfies Array<[ClockFormat, string]>),
-      'settings-line-wrap'
+      (a11y) => segmentedControl('settings-clock-format', preferences.clockFormat, [
+          ['auto', 'Auto'],
+          ['12h', '12h'],
+          ['24h', '24h']
+        ] satisfies Array<[ClockFormat, string]>, a11y.attributes, syncedDisabled),
+      'settings-line-wrap',
+      'appearance-clock-format'
     )}
   `;
 }
@@ -632,29 +744,33 @@ const WAKE_APP_ZONE_LABELS: Record<WakeAppZonePosition, string> = {
   right: 'Right'
 };
 
-function renderSleepScreenRows(model: SettingsShellModel): string {
+function renderSleepScreenRows(model: SettingsShellModel, options: SettingsRenderOptions): string {
   const preferences = model.preferences;
   const enabled = preferences.wakeAppZoneEnabled;
-  const toggle = `<label class="settings-toggle"><input type="checkbox" data-action="settings-wake-app-zone" ${enabled ? 'checked' : ''} /><span></span></label>`;
+  const syncedDisabled = options.syncedPreferencesWritable === false;
   const positionRow = enabled
     ? settingControlRow(
         'Tap zone position',
         'Which screen edge the wake-app zone sits on',
-        segmentedControl(
-          'settings-wake-app-zone-position',
-          preferences.wakeAppZonePosition,
-          WAKE_APP_ZONE_POSITIONS.map((position) => [position, WAKE_APP_ZONE_LABELS[position]])
-        ),
-        'settings-line-wrap'
+        (a11y) => segmentedControl(
+            'settings-wake-app-zone-position',
+            preferences.wakeAppZonePosition,
+            WAKE_APP_ZONE_POSITIONS.map((position) => [position, WAKE_APP_ZONE_LABELS[position]]),
+            a11y.attributes,
+            syncedDisabled
+          ),
+        'settings-line-wrap',
+        'sleep-tap-zone-position'
       )
     : '';
   return `
-    ${renderScreensaverRows(model)}
+    ${renderScreensaverRows(model, options)}
     ${settingControlRow(
       'Wake app without the machine',
       'Adds a tap zone to the tablet sleep screen that opens Beanie while the machine stays asleep',
-      toggle,
-      'settings-line-wrap'
+      (a11y) => `<label class="settings-toggle"><input type="checkbox" data-action="settings-wake-app-zone" ${enabled ? 'checked' : ''} ${a11y.attributes} ${syncedDisabled ? 'disabled' : ''} /><span></span></label>`,
+      'settings-line-wrap',
+      'sleep-wake-app-zone'
     )}
     ${positionRow}
   `;
@@ -667,24 +783,30 @@ const SCREENSAVER_MODE_LABELS: Array<[ScreensaverMode, string]> = [
   ['photos-clock', 'Photos + clock']
 ];
 
-function renderScreensaverRows(model: SettingsShellModel): string {
+function renderScreensaverRows(model: SettingsShellModel, options: SettingsRenderOptions): string {
   const preferences = model.preferences;
   const mode = preferences.screensaverMode;
   const black = mode === 'black';
+  const syncedDisabled = options.syncedPreferencesWritable === false;
+  const brightnessDetail = black ? 'The black screensaver always turns the screen fully off' : 'Screen backlight while the screensaver shows';
   const brightnessRow = settingControlRow(
     'Screensaver brightness',
-    black ? 'The black screensaver always turns the screen fully off' : 'Screen backlight while the screensaver shows',
-    numberEditButton({
-      target: 'screensaver-brightness',
-      title: 'Screensaver brightness',
-      value: String(preferences.screensaverBrightness),
-      display: black ? 'Screen off' : `${preferences.screensaverBrightness}%`,
-      min: 0,
-      max: 100,
-      step: 5,
-      unit: '%',
-      disabled: black
-    })
+    brightnessDetail,
+    (a11y) => numberEditButton({
+        target: 'screensaver-brightness',
+        title: 'Screensaver brightness',
+        value: String(preferences.screensaverBrightness),
+        display: black ? 'Screen off' : `${preferences.screensaverBrightness}%`,
+        min: 0,
+        max: 100,
+        step: 5,
+        unit: '%',
+        attrs: a11y.valueAttributes,
+        valueId: a11y.valueId,
+        disabled: black || syncedDisabled
+      }),
+    '',
+    'screensaver-brightness'
   );
   const count = model.screensaverPhotoCount;
   const photosRow = screensaverShowsPhotos(mode)
@@ -705,11 +827,12 @@ function renderScreensaverRows(model: SettingsShellModel): string {
     ${settingControlRow(
       'Screensaver',
       'What the tablet shows while the machine sleeps (tap the screen to wake)',
-      `<span class="settings-saver-mode">
-        ${segmentedControl('settings-screensaver-mode', mode, SCREENSAVER_MODE_LABELS)}
-        <button type="button" class="text-button" data-action="screensaver-preview">${icon('eye')}<span>Preview</span></button>
-      </span>`,
-      'settings-line-stack'
+      (a11y) => `<span class="settings-saver-mode">
+          ${segmentedControl('settings-screensaver-mode', mode, SCREENSAVER_MODE_LABELS, a11y.attributes, syncedDisabled)}
+          <button type="button" class="text-button" data-action="screensaver-preview" ${a11y.descriptionAttributes}>${icon('eye')}<span>Preview</span></button>
+        </span>`,
+      'settings-line-stack',
+      'screensaver-mode'
     )}
     ${brightnessRow}
     ${photosRow}
@@ -725,12 +848,15 @@ function numberEditButton(opts: {
   max: number;
   step: number;
   unit: string;
+  attrs?: string;
+  valueId?: string;
   disabled?: boolean;
 }): string {
+  const valueId = opts.valueId ? ` id="${escapeAttr(opts.valueId)}"` : '';
   if (opts.disabled) {
-    return `<button type="button" class="settings-input number-edit-button settings-number-button" disabled><span>${escapeHtml(opts.display)}</span></button>`;
+    return `<button type="button" class="settings-input number-edit-button settings-number-button" ${opts.attrs ?? ''} disabled><span${valueId}>${escapeHtml(opts.display)}</span></button>`;
   }
-  return `<button type="button" class="settings-input number-edit-button settings-number-button" data-action="open-number-edit" data-target="${escapeAttr(opts.target)}" data-title="${escapeAttr(opts.title)}" data-value="${escapeAttr(opts.value)}" data-min="${opts.min}" data-max="${opts.max}" data-step="${opts.step}" data-unit="${escapeAttr(opts.unit)}"><span>${escapeHtml(opts.display)}</span></button>`;
+  return `<button type="button" class="settings-input number-edit-button settings-number-button" data-action="open-number-edit" data-target="${escapeAttr(opts.target)}" data-title="${escapeAttr(opts.title)}" data-value="${escapeAttr(opts.value)}" data-min="${opts.min}" data-max="${opts.max}" data-step="${opts.step}" data-unit="${escapeAttr(opts.unit)}" ${opts.attrs ?? ''}><span${valueId}>${escapeHtml(opts.display)}</span></button>`;
 }
 
 function phoneNumberInput(opts: {
@@ -751,16 +877,24 @@ function phoneNumberInput(opts: {
     </span>`;
 }
 
-function renderScannerKeyRows(): string {
+function renderScannerKeyRows(keySet: boolean): string {
   return settingControlRow(
     'Gemini key',
-    'Update the API key used by bag label scanning',
-    `<button type="button" class="text-button" data-action="settings-change-scanner-key">${icon('key-round')}<span>Change key</span></button>`
+    keySet
+      ? 'Stored only on this device. Bag photos and label details are sent directly to Google when scanning.'
+      : 'No key on this device. Bag photos and label details are sent directly to Google when scanning.',
+    (a11y) => `<span class="settings-inline-actions">
+      <button type="button" class="text-button" data-action="settings-change-scanner-key" ${a11y.descriptionAttributes}>${icon('key-round')}<span>${keySet ? 'Change key' : 'Set up'}</span></button>
+      <button type="button" class="text-button danger" data-action="settings-remove-scanner-key" ${a11y.descriptionAttributes} ${keySet ? '' : 'disabled'}>${icon('trash-2')}<span>Remove</span></button>
+    </span>`,
+    '',
+    'scanner-gemini-key'
   );
 }
 
 function renderWaterAlertRows(model: SettingsShellModel, options: SettingsRenderOptions = {}): string {
   const soft = model.preferences.waterSoftLimitMl;
+  const syncedDisabled = options.syncedPreferencesWritable === false;
   const refill = model.machineRefillLevelMm;
   const refillKnown = refill != null;
   const refillMm = refillKnown ? Math.round(refill) : 0;
@@ -769,14 +903,16 @@ function renderWaterAlertRows(model: SettingsShellModel, options: SettingsRender
     ${settingControlRow(
       'Low-water warning',
       'Show a banner and flag the tank reading when it drops to this level',
-      options.phone
+      (a11y) => options.phone
         ? phoneNumberInput({
             action: 'settings-water-soft',
             value: String(soft),
             min: WATER_SOFT_MIN_ML,
             max: WATER_SOFT_MAX_ML,
             step: WATER_SOFT_STEP_ML,
-            unit: 'ml'
+            unit: 'ml',
+            attrs: a11y.attributes,
+            disabled: syncedDisabled
           })
         : numberEditButton({
             target: 'water-soft',
@@ -786,15 +922,20 @@ function renderWaterAlertRows(model: SettingsShellModel, options: SettingsRender
             min: WATER_SOFT_MIN_ML,
             max: WATER_SOFT_MAX_ML,
             step: WATER_SOFT_STEP_ML,
-            unit: 'ml'
-          })
+            unit: 'ml',
+            attrs: a11y.valueAttributes,
+            valueId: a11y.valueId,
+            disabled: syncedDisabled
+          }),
+      '',
+      'water-soft-limit'
     )}
     ${settingControlRow(
       'Machine refill level',
       refillKnown
         ? `The DE1 pauses shots and shows the refill popup at this tank level${refillMl != null ? ` (≈ ${refillMl} ml)` : ''}`
         : 'Connect the machine to set its refill level',
-      options.phone
+      (a11y) => options.phone
         ? phoneNumberInput({
             action: 'settings-machine-refill',
             value: String(refillMm),
@@ -802,6 +943,7 @@ function renderWaterAlertRows(model: SettingsShellModel, options: SettingsRender
             max: MACHINE_REFILL_MAX_MM,
             step: MACHINE_REFILL_STEP_MM,
             unit: 'mm',
+            attrs: a11y.attributes,
             disabled: !refillKnown
           })
         : numberEditButton({
@@ -813,19 +955,22 @@ function renderWaterAlertRows(model: SettingsShellModel, options: SettingsRender
             max: MACHINE_REFILL_MAX_MM,
             step: MACHINE_REFILL_STEP_MM,
             unit: 'mm',
+            attrs: a11y.valueAttributes,
+            valueId: a11y.valueId,
             disabled: !refillKnown
-          })
+          }),
+      '',
+      'machine-refill-level'
     )}
   `;
 }
 
-function renderCacheResetRows(model: SettingsShellModel): string {
-  const count = model.cacheKeyCount === 1 ? '1 local key' : `${model.cacheKeyCount} local keys`;
+function renderCacheResetRows(): string {
   return `
     ${settingControlRow(
-      'Demo/cache reset',
-      `${count} can be cleared; theme and scale are kept`,
-      `<button type="button" class="text-button" data-action="settings-reset-cache">${icon('rotate-ccw')}<span>Reset</span></button>`
+      'Device cache',
+      'Clear downloaded offline data on this device. Synced preferences, scanner key, theme, and screensaver photos are kept.',
+      `<button type="button" class="text-button" data-action="settings-reset-cache">${icon('rotate-ccw')}<span>Clear cache</span></button>`
     )}
   `;
 }
@@ -864,16 +1009,46 @@ function settingReadout(
   `;
 }
 
-function settingControlRow(label: string, detail: string, control: string, extraClass = ''): string {
+function settingControlRow(
+  label: string,
+  detail: string,
+  control: SettingControlContent,
+  extraClass = '',
+  accessibilityKey = label
+): string {
+  const a11y = settingControlA11y(accessibilityKey, detail !== '');
+  const associatesCopy = typeof control === 'function';
+  const renderedControl = associatesCopy ? control(a11y) : control;
   return `
     <div class="settings-line${extraClass ? ` ${extraClass}` : ''}">
       <div>
-        <span>${escapeHtml(label)}</span>
-        <small>${escapeHtml(detail)}</small>
+        <span${associatesCopy ? ` id="${a11y.labelId}"` : ''}>${escapeHtml(label)}</span>
+        <small${associatesCopy && a11y.descriptionId ? ` id="${a11y.descriptionId}"` : ''}>${escapeHtml(detail)}</small>
       </div>
-      ${control}
+      ${renderedControl}
     </div>
   `;
+}
+
+function settingControlA11y(key: string, hasDescription: boolean): SettingControlA11y {
+  const slug = key
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '') || 'control';
+  const baseId = `settings-control-${slug}`;
+  const labelId = `${baseId}-label`;
+  const descriptionId = hasDescription ? `${baseId}-description` : null;
+  const valueId = `${baseId}-value`;
+  const descriptionAttributes = descriptionId ? `aria-describedby="${descriptionId}"` : '';
+  return {
+    labelId,
+    descriptionId,
+    valueId,
+    attributes: `aria-labelledby="${labelId}"${descriptionAttributes ? ` ${descriptionAttributes}` : ''}`,
+    valueAttributes: `aria-labelledby="${labelId} ${valueId}"${descriptionAttributes ? ` ${descriptionAttributes}` : ''}`,
+    descriptionAttributes
+  };
 }
 
 const THEME_OPTIONS: Array<[ThemePreference, string]> = [
@@ -893,9 +1068,9 @@ const THEME_OPTIONS: Array<[ThemePreference, string]> = [
 // A grid of theme swatches. Each preview carries data-theme="<value>" so the
 // theme's palette tokens cascade into it (styles.css), letting the chip render
 // the real colors without duplicating any palette here.
-function themePicker(activeValue: ThemePreference): string {
+function themePicker(activeValue: ThemePreference, a11yAttributes = 'aria-label="Theme"'): string {
   return `
-    <div class="theme-picker" role="group" aria-label="Theme">
+    <div class="theme-picker" role="group" ${a11yAttributes}>
       ${THEME_OPTIONS.map(([value, label]) => `
         <button type="button" class="theme-swatch ${activeValue === value ? 'active' : ''}" data-action="settings-theme" data-value="${escapeAttr(value)}" aria-pressed="${activeValue === value}">
           <span class="theme-swatch-preview ${value === 'system' ? 'system' : ''}" data-theme="${escapeAttr(value)}" aria-hidden="true">
@@ -913,12 +1088,14 @@ function themePicker(activeValue: ThemePreference): string {
 function segmentedControl<T extends string>(
   action: string,
   activeValue: T,
-  options: Array<[T, string]>
+  options: Array<[T, string]>,
+  a11yAttributes = '',
+  disabled = false
 ): string {
   return `
-    <div class="settings-segmented" role="group">
+    <div class="settings-segmented" role="group" ${a11yAttributes}>
       ${options.map(([value, label]) => `
-        <button type="button" class="${activeValue === value ? 'active' : ''}" data-action="${escapeAttr(action)}" data-value="${escapeAttr(value)}" aria-pressed="${activeValue === value}">
+        <button type="button" class="${activeValue === value ? 'active' : ''}" data-action="${escapeAttr(action)}" data-value="${escapeAttr(value)}" aria-pressed="${activeValue === value}" ${disabled ? 'disabled' : ''}>
           ${escapeHtml(label)}
         </button>
       `).join('')}

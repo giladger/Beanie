@@ -10,6 +10,8 @@ run('onboard step explains the free key and links to AI Studio', () => {
   includes(html, 'data-form="scanner-onboard"');
   includes(html, 'name="apiKey"');
   includes(html, 'value="AIzaABC"');
+  includes(html, 'up to 60 active roaster/bean names');
+  includes(html, 'directly to Google Gemini');
 });
 
 run('onboard surfaces a verify message when present', () => {
@@ -56,6 +58,7 @@ run('capture step offers a file input and disables extract until a photo exists'
   // No capture attribute — it would force camera-only and block library photos.
   notIncludes(html, 'capture=');
   includes(html, 'data-action="scanner-extract" disabled');
+  includes(html, 'device-downscaled photos');
   notIncludes(html, 'Change key');
   notIncludes(html, 'data-action="scanner-change-key"');
 });

@@ -35,6 +35,8 @@ export interface WorkbenchRecipeViewModel {
   grinderStep: number;
   ratioLabel: string;
   brewTempLabel: string;
+  /** Visible acknowledgement for the debounced recipe -> machine workflow write. */
+  applyState?: 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
   /** A Derek change is staged for the next shot; offers one-tap revert and
    * highlights the control carrying the changed value. */
   derekTweak?: { summary: string; parameter: string | null } | null;
@@ -222,7 +224,7 @@ export function renderRecipeEditor(model: WorkbenchRecipeViewModel): string {
   const mark = (control: string) => (derekMarkFor(model.derekTweak, control) ? ' derek-changed' : '');
   return `
     <section class="recipe-grid">
-      ${controlProfile(draft.profileTitle ?? 'No profile', model.derekTweak, mark('profile'))}
+      ${controlProfile(draft.profileTitle ?? 'No profile', model.derekTweak, model.applyState, mark('profile'))}
       ${controlNumber('Dose', 'dose', draft.dose, 0.5, mark('dose'))}
       ${controlNumber('Yield', 'yield', draft.yield, 1, mark('yield'))}
       ${controlRatio(model.ratioLabel)}
@@ -288,19 +290,32 @@ function controlGrind(value: string, step: number, markClass = ''): string {
 function controlProfile(
   title: string,
   tweak: { summary: string; parameter: string | null } | null | undefined,
+  applyState: WorkbenchRecipeViewModel['applyState'],
   markClass = ''
 ): string {
   const revert = tweak
     ? `<button type="button" class="derek-tweak-revert" data-action="derek-revert-tweak" title="${escapeAttr(`Revert: ${tweak.summary}`)}" aria-label="${escapeAttr(`Revert Derek tweak: ${tweak.summary}`)}">${icon('rotate-ccw')}<span>Revert tweak</span></button>`
     : '';
+  const apply = recipeApplyChip(applyState);
   return `
     <div class="select-control profile-control panel${markClass}">
-      <div class="profile-label-row"><label>Profile</label>${revert}</div>
+      <div class="profile-label-row"><label>Profile</label><span class="profile-label-actions">${revert}${apply}</span></div>
       <button type="button" class="profile-button" data-action="open-profile-picker">
         <span>${escapeHtml(title)}</span>
       </button>
     </div>
   `;
+}
+
+function recipeApplyChip(state: WorkbenchRecipeViewModel['applyState'] = 'idle'): string {
+  if (state === 'idle') return '';
+  const presentation = {
+    pending: { label: 'Applying…', tone: 'pending' },
+    applied: { label: 'Applied', tone: 'ok' },
+    failed: { label: 'Apply failed', tone: 'alert' },
+    stale: { label: 'Not applied', tone: 'warn' }
+  }[state];
+  return `<span class="recipe-apply-chip ${presentation.tone}">${escapeHtml(presentation.label)}</span>`;
 }
 
 function controlRatio(label: string): string {

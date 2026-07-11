@@ -1,10 +1,8 @@
 import {
   favoriteBeansKey,
   favoriteProfilesKey,
-  geminiApiKeyKey,
   getSyncedItem,
   lastBeanKey,
-  removeSyncedItem,
   setSyncedItem
 } from './settingsStore';
 
@@ -46,21 +44,57 @@ export function writeFavoriteBeans(ids: string[]): void {
   setSyncedItem(favoriteBeansKey, JSON.stringify([...new Set(ids)]));
 }
 
-// The user's own (free-tier) Gemini key for the AI label scanner — synced
-// across devices through the gateway store like every other setting.
+// The user's Gemini credential is deliberately device-local. API keys are not
+// preferences and must never enter the gateway's cross-device settings store.
+const geminiApiKeyDeviceKey = 'beanie:gemini-api-key';
+const legacyGeminiStoreKey = 'geminiApiKey';
+
 export function readGeminiApiKey(): string | null {
-  const value = getSyncedItem(geminiApiKeyKey);
-  return value && value.trim() ? value : null;
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const value = localStorage.getItem(geminiApiKeyDeviceKey);
+    return value && value.trim() ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 export function writeGeminiApiKey(key: string): void {
   const trimmed = key.trim();
-  if (trimmed) setSyncedItem(geminiApiKeyKey, trimmed);
-  else removeSyncedItem(geminiApiKeyKey);
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (trimmed) localStorage.setItem(geminiApiKeyDeviceKey, trimmed);
+    else localStorage.removeItem(geminiApiKeyDeviceKey);
+  } catch {
+    // The scanner will remain unconfigured when device storage is unavailable.
+  }
 }
 
 export function clearGeminiApiKey(): void {
-  removeSyncedItem(geminiApiKeyKey);
+  writeGeminiApiKey('');
+}
+
+export interface LegacyGeminiKeyGateway {
+  storeGet(namespace: string, key: string): Promise<unknown>;
+  storeDelete(namespace: string, key: string): Promise<void>;
+}
+
+/**
+ * Move the historic synced key onto this device, then remove the gateway copy.
+ * A local value wins so migration never replaces a key chosen on this device.
+ * Failures are allowed to bubble so startup can warn and a later launch retries.
+ */
+export async function migrateLegacyGeminiApiKey(gateway: LegacyGeminiKeyGateway): Promise<boolean> {
+  const remote = await gateway.storeGet('beanie', legacyGeminiStoreKey);
+  if (typeof remote !== 'string' || !remote.trim()) return false;
+  if (readGeminiApiKey() == null) {
+    writeGeminiApiKey(remote);
+    if (readGeminiApiKey() !== remote.trim()) {
+      throw new Error('Could not persist the migrated Gemini key on this device');
+    }
+  }
+  await gateway.storeDelete('beanie', legacyGeminiStoreKey);
+  return true;
 }
 
 // Whether this device should skip the phone hand-off and scan on-device. It's a

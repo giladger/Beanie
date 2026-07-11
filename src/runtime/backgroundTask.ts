@@ -62,6 +62,14 @@ export class BackgroundTask implements Disposable, PresentationActivityTarget {
     if (!this.suspended) this.scheduleNext();
   }
 
+  /** Stop scheduling without disposing, so a later outage can restart it. */
+  stop(): void {
+    if (this.disposed || !this.started) return;
+    this.started = false;
+    this.runQueued = false;
+    this.cancelTimer();
+  }
+
   /** Request a run; concurrent requests collapse into one trailing catch-up. */
   trigger(): void {
     if (this.disposed || !this.started || this.suspended) return;

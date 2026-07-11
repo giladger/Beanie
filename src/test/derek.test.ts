@@ -1,12 +1,41 @@
 import {
   createSseDecoder,
+  probeDerekRelay,
   readDerekEvent,
   streamDerekAnswer,
+  DerekDeadlineError,
   DerekRequestError,
+  DerekResponseLimitError,
   DerekStallError,
   DerekUnavailableError,
   type DerekEvent
 } from '../api/derek';
+
+await run('Derek relay probe has an internal deadline', async () => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: {} });
+  Object.defineProperty(globalThis, 'location', {
+    configurable: true,
+    value: { port: '', protocol: 'http:', hostname: 'localhost', origin: 'http://localhost' }
+  });
+  let aborted = false;
+  try {
+    const availability = await probeDerekRelay(((_input, init) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        aborted = true;
+        reject(new DOMException('aborted', 'AbortError'));
+      }, { once: true });
+    })) as typeof fetch, 5);
+    equal(availability, 'unknown');
+    equal(aborted, true);
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
+    else Reflect.deleteProperty(globalThis, 'window');
+    if (previousLocation) Object.defineProperty(globalThis, 'location', previousLocation);
+    else Reflect.deleteProperty(globalThis, 'location');
+  }
+});
 
 run('SSE decoder yields complete events across arbitrary chunk boundaries', () => {
   const decoder = createSseDecoder();
@@ -35,6 +64,23 @@ run('SSE decoder buffers an incomplete trailing event until it completes', () =>
   const done = decoder.push('\n\n');
   equal(done.length, 1);
   equal(done[0]!.data, '{"text":"x"}');
+});
+
+run('SSE decoder rejects an oversized incomplete event instead of retaining it', () => {
+  const decoder = createSseDecoder({ maxBufferChars: 24 });
+  const error = expectThrows(
+    () => decoder.push(`event: delta\ndata: ${'x'.repeat(30)}`),
+    DerekResponseLimitError
+  );
+  equal(error.message, 'Derek returned an oversized streaming event');
+});
+
+run('SSE decoder rejects an oversized complete event in one chunk', () => {
+  const decoder = createSseDecoder({ maxBufferChars: 24 });
+  expectThrows(
+    () => decoder.push(`event: delta\ndata: ${'x'.repeat(30)}\n\n`),
+    DerekResponseLimitError
+  );
 });
 
 run('readDerekEvent maps the live event vocabulary', () => {
@@ -145,6 +191,21 @@ await run('streamDerekAnswer maps other HTTP failures to DerekRequestError with 
   equal((error as DerekRequestError).status, 429);
 });
 
+await run('streamDerekAnswer applies its stall budget while reading an HTTP error body', async () => {
+  await expectRejects(
+    streamDerekAnswer(
+      { query: 'q' },
+      {
+        onEvent: () => {},
+        stallMs: 20,
+        totalMs: 100,
+        fetchImpl: hangingHttpErrorFetch(503)
+      }
+    ),
+    DerekStallError
+  );
+});
+
 await run('streamDerekAnswer resolves null when the stream ends without a result', async () => {
   const result = await streamDerekAnswer(
     { query: 'q' },
@@ -161,6 +222,89 @@ await run('streamDerekAnswer throws DerekStallError when the stream goes silent'
       { onEvent: () => {}, stallMs: 20, fetchImpl: silentSseFetch() }
     ),
     DerekStallError
+  );
+});
+
+await run('streamDerekAnswer does not let incomplete byte drips evade the event stall budget', async () => {
+  await expectRejects(
+    streamDerekAnswer(
+      { query: 'q' },
+      {
+        onEvent: () => {},
+        stallMs: 25,
+        totalMs: 200,
+        maxEventChars: 1000,
+        fetchImpl: drippingIncompleteSseFetch(5)
+      }
+    ),
+    DerekStallError
+  );
+});
+
+await run('streamDerekAnswer enforces an absolute duration while valid events keep arriving', async () => {
+  const error = await expectRejects(
+    streamDerekAnswer(
+      { query: 'q' },
+      {
+        onEvent: () => {},
+        stallMs: 50,
+        totalMs: 30,
+        fetchImpl: periodicEventSseFetch(5)
+      }
+    ),
+    DerekDeadlineError
+  );
+  equal(error.message, 'Derek took too long to finish the answer');
+});
+
+await run('streamDerekAnswer bounds a growing incomplete SSE event and aborts its fetch', async () => {
+  let requestSignal: AbortSignal | null = null;
+  const error = await expectRejects(
+    streamDerekAnswer(
+      { query: 'q' },
+      {
+        onEvent: () => {},
+        maxEventChars: 32,
+        fetchImpl: openSseFetch([`event: delta\ndata: ${'x'.repeat(40)}`], (signal) => {
+          requestSignal = signal;
+        })
+      }
+    ),
+    DerekResponseLimitError
+  );
+  equal(error.message, 'Derek returned an oversized streaming event');
+  equal((requestSignal as AbortSignal | null)?.aborted, true);
+});
+
+await run('streamDerekAnswer caps cumulative delta text before publishing excess text', async () => {
+  const events: DerekEvent[] = [];
+  const wire =
+    'event: delta\ndata: {"text":"123"}\n\n' +
+    'event: delta\ndata: {"text":"456"}\n\n';
+  const error = await expectRejects(
+    streamDerekAnswer(
+      { query: 'q' },
+      {
+        onEvent: (event) => events.push(event),
+        maxAnswerChars: 5,
+        fetchImpl: openSseFetch([wire])
+      }
+    ),
+    DerekResponseLimitError
+  );
+  equal(error.message, "Derek's answer was larger than Beanie can safely display");
+  equal(events.length, 1);
+});
+
+await run('streamDerekAnswer caps the final result answer independently of deltas', async () => {
+  const wire =
+    'event: result\ndata: {"mode":"answer","answer_text":"123456","citations":[]}\n\n';
+  await expectRejects(
+    streamDerekAnswer(
+      { query: 'q' },
+      { onEvent: () => {}, maxAnswerChars: 5, fetchImpl: openSseFetch([wire]) }
+    ),
+    DerekResponseLimitError
   );
 });
 
@@ -181,6 +325,29 @@ await run('streamDerekAnswer aborts when the caller signal fires', async () => {
   equal(threw, true);
 });
 
+await run('streamDerekAnswer preserves an already-aborted caller reason', async () => {
+  const controller = new AbortController();
+  const reason = new Error('caller cancelled');
+  controller.abort(reason);
+  let received: unknown;
+  try {
+    await streamDerekAnswer(
+      { query: 'q' },
+      {
+        onEvent: () => {},
+        signal: controller.signal,
+        fetchImpl: async (_input, init) => {
+          if (init?.signal?.aborted) throw init.signal.reason;
+          throw new Error('expected an aborted signal');
+        }
+      }
+    );
+  } catch (error) {
+    received = error;
+  }
+  equal(received, reason);
+});
+
 // A stream that never emits and never closes, but — like real fetch — errors
 // its pending read when the request's abort signal fires.
 function silentSseFetch(): typeof fetch {
@@ -190,6 +357,85 @@ function silentSseFetch(): typeof fetch {
         const abort = () => controller.error(new DOMException('aborted', 'AbortError'));
         if (init?.signal?.aborted) return abort();
         init?.signal?.addEventListener('abort', abort, { once: true });
+      }
+    });
+    return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+  };
+}
+
+function hangingHttpErrorFetch(status: number): typeof fetch {
+  return async (_input, init) => {
+    const signal = init?.signal;
+    if (!signal) throw new Error('expected request signal');
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const abort = () => controller.error(new DOMException('aborted', 'AbortError'));
+        if (signal.aborted) abort();
+        else signal.addEventListener('abort', abort, { once: true });
+      }
+    });
+    return new Response(stream, { status });
+  };
+}
+
+function openSseFetch(
+  chunks: string[],
+  captureSignal: (signal: AbortSignal) => void = () => {}
+): typeof fetch {
+  return async (_input, init) => {
+    const signal = init?.signal;
+    if (!signal) throw new Error('expected request signal');
+    captureSignal(signal);
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const abort = () => controller.error(new DOMException('aborted', 'AbortError'));
+        if (signal.aborted) return abort();
+        signal.addEventListener('abort', abort, { once: true });
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      }
+    });
+    return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+  };
+}
+
+function periodicEventSseFetch(intervalMs: number): typeof fetch {
+  return async (_input, init) => {
+    const signal = init?.signal;
+    if (!signal) throw new Error('expected request signal');
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const interval = setInterval(() => {
+          controller.enqueue(encoder.encode('event: phase\ndata: {"phase":"answering"}\n\n'));
+        }, intervalMs);
+        const abort = () => {
+          clearInterval(interval);
+          controller.error(new DOMException('aborted', 'AbortError'));
+        };
+        if (signal.aborted) abort();
+        else signal.addEventListener('abort', abort, { once: true });
+      }
+    });
+    return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+  };
+}
+
+function drippingIncompleteSseFetch(intervalMs: number): typeof fetch {
+  return async (_input, init) => {
+    const signal = init?.signal;
+    if (!signal) throw new Error('expected request signal');
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('event: delta\ndata: '));
+        const interval = setInterval(() => controller.enqueue(encoder.encode('x')), intervalMs);
+        const abort = () => {
+          clearInterval(interval);
+          controller.error(new DOMException('aborted', 'AbortError'));
+        };
+        if (signal.aborted) abort();
+        else signal.addEventListener('abort', abort, { once: true });
       }
     });
     return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
@@ -219,6 +465,19 @@ async function expectRejects(
 ): Promise<Error> {
   try {
     await promise;
+  } catch (error) {
+    if (error instanceof errorClass) return error;
+    throw new Error(`Expected ${errorClass.name}, got ${String(error)}`);
+  }
+  throw new Error(`Expected ${errorClass.name}, but nothing was thrown`);
+}
+
+function expectThrows(
+  fn: () => unknown,
+  errorClass: new (...args: never[]) => Error
+): Error {
+  try {
+    fn();
   } catch (error) {
     if (error instanceof errorClass) return error;
     throw new Error(`Expected ${errorClass.name}, got ${String(error)}`);
