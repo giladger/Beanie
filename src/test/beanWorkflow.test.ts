@@ -5,6 +5,7 @@ import {
   compareBeansForPicker,
   computeBeanFreshness,
   editLastBatchStorageEventDate,
+  normalizeDraft,
   profileBaseTemperature,
   ratioFor,
   recipeFromShot,
@@ -116,6 +117,41 @@ run('loads planned dose and yield when preferring planned', () => {
   };
   // Loading into the dial-in repeats the planned recipe, not the pour's actuals.
   match(recipeFromShot(shot, 'planned'), { dose: 18, yield: 42 });
+});
+
+run('loads a shot temperature into the next workflow', () => {
+  const shot: ShotRecord = {
+    id: 'shot-temperature',
+    timestamp: '2026-06-01T10:00:00Z',
+    workflow: {
+      profile: {
+        title: 'Blooming',
+        tank_temperature: 91,
+        steps: [{ temperature: 89 }, { temperature: 93 }]
+      },
+      context: { targetDoseWeight: 18, targetYield: 42 }
+    },
+    measurements: []
+  };
+  const libraryProfile: ProfileRecord = {
+    id: 'profile-blooming',
+    profile: {
+      title: 'Blooming',
+      tank_temperature: 94,
+      steps: [{ temperature: 92 }, { temperature: 96 }]
+    }
+  };
+
+  const draft = normalizeDraft(recipeFromShot(shot, 'planned'), [libraryProfile], []);
+  const update = buildWorkflowUpdate(beans[0]!, null, draft, draft.profile);
+
+  equal(draft.brewTemp, 91);
+  equal(profileBaseTemperature(update.profile), 91);
+  const steps = update.profile?.steps as Array<{ temperature: number }>;
+  equal(steps[0]?.temperature, 89);
+  equal(steps[1]?.temperature, 93);
+  equal(update.profile === libraryProfile.profile, false);
+  equal(libraryProfile.profile.tank_temperature, 94);
 });
 
 run('planned preference falls back to actuals when no target is set', () => {

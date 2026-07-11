@@ -154,6 +154,7 @@ export function recipeFromShot(
   return {
     profileTitle: workflow?.profile?.title ?? null,
     profile: workflow?.profile ?? null,
+    brewTemp: profileBaseTemperature(workflow?.profile),
     dose: prefer === 'planned'
       ? firstPositive(plannedDose, actualDose)
       : firstPositive(actualDose, plannedDose),
