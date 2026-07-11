@@ -61,7 +61,7 @@ export function shotFilterForBean(bean: Bean, batch?: BeanBatch | null): URLSear
 
 export function beanListTimestamp(bean: Bean, usageAt?: number | null): number {
   const shotTime = typeof usageAt === 'number' && Number.isFinite(usageAt) ? usageAt : 0;
-  const addTime = parseTimestamp(bean.createdAt) ?? parseTimestamp(bean.updatedAt) ?? 0;
+  const addTime = parseTimestamp(bean.createdAt) ?? 0;
   return Math.max(shotTime, addTime);
 }
 

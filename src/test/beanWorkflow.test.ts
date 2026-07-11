@@ -61,11 +61,12 @@ run('builds bean shot filters by stable bean id', () => {
   equal(query.get('beanId'), 'a');
 });
 
-run('sorts bean list by shot or add recency before name', () => {
+run('sorts beans by latest shot or creation time, never edit time', () => {
   const sorted = [
     { id: 'old-used', roaster: 'A', name: 'Used' },
     { id: 'new-empty', roaster: 'B', name: 'New', createdAt: '2026-06-08T10:00:00.000Z' },
-    { id: 'old-empty', roaster: 'C', name: 'Old', createdAt: '2026-06-01T10:00:00.000Z' }
+    { id: 'old-empty', roaster: 'C', name: 'Old', createdAt: '2026-06-01T10:00:00.000Z' },
+    { id: 'edited', roaster: 'D', name: 'Edited', updatedAt: '2026-06-09T10:00:00.000Z' }
   ].sort((a, b) =>
     compareBeansForPicker(a, b, { 'old-used': Date.parse('2026-06-07T10:00:00.000Z') }, null)
   );
@@ -73,6 +74,7 @@ run('sorts bean list by shot or add recency before name', () => {
   equal(sorted[0]?.id, 'new-empty');
   equal(sorted[1]?.id, 'old-used');
   equal(sorted[2]?.id, 'old-empty');
+  equal(sorted[3]?.id, 'edited');
 });
 
 run('hydrates recipe values from a shot', () => {

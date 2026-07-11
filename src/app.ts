@@ -289,6 +289,7 @@ import { beanieCache } from './domain/cache';
 import { loadGatewayStartupWithCache } from './data/startupRepository';
 import {
   fetchShotPage as fetchShotPageFromRepository,
+  loadLatestBeanUsage,
   loadLatestShotCandidates as loadLatestShotCandidatesFromRepository
 } from './data/shotRepository';
 import { loadBeanBatches } from './data/beanRepository';
@@ -1062,6 +1063,7 @@ export class BeanieApp {
   private readonly desiredStoreWrites = new Map<string, string | null>();
   private shotRefreshInFlight = false;
   private beanRefreshInFlight = false;
+  private beanUsageRefreshRequestId = 0;
   private shotCacheGeneration = 0;
 
   private readonly beanWorkflow = new BeanWorkflowController();
@@ -1594,6 +1596,7 @@ export class BeanieApp {
         loading: false,
         status: machineSleeping ? 'Machine asleep' : startupStatusLabel(startup.status)
       });
+      void this.refreshBeanUsage(beans);
       this.noteUserActivity();
 
       const selected = selectInitialBean(beans, workflow, readLastBeanId(), latestShots.items[0]);
@@ -1792,7 +1795,10 @@ export class BeanieApp {
       beanPickerFocusedBatchId: null,
       beanPickerFreezeBatchId: null
     });
-    if (!options.create) void this.refreshBeans({ force: true, allowModal: true });
+    if (!options.create) {
+      void this.refreshBeans({ force: true, allowModal: true });
+      void this.refreshBeanUsage();
+    }
     if (id && !options.create) await this.ensureBatchesLoaded(id);
   }
 
@@ -2054,12 +2060,33 @@ export class BeanieApp {
         batchesByBean: keepKeys(this.state.batchesByBean, beanIds),
         beanUsageAt: keepKeys(this.state.beanUsageAt, beanIds)
       });
+      void this.refreshBeanUsage(beans);
       void beanieCache.putBeans(beans).catch(() => {});
     } catch (error) {
       console.warn('[Beanie] Could not refresh beans', error);
     } finally {
       this.beanRefreshInFlight = false;
     }
+  }
+
+  // Shot summaries identify coffee through batch ids, while the picker does not
+  // eagerly load every bean's batches. Ask the gateway for one scoped summary
+  // per bean so the ordering reflects each bean's actual latest pull.
+  private async refreshBeanUsage(beans: readonly Bean[] = this.state.beans): Promise<void> {
+    if (this.state.demo || this.disposed || beans.length === 0) return;
+    const requestId = ++this.beanUsageRefreshRequestId;
+    const usage = await loadLatestBeanUsage(beans, gateway);
+    if (this.disposed || requestId !== this.beanUsageRefreshRequestId) return;
+
+    const beanIds = new Set(this.state.beans.map((bean) => bean.id));
+    const beanUsageAt = { ...this.state.beanUsageAt };
+    let changed = false;
+    for (const [beanId, timestamp] of Object.entries(usage)) {
+      if (!beanIds.has(beanId) || timestamp <= (beanUsageAt[beanId] ?? 0)) continue;
+      beanUsageAt[beanId] = timestamp;
+      changed = true;
+    }
+    if (changed) this.setState({ beanUsageAt });
   }
 
   private canRefreshBeansInsideModal(): boolean {
@@ -3520,6 +3547,7 @@ export class BeanieApp {
   private handleGatewayReconnected(): void {
     this.setState({ gatewayLinkDown: false, status: 'Gateway reconnected' });
     void this.refreshBeans({ force: true });
+    void this.refreshBeanUsage();
     void this.refreshVisibleShots();
     void this.doseMutationReconciler.trigger();
   }
@@ -4165,6 +4193,12 @@ export class BeanieApp {
           liveActive: false,
           liveFinalizing: false,
           beans: bean ? promoteBean(this.state.beans, bean.id) : this.state.beans,
+          beanUsageAt: bean && decision.optimisticShot
+            ? {
+                ...this.state.beanUsageAt,
+                ...beanUsageForBean(bean.id, [decision.optimisticShot])
+              }
+            : this.state.beanUsageAt,
           shots: decision.optimisticShot
             ? includeShotInHistory(this.state.shots, decision.optimisticShot, this.shotPageSize)
             : this.state.shots,
@@ -4233,6 +4267,10 @@ export class BeanieApp {
           shots: visibleRecords,
           shotsTotal: Math.max(result.total, visibleRecords.length),
           shotsLoadingMore: false,
+          beanUsageAt: {
+            ...this.state.beanUsageAt,
+            ...beanUsageForBean(bean.id, visibleRecords)
+          },
           liveActive: false,
           liveFinalizing: false,
           detailShotId: savedShot.id,
@@ -4253,6 +4291,10 @@ export class BeanieApp {
         shots: visibleRecords,
         shotsTotal: Math.max(result.total, visibleRecords.length),
         shotsLoadingMore: false,
+        beanUsageAt: {
+          ...this.state.beanUsageAt,
+          ...beanUsageForBean(bean.id, visibleRecords)
+        },
         liveActive: false,
         liveFinalizing: false,
         detailShotId: context.optimisticShot?.id ?? result.records[0]?.id ?? this.state.detailShotId,
@@ -4504,7 +4546,10 @@ export class BeanieApp {
         if (value === 'settings') {
           this.openSettingsForPhone();
         }
-        if (value === 'beans') void this.refreshBeans({ force: true });
+        if (value === 'beans') {
+          void this.refreshBeans({ force: true });
+          void this.refreshBeanUsage();
+        }
       },
       'phone-select-bean': async ({ id }) => {
         if (id) {
@@ -5962,7 +6007,6 @@ export class BeanieApp {
       beans,
       batchesByBean: result.batchesByBean,
       selectedBatchId: result.selectedBatchId,
-      beanUsageAt: { ...this.state.beanUsageAt, [bean.id]: nowMs },
       beanPickerBeanId: bean.id,
       beanPickerMode: 'inspect',
       beanPickerDraftBatchBeanId: null,

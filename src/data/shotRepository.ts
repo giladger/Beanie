@@ -1,4 +1,4 @@
-import type { PaginatedShots, ShotRecord, ShotSummary } from '../api/types';
+import type { Bean, PaginatedShots, ShotRecord, ShotSummary } from '../api/types';
 import { mergeShotSummaryIntoRecord } from '../domain/shotRecord';
 
 export interface ShotRepositoryGateway {
@@ -23,6 +23,36 @@ export interface FetchShotPageInput {
   query: URLSearchParams;
   pageSize: number;
   offset: number;
+}
+
+export async function loadLatestBeanUsage(
+  beans: readonly Pick<Bean, 'id'>[],
+  gateway: Pick<ShotRepositoryGateway, 'shots'>
+): Promise<Record<string, number>> {
+  const entries = await Promise.all(
+    beans.map(async (bean): Promise<readonly [string, number] | null> => {
+      const query = new URLSearchParams({
+        limit: '1',
+        offset: '0',
+        order: 'desc',
+        beanId: bean.id
+      });
+      try {
+        const page = await gateway.shots(query);
+        const timestamp = Date.parse(page.items[0]?.timestamp ?? '');
+        return Number.isFinite(timestamp) ? [bean.id, timestamp] : null;
+      } catch (error) {
+        console.warn(`[Beanie] Could not load latest shot for bean ${bean.id}`, error);
+        return null;
+      }
+    })
+  );
+
+  const usage: Record<string, number> = {};
+  for (const entry of entries) {
+    if (entry) usage[entry[0]] = entry[1];
+  }
+  return usage;
 }
 
 export async function fetchShotPage(

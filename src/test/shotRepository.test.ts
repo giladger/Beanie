@@ -2,6 +2,7 @@ import type { PaginatedShots, ShotRecord, ShotSummary } from '../api/types';
 import {
   fetchShotPage,
   loadFullShot,
+  loadLatestBeanUsage,
   loadLatestShotCandidates,
   type ShotRepositoryCache,
   type ShotRepositoryGateway
@@ -78,6 +79,74 @@ class FakeShotCache implements ShotRepositoryCache {
     return this.record;
   }
 }
+
+await run('loadLatestBeanUsage queries one latest summary per bean without hydrating shots', async () => {
+  const queries: URLSearchParams[] = [];
+  let hydratedShots = 0;
+  const timestamps: Record<string, string> = {
+    'bean-1': '2026-06-07T10:00:00.000Z',
+    'bean-2': '2026-06-08T11:00:00.000Z'
+  };
+  const gateway: ShotRepositoryGateway = {
+    async shots(query) {
+      queries.push(new URLSearchParams(query));
+      const beanId = query.get('beanId') ?? '';
+      return {
+        items: [{ id: `shot-${beanId}`, timestamp: timestamps[beanId] ?? '' }],
+        total: 1,
+        limit: 1,
+        offset: 0
+      };
+    },
+    async shot() {
+      hydratedShots += 1;
+      return fullRecord;
+    }
+  };
+
+  const usage = await loadLatestBeanUsage([{ id: 'bean-1' }, { id: 'bean-2' }], gateway);
+
+  equal(usage['bean-1'], Date.parse(timestamps['bean-1']!));
+  equal(usage['bean-2'], Date.parse(timestamps['bean-2']!));
+  equal(queries.length, 2);
+  equal(queries[0]?.get('limit'), '1');
+  equal(queries[0]?.get('offset'), '0');
+  equal(queries[0]?.get('order'), 'desc');
+  equal(queries[0]?.get('beanId'), 'bean-1');
+  equal(queries[1]?.get('beanId'), 'bean-2');
+  equal(hydratedShots, 0);
+});
+
+await run('loadLatestBeanUsage isolates failed, missing, and invalid bean shot summaries', async () => {
+  const queriedBeans: string[] = [];
+  const gateway: Pick<ShotRepositoryGateway, 'shots'> = {
+    async shots(query) {
+      const beanId = query.get('beanId') ?? '';
+      queriedBeans.push(beanId);
+      if (beanId === 'failed') throw new Error('shots unavailable');
+      const timestamp = beanId === 'valid' ? '2026-06-08T11:00:00.000Z' : 'not-a-date';
+      return {
+        items: beanId === 'missing' ? [] : [{ id: `shot-${beanId}`, timestamp }],
+        total: beanId === 'missing' ? 0 : 1,
+        limit: 1,
+        offset: 0
+      };
+    }
+  };
+
+  const usage = await withSuppressedWarnings(() =>
+    loadLatestBeanUsage(
+      [{ id: 'valid' }, { id: 'failed' }, { id: 'missing' }, { id: 'invalid' }],
+      gateway
+    )
+  );
+
+  equal(usage.valid, Date.parse('2026-06-08T11:00:00.000Z'));
+  equal(usage.failed, undefined);
+  equal(usage.missing, undefined);
+  equal(usage.invalid, undefined);
+  equal(queriedBeans.join(','), 'valid,failed,missing,invalid');
+});
 
 await run('loadFullShot merges cached measurements with fresh summary fields', async () => {
   const gateway = new FakeShotGateway();
