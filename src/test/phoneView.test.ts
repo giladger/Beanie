@@ -40,6 +40,13 @@ run('phone home hero opens the bean picker and shows bag facts', () => {
   includes(html, '~10 shots');
 });
 
+run('phone home hides the passive not-applied recipe label', () => {
+  const html = renderPhoneShell({ ...model(), applyState: 'stale' });
+
+  excludes(html, 'phone-apply-chip');
+  excludes(html, 'Not applied');
+});
+
 run('phone bean rows carry the picker stock facts and favorites', () => {
   const html = renderPhoneShell({ ...model(), activeTab: 'beans' });
 

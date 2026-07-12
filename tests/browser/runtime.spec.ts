@@ -88,7 +88,7 @@ test('gateway failure reaches an explicit, usable demo shell', async ({ page }) 
 
   await expect(mode).toContainText('OFFLINE · cached data');
   await page.getByRole('button', { name: 'Increase Dose' }).click();
-  await expect(page.locator('.recipe-apply-chip')).toHaveText('Not applied');
+  await expect(page.locator('.recipe-apply-chip')).toHaveCount(0);
   expect(workflowWrites).toBe(0);
   expect(pageErrors).toEqual([]);
 });

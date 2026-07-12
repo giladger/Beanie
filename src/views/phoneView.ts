@@ -136,8 +136,7 @@ function renderHomeTab(model: PhoneShellModel): string {
 const APPLY_CHIP: Record<string, { cls: string; text: string }> = {
   pending: { cls: 'pending', text: 'Applying…' },
   applied: { cls: 'ok', text: 'Applied' },
-  failed: { cls: 'alert', text: 'Apply failed' },
-  stale: { cls: 'stale', text: 'Not applied' }
+  failed: { cls: 'alert', text: 'Apply failed' }
 };
 
 function applyChip(state: PhoneShellModel['applyState']): string {

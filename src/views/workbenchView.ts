@@ -308,12 +308,11 @@ function controlProfile(
 }
 
 function recipeApplyChip(state: WorkbenchRecipeViewModel['applyState'] = 'idle'): string {
-  if (state === 'idle') return '';
+  if (state === 'idle' || state === 'stale') return '';
   const presentation = {
     pending: { label: 'Applying…', tone: 'pending' },
     applied: { label: 'Applied', tone: 'ok' },
-    failed: { label: 'Apply failed', tone: 'alert' },
-    stale: { label: 'Not applied', tone: 'warn' }
+    failed: { label: 'Apply failed', tone: 'alert' }
   }[state];
   return `<span class="recipe-apply-chip ${presentation.tone}">${escapeHtml(presentation.label)}</span>`;
 }

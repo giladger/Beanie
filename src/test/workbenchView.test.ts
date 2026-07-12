@@ -90,6 +90,10 @@ run('workbench hides the topbar clock when the preference turns it off', () => {
 
 run('workbench exposes recipe apply progress and failures beside the profile', () => {
   const base = model();
+  const stale = renderWorkbench(model({ recipe: { ...base.recipe, applyState: 'stale' } }));
+  excludes(stale, 'recipe-apply-chip');
+  excludes(stale, 'Not applied');
+
   const pending = renderWorkbench(model({ recipe: { ...base.recipe, applyState: 'pending' } }));
   includes(pending, 'recipe-apply-chip pending');
   includes(pending, '>Applying…</span>');
