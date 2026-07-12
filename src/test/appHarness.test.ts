@@ -229,8 +229,7 @@ await run('queued machine mutations re-check live authority at dispatch', async 
   const harness = app as unknown as {
     setState(next: Record<string, unknown>): void;
     runExactMachineCommand<T>(
-      run: () => T | PromiseLike<T>,
-      options?: { allowOfflineStop?: boolean }
+      run: (lane: unknown) => T | PromiseLike<T>
     ): Promise<T>;
   };
   harness.setState({ startupPhase: 'connected', demo: false });
@@ -258,9 +257,6 @@ await run('queued machine mutations re-check live authority at dispatch', async 
   equal(rejected, true);
   equal(secondRuns, 0);
 
-  let stopRuns = 0;
-  await harness.runExactMachineCommand(() => { stopRuns += 1; }, { allowOfflineStop: true });
-  equal(stopRuns, 1);
   app.dispose();
 });
 

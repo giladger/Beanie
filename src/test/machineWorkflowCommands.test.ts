@@ -1,4 +1,5 @@
-import type { MachineState, Workflow } from '../api/types';
+import type { De1AdvancedSettingsPatch } from '../api/settings';
+import type { De1MachineSettings, MachineState, Workflow } from '../api/types';
 import {
   MachineWorkflowCommands,
   type MachineAuthorityPort,
@@ -98,6 +99,49 @@ await run('owned lane rechecks authority between compound machine mutations', as
   deepEqual(transport.requestedStates, []);
 });
 
+await run('owned lane routes every typed machine mutation through the injected transport', async () => {
+  const mutations = new GatewayMutationCoordinator<string>();
+  const transport = fakeTransport();
+  const commands = new MachineWorkflowCommands(mutations, transport, liveAuthority());
+  const machinePatch: Partial<De1MachineSettings> = { steamPurgeMode: 1, tankTemp: 88 };
+  const advancedPatch: De1AdvancedSettingsPatch = { heaterVoltage: 230, refillKitSetting: 2 };
+
+  const outcome = await commands.runExact(async (lane) => {
+    await lane.updateCalibration(1.07);
+    await lane.updateMachineSettings(machinePatch);
+    await lane.updateMachineAdvancedSettings(advancedPatch);
+    await lane.setRefillLevel(42);
+    await lane.resetMachineSettings();
+  });
+
+  equal(outcome.status, 'completed');
+  deepEqual(transport.calibrations, [1.07]);
+  deepEqual(transport.machineSettingsPatches, [machinePatch]);
+  deepEqual(transport.advancedSettingsPatches, [advancedPatch]);
+  deepEqual(transport.refillLevels, [42]);
+  equal(transport.resetCount, 1);
+});
+
+await run('extended machine mutations recheck authority between compound steps', async () => {
+  const mutations = new GatewayMutationCoordinator<string>();
+  const authority = liveAuthority();
+  const transport = fakeTransport();
+  transport.updateCalibration = (flowMultiplier) => {
+    transport.calibrations.push(flowMultiplier);
+    authority.live = false;
+  };
+  const commands = new MachineWorkflowCommands(mutations, transport, authority);
+
+  const outcome = await commands.runExact(async (lane) => {
+    await lane.updateCalibration(1.03);
+    await lane.updateMachineSettings({ fan: 2 });
+  });
+
+  deepEqual(outcome, { status: 'authority-blocked' });
+  deepEqual(transport.calibrations, [1.03]);
+  deepEqual(transport.machineSettingsPatches, []);
+});
+
 await run('only the explicit safety-stop API bypasses live authority', async () => {
   const mutations = new GatewayMutationCoordinator<string>();
   const transport = fakeTransport();
@@ -126,7 +170,15 @@ await run('owned machine lane exposes mutation capabilities but no nested schedu
 
   equal(outcome.status, 'completed');
   equal(Object.isFrozen(captured), true);
-  deepEqual(Object.keys(captured ?? {}).sort(), ['requestState', 'updateWorkflow']);
+  deepEqual(Object.keys(captured ?? {}).sort(), [
+    'requestState',
+    'resetMachineSettings',
+    'setRefillLevel',
+    'updateCalibration',
+    'updateMachineAdvancedSettings',
+    'updateMachineSettings',
+    'updateWorkflow'
+  ]);
 });
 
 await run('shared mutation owner, not the machine feature, owns disposal and drain', async () => {
@@ -158,6 +210,11 @@ interface MutableAuthority extends MachineAuthorityPort {
 interface FakeTransport extends MachineWorkflowTransport {
   requestedStates: MachineState[];
   updatedWorkflows: Workflow[];
+  calibrations: number[];
+  machineSettingsPatches: Array<Partial<De1MachineSettings>>;
+  advancedSettingsPatches: De1AdvancedSettingsPatch[];
+  refillLevels: number[];
+  resetCount: number;
 }
 
 function liveAuthority(): MutableAuthority {
@@ -172,12 +229,36 @@ function liveAuthority(): MutableAuthority {
 function fakeTransport(): FakeTransport {
   const requestedStates: MachineState[] = [];
   const updatedWorkflows: Workflow[] = [];
+  const calibrations: number[] = [];
+  const machineSettingsPatches: Array<Partial<De1MachineSettings>> = [];
+  const advancedSettingsPatches: De1AdvancedSettingsPatch[] = [];
+  const refillLevels: number[] = [];
   return {
     requestedStates,
     updatedWorkflows,
+    calibrations,
+    machineSettingsPatches,
+    advancedSettingsPatches,
+    refillLevels,
+    resetCount: 0,
     updateWorkflow(next) {
       updatedWorkflows.push(next);
       return next;
+    },
+    updateCalibration(flowMultiplier) {
+      calibrations.push(flowMultiplier);
+    },
+    updateMachineSettings(patch) {
+      machineSettingsPatches.push(patch);
+    },
+    updateMachineAdvancedSettings(patch) {
+      advancedSettingsPatches.push(patch);
+    },
+    resetMachineSettings() {
+      this.resetCount += 1;
+    },
+    setRefillLevel(refillLevel) {
+      refillLevels.push(refillLevel);
     },
     requestState(state) {
       requestedStates.push(state);

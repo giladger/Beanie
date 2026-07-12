@@ -146,7 +146,7 @@ import {
 } from './runtime/presentationActivity';
 import { DisposableScope } from './runtime/disposableScope';
 import { BackgroundTask } from './runtime/backgroundTask';
-import { WorkflowCommandCoordinator } from './runtime/workflowCommandCoordinator';
+import { GatewayMutationCoordinator } from './runtime/gatewayMutationCoordinator';
 import { OperationAuthority } from './runtime/operationAuthority';
 import { BoundedImageTranscoder } from './platform/imageTranscoder';
 import {
@@ -164,6 +164,11 @@ import {
   textOrNull
 } from './domain/beanForm';
 import { DerekFlow } from './controllers/derekFlow';
+import {
+  MachineWorkflowCommands,
+  type OwnedMachineLane
+} from './controllers/machineWorkflowCommands';
+import { SettingsStoreSync } from './controllers/settingsStoreSync';
 import {
   backspaceInputDialogValue,
   clearInputDialogValue,
@@ -842,6 +847,30 @@ function isPhoneTab(value: string | undefined): value is PhoneTab {
 }
 
 export class BeanieApp {
+  private readonly gatewayMutations = new GatewayMutationCoordinator<string>();
+  private readonly settingsStoreSync = new SettingsStoreSync(
+    {
+      load: (canCommit) => loadAllFromStore(gateway, canCommit),
+      poll: (canCommit) => pollFromStore(gateway, canCommit),
+      write: (key, value) => value === null
+        ? gateway.storeDelete(SETTINGS_STORE_NAMESPACE, key)
+        : gateway.storeSet(SETTINGS_STORE_NAMESPACE, key, value)
+    },
+    this.gatewayMutations
+  );
+  private readonly machineWorkflowCommands = new MachineWorkflowCommands(
+    this.gatewayMutations,
+    {
+      updateWorkflow: (workflow) => gateway.updateWorkflow(workflow),
+      requestState: (state) => gateway.requestState(state),
+      updateCalibration: (calibration) => gateway.updateCalibration(calibration),
+      updateMachineSettings: (settings) => gateway.updateMachineSettings(settings),
+      updateMachineAdvancedSettings: (patch) => gateway.updateMachineAdvancedSettings(patch),
+      resetMachineSettings: () => gateway.resetMachineSettings(),
+      setRefillLevel: (level) => gateway.setRefillLevel(level)
+    },
+    { hasLiveAuthority: () => this.hasLiveMachineAuthority() }
+  );
   private readonly settingsController = createSettingsController({
     ...gateway,
     scanDevices: () => this.runExactCommand('devices', () => gateway.scanDevices()),
@@ -858,7 +887,7 @@ export class BeanieApp {
       () => gateway.disconnectDevice(id)
     ),
     requestState: (state) => this.runExactMachineCommand(
-      () => gateway.requestState(state as MachineState)
+      (lane) => lane.requestState(state as MachineState)
     ),
     addWakeSchedule: (schedule) => this.runExactCommand(
       'wake-schedules',
@@ -889,20 +918,20 @@ export class BeanieApp {
       () => gateway.updateSettings(patch)
     ),
     updateMachineSettings: (patch) => this.runExactMachineCommand(
-      () => gateway.updateMachineSettings(patch)
+      (lane) => lane.updateMachineSettings(patch)
     ),
     updateMachineAdvancedSettings: (patch) => this.runExactMachineCommand(
-      () => gateway.updateMachineAdvancedSettings(patch)
+      (lane) => lane.updateMachineAdvancedSettings(patch)
     ),
     updateCalibration: (value) => this.runExactMachineCommand(
-      () => gateway.updateCalibration(value)
+      (lane) => lane.updateCalibration(value)
     ),
     updatePresenceSettings: (patch) => this.runExactCommand(
       'presence-settings',
       () => gateway.updatePresenceSettings(patch)
     ),
     resetMachineSettings: () => this.runExactMachineCommand(
-      () => gateway.resetMachineSettings()
+      (lane) => lane.resetMachineSettings()
     )
   });
   private state: AppState = {
@@ -1051,13 +1080,6 @@ export class BeanieApp {
     run: () => this.retryStartupConnection(),
     onError: (error) => console.warn('[Beanie] Startup reconnect failed', error)
   });
-  private readonly workflowCommands = new WorkflowCommandCoordinator<string>();
-  // Updated inside the serialized gateway command before its promise settles.
-  // The coordinator may start the next physical command before the caller's UI
-  // continuation runs, so machine sequencing must not depend on AppState being
-  // rendered first.
-  private machineWorkflowShadow: Workflow | null = null;
-  private machineWorkflowDesired: Workflow | null = null;
   private readonly applyAuthority = new OperationAuthority();
   private readonly loadMoreAuthority = new OperationAuthority();
   private readonly doseMutationReconciler: DoseMutationReconciler;
@@ -1085,12 +1107,6 @@ export class BeanieApp {
   private settingsLoadPromise: Promise<void> | null = null;
   private settingsBundleLoadPromise: Promise<void> | null = null;
   private startupLoadInFlight = false;
-  // Setting pushes that failed; keyed by store key so a Retry re-sends each.
-  private readonly failedStoreWrites = new Map<string, string | null>();
-  // Latest desired value guards completion callbacks from older in-flight
-  // writes; queued values themselves are coalesced by workflowCommands.
-  private readonly desiredStoreWrites = new Map<string, string | null>();
-  private settingsStoreMutationRevision = 0;
   private readonly settingsMutationRevisions = new Map<string, number>();
   private shotRefreshInFlight = false;
   private beanRefreshInFlight = false;
@@ -1351,7 +1367,16 @@ export class BeanieApp {
     this.appScope.own(this.beanRefreshTask);
     this.appScope.own(this.settingsSyncTask);
     this.appScope.own(this.startupRetryTask);
-    this.appScope.own(this.workflowCommands);
+    this.appScope.own(this.gatewayMutations);
+    this.appScope.own(this.settingsStoreSync);
+    this.appScope.own(this.settingsStoreSync.subscribe((event) => {
+      if (event.type === 'write-failed') {
+        console.error('[Beanie] Failed to save setting to gateway store', event.write.key, event.error);
+      }
+      if (!this.disposed && this.state.storeError !== event.state.storeError) {
+        this.setState({ storeError: event.state.storeError });
+      }
+    }));
     this.appScope.own(this.applyAuthority);
     this.appScope.own(this.loadMoreAuthority);
     this.appScope.own(this.doseMutationReconciler);
@@ -1441,8 +1466,9 @@ export class BeanieApp {
     // DisposableScope is intentionally synchronous. Start both asynchronous
     // drains explicitly so a replacement app can await the old physical work
     // before acquiring the same batch/machine resources.
+    this.settingsStoreSync.dispose();
     const doseDrain = this.doseMutationReconciler.dispose();
-    const commandDrain = this.workflowCommands.disposeAndWait();
+    const commandDrain = this.gatewayMutations.disposeAndWait();
     this.disposeDrain = Promise.all([doseDrain, commandDrain]).then(() => undefined);
     void this.disposeDrain.catch((error) => {
       console.error('[Beanie] Runtime disposal drain failed', error);
@@ -1617,8 +1643,7 @@ export class BeanieApp {
           );
           const grinders = cached.grinders ?? [];
           const profiles = cached.profiles ?? [];
-          this.machineWorkflowShadow = cached.workflow;
-          this.machineWorkflowDesired = cached.workflow;
+          this.machineWorkflowCommands.synchronizeAuthoritative(cached.workflow);
           this.setState({
             workflow: cached.workflow,
             beans: cached.beans,
@@ -1667,8 +1692,7 @@ export class BeanieApp {
       const limited = startup.status === 'partial-failure';
       const recoveringFromDemo = this.state.demo;
 
-      this.machineWorkflowShadow = workflow;
-      this.machineWorkflowDesired = workflow;
+      this.machineWorkflowCommands.synchronizeAuthoritative(workflow);
       this.setState({
         workflow,
         beans,
@@ -2345,21 +2369,29 @@ export class BeanieApp {
     const persistCalibration = calibrationTarget != null && !this.settingsLocal;
     const operation = this.applyAuthority.begin(recipeOperationSubject(signature));
     try {
-      const outcome = await this.workflowCommands.submit(
-        'machine',
-        { policy: 'latest-wins', coalesceKey: 'recipe' },
-        async () => {
-          const workflow = await this.updateGatewayWorkflowInOwnedLane(update);
+      const outcome = await this.machineWorkflowCommands.runLatest(
+        'recipe',
+        async (lane) => {
+          const workflow = await lane.updateWorkflow(update);
           if (persistCalibration) {
-            this.assertLiveMachineAuthority();
-            await gateway.updateCalibration(calibrationTarget);
+            await lane.updateCalibration(calibrationTarget);
           }
-          this.assertLiveMachineAuthority();
           return workflow;
         }
       );
       if (!operation.isCurrent) return;
-      if (outcome.status === 'superseded' || outcome.status === 'canceled' || outcome.status === 'disposed') {
+      if (
+        outcome.status === 'superseded' ||
+        outcome.status === 'canceled' ||
+        outcome.status === 'disposed' ||
+        outcome.status === 'authority-blocked'
+      ) {
+        if (outcome.status === 'authority-blocked') {
+          operation.commit(() => this.setState({
+            applyState: 'stale',
+            status: 'Recipe not applied — reconnect to continue'
+          }));
+        }
         return;
       }
       if (outcome.status === 'completed') {
@@ -2422,43 +2454,35 @@ export class BeanieApp {
     resourceKey: string,
     run: () => Value | PromiseLike<Value>
   ): Promise<Value> {
-    const outcome = await this.workflowCommands.submit(resourceKey, { policy: 'exact-fifo' }, run);
+    const outcome = await this.gatewayMutations.exact(resourceKey, run);
     if (outcome.status === 'completed') return outcome.value;
     if (outcome.status === 'failed') throw outcome.error;
     throw new Error(`${resourceKey} command ${outcome.status}`);
   }
 
-  private runExactMachineCommand<Value>(
-    run: () => Value | PromiseLike<Value>,
-    options: { allowOfflineStop?: boolean } = {}
+  private async runExactMachineCommand<Value>(
+    run: (lane: OwnedMachineLane) => Value | PromiseLike<Value>
   ): Promise<Value> {
-    return this.runExactCommand('machine', () => {
-      if (!options.allowOfflineStop) this.assertLiveMachineAuthority();
-      return run();
-    });
+    const outcome = await this.machineWorkflowCommands.runExact(run);
+    if (outcome.status === 'completed') return outcome.value;
+    if (outcome.status === 'failed') throw outcome.error;
+    throw new Error(`machine command ${outcome.status}`);
+  }
+
+  private async requestSafeMachineStop(): Promise<void> {
+    const outcome = await this.machineWorkflowCommands.stopSafely();
+    if (outcome.status === 'completed') return;
+    if (outcome.status === 'failed') throw outcome.error;
+    throw new Error(`machine stop ${outcome.status}`);
   }
 
   private updateWorkflowExact(workflow: Workflow): Promise<Workflow> {
-    this.machineWorkflowDesired = workflow;
-    return this.runExactMachineCommand(() => this.updateGatewayWorkflowInOwnedLane(workflow));
-  }
-
-  /** Caller must own the machine lane or be the command that is acquiring it. */
-  private async updateGatewayWorkflowInOwnedLane(workflow: Workflow): Promise<Workflow> {
-    this.assertLiveMachineAuthority();
-    const saved = await gateway.updateWorkflow(workflow);
-    this.machineWorkflowShadow = saved;
-    return saved;
+    this.machineWorkflowCommands.stageDesired(workflow);
+    return this.runExactMachineCommand((lane) => lane.updateWorkflow(workflow));
   }
 
   private hasLiveMachineAuthority(): boolean {
     return this.state.demo || this.state.startupPhase === 'connected';
-  }
-
-  private assertLiveMachineAuthority(): void {
-    if (!this.hasLiveMachineAuthority()) {
-      throw new Error('Live machine authority is unavailable');
-    }
   }
 
   private machineIsSleeping(): boolean {
@@ -2511,7 +2535,7 @@ export class BeanieApp {
     if (activeSubject != null && activeSubject !== subject) {
       this.applyAuthority.invalidate(new Error(`Superseded by staged ${subject}`));
     }
-    this.machineWorkflowDesired = candidate.workflow;
+    this.machineWorkflowCommands.stageDesired(candidate.workflow);
   }
 
   private loadShotRecipe(shotId: string, opts: { skipDerekTip?: boolean } = {}): void {
@@ -3051,20 +3075,31 @@ export class BeanieApp {
       if (state === 'espresso') this.startSimulatedShot();
       return true;
     }
+    if (allowOfflineStop && !this.hasLiveMachineAuthority()) {
+      const stopped = await this.machineWorkflowCommands.stopSafely();
+      if (stopped.status === 'completed') {
+        return this.finishMachineAction(state, service, {
+          type: 'sent',
+          status: machineActionStatus(state, 'sent'),
+          restore: null
+        });
+      }
+      const error = stopped.status === 'failed'
+        ? stopped.error
+        : new Error(`Machine stop ${stopped.status}`);
+      console.error('[Beanie] Machine action did not run', error);
+      this.setState({ busy: false, status: 'Machine command failed' });
+      return false;
+    }
     const prepared = this.prepareMachineActionCommand(
       state,
-      this.machineWorkflowDesired ?? this.machineWorkflowShadow ?? this.state.workflow
+      this.machineWorkflowCommands.desiredOr(this.state.workflow)
     );
     const preparedCalibration = state === 'espresso'
       ? this.resolveProfileFlowCalibration(prepared.workflow?.profile?.title ?? null)
       : null;
-    const coordinated = await this.workflowCommands.submit(
-      'machine',
-      { policy: 'exact-fifo' },
-      async () => {
-        if (!this.hasLiveMachineAuthority() && !allowOfflineStop) {
-          return { type: 'authority-blocked' as const };
-        }
+    const coordinated = await this.machineWorkflowCommands.runExact(
+      async (lane) => {
         // Safety inputs are observations, not desired configuration. Re-check
         // them at dispatch after any queued workflow writes have completed.
         const dispatchPreflight = machineActionPreflight({
@@ -3081,32 +3116,28 @@ export class BeanieApp {
           // Shot start is a compound exact command: persist the draft captured
           // at the tap (even if its debounce has not fired or an earlier apply
           // failed), then calibration, then request physical state.
-          const workflow = await this.updateGatewayWorkflowInOwnedLane(prepared.workflow);
+          const workflow = await lane.updateWorkflow(prepared.workflow);
           dispatchCommand = { ...prepared, workflow };
           if (preparedCalibration != null && !this.settingsLocal) {
-            this.assertLiveMachineAuthority();
-            await gateway.updateCalibration(preparedCalibration);
+            await lane.updateCalibration(preparedCalibration);
           }
-        }
-        if (!this.hasLiveMachineAuthority() && !allowOfflineStop) {
-          return { type: 'authority-blocked' as const };
         }
         return {
           type: 'command' as const,
-          command: await this.sendMachineActionInOwnedLane(dispatchCommand, { allowOfflineStop })
+          command: await this.sendMachineActionInOwnedLane(dispatchCommand, lane)
         };
       }
     );
+    if (coordinated.status === 'authority-blocked') {
+      this.setState({ busy: false, status: 'Machine controls are read-only until live data reconnects' });
+      return false;
+    }
     if (coordinated.status !== 'completed') {
       const error = coordinated.status === 'failed'
         ? coordinated.error
         : new Error(`Machine action ${coordinated.status}`);
       console.error('[Beanie] Machine action did not run', error);
       this.setState({ busy: false, status: 'Machine command failed' });
-      return false;
-    }
-    if (coordinated.value.type === 'authority-blocked') {
-      this.setState({ busy: false, status: 'Machine controls are read-only until live data reconnects' });
       return false;
     }
     if (coordinated.value.type === 'blocked') {
@@ -3137,18 +3168,11 @@ export class BeanieApp {
   /** Caller must already own the `machine` workflow-command lane. */
   private sendMachineActionInOwnedLane(
     command: Parameters<typeof sendMachineActionCommand>[0],
-    options: { allowOfflineStop?: boolean } = {}
+    lane: OwnedMachineLane
   ): Promise<SendMachineActionCommandResult> {
     return sendMachineActionCommand(command, {
-      // These adapters deliberately bypass the coordinator: the enclosing
-      // compound command owns the lane and nesting would deadlock it.
-      updateWorkflow: (nextWorkflow) => this.updateGatewayWorkflowInOwnedLane(nextWorkflow),
-      requestState: (nextState) => {
-        if (!(options.allowOfflineStop === true && nextState === 'idle')) {
-          this.assertLiveMachineAuthority();
-        }
-        return gateway.requestState(nextState);
-      },
+      updateWorkflow: (nextWorkflow) => lane.updateWorkflow(nextWorkflow),
+      requestState: (nextState) => lane.requestState(nextState),
       isNoScaleShotBlockError
     });
   }
@@ -3224,7 +3248,7 @@ export class BeanieApp {
       return;
     }
     this.cleaningInProgress = true;
-    this.machineWorkflowDesired = plan.workflow;
+    this.machineWorkflowCommands.stageDesired(plan.workflow);
     this.setState({ busy: true, status: plan.status });
     if (this.state.demo) {
       const result = await loadCleaningWorkflow(plan.workflow, true, {
@@ -3252,18 +3276,16 @@ export class BeanieApp {
     // exact lane command. A pending recipe apply therefore cannot slip between
     // those two awaits and make the machine run the wrong profile.
     const preparedCleaningAction = this.prepareMachineActionCommand('espresso', plan.workflow);
-    const coordinated = await this.workflowCommands.submit(
-      'machine',
-      { policy: 'exact-fifo' },
-      async () => {
+    const coordinated = await this.machineWorkflowCommands.runExact(
+      async (lane) => {
         const result = await loadCleaningWorkflow(plan.workflow, false, {
-          updateWorkflow: (workflow) => this.updateGatewayWorkflowInOwnedLane(workflow)
+          updateWorkflow: (workflow) => lane.updateWorkflow(workflow)
         });
         const command = result.type !== 'failed' && startShot
           ? await this.sendMachineActionInOwnedLane({
               ...preparedCleaningAction,
               workflow: result.workflow
-            })
+            }, lane)
           : null;
         return { result, command };
       }
@@ -3638,9 +3660,9 @@ export class BeanieApp {
   }
 
   private async setGatewayBrightnessLatest(brightness: number): Promise<DisplayState | null> {
-    const outcome = await this.workflowCommands.submit(
+    const outcome = await this.gatewayMutations.latest(
       'display',
-      { policy: 'latest-wins', coalesceKey: 'brightness' },
+      'brightness',
       () => gateway.setDisplayBrightness(brightness)
     );
     if (outcome.status === 'completed') return outcome.value;
@@ -3733,7 +3755,7 @@ export class BeanieApp {
     }
 
     try {
-      await this.runExactMachineCommand(() => gateway.requestState('idle'), { allowOfflineStop: true });
+      await this.requestSafeMachineStop();
       if (this.disposed) return;
       this.setState({ busy: false, status: 'Stop requested' });
       this.armMachineStopFeedbackTimer();
@@ -4045,7 +4067,7 @@ export class BeanieApp {
     if (state !== 'steam') return;
     this.machineService.markTimedSteamStopRequested(Date.now());
     try {
-      await this.runExactMachineCommand(() => gateway.requestState('idle'), { allowOfflineStop: true });
+      await this.requestSafeMachineStop();
       if (this.disposed) return;
       this.setState({ status: 'Timed steam stop requested' });
       this.armMachineStopFeedbackTimer();
@@ -4177,7 +4199,7 @@ export class BeanieApp {
       return;
     }
     try {
-      await this.runExactMachineCommand(() => gateway.setRefillLevel(mm));
+      await this.runExactMachineCommand((lane) => lane.setRefillLevel(mm));
       this.setState({ status: 'Machine refill level set' });
     } catch (error) {
       console.error('[Beanie] Set refill level failed', error);
@@ -4957,45 +4979,17 @@ export class BeanieApp {
    */
   private pushSettingToStore(storeKey: string, value: string | null): boolean {
     if (this.state.demo) return true;
-    if (!this.state.settingsStoreAvailable) {
+    if (!this.settingsStoreSync.admitWrite(storeKey, value)) {
       // Domain writers update their own view state after returning. Re-read the
       // untouched authoritative cache on the next microtask to roll that view
       // state back without allowing a default-derived write through.
       queueMicrotask(() => {
-        if (this.disposed || this.state.settingsStoreAvailable) return;
-        this.applyLoadedSettings(false);
-        this.setState({ status: 'Synced settings are unavailable — no change was saved' });
+        if (this.disposed) return;
+        this.applyLoadedSettings(this.settingsStoreSync.snapshot.available);
+        this.setState({ status: 'Synced settings are unavailable or busy — no change was saved' });
       });
       return false;
     }
-    this.settingsStoreMutationRevision += 1;
-    this.desiredStoreWrites.set(storeKey, value);
-    const push = this.workflowCommands.submit(
-      `store:${storeKey}`,
-      { policy: 'latest-wins', coalesceKey: 'value' },
-      () => value === null
-        // A cleared value DELETEs the key (POSTing null would store the string
-        // "null"); otherwise the raw string is written.
-        ? gateway.storeDelete(SETTINGS_STORE_NAMESPACE, storeKey)
-        : gateway.storeSet(SETTINGS_STORE_NAMESPACE, storeKey, value)
-    );
-    void push.then((outcome) => {
-      // An older request may finish after the user chose another value. Its
-      // transport result is real, but it does not own current UI/error state.
-      if (this.desiredStoreWrites.get(storeKey) !== value) return;
-      if (outcome.status === 'completed') {
-        this.failedStoreWrites.delete(storeKey);
-        if (this.failedStoreWrites.size === 0 && this.state.storeError) {
-          this.setState({ storeError: false });
-        }
-        return;
-      }
-      if (outcome.status === 'failed') {
-        console.error('[Beanie] Failed to save setting to gateway store', storeKey, outcome.error);
-        this.failedStoreWrites.set(storeKey, value);
-        if (!this.state.storeError) this.setState({ storeError: true });
-      }
-    });
     return true;
   }
 
@@ -5018,22 +5012,25 @@ export class BeanieApp {
       this.applyLoadedSettings(true);
       return;
     }
+    const result = await this.settingsStoreSync.loadInitial();
     try {
-      await loadAllFromStore(gateway);
-      if (this.disposed) return;
-      try {
-        await migrateLegacyGeminiApiKey(gateway);
-      } catch (error) {
-        // Do not make all preferences unavailable because a best-effort secret
-        // cleanup failed. The next real startup retries the migration.
-        console.warn('[Beanie] Legacy scanner key cleanup failed; will retry', error);
+      if (result.type === 'loaded' && !this.disposed) {
+        try {
+          await migrateLegacyGeminiApiKey(gateway);
+        } catch (error) {
+          // Do not make all preferences unavailable because a best-effort secret
+          // cleanup failed. The next real startup retries the migration.
+          console.warn('[Beanie] Legacy scanner key cleanup failed; will retry', error);
+        }
+        if (!this.disposed) this.applyLoadedSettings(true);
+        return;
       }
-      this.applyLoadedSettings(true);
-    } catch (error) {
-      console.warn('[Beanie] Settings load failed; keeping the last trustworthy values or defaults', error);
+      if (result.type === 'failed') {
+        console.warn('[Beanie] Settings load failed; keeping the last trustworthy values or defaults', result.error);
+      }
       // A failed first load has no trustworthy store snapshot. A later failed
       // reload must not discard a snapshot that was already loaded cleanly.
-      if (!this.disposed) this.applyLoadedSettings(this.state.settingsStoreAvailable);
+      if (!this.disposed) this.applyLoadedSettings(this.settingsStoreSync.snapshot.available);
     } finally {
       // Initial failure is recoverable: keep polling instead of making the
       // fallback defaults sticky for the lifetime of the app.
@@ -5079,22 +5076,14 @@ export class BeanieApp {
   /** Live sync: re-poll the settings store; re-render only if something changed. */
   private async pollSettings(): Promise<void> {
     if (this.state.demo || this.disposed) return;
-    const storeWritePending = () => this.workflowCommands.snapshot.resources.some(
-      (resource) => String(resource.key).startsWith('store:')
-    );
-    if (storeWritePending()) return;
-    const revision = this.settingsStoreMutationRevision;
-    try {
-      const changed = await pollFromStore(
-        gateway,
-        () => revision === this.settingsStoreMutationRevision && !storeWritePending()
-      );
-      if (changed === null) return;
-      if (!this.disposed && (!this.state.settingsStoreAvailable || changed.length > 0)) {
+    const wasAvailable = this.state.settingsStoreAvailable;
+    const result = await this.settingsStoreSync.pollNow();
+    if (result.type === 'polled') {
+      if (!this.disposed && (!wasAvailable || result.changedKeys.length > 0)) {
         this.applyLoadedSettings(true);
       }
-    } catch (error) {
-      console.warn('[Beanie] Settings poll failed', error);
+    } else if (result.type === 'failed') {
+      console.warn('[Beanie] Settings poll failed', result.error);
     }
   }
 
@@ -5149,8 +5138,7 @@ export class BeanieApp {
     if (!changed) return;
     // Adopt the gateway's workflow, then re-derive the displayed recipe + bean
     // from it (display only — never applied back to the machine).
-    this.machineWorkflowShadow = workflow;
-    this.machineWorkflowDesired = workflow;
+    this.machineWorkflowCommands.synchronizeAuthoritative(workflow);
     this.state.workflow = workflow;
     // Prefer the explicitly-selected coffee (last-bean-id, written on every
     // pick) over the workflow's bean: picking a coffee uses apply:false, so the
@@ -5199,22 +5187,19 @@ export class BeanieApp {
   }
 
   private retryFailedStoreWrites(): void {
-    for (const [storeKey, value] of [...this.failedStoreWrites.entries()]) {
-      this.pushSettingToStore(storeKey, value);
-    }
+    this.settingsStoreSync.retryFailedWrites();
   }
 
   private async dismissStoreError(): Promise<void> {
-    const failedKeys = [...this.failedStoreWrites.keys()];
-    try {
-      await pollFromStore(gateway);
-      if (this.disposed) return;
-      for (const key of failedKeys) this.desiredStoreWrites.delete(key);
-      this.failedStoreWrites.clear();
+    const result = await this.settingsStoreSync.discardAndReload();
+    if (this.disposed) return;
+    if (result.type === 'reloaded') {
       this.applyLoadedSettings(true);
       this.setState({ storeError: false, status: 'Gateway settings restored' });
-    } catch (error) {
-      console.warn('[Beanie] Could not restore gateway settings', error);
+      return;
+    }
+    if (result.type === 'failed') {
+      console.warn('[Beanie] Could not restore gateway settings', result.error);
       this.setState({ status: 'Could not reload gateway settings — retry when connected' });
     }
   }
@@ -7208,9 +7193,9 @@ export class BeanieApp {
     }
 
     try {
-      const verifiedMachineSettings = await this.runExactMachineCommand(() =>
+      const verifiedMachineSettings = await this.runExactMachineCommand((lane) =>
         updateSteamPurgeModeAndReadBack(plan.nextMode, {
-          updateMachineSettings: (patch) => gateway.updateMachineSettings(patch),
+          updateMachineSettings: (patch) => lane.updateMachineSettings(patch),
           readMachineSettings: () => gateway.machineSettings()
         })
       );
@@ -7259,28 +7244,24 @@ export class BeanieApp {
       hotWaterStopMode: this.state.hotWaterStopMode,
       status
     });
-    this.machineWorkflowDesired = plan.workflow;
+    this.machineWorkflowCommands.stageDesired(plan.workflow);
     this.setState({
       workflow: plan.workflow,
       machineSettings: plan.machineSettings,
       busy: true,
       status: plan.savingStatus
     });
-    const persist = () => persistMachineWorkflowPlan(plan, this.state.demo, {
+    const persist = (lane: OwnedMachineLane | null) => persistMachineWorkflowPlan(plan, this.state.demo, {
       writeHotWaterWeightTarget: (value) => writeHotWaterWeightTarget(value),
-      // This multi-endpoint plan is submitted as one lane command below.
-      updateWorkflow: (workflow) => this.updateGatewayWorkflowInOwnedLane(workflow),
-      updateMachineSettings: (patch) => {
-        this.assertLiveMachineAuthority();
-        return gateway.updateMachineSettings(patch);
-      },
+      updateWorkflow: (workflow) => lane?.updateWorkflow(workflow) ?? Promise.resolve(workflow),
+      updateMachineSettings: (patch) => lane?.updateMachineSettings(patch) ?? Promise.resolve(),
       logDirectMachineUpdateFailure: (error) => {
         console.error('[Beanie] Direct machine settings update failed', error);
       }
     });
     const result = this.state.demo
-      ? await persist()
-      : await this.runExactMachineCommand(persist);
+      ? await persist(null)
+      : await this.runExactMachineCommand((lane) => persist(lane));
     if (result.type === 'demo') {
       this.setState({ busy: false, status: result.status });
       return;
@@ -8030,7 +8011,7 @@ export class BeanieApp {
 
   private renderStoreErrorOverlay(): string {
     if (!this.state.storeError) return '';
-    const count = this.failedStoreWrites.size;
+    const count = this.settingsStoreSync.snapshot.failedWrites.length;
     const noun = count === 1 ? 'setting change' : 'setting changes';
     return `
       <div class="store-error-overlay" role="alertdialog" aria-modal="true" aria-labelledby="store-error-title">
@@ -8904,7 +8885,7 @@ export class BeanieApp {
     });
     if (this.settingsLocal) return;
     try {
-      await this.runExactMachineCommand(() => gateway.updateCalibration(resolved));
+      await this.runExactMachineCommand((lane) => lane.updateCalibration(resolved));
     } catch (error) {
       console.error('[Beanie] Per-profile flow calibration apply failed', error);
     }

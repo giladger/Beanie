@@ -1,4 +1,5 @@
-import type { MachineState, Workflow } from '../api/types';
+import type { De1AdvancedSettingsPatch } from '../api/settings';
+import type { De1MachineSettings, MachineState, Workflow } from '../api/types';
 import type {
   GatewayMutationOutcome,
   GatewayMutationPort
@@ -8,6 +9,11 @@ const MACHINE_RESOURCE = 'machine';
 
 export interface MachineWorkflowTransport {
   updateWorkflow(workflow: Workflow): Workflow | PromiseLike<Workflow>;
+  updateCalibration(flowMultiplier: number): void | PromiseLike<void>;
+  updateMachineSettings(patch: Partial<De1MachineSettings>): void | PromiseLike<void>;
+  updateMachineAdvancedSettings(patch: De1AdvancedSettingsPatch): void | PromiseLike<void>;
+  resetMachineSettings(): void | PromiseLike<void>;
+  setRefillLevel(refillLevel: number): void | PromiseLike<void>;
   requestState(state: MachineState): void | PromiseLike<void>;
 }
 
@@ -25,6 +31,11 @@ export interface MachineAuthorityPort {
  */
 export interface OwnedMachineLane {
   updateWorkflow(workflow: Workflow): Promise<Workflow>;
+  updateCalibration(flowMultiplier: number): Promise<void>;
+  updateMachineSettings(patch: Partial<De1MachineSettings>): Promise<void>;
+  updateMachineAdvancedSettings(patch: De1AdvancedSettingsPatch): Promise<void>;
+  resetMachineSettings(): Promise<void>;
+  setRefillLevel(refillLevel: number): Promise<void>;
   requestState(state: MachineState): Promise<void>;
 }
 
@@ -60,6 +71,21 @@ export class MachineWorkflowCommands {
   ) {
     this.ownedLane = Object.freeze({
       updateWorkflow: (workflow: Workflow) => this.updateWorkflowInOwnedLane(workflow),
+      updateCalibration: (flowMultiplier: number) => this.runOwnedMutation(
+        () => this.transport.updateCalibration(flowMultiplier)
+      ),
+      updateMachineSettings: (patch: Partial<De1MachineSettings>) => this.runOwnedMutation(
+        () => this.transport.updateMachineSettings(patch)
+      ),
+      updateMachineAdvancedSettings: (patch: De1AdvancedSettingsPatch) => this.runOwnedMutation(
+        () => this.transport.updateMachineAdvancedSettings(patch)
+      ),
+      resetMachineSettings: () => this.runOwnedMutation(
+        () => this.transport.resetMachineSettings()
+      ),
+      setRefillLevel: (refillLevel: number) => this.runOwnedMutation(
+        () => this.transport.setRefillLevel(refillLevel)
+      ),
       requestState: (state: MachineState) => this.requestStateInOwnedLane(state)
     });
   }
@@ -135,8 +161,7 @@ export class MachineWorkflowCommands {
   }
 
   private async updateWorkflowInOwnedLane(workflow: Workflow): Promise<Workflow> {
-    this.assertLiveAuthority();
-    const saved = await this.transport.updateWorkflow(workflow);
+    const saved = await this.runOwnedMutation(() => this.transport.updateWorkflow(workflow));
     // A newer desired workflow may have been staged while this request was in
     // flight. Only advance the confirmed shadow here.
     this.adoptAuthoritative(saved);
@@ -144,8 +169,15 @@ export class MachineWorkflowCommands {
   }
 
   private async requestStateInOwnedLane(state: MachineState): Promise<void> {
+    await this.runOwnedMutation(() => this.transport.requestState(state));
+  }
+
+  /** Revalidate live authority immediately before every gateway side effect. */
+  private async runOwnedMutation<Value>(
+    mutation: () => Value | PromiseLike<Value>
+  ): Promise<Value> {
     this.assertLiveAuthority();
-    await this.transport.requestState(state);
+    return await mutation();
   }
 
   private assertLiveAuthority(): void {

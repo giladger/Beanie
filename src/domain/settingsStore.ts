@@ -150,7 +150,10 @@ async function fetchBulk(gateway: SettingsStoreGateway): Promise<Record<string, 
  * the app renders real content. Throws if the store is unreachable (the caller
  * falls back to defaults / demo).
  */
-export async function loadAllFromStore(gateway: SettingsStoreGateway): Promise<void> {
+export async function loadAllFromStore(
+  gateway: SettingsStoreGateway,
+  canCommit: () => boolean = () => true
+): Promise<boolean> {
   // One bulk request when supported; per-key gets otherwise.
   const bulk = await fetchBulk(gateway);
   const loaded = await Promise.all(
@@ -174,11 +177,14 @@ export async function loadAllFromStore(gateway: SettingsStoreGateway): Promise<v
     })
   );
   // Commit only after every read (and any legacy seed) succeeded. A partial
-  // outage must never leave a mixed cache that looks like a successful load.
+  // outage must never leave a mixed cache that looks like a successful load,
+  // and a concurrent local mutation/disposal must fence this snapshot.
+  if (!canCommit()) return false;
   for (const [key, value] of loaded) {
     if (value === null) cache.delete(key);
     else cache.set(key, value);
   }
+  return true;
 }
 
 /**
