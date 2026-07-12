@@ -214,6 +214,59 @@ run('claims only the mutation kinds owned by a worker', async () => {
   equal(settings[0]?.record.kind, 'display-setting');
 });
 
+run('claims one exact due command by id and kind without bypassing lease fencing', async () => {
+  let lease = 0;
+  const { outbox } = fakeBackedOutbox({ createLeaseToken: () => `lease-${++lease}` });
+  await outbox.enqueue({
+    ...doseCommand('older-head', 'batch-1'),
+    createdAt: new Date('2026-07-10T09:59:00.000Z'),
+    causalOrder: 'aggregate'
+  });
+  const target = await outbox.enqueue({
+    ...doseCommand('delete-phase', 'batch-1'),
+    idempotencyKey: 'shot-delete-reclaim:v1:delete-phase',
+    kind: 'pending-shot-delete-reclaim',
+    createdAt: new Date('2026-07-10T10:00:00.000Z'),
+    causalOrder: 'aggregate'
+  });
+
+  equal(await outbox.claimDueById({
+    idempotencyKey: target.record.idempotencyKey,
+    kind: 'wrong-kind',
+    ownerId: 'delete-worker',
+    leaseMs: 1_000,
+    now: new Date('2026-07-10T10:00:00.000Z')
+  }), null);
+
+  const claimed = await outbox.claimDueById<DosePayload>({
+    idempotencyKey: target.record.idempotencyKey,
+    kind: 'pending-shot-delete-reclaim',
+    ownerId: 'delete-worker',
+    leaseMs: 1_000,
+    now: new Date('2026-07-10T10:00:00.000Z')
+  });
+  equal(claimed?.record.idempotencyKey, target.record.idempotencyKey);
+  equal(claimed?.record.attemptCount, 1);
+  equal(claimed?.leaseToken, 'lease-1');
+  equal(await outbox.claimDueById({
+    idempotencyKey: target.record.idempotencyKey,
+    kind: 'pending-shot-delete-reclaim',
+    ownerId: 'other-delete-worker',
+    leaseMs: 1_000,
+    now: new Date('2026-07-10T10:00:00.999Z')
+  }), null);
+
+  const reclaimed = await outbox.claimDueById({
+    idempotencyKey: target.record.idempotencyKey,
+    kind: 'pending-shot-delete-reclaim',
+    ownerId: 'other-delete-worker',
+    leaseMs: 1_000,
+    now: new Date('2026-07-10T10:00:01.000Z')
+  });
+  equal(reclaimed?.record.attemptCount, 2);
+  equal(reclaimed?.leaseToken, 'lease-2');
+});
+
 run('serializes each aggregate and never lets a later command bypass its head', async () => {
   const { outbox } = fakeBackedOutbox();
   const first = await outbox.enqueue(doseCommand('shot-1', 'batch-1'));
@@ -522,6 +575,206 @@ run('never loses a concurrent enqueue while another record is acknowledged', asy
   equal(records.length, 2);
   equal(records.find((record) => record.payload.shotId === 'shot-1')?.state, 'acknowledged');
   equal(records.find((record) => record.payload.shotId === 'shot-2')?.state, 'pending');
+});
+
+run('atomically acknowledges a source and releases its child at the source causal slot', async () => {
+  const { outbox } = fakeBackedOutbox({ createLeaseToken: () => 'delete-lease' });
+  const source = await outbox.enqueue({
+    ...doseCommand('source-shot', 'batch-1'),
+    idempotencyKey: 'shot-delete-reclaim:v1:source-shot',
+    kind: 'pending-shot-delete-reclaim',
+    aggregateKey: 'bean-inventory:bean-for-batch-1',
+    createdAt: new Date('2026-07-10T10:00:00.000Z'),
+    causalOrder: 'aggregate'
+  });
+  const newer = await outbox.enqueue({
+    ...doseCommand('newer-shot', 'batch-1'),
+    aggregateKey: source.record.aggregateKey,
+    createdAt: new Date('2026-07-10T09:00:00.000Z'),
+    causalOrder: 'aggregate'
+  });
+  const claim = await outbox.claimDueById({
+    idempotencyKey: source.record.idempotencyKey,
+    kind: source.record.kind,
+    ownerId: 'delete-worker',
+    leaseMs: 30_000,
+    now: new Date('2026-07-10T10:01:00.000Z')
+  });
+
+  const handoff = await outbox.acknowledgeAndEnqueue({
+    sourceIdempotencyKey: source.record.idempotencyKey,
+    sourceKind: source.record.kind,
+    sourceLeaseToken: claim!.leaseToken,
+    command: {
+      ...doseCommand('source-shot', 'batch-1'),
+      idempotencyKey: 'shot-dose-reclaim:v1:source-shot:batch-1',
+      kind: 'pending-dose-reclaim',
+      aggregateKey: source.record.aggregateKey
+    },
+    outcome: 'committed',
+    remoteReceiptId: 'delete-receipt-1',
+    details: { reclaimIdempotencyKey: 'shot-dose-reclaim:v1:source-shot:batch-1' },
+    now: new Date('2026-07-10T10:01:01.000Z')
+  });
+
+  equal(handoff?.inserted, true);
+  equal(handoff?.record.state, 'pending');
+  equal(handoff?.record.createdAt, source.record.createdAt);
+  equal(handoff?.record.nextAttemptAt, '2026-07-10T10:01:01.000Z');
+  equal((await outbox.get(source.record.idempotencyKey))?.state, 'acknowledged');
+  equal(
+    (await outbox.get(source.record.idempotencyKey))?.receipt?.remoteReceiptId,
+    'delete-receipt-1'
+  );
+  equal(handoff!.record.createdAt < newer.record.createdAt, true);
+
+  const next = await outbox.claimDue({
+    ownerId: 'dose-worker',
+    leaseMs: 30_000,
+    kinds: ['pending-dose-reclaim', 'batch-dose-deduction'],
+    limit: 10,
+    now: new Date('2026-07-10T10:01:02.000Z')
+  });
+  equal(next.length, 1);
+  equal(next[0]?.record.idempotencyKey, handoff?.record.idempotencyKey);
+});
+
+run('deduplicates an existing physical child while preserving first-admission data', async () => {
+  const { outbox } = fakeBackedOutbox({ createLeaseToken: () => 'delete-lease' });
+  const source = await outbox.enqueue({
+    ...doseCommand('duplicate-shot', 'batch-1'),
+    idempotencyKey: 'shot-delete-reclaim:v1:duplicate-shot',
+    kind: 'pending-shot-delete-reclaim',
+    aggregateKey: 'bean-inventory:bean-for-batch-1',
+    createdAt: new Date('2026-07-10T10:00:00.000Z'),
+    causalOrder: 'aggregate'
+  });
+  const childCommand = {
+    ...doseCommand('duplicate-shot', 'batch-1'),
+    idempotencyKey: 'shot-dose-reclaim:v1:duplicate-shot:batch-1',
+    kind: 'pending-dose-reclaim',
+    aggregateKey: source.record.aggregateKey,
+    physicalIdentity: doseAdjustmentPhysicalIdentity({
+      beanId: 'bean-for-batch-1', batchId: 'batch-1', dose: 18
+    })
+  };
+  const existing = await outbox.enqueue({
+    ...childCommand,
+    payload: { ...childCommand.payload, expectedRemaining: 64 },
+    createdAt: new Date('2026-07-10T10:00:10.000Z'),
+    causalOrder: 'aggregate'
+  });
+  const claim = await outbox.claimDueById({
+    idempotencyKey: source.record.idempotencyKey,
+    kind: source.record.kind,
+    ownerId: 'delete-worker',
+    leaseMs: 30_000,
+    now: new Date('2026-07-10T10:01:00.000Z')
+  });
+  const handoff = await outbox.acknowledgeAndEnqueue({
+    sourceIdempotencyKey: source.record.idempotencyKey,
+    sourceKind: source.record.kind,
+    sourceLeaseToken: claim!.leaseToken,
+    command: childCommand,
+    outcome: 'already-applied',
+    now: new Date('2026-07-10T10:01:01.000Z')
+  });
+
+  equal(handoff?.inserted, false);
+  equal((handoff?.record.payload as DosePayload).expectedRemaining, 64);
+  equal(handoff?.record.createdAt, source.record.createdAt);
+  equal(handoff?.record.idempotencyKey, existing.record.idempotencyKey);
+  equal((await outbox.list()).length, 2);
+  equal((await outbox.get(source.record.idempotencyKey))?.state, 'acknowledged');
+});
+
+run('rejects a conflicting handoff child without acknowledging its source', async () => {
+  const { outbox } = fakeBackedOutbox({ createLeaseToken: () => 'delete-lease' });
+  const source = await outbox.enqueue({
+    ...doseCommand('conflict-shot', 'batch-1'),
+    idempotencyKey: 'shot-delete-reclaim:v1:conflict-shot',
+    kind: 'pending-shot-delete-reclaim',
+    aggregateKey: 'bean-inventory:bean-for-batch-1'
+  });
+  const childId = 'shot-dose-reclaim:v1:conflict-shot:batch-1';
+  await outbox.enqueue({
+    ...doseCommand('conflict-shot', 'batch-1'),
+    idempotencyKey: childId,
+    kind: 'pending-dose-reclaim',
+    aggregateKey: source.record.aggregateKey,
+    payload: { ...doseCommand('conflict-shot', 'batch-1').payload, dose: 19 },
+    physicalIdentity: doseAdjustmentPhysicalIdentity({
+      beanId: 'bean-for-batch-1', batchId: 'batch-1', dose: 19
+    })
+  });
+  const claim = await outbox.claimDueById({
+    idempotencyKey: source.record.idempotencyKey,
+    kind: source.record.kind,
+    ownerId: 'delete-worker',
+    leaseMs: 30_000,
+    now: new Date('2026-07-10T10:01:00.000Z')
+  });
+
+  let error: unknown = null;
+  try {
+    await outbox.acknowledgeAndEnqueue({
+      sourceIdempotencyKey: source.record.idempotencyKey,
+      sourceKind: source.record.kind,
+      sourceLeaseToken: claim!.leaseToken,
+      command: {
+        ...doseCommand('conflict-shot', 'batch-1'),
+        idempotencyKey: childId,
+        kind: 'pending-dose-reclaim',
+        aggregateKey: source.record.aggregateKey,
+        physicalIdentity: doseAdjustmentPhysicalIdentity({
+          beanId: 'bean-for-batch-1', batchId: 'batch-1', dose: 18
+        })
+      },
+      outcome: 'committed',
+      now: new Date('2026-07-10T10:01:01.000Z')
+    });
+  } catch (caught) {
+    error = caught;
+  }
+
+  equal(error instanceof IdempotencyConflictError, true);
+  equal((await outbox.get(source.record.idempotencyKey))?.state, 'in-flight');
+  equal(((await outbox.get<DosePayload>(childId))?.payload.dose), 19);
+});
+
+run('a stale handoff lease cannot acknowledge the source or create a child', async () => {
+  const { outbox } = fakeBackedOutbox({ createLeaseToken: () => 'expired-lease' });
+  const source = await outbox.enqueue({
+    ...doseCommand('stale-shot', 'batch-1'),
+    idempotencyKey: 'shot-delete-reclaim:v1:stale-shot',
+    kind: 'pending-shot-delete-reclaim',
+    aggregateKey: 'bean-inventory:bean-for-batch-1'
+  });
+  const claim = await outbox.claimDueById({
+    idempotencyKey: source.record.idempotencyKey,
+    kind: source.record.kind,
+    ownerId: 'delete-worker',
+    leaseMs: 1_000,
+    now: new Date('2026-07-10T10:00:00.000Z')
+  });
+  const childId = 'shot-dose-reclaim:v1:stale-shot:batch-1';
+  const handoff = await outbox.acknowledgeAndEnqueue({
+    sourceIdempotencyKey: source.record.idempotencyKey,
+    sourceKind: source.record.kind,
+    sourceLeaseToken: claim!.leaseToken,
+    command: {
+      ...doseCommand('stale-shot', 'batch-1'),
+      idempotencyKey: childId,
+      kind: 'pending-dose-reclaim',
+      aggregateKey: source.record.aggregateKey
+    },
+    outcome: 'committed',
+    now: new Date('2026-07-10T10:00:01.000Z')
+  });
+
+  equal(handoff, null);
+  equal((await outbox.get(source.record.idempotencyKey))?.state, 'in-flight');
+  equal(await outbox.get(childId), null);
 });
 
 run('retains receipt tombstones until an explicit age-bounded prune', async () => {

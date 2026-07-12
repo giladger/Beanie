@@ -84,6 +84,22 @@ export interface ClaimDueOptions {
   canonicalAggregateKey?(record: Readonly<DurableMutationRecord>): string;
 }
 
+/**
+ * Claim one known command without consulting its aggregate head.
+ *
+ * This is intentionally narrower than `claimDue`: callers must prove both the
+ * stable command id and its kind. It is useful for an earlier phase which owns
+ * a different physical scheduling lane while the record continues to reserve
+ * its eventual aggregate position.
+ */
+export interface ClaimDueByIdOptions {
+  idempotencyKey: string;
+  kind: string;
+  ownerId: string;
+  leaseMs: number;
+  now?: Date;
+}
+
 export interface MarkMutationRetryOptions {
   idempotencyKey: string;
   leaseToken: string;
@@ -102,6 +118,30 @@ export interface RenewMutationLeaseOptions {
 export interface AcknowledgeMutationOptions<Details = unknown> {
   idempotencyKey: string;
   leaseToken: string;
+  outcome: MutationReceiptOutcome;
+  committedAt?: Date;
+  remoteReceiptId?: string | null;
+  remoteRevision?: string | null;
+  details?: Details;
+  now?: Date;
+}
+
+export type MutationHandoffCommand<Payload = unknown> = Pick<
+  MutationCommand<Payload>,
+  'idempotencyKey' | 'kind' | 'aggregateKey' | 'payload' | 'physicalIdentity'
+>;
+
+/**
+ * Atomically finish a leased source command and release its child command.
+ * The child must stay on the source aggregate and inherits the source's causal
+ * creation slot; caller clocks and work admitted after the source cannot move
+ * the child behind a newer aggregate command.
+ */
+export interface AcknowledgeAndEnqueueOptions<Payload = unknown, Details = unknown> {
+  sourceIdempotencyKey: string;
+  sourceKind: string;
+  sourceLeaseToken: string;
+  command: MutationHandoffCommand<Payload>;
   outcome: MutationReceiptOutcome;
   committedAt?: Date;
   remoteReceiptId?: string | null;
@@ -339,26 +379,52 @@ export class DurableMutationOutbox {
 
         return due.map((record): ClaimedMutation<Payload> => {
           const leaseToken = this.nextLeaseToken(record.lease?.token ?? null);
-          const claimed: DurableMutationRecord = {
-            ...record,
-            state: 'in-flight',
-            updatedAt: nowIso,
-            attemptCount: record.attemptCount + 1,
-            lastAttemptAt: nowIso,
-            nextAttemptAt: null,
-            lease: {
-              token: leaseToken,
-              ownerId: options.ownerId,
-              expiresAt: leaseExpiresAt
-            },
-            receipt: null
-          };
+          const claimed = claimRecord(
+            record,
+            options.ownerId,
+            leaseToken,
+            nowIso,
+            leaseExpiresAt
+          );
           records.set(claimed.idempotencyKey, claimed);
           return {
             record: cloneValue(claimed) as DurableMutationRecord<Payload>,
             leaseToken
           };
         });
+      });
+    });
+  }
+
+  async claimDueById<Payload = unknown>(
+    options: ClaimDueByIdOptions
+  ): Promise<ClaimedMutation<Payload> | null> {
+    this.assertOpen();
+    requireNonEmpty(options.idempotencyKey, 'idempotencyKey');
+    requireNonEmpty(options.kind, 'kind');
+    requireNonEmpty(options.ownerId, 'ownerId');
+    requirePositiveFinite(options.leaseMs, 'leaseMs');
+
+    return this.exclusive(async () => {
+      const now = options.now ?? this.now();
+      const nowMs = now.getTime();
+      const nowIso = now.toISOString();
+      const leaseExpiresAt = new Date(nowMs + options.leaseMs).toISOString();
+      return (await this.backend()).mutate((records) => {
+        const record = records.get(options.idempotencyKey);
+        if (!record || record.kind !== options.kind || !isDue(record, nowMs)) return null;
+        const claimed = claimRecord(
+          record,
+          options.ownerId,
+          this.nextLeaseToken(record.lease?.token ?? null),
+          nowIso,
+          leaseExpiresAt
+        );
+        records.set(claimed.idempotencyKey, claimed);
+        return {
+          record: cloneValue(claimed) as DurableMutationRecord<Payload>,
+          leaseToken: claimed.lease!.token
+        };
       });
     });
   }
@@ -450,6 +516,106 @@ export class DurableMutationOutbox {
           }
         });
         return true;
+      });
+    });
+  }
+
+  async acknowledgeAndEnqueue<Payload = unknown, Details = unknown>(
+    options: AcknowledgeAndEnqueueOptions<Payload, Details>
+  ): Promise<EnqueueResult<Payload> | null> {
+    this.assertOpen();
+    requireNonEmpty(options.sourceIdempotencyKey, 'sourceIdempotencyKey');
+    requireNonEmpty(options.sourceKind, 'sourceKind');
+    requireNonEmpty(options.sourceLeaseToken, 'sourceLeaseToken');
+    validateCommand(options.command);
+    if (options.command.idempotencyKey === options.sourceIdempotencyKey) {
+      throw new Error('Handoff command must use a different idempotency key');
+    }
+
+    return this.exclusive(async () => {
+      const backend = await this.backend();
+      const now = options.now ?? this.now();
+      const committedAt = options.committedAt ?? now;
+      requireValidDate(committedAt, 'committedAt');
+      const nowMs = now.getTime();
+      const nowIso = now.toISOString();
+      return backend.mutate((records) => {
+        const source = records.get(options.sourceIdempotencyKey);
+        if (
+          source?.kind !== options.sourceKind ||
+          !hasActiveLease(source, options.sourceLeaseToken, nowMs)
+        ) return null;
+        if (options.command.aggregateKey !== source.aggregateKey) {
+          throw new Error('Handoff command must use the source aggregate');
+        }
+
+        const existing = records.get(options.command.idempotencyKey);
+        let child: DurableMutationRecord<Payload>;
+        let inserted: boolean;
+        if (existing) {
+          if (!samePhysicalCommand(existing, options.command)) {
+            throw new IdempotencyConflictError(options.command.idempotencyKey);
+          }
+          // The physical child may already exist after a replay or mixed-version
+          // handoff. Keep its first-admission payload and operational state, but
+          // canonicalize routing and preserve the earliest causal slot.
+          child = {
+            ...existing,
+            aggregateKey: source.aggregateKey,
+            createdAt: existing.createdAt <= source.createdAt
+              ? existing.createdAt
+              : source.createdAt,
+            ...(existing.physicalIdentity == null && options.command.physicalIdentity != null
+              ? { physicalIdentity: options.command.physicalIdentity }
+              : {})
+          } as DurableMutationRecord<Payload>;
+          inserted = false;
+        } else {
+          child = {
+            idempotencyKey: options.command.idempotencyKey,
+            kind: options.command.kind,
+            aggregateKey: source.aggregateKey,
+            payload: cloneValue(options.command.payload),
+            ...(options.command.physicalIdentity == null
+              ? {}
+              : { physicalIdentity: options.command.physicalIdentity }),
+            state: 'pending',
+            createdAt: source.createdAt,
+            updatedAt: nowIso,
+            attemptCount: 0,
+            lastAttemptAt: null,
+            nextAttemptAt: nowIso,
+            lastError: null,
+            lease: null,
+            receipt: null
+          };
+          inserted = true;
+        }
+
+        const acknowledged: DurableMutationRecord = {
+          ...source,
+          state: 'acknowledged',
+          updatedAt: nowIso,
+          nextAttemptAt: null,
+          lastError: null,
+          lease: null,
+          receipt: {
+            idempotencyKey: source.idempotencyKey,
+            outcome: options.outcome,
+            committedAt: committedAt.toISOString(),
+            acknowledgedAt: nowIso,
+            remoteReceiptId: options.remoteReceiptId ?? null,
+            remoteRevision: options.remoteRevision ?? null,
+            details: options.details === undefined ? null : cloneValue(options.details)
+          }
+        };
+        records.set(child.idempotencyKey, child);
+        records.set(acknowledged.idempotencyKey, acknowledged);
+        return {
+          inserted,
+          durability: backend.durability,
+          record: cloneValue(child)
+        };
       });
     });
   }
@@ -953,6 +1119,29 @@ function isDue(record: DurableMutationRecord, nowMs: number): boolean {
     return record.lease != null && Date.parse(record.lease.expiresAt) <= nowMs;
   }
   return false;
+}
+
+function claimRecord(
+  record: DurableMutationRecord,
+  ownerId: string,
+  leaseToken: string,
+  nowIso: string,
+  leaseExpiresAt: string
+): DurableMutationRecord {
+  return {
+    ...record,
+    state: 'in-flight',
+    updatedAt: nowIso,
+    attemptCount: record.attemptCount + 1,
+    lastAttemptAt: nowIso,
+    nextAttemptAt: null,
+    lease: {
+      token: leaseToken,
+      ownerId,
+      expiresAt: leaseExpiresAt
+    },
+    receipt: null
+  };
 }
 
 function aggregateHeads(records: Iterable<DurableMutationRecord>): DurableMutationRecord[] {
