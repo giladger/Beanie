@@ -222,6 +222,30 @@ await run('queued restore rebases service settings onto the newest desired recip
   fixture.dispose();
 });
 
+await run('an authority-blocked restore keeps its token for reconnect retry', async () => {
+  const fixture = createFixture();
+  const padded = workflow('Recipe', steam({ duration: 15 }));
+  fixture.commands.synchronizeAuthoritative(padded);
+  fixture.flow.captureRestore({
+    steamSettings: steam({ duration: 12 }),
+    hotWaterData: water(),
+    rinseData: rinse()
+  });
+  fixture.authority.live = false;
+
+  const blocked = await fixture.flow.restoreAfterEnd(false);
+
+  equal(blocked.type, 'failed');
+  equal(blocked.type === 'failed' ? blocked.reason : null, 'authority');
+  equal(fixture.flow.snapshot.restorePending, true);
+  fixture.authority.live = true;
+  const retried = await fixture.flow.restoreAfterEnd(false);
+  equal(retried.type, 'restored');
+  equal(fixture.transport.updatedWorkflows.at(-1)?.steamSettings?.duration, 12);
+  equal(fixture.flow.snapshot.restorePending, false);
+  fixture.dispose();
+});
+
 await run('demo stop is local and service flow disposal leaves the shared queue alive', async () => {
   const fixture = createFixture();
   fixture.machineState.value = 'steam';

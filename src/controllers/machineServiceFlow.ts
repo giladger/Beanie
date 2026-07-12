@@ -319,6 +319,10 @@ export class MachineServiceFlow {
     if (outcome.status === 'completed') {
       return this.emitRestore({ type: 'restored', workflow: outcome.value });
     }
+    // Authority/network loss after a temporary workflow landed must not erase
+    // the only restore token. Keep it for the reconnect path to retry, without
+    // replacing a newer service token that may have been captured meanwhile.
+    if (this.restore == null) this.restore = restore;
     return this.emitRestore({ type: 'failed', ...commandFailure(outcome) });
   }
 

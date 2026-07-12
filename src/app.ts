@@ -1715,6 +1715,12 @@ export class BeanieApp {
         this.startupRetryTask.start();
         return;
       }
+      if (
+        this.machineService.snapshot.restorePending &&
+        machineServiceState(machine?.state?.state) == null
+      ) {
+        void this.machineService.restoreAfterEnd(false);
+      }
       void this.refreshBeanUsage(beans);
       this.noteUserActivity();
       void this.enforceGatewayTrackingMode();
