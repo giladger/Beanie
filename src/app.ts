@@ -171,6 +171,10 @@ import {
   MachineWorkflowCommands,
   type OwnedMachineLane
 } from './controllers/machineWorkflowCommands';
+import {
+  MachineActionFlow,
+  type MachineActionOutcome
+} from './controllers/machineActionFlow';
 import { SettingsStoreSync } from './controllers/settingsStoreSync';
 import {
   RecipeApplyController,
@@ -474,7 +478,6 @@ import {
   machineActionPreflight,
   machineActionStatus,
   optimisticMachineSnapshot,
-  sendMachineActionCommand,
   type SendMachineActionCommandResult
 } from './controllers/machineExecutionController';
 import {
@@ -814,6 +817,16 @@ export class BeanieApp {
       sleeping: this.machineIsSleeping()
     })
   });
+  private readonly machineActions = new MachineActionFlow(
+    this.machineWorkflowCommands,
+    {
+      snapshot: () => ({
+        noScaleBlocked: this.shouldPreflightBlockShotForScale(),
+        waterAlertHard: this.currentWaterAlert() === 'hard'
+      })
+    },
+    { isNoScaleShotBlockError }
+  );
   private readonly cleaningExecution = new CleaningExecutionFlow({
     commands: this.machineWorkflowCommands,
     hasLiveAuthority: () => this.hasLiveMachineAuthority(),
@@ -2900,28 +2913,27 @@ export class BeanieApp {
     // soon as only the command endpoint recovers. Keep the fail-safe idle/stop
     // command available, but require a fully authoritative startup for starts.
     const allowOfflineStop = state === 'idle' && opts.allowOfflineStop === true;
-    if (!this.hasLiveMachineAuthority() && !allowOfflineStop) {
+    if (!this.state.demo && !this.hasLiveMachineAuthority() && !allowOfflineStop) {
       this.setState({ status: 'Machine controls are read-only until live data reconnects' });
       return false;
     }
-    const preflight = machineActionPreflight({
-      state,
-      skipScaleCheck: opts.skipScaleCheck === true,
-      noScaleBlocked: this.shouldPreflightBlockShotForScale(),
-      waterAlertHard: this.currentWaterAlert() === 'hard'
-    });
-    if (preflight.type === 'blocked-no-scale') {
-      this.showNoScaleShotWarning({ busy: false });
-      return false;
-    }
-    if (preflight.type === 'blocked-water') {
-      // Re-arm the (dismissable) refill popup instead of starting a shot.
-      this.setState({ waterAlertDismissed: false, status: 'Refill the water tank' });
-      return false;
-    }
-    const service = preflight.service;
-    this.setState({ busy: true, status: preflight.status });
     if (this.state.demo) {
+      const preflight = machineActionPreflight({
+        state,
+        skipScaleCheck: opts.skipScaleCheck === true,
+        noScaleBlocked: this.shouldPreflightBlockShotForScale(),
+        waterAlertHard: this.currentWaterAlert() === 'hard'
+      });
+      if (preflight.type === 'blocked-no-scale') {
+        this.showNoScaleShotWarning({ busy: false });
+        return false;
+      }
+      if (preflight.type === 'blocked-water') {
+        this.setState({ waterAlertDismissed: false, status: 'Refill the water tank' });
+        return false;
+      }
+      const service = preflight.service;
+      this.setState({ busy: true, status: preflight.status });
       if (state !== 'espresso') this.stopSimulatedShot();
       this.rememberMachineProgressReturnView(service);
       this.trackMachineServiceState(state);
@@ -2937,106 +2949,69 @@ export class BeanieApp {
       if (state === 'espresso') this.startSimulatedShot();
       return true;
     }
-    if (allowOfflineStop && !this.hasLiveMachineAuthority()) {
-      const stopped = await this.machineWorkflowCommands.stopSafely();
-      if (stopped.status === 'completed') {
-        return this.finishMachineAction(state, service, {
-          type: 'sent',
-          status: machineActionStatus(state, 'sent'),
-          restore: null
-        });
-      }
-      const error = stopped.status === 'failed'
-        ? stopped.error
-        : new Error(`Machine stop ${stopped.status}`);
-      console.error('[Beanie] Machine action did not run', error);
-      this.setState({ busy: false, status: 'Machine command failed' });
-      return false;
+    if (allowOfflineStop) {
+      this.setState({ busy: true, status: 'Stopping machine' });
+      return this.finishMachineActionOutcome(await this.machineActions.stopSafely());
     }
-    const prepared = this.prepareMachineActionCommand(
-      state,
-      this.machineWorkflowCommands.desiredOr(this.state.workflow)
-    );
+    const workflow = this.machineWorkflowCommands.desiredOr(this.state.workflow);
     const preparedCalibration = state === 'espresso'
-      ? this.resolveProfileFlowCalibration(prepared.workflow?.profile?.title ?? null)
+      ? this.resolveProfileFlowCalibration(workflow?.profile?.title ?? null)
       : null;
-    const coordinated = await this.machineWorkflowCommands.runExact(
-      async (lane) => {
-        // Safety inputs are observations, not desired configuration. Re-check
-        // them at dispatch after any queued workflow writes have completed.
-        const dispatchPreflight = machineActionPreflight({
-          state,
-          skipScaleCheck: opts.skipScaleCheck === true,
-          noScaleBlocked: this.shouldPreflightBlockShotForScale(),
-          waterAlertHard: this.currentWaterAlert() === 'hard'
-        });
-        if (dispatchPreflight.type !== 'ready') {
-          return { type: 'blocked' as const, preflight: dispatchPreflight };
-        }
-        let dispatchCommand = prepared;
-        if (state === 'espresso' && prepared.workflow) {
-          // Shot start is a compound exact command: persist the draft captured
-          // at the tap (even if its debounce has not fired or an earlier apply
-          // failed), then calibration, then request physical state.
-          const workflow = await lane.updateWorkflow(prepared.workflow);
-          dispatchCommand = { ...prepared, workflow };
-          if (preparedCalibration != null && !this.settingsLocal) {
-            await lane.updateCalibration(preparedCalibration);
-          }
-        }
-        return {
-          type: 'command' as const,
-          command: await this.sendMachineActionInOwnedLane(dispatchCommand, lane)
-        };
-      }
-    );
-    if (coordinated.status === 'authority-blocked') {
-      this.setState({ busy: false, status: 'Machine controls are read-only until live data reconnects' });
-      return false;
-    }
-    if (coordinated.status !== 'completed') {
-      const error = coordinated.status === 'failed'
-        ? coordinated.error
-        : new Error(`Machine action ${coordinated.status}`);
-      console.error('[Beanie] Machine action did not run', error);
-      this.setState({ busy: false, status: 'Machine command failed' });
-      return false;
-    }
-    if (coordinated.value.type === 'blocked') {
-      if (coordinated.value.preflight.type === 'blocked-no-scale') {
-        this.showNoScaleShotWarning({ busy: false });
-      } else {
-        this.setState({ busy: false, waterAlertDismissed: false, status: 'Refill the water tank' });
-      }
-      return false;
-    }
-    return this.finishMachineAction(state, service, coordinated.value.command);
-  }
-
-  private prepareMachineActionCommand(
-    state: MachineState,
-    workflow: Workflow | null
-  ): Parameters<typeof sendMachineActionCommand>[0] {
-    return {
+    const started = this.machineActions.start({
       state,
+      liveAuthority: this.hasLiveMachineAuthority(),
+      skipScaleCheck: opts.skipScaleCheck,
       workflow,
       steamSettings: this.currentSteamSettings(workflow),
       hotWaterData: this.currentHotWaterData(workflow),
       rinseData: this.currentRinseData(workflow),
-      twoTapSteamStop: this.usesTwoTapSteamStop()
-    };
+      twoTapSteamStop: this.usesTwoTapSteamStop(),
+      calibration: preparedCalibration == null
+        ? null
+        : { flowMultiplier: preparedCalibration, persist: !this.settingsLocal }
+    });
+    if (started.type !== 'queued') return this.finishMachineActionOutcome(started);
+    this.setState({ busy: true, status: started.status });
+    return this.finishMachineActionOutcome(await started.completion);
   }
 
-  /** Caller must already own the `machine` workflow-command lane. */
-  private sendMachineActionInOwnedLane(
-    command: Parameters<typeof sendMachineActionCommand>[0],
-    lane: OwnedMachineLane
-  ): Promise<SendMachineActionCommandResult> {
-    return sendMachineActionCommand(command, {
-      updateWorkflow: (nextWorkflow) => lane.updateWorkflow(nextWorkflow),
-      requestState: (nextState) => lane.requestState(nextState),
-      isNoScaleShotBlockError
-    });
+  private finishMachineActionOutcome(outcome: MachineActionOutcome): boolean {
+    if (outcome.type === 'blocked-authority') {
+      if (outcome.restore) {
+        this.machineService.captureRestore(outcome.restore);
+        void this.machineService.restoreAfterEnd(this.state.demo);
+      }
+      this.setState({ busy: false, status: 'Machine controls are read-only until live data reconnects' });
+      return false;
+    }
+    if (outcome.type === 'blocked-safety') {
+      if (outcome.reason === 'no-scale') this.showNoScaleShotWarning({ busy: false });
+      else this.setState({ busy: false, waterAlertDismissed: false, status: 'Refill the water tank' });
+      return false;
+    }
+    if (outcome.type === 'canceled') {
+      console.error('[Beanie] Machine action did not run', new Error(`Machine action ${outcome.reason}`));
+      this.setState({ busy: false, status: 'Machine command failed' });
+      return false;
+    }
+    if (outcome.type === 'failed') {
+      return this.finishMachineAction(
+        outcome.state,
+        machineServiceState(outcome.state),
+        {
+          type: 'failed',
+          error: outcome.error,
+          status: outcome.status,
+          noScaleBlocked: false,
+          restore: outcome.restore
+        }
+      );
+    }
+    return this.finishMachineAction(
+      outcome.state,
+      outcome.service,
+      { type: 'sent', status: outcome.status, restore: outcome.restore }
+    );
   }
 
   private finishMachineAction(

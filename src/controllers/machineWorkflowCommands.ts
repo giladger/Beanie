@@ -195,8 +195,15 @@ class MachineAuthorityUnavailableError extends Error {
 function mapAuthorityOutcome<Value>(
   outcome: GatewayMutationOutcome<Value>
 ): MachineWorkflowCommandOutcome<Value> {
-  if (outcome.status === 'failed' && outcome.error instanceof MachineAuthorityUnavailableError) {
+  if (outcome.status === 'failed' && isMachineAuthorityUnavailableError(outcome.error)) {
     return { status: 'authority-blocked' };
   }
   return outcome;
+}
+
+/** Identify a caught owned-lane rejection without exposing a forgeable error constructor. */
+export function isMachineAuthorityUnavailableError(
+  error: unknown
+): boolean {
+  return error instanceof MachineAuthorityUnavailableError;
 }
