@@ -466,16 +466,15 @@ import {
   machineServiceTone,
   machineServiceVerb
 } from './domain/machineService';
-import { MachineServiceController } from './controllers/machineServiceController';
 import {
-  captureMachineServiceWorkflowRestore,
-  extendedMachineServiceWorkflow,
+  MachineServiceFlow,
+  type MachineServiceFlowEvent
+} from './controllers/machineServiceFlow';
+import {
   machineActionPreflight,
   machineActionStatus,
   optimisticMachineSnapshot,
-  restoreMachineServiceWorkflowAfterEnd as restoreMachineServiceWorkflowAfterEndController,
   sendMachineActionCommand,
-  type MachineServiceWorkflowRestore,
   type SendMachineActionCommandResult
 } from './controllers/machineExecutionController';
 import {
@@ -820,6 +819,10 @@ export class BeanieApp {
     hasLiveAuthority: () => this.hasLiveMachineAuthority(),
     isNoScaleShotBlockError
   });
+  private readonly machineService = new MachineServiceFlow({
+    commands: this.machineWorkflowCommands,
+    machineState: () => this.state.machine?.state?.state
+  });
   private readonly settingsController = createSettingsController({
     ...gateway,
     scanDevices: () => this.runExactCommand('devices', () => gateway.scanDevices()),
@@ -1098,7 +1101,6 @@ export class BeanieApp {
   private detailChartShotId: string | null = null;
   private detailChartCompareShotId: string | null = null;
   private simTimer: number | null = null;
-  private readonly machineService = new MachineServiceController();
   // True while a cleaning/backflush cycle is running as an espresso pull, so the
   // shot-end handler records a cleaning (not a bean shot) and restores the recipe.
   private cleaningInProgress = false;
@@ -1107,10 +1109,6 @@ export class BeanieApp {
   private lastWaterAlert: WaterAlertLevel = 'none';
   private readonly waterAlertProjector = new WaterAlertProjector();
   private machineProgressReturnView: View | null = null;
-  private machineStopFeedbackTimer: number | null = null;
-  private timedSteamStopTimer: number | null = null;
-  private timedSteamStopScheduledForMs: number | null = null;
-  private machineServiceWorkflowToRestore: MachineServiceWorkflowRestore | null = null;
   private sleepBrightnessTimer: number | null = null;
   private sleepBrightnessDimmed = false;
   /** Backlight level the sleep dim last applied; used to detect a missing restore. */
@@ -1325,6 +1323,8 @@ export class BeanieApp {
     }));
     this.appScope.own(this.recipeApply);
     this.appScope.own(this.recipeApply.subscribe((event) => this.handleRecipeApplyEvent(event)));
+    this.appScope.own(this.machineService);
+    this.appScope.own(this.machineService.subscribe((event) => this.handleMachineServiceEvent(event)));
     this.appScope.own(this.loadMoreAuthority);
     this.appScope.own(this.doseMutationReconciler);
     this.derekFlow = new DerekFlow({
@@ -1415,6 +1415,7 @@ export class BeanieApp {
     // before acquiring the same batch/machine resources.
     this.settingsStoreSync.dispose();
     this.recipeApply.dispose();
+    this.machineService.dispose();
     const doseDrain = this.doseMutationReconciler.dispose();
     const commandDrain = this.gatewayMutations.disposeAndWait();
     this.disposeDrain = Promise.all([doseDrain, commandDrain]).then(() => undefined);
@@ -1436,7 +1437,6 @@ export class BeanieApp {
     if (this.clockTimer != null) window.clearTimeout(this.clockTimer);
     if (this.saverPhotoTimer != null) window.clearTimeout(this.saverPhotoTimer);
     if (this.simTimer != null) window.clearTimeout(this.simTimer);
-    if (this.timedSteamStopTimer != null) window.clearTimeout(this.timedSteamStopTimer);
     if (this.sleepBrightnessTimer != null) window.clearTimeout(this.sleepBrightnessTimer);
     if (this.sleepWakeRestoreTimer != null) window.clearTimeout(this.sleepWakeRestoreTimer);
     if (this.wakeZonePreviewTimer != null) window.clearTimeout(this.wakeZonePreviewTimer);
@@ -1449,11 +1449,9 @@ export class BeanieApp {
     this.detailChart = null;
     this.shotStagesChart = null;
     this.calibratorChart = null;
-    this.clearMachineStopRequest();
     this.clockTimer = null;
     this.saverPhotoTimer = null;
     this.simTimer = null;
-    this.timedSteamStopTimer = null;
     this.sleepBrightnessTimer = null;
     this.sleepWakeRestoreTimer = null;
   }
@@ -2372,18 +2370,6 @@ export class BeanieApp {
     throw new Error(`machine command ${outcome.status}`);
   }
 
-  private async requestSafeMachineStop(): Promise<void> {
-    const outcome = await this.machineWorkflowCommands.stopSafely();
-    if (outcome.status === 'completed') return;
-    if (outcome.status === 'failed') throw outcome.error;
-    throw new Error(`machine stop ${outcome.status}`);
-  }
-
-  private updateWorkflowExact(workflow: Workflow): Promise<Workflow> {
-    this.machineWorkflowCommands.stageDesired(workflow);
-    return this.runExactMachineCommand((lane) => lane.updateWorkflow(workflow));
-  }
-
   private hasLiveMachineAuthority(): boolean {
     return this.state.demo || this.state.startupPhase === 'connected';
   }
@@ -3059,10 +3045,11 @@ export class BeanieApp {
     command: SendMachineActionCommandResult
   ): boolean {
     if (this.disposed) return false;
-    if (command.restore) this.captureMachineServiceWorkflowRestore(command.restore);
+    if (command.restore) this.machineService.captureRestore(command.restore);
     if (command.type === 'failed') {
+      if (command.restore) void this.machineService.restoreAfterEnd(this.state.demo);
       console.error('[Beanie] Machine action failed', command.error);
-      if (state === 'steam' && !command.restore) this.machineServiceWorkflowToRestore = null;
+      if (state === 'steam' && !command.restore) this.machineService.clearRestore();
       if (command.noScaleBlocked) {
         this.showNoScaleShotWarning({ busy: false });
         return false;
@@ -3312,15 +3299,6 @@ export class BeanieApp {
     const plan = cleaningThresholdPlan(shots);
     writeCleaningThreshold(plan.threshold);
     this.setState({ cleaningThreshold: plan.threshold, status: plan.status });
-  }
-
-  private captureMachineServiceWorkflowRestore(restore?: MachineServiceWorkflowRestore): void {
-    if (this.machineServiceWorkflowToRestore != null) return;
-    this.machineServiceWorkflowToRestore = restore ?? captureMachineServiceWorkflowRestore({
-      steamSettings: this.currentSteamSettings(),
-      hotWaterData: this.currentHotWaterData(),
-      rinseData: this.currentRinseData()
-    });
   }
 
   private shouldPreflightBlockShotForScale(): boolean {
@@ -3581,19 +3559,22 @@ export class BeanieApp {
   }
 
   private async stopMachineService(): Promise<void> {
-    const service = machineServiceState(this.state.machine?.state?.state) ?? this.machineService.service;
+    const service = machineServiceState(this.state.machine?.state?.state)
+      ?? this.machineService.snapshot.service.service;
     if (!service) {
       await this.machineAction('idle', { allowOfflineStop: true });
       return;
     }
 
-    this.machineService.markStopRequested(service, Date.now());
-    if (service === 'steam') this.clearTimedSteamStopTimer();
     this.setState({ busy: true, status: 'Stopping machine' });
-    if (this.state.demo) {
+    const result = await this.machineService.stop({
+      demo: this.state.demo,
+      machineState: this.state.machine?.state?.state
+    });
+    if (this.disposed || result.type === 'disposed') return;
+    if (result.type === 'demo-stopped') {
       const returnView = this.consumeMachineProgressReturnView();
-      this.clearMachineStopRequest();
-      this.trackMachineServiceState('idle');
+      if (result.service === 'flush') this.advanceCleaningWizardAfterFlush();
       this.setState({
         busy: false,
         machine: optimisticMachineSnapshot(this.state.machine, 'idle'),
@@ -3602,17 +3583,12 @@ export class BeanieApp {
       });
       return;
     }
-
-    try {
-      await this.requestSafeMachineStop();
-      if (this.disposed) return;
+    if (result.type === 'requested') {
       this.setState({ busy: false, status: 'Stop requested' });
-      this.armMachineStopFeedbackTimer();
-    } catch (error) {
-      console.error('[Beanie] Machine stop failed', error);
-      this.clearMachineStopRequest();
-      this.setState({ busy: false, status: 'Machine stop failed' });
+      return;
     }
+    console.error('[Beanie] Machine stop failed', result.error ?? result.reason);
+    this.setState({ busy: false, status: 'Machine stop failed' });
   }
 
   private startLiveStreams(): void {
@@ -3860,76 +3836,24 @@ export class BeanieApp {
     substate?: string,
     nowMs = Date.now()
   ): void {
-    const transition = this.machineService.track(state, substate, nowMs);
-
-    if (transition.clearTimedSteamTimer) this.clearTimedSteamStopTimer();
-    if (transition.restoreWorkflowAfterEnd) void this.restoreMachineServiceWorkflowAfterEnd();
-    if (transition.updateTimedSteamStopTimer) this.updateTimedSteamStopTimer(nowMs);
+    const { transition } = this.machineService.track({
+      state,
+      substate,
+      demo: this.state.demo,
+      twoTapSteamStop: this.usesTwoTapSteamStop(),
+      targetSeconds: this.currentMachineServiceTargetSeconds(),
+      nowMs
+    });
     // A flush the cleaning wizard kicked off just returned to idle — step it on.
     if (transition.previousService === 'flush' && transition.currentService == null) {
       this.advanceCleaningWizardAfterFlush();
     }
   }
 
-  private updateTimedSteamStopTimer(nowMs = Date.now()): void {
-    const delayMs = this.machineService.timedSteamStopDelay({
-      disabled: this.state.demo,
-      twoTapStop: this.usesTwoTapSteamStop(),
-      targetSeconds: this.currentMachineServiceTargetSeconds(),
-      nowMs
-    });
-    if (delayMs == null) {
-      this.clearTimedSteamStopTimer();
-      return;
-    }
-    this.scheduleTimedSteamStop(delayMs, nowMs);
-  }
-
-  private scheduleTimedSteamStop(delayMs: number, nowMs = Date.now()): void {
-    const scheduledForMs = nowMs + delayMs;
-    if (
-      this.timedSteamStopTimer != null &&
-      this.timedSteamStopScheduledForMs != null &&
-      Math.abs(this.timedSteamStopScheduledForMs - scheduledForMs) < 250
-    ) {
-      return;
-    }
-    this.clearTimedSteamStopTimer();
-    this.timedSteamStopScheduledForMs = scheduledForMs;
-    this.timedSteamStopTimer = window.setTimeout(() => {
-      this.timedSteamStopTimer = null;
-      this.timedSteamStopScheduledForMs = null;
-      void this.requestTimedSteamIdleStop();
-    }, delayMs);
-  }
-
-  private clearTimedSteamStopTimer(): void {
-    if (this.timedSteamStopTimer != null) {
-      window.clearTimeout(this.timedSteamStopTimer);
-      this.timedSteamStopTimer = null;
-    }
-    this.timedSteamStopScheduledForMs = null;
-  }
-
-  private async requestTimedSteamIdleStop(): Promise<void> {
-    const state = this.state.machine?.state?.state;
-    if (state !== 'steam') return;
-    this.machineService.markTimedSteamStopRequested(Date.now());
-    try {
-      await this.requestSafeMachineStop();
-      if (this.disposed) return;
-      this.setState({ status: 'Timed steam stop requested' });
-      this.armMachineStopFeedbackTimer();
-    } catch (error) {
-      console.error('[Beanie] Timed steam stop failed', error);
-      this.clearMachineStopRequest();
-      this.setState({ status: 'Timed steam stop failed' });
-    }
-  }
-
   private currentMachineServiceTargetSeconds(): number | null {
-    if (this.machineService.targetOverrideSeconds != null) return this.machineService.targetOverrideSeconds;
-    const service = this.machineService.service;
+    const progress = this.machineService.snapshot.service;
+    if (progress.targetOverrideSeconds != null) return progress.targetOverrideSeconds;
+    const service = progress.service;
     if (!service) return null;
     return machineServiceTargetSeconds(
       service,
@@ -3942,7 +3866,8 @@ export class BeanieApp {
   }
 
   private async extendMachineServiceDuration(seconds: number): Promise<void> {
-    const service = machineServiceState(this.state.machine?.state?.state) ?? this.machineService.service;
+    const service = machineServiceState(this.state.machine?.state?.state)
+      ?? this.machineService.snapshot.service.service;
     if (!service || this.state.demo) return;
     if (this.state.startupPhase !== 'connected') {
       this.setState({ status: 'Add time is unavailable until live data reconnects' });
@@ -3956,44 +3881,22 @@ export class BeanieApp {
       this.state.hotWaterStopMode,
       scaleConnected(this.state.scale)
     );
-    const nextTarget = this.machineService.extendTarget(seconds, Date.now(), currentTarget);
-    this.captureMachineServiceWorkflowRestore();
     this.setState({ status: `Added ${seconds}s` });
-    this.updateTimedSteamStopTimer();
-
-    const workflow = this.state.workflow;
-    if (workflow == null) return;
-    const nextWorkflow = extendedMachineServiceWorkflow({
-      workflow,
-      service,
+    const result = await this.machineService.extend({
+      seconds,
+      machineState: this.state.machine?.state?.state,
+      demo: this.state.demo,
+      workflow: this.state.workflow,
       steamSettings: this.currentSteamSettings(),
       hotWaterData: this.currentHotWaterData(),
       rinseData: this.currentRinseData(),
-      nextTargetSeconds: nextTarget,
-      twoTapSteamStop: this.usesTwoTapSteamStop()
-    });
-
-    try {
-      await this.updateWorkflowExact(nextWorkflow);
-    } catch (error) {
-      console.error('[Beanie] Extend service duration failed', error);
-      this.setState({ status: 'Add time failed' });
-    }
-  }
-
-  private async restoreMachineServiceWorkflowAfterEnd(): Promise<void> {
-    const restore = this.machineServiceWorkflowToRestore;
-    this.machineServiceWorkflowToRestore = null;
-    const result = await restoreMachineServiceWorkflowAfterEndController({
-      restore,
-      workflow: this.state.workflow,
-      demo: this.state.demo
-    }, {
-      updateWorkflow: (workflow) => this.updateWorkflowExact(workflow)
+      currentTargetSeconds: currentTarget,
+      twoTapSteamStop: this.usesTwoTapSteamStop(),
+      nowMs: Date.now()
     });
     if (result.type === 'failed') {
-      console.error('[Beanie] Machine service settings restore failed', result.error);
-      this.setState({ status: result.status });
+      console.error('[Beanie] Extend service duration failed', result.error ?? result.reason);
+      this.setState({ status: 'Add time failed' });
     }
   }
 
@@ -4001,22 +3904,25 @@ export class BeanieApp {
     return normalizeSteamPurgeMode(this.state.machineSettings?.steamPurgeMode) === 1;
   }
 
-  private clearMachineStopRequest(): void {
-    this.machineService.clearStopRequest();
-    if (this.machineStopFeedbackTimer != null) {
-      window.clearTimeout(this.machineStopFeedbackTimer);
-      this.machineStopFeedbackTimer = null;
-    }
-  }
-
-  private armMachineStopFeedbackTimer(): void {
+  private handleMachineServiceEvent(event: MachineServiceFlowEvent): void {
     if (this.disposed) return;
-    if (this.machineStopFeedbackTimer != null) window.clearTimeout(this.machineStopFeedbackTimer);
-    this.machineStopFeedbackTimer = window.setTimeout(() => {
-      this.machineStopFeedbackTimer = null;
-      if (!this.machineService.stopRequestedFor) return;
+    if (event.type === 'stop-not-confirmed') {
       this.setState({ status: 'Stop not confirmed' });
-    }, 4000);
+      return;
+    }
+    if (event.type === 'stop-result' && event.result.type !== 'disposed' && 'timed' in event.result && event.result.timed) {
+      if (event.result.type === 'requested') {
+        this.setState({ status: 'Timed steam stop requested' });
+      } else if (event.result.type === 'failed') {
+        console.error('[Beanie] Timed steam stop failed', event.result.error ?? event.result.reason);
+        this.setState({ status: 'Timed steam stop failed' });
+      }
+      return;
+    }
+    if (event.type === 'restore-result' && event.result.type === 'failed') {
+      console.error('[Beanie] Machine service settings restore failed', event.result.error ?? event.result.reason);
+      this.setState({ status: 'Machine service restore failed' });
+    }
   }
 
   private currentWaterAlert(): WaterAlertLevel {
@@ -8296,7 +8202,7 @@ export class BeanieApp {
     const water = this.currentHotWaterData();
     const flush = this.currentRinseData();
     const waterScaleConnected = scaleConnected(this.state.scale);
-    const progress = this.machineService.snapshot();
+    const progress = this.machineService.snapshot.service;
     const targetSeconds = progress.targetOverrideSeconds
       ?? machineServiceTargetSeconds(
         service,
