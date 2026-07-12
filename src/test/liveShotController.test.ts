@@ -12,6 +12,7 @@ await run('live shot end decision routes cleaning before save decisions', () => 
     cleaningInProgress: true,
     noScaleBlockedAbort: false,
     beanId: 'bean-1',
+    beanBatchId: 'batch-1',
     demo: false,
     currentShots: [shot('previous', '2026-06-07T09:59:00.000Z')],
     shotWindow: { startMs: Date.parse('2026-06-07T10:00:00.000Z'), lastActiveMs: null },
@@ -28,6 +29,7 @@ await run('live shot end decision routes no-scale abort before counting espresso
     cleaningInProgress: false,
     noScaleBlockedAbort: true,
     beanId: 'bean-1',
+    beanBatchId: 'batch-1',
     demo: false,
     currentShots: [],
     shotWindow: { startMs: Date.parse('2026-06-07T10:00:00.000Z'), lastActiveMs: null },
@@ -46,6 +48,7 @@ await run('live shot end decision prepares remote save context for real beans', 
     cleaningInProgress: false,
     noScaleBlockedAbort: false,
     beanId: 'bean-1',
+    beanBatchId: 'batch-1',
     demo: false,
     currentShots: [shot('previous', '2026-06-07T09:59:00.000Z')],
     shotWindow: { startMs, lastActiveMs: null },
@@ -60,6 +63,8 @@ await run('live shot end decision prepares remote save context for real beans', 
   equal(decision.type === 'remote-save' ? decision.context.previousShotIds.has('previous') : false, true);
   equal(decision.type === 'remote-save' ? decision.context.endedAtMs : null, startMs + 30_000);
   equal(decision.type === 'remote-save' ? decision.context.optimisticShot?.id : null, 'optimistic');
+  equal(decision.type === 'remote-save' ? decision.context.expectedBeanId : null, 'bean-1');
+  equal(decision.type === 'remote-save' ? decision.context.expectedBatchId : null, 'batch-1');
 });
 
 await run('live shot end decision completes locally for demo or missing bean', () => {
@@ -67,6 +72,7 @@ await run('live shot end decision completes locally for demo or missing bean', (
     cleaningInProgress: false,
     noScaleBlockedAbort: false,
     beanId: 'bean-1',
+    beanBatchId: 'batch-1',
     demo: true,
     currentShots: [],
     shotWindow: { startMs: Date.parse('2026-06-07T10:00:00.000Z'), lastActiveMs: null },
@@ -78,6 +84,7 @@ await run('live shot end decision completes locally for demo or missing bean', (
     cleaningInProgress: false,
     noScaleBlockedAbort: false,
     beanId: null,
+    beanBatchId: null,
     demo: false,
     currentShots: [],
     shotWindow: { startMs: Date.parse('2026-06-07T10:00:00.000Z'), lastActiveMs: null },
@@ -103,6 +110,51 @@ await run('completed live shot prefers a new record inside the live window', () 
   const newMatch = shot('new', '2026-06-07T10:00:10.000Z');
 
   equal(completedLiveShot([oldMatch, newMatch], context, false)?.id, 'new');
+});
+
+await run('completed live shot rejects an explicitly conflicting persisted batch', () => {
+  const startedAtMs = Date.parse('2026-06-07T10:00:00.000Z');
+  const context = completionContext({
+    startedAtMs,
+    endedAtMs: startedAtMs + 30_000,
+    expectedBeanId: 'bean-1',
+    expectedBatchId: 'batch-1'
+  });
+  const conflict = shotForBatch('wrong', '2026-06-07T10:00:12.000Z', 'batch-2');
+  const correct = shotForBatch('correct', '2026-06-07T10:00:10.000Z', 'batch-1');
+
+  equal(completedLiveShot([conflict, correct], context, false)?.id, 'correct');
+  equal(completedLiveShot([conflict], context, false), null);
+});
+
+await run('completed live shot never reuses a pre-shot baseline record', () => {
+  const startedAtMs = Date.parse('2026-06-07T10:00:00.000Z');
+  const prior = shotForBatch('prior', '2026-06-07T10:00:05.000Z', 'batch-1');
+  const context = completionContext({
+    previousShotIds: new Set([prior.id]),
+    startedAtMs,
+    endedAtMs: startedAtMs + 30_000,
+    expectedBeanId: 'bean-1',
+    expectedBatchId: 'batch-1'
+  });
+
+  equal(completedLiveShot([prior], context, false), null);
+});
+
+await run('completed live shot keeps weak identity provisional when a batch is expected', () => {
+  const startedAtMs = Date.parse('2026-06-07T10:00:00.000Z');
+  const weak = {
+    ...shot('weak', '2026-06-07T10:00:12.000Z'),
+    workflow: { context: { beanId: 'bean-1' } }
+  };
+  const context = completionContext({
+    startedAtMs,
+    endedAtMs: startedAtMs + 30_000,
+    expectedBeanId: 'bean-1',
+    expectedBatchId: 'batch-1'
+  });
+
+  equal(completedLiveShot([weak], context, false), null);
 });
 
 await run('completed live shot uses newest unknown record only when fallback is allowed', () => {
@@ -163,6 +215,30 @@ await run('wait for completed live shot falls back to latest candidates on final
   equal(latestLoads, 2);
   equal(result.type, 'completed');
   equal(result.type === 'completed' ? result.shot.id : null, 'gateway-lagged');
+});
+
+await run('wait for completed live shot classifies a conflicting global candidate', async () => {
+  const startedAtMs = Date.parse('2026-06-07T10:00:00.000Z');
+  const conflict = shotForBatch('wrong-batch', '2026-06-07T10:00:12.000Z', 'batch-2');
+  const result = await waitForCompletedLiveShot(
+    completionContext({
+      startedAtMs,
+      endedAtMs: startedAtMs + 30_000,
+      expectedBeanId: 'bean-1',
+      expectedBatchId: 'batch-1'
+    }),
+    {
+      delay: async () => {},
+      invalidateShotMutation: async () => {},
+      loadFirstShots: async () => ({ records: [], total: 0 }),
+      loadLatestShotCandidates: async () => [conflict],
+      stillRelevant: () => true
+    },
+    [0]
+  );
+
+  equal(result.type, 'mismatch');
+  equal(result.type === 'mismatch' ? result.shot.id : null, conflict.id);
 });
 
 await run('wait for completed live shot aborts stale polling before loading records', async () => {
@@ -248,6 +324,8 @@ function completionContext(overrides: Partial<LiveShotCompletionContext> = {}): 
     startedAtMs: null,
     endedAtMs: null,
     optimisticShot: null,
+    expectedBeanId: null,
+    expectedBatchId: null,
     ...overrides
   };
 }
@@ -260,6 +338,13 @@ function shot(id: string, timestamp: string): ShotRecord {
     annotations: null,
     metadata: null,
     measurements: []
+  };
+}
+
+function shotForBatch(id: string, timestamp: string, beanBatchId: string): ShotRecord {
+  return {
+    ...shot(id, timestamp),
+    workflow: { context: { beanBatchId } }
   };
 }
 

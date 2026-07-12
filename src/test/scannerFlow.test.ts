@@ -35,7 +35,7 @@ class TestFormData {
 async function main(): Promise<void> {
   const originalFormData = globalThis.FormData;
   (globalThis as unknown as { FormData: typeof FormData }).FormData = TestFormData as unknown as typeof FormData;
-  await run('scanner save preserves inventory updates that settle while batch creation is pending', async () => {
+  await run('scanner save preserves inventory updates and the active coffee while batch creation is pending', async () => {
     const harness = createHarness();
     const saving = harness.flow.submitScannerReview(form());
     await flushAsync();
@@ -68,10 +68,69 @@ async function main(): Promise<void> {
     equal(harness.host.current.batchesByBean.other?.[0]?.id, concurrent.id);
     equal(harness.host.current.batchesByBean.target?.[0]?.id, created.id);
     equal(harness.host.current.beans.some((bean) => bean.id === 'late-bean'), true);
-    deepEqual(harness.host.selections, [{
-      beanId: 'target',
-      options: { apply: false, preferWorkflow: false, preferredBatchId: created.id }
-    }]);
+    equal(harness.host.current.selectedBeanId, 'other');
+    equal(harness.host.current.selectedBatchId, 'other-old');
+    equal(harness.host.current.status, 'Added a bag for Test Coffee — select it to brew');
+    deepEqual(harness.host.selections, []);
+  });
+
+  await run('scanner save adds a new bean without silently making it active', async () => {
+    const target: Bean = { id: 'target', roaster: 'New', name: 'Coffee' };
+    const other: Bean = { id: 'other', roaster: 'Other', name: 'Coffee' };
+    const host = new HostHarness({
+      demo: false,
+      scanner: scannerState(null),
+      beans: [other],
+      batchesByBean: { other: [batch('other-old', 'other', 100)] },
+      selectedBeanId: 'other',
+      selectedBatchId: 'other-old',
+      modal: 'label-scanner',
+      status: ''
+    });
+    const created = batch('created', 'target', 250);
+    const flow = new ScannerFlow(
+      host,
+      {
+        saveBean: async () => ({
+          type: 'saved',
+          bean: target,
+          beans: [target, other],
+          batchesByBean: { other: [batch('other-old', 'other', 100)], target: [] },
+          editing: false,
+          selectBeanId: target.id,
+          status: 'Bean added'
+        })
+      },
+      {
+        createBatch: async () => ({
+          type: 'created',
+          batch: created,
+          recovered: false,
+          projection: {
+            beanId: target.id,
+            batches: [created],
+            shouldScheduleApply: false
+          },
+          status: 'Batch added'
+        })
+      },
+      unusedTranscoder
+    );
+
+    await flow.submitScannerReview(new TestForm({
+      roaster: target.roaster,
+      name: target.name,
+      roastDate: '2026-07-01',
+      roastLevel: 'medium',
+      weight: '250'
+    }) as unknown as HTMLFormElement);
+
+    equal(host.current.beans[0]?.id, target.id);
+    equal(host.current.batchesByBean.target?.[0]?.id, created.id);
+    equal(host.current.selectedBeanId, other.id);
+    equal(host.current.selectedBatchId, 'other-old');
+    equal(host.current.status, 'Added New Coffee — select it to brew');
+    deepEqual(host.selections, []);
   });
 
   await run('scanner batch failure does not restore its stale inventory snapshot', async () => {
@@ -298,7 +357,7 @@ function createHarness(): {
   };
 }
 
-function scannerState(existingBeanId: string): LabelScannerState {
+function scannerState(existingBeanId: string | null): LabelScannerState {
   return {
     step: 'review',
     handoff: false,

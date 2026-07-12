@@ -16,11 +16,13 @@ import {
   type LiveShotEndDecision,
   type LiveShotWindow
 } from './liveShotController';
+import {
+  shotCoffeeLabel,
+  shotSelectionCompatibility,
+  type LiveShotSelection
+} from './liveShotAttribution';
 
-export interface LiveShotSelection {
-  readonly bean: Bean | null;
-  readonly batch: BeanBatch | null;
-}
+export type { LiveShotSelection } from './liveShotAttribution';
 
 export interface LiveShotCompletionRequest {
   readonly cleaningInProgress: boolean;
@@ -62,7 +64,9 @@ export interface LiveShotCompletionDependencies {
   loadFirstShots(target: LiveShotPollingTarget): Promise<{ records: ShotRecord[]; total: number }>;
   loadLatestShotCandidates(): Promise<ShotRecord[]>;
   isRelevant(target: LiveShotPollingTarget): boolean;
-  consumeDose(input: LiveShotDoseConsumption): Promise<void>;
+  resolveShotSelection(shot: ShotRecord): LiveShotSelection | null;
+  /** Resolves true after the reconciler accepts the dose command or finds it acknowledged. */
+  consumeDose(input: LiveShotDoseConsumption): Promise<boolean>;
   readPendingTweak(): PendingDerekTweak | null;
   clearPendingTweak(): void;
   serializeShotMutation<Value>(
@@ -98,6 +102,18 @@ export type LiveShotCompletionOutcome =
       type: 'remote-complete';
       beanId: string;
       batchId: string | null;
+      shot: ShotRecord;
+      history: LiveShotHistoryProjection;
+      contextPersistence: CompletedShotContextPersistence;
+      contextError?: unknown;
+    }
+  | {
+      type: 'remote-mismatch';
+      expectedBeanId: string;
+      expectedBatchId: string | null;
+      actualBeanId: string | null;
+      actualBatchId: string | null;
+      inventoryReviewBeanIds: readonly string[];
       shot: ShotRecord;
       history: LiveShotHistoryProjection;
       contextPersistence: CompletedShotContextPersistence;
@@ -152,6 +168,11 @@ interface CompletedShotContextResult {
   readonly error?: unknown;
 }
 
+interface DoseAdmission {
+  state: 'pending' | 'admitted' | 'failed';
+  settled: Promise<boolean>;
+}
+
 /**
  * Owns shot-end routing and the low-frequency completion/reconciliation flow.
  *
@@ -195,6 +216,7 @@ export class LiveShotCompletionFlow {
       cleaningInProgress: request.cleaningInProgress,
       noScaleBlockedAbort: request.noScaleBlockedAbort,
       beanId: bean?.id ?? null,
+      beanBatchId: batch?.id ?? null,
       demo: request.demo,
       currentShots: [...request.currentShots],
       shotWindow: request.shotWindow,
@@ -211,7 +233,7 @@ export class LiveShotCompletionFlow {
       case 'no-scale-abort':
         return this.settleImmediate(operation, request, { type: 'no-scale-abort' });
       case 'local-complete': {
-        if (bean && batch) this.startDoseConsumption(operation, request, bean, batch, decision.optimisticShot);
+        if (bean && batch) void this.startDoseConsumption(operation, request, bean, batch, decision.optimisticShot);
         const records = decision.optimisticShot
           ? includeShotInHistory([...request.currentShots], decision.optimisticShot, request.pageLimit)
           : [...request.currentShots];
@@ -225,7 +247,9 @@ export class LiveShotCompletionFlow {
               ? Math.max(request.currentShotsTotal, request.currentShots.length + 1)
               : request.currentShotsTotal,
             detailShotId: decision.optimisticShot?.id ?? request.currentDetailShotId,
-            status: decision.status
+            status: request.selection.source === 'explicit-unresolved' && !request.demo
+              ? 'Shot complete — machine coffee identity unavailable; bag unchanged'
+              : decision.status
           }
         });
       }
@@ -237,8 +261,23 @@ export class LiveShotCompletionFlow {
             closeFinalizing: true
           });
         }
-        if (batch) this.startDoseConsumption(operation, request, bean, batch, decision.context.optimisticShot);
-        return this.reconcileRemote(operation, request, { bean, batch }, decision.context);
+        const doseAdmission =
+          batch && isConfirmedAttribution(request.selection)
+            ? this.startDoseConsumption(
+                operation,
+                request,
+                bean,
+                batch,
+                decision.context.optimisticShot
+              )
+            : null;
+        return this.reconcileRemote(
+          operation,
+          request,
+          { bean, batch },
+          decision.context,
+          doseAdmission
+        );
     }
   }
 
@@ -266,7 +305,8 @@ export class LiveShotCompletionFlow {
     operation: OperationLease,
     request: LiveShotCompletionRequest,
     target: LiveShotPollingTarget,
-    context: LiveShotCompletionContext
+    context: LiveShotCompletionContext,
+    doseAdmission: DoseAdmission | null
   ): Promise<LiveShotCompletionOutcome> {
     try {
       const result = await waitForCompletedLiveShot(context, {
@@ -285,26 +325,72 @@ export class LiveShotCompletionFlow {
           closeFinalizing: true
         });
       }
-
       if (result.type === 'fallback') {
-        const records = context.optimisticShot
-          ? includeShotInHistory(result.records, context.optimisticShot, request.pageLimit)
-          : result.records;
         return this.settle(operation, request, {
           type: 'remote-fallback',
           beanId: target.bean.id,
           batchId: target.batch?.id ?? null,
           optimisticShot: context.optimisticShot,
           history: {
-            records,
-            total: Math.max(result.total, records.length),
-            detailShotId:
-              context.optimisticShot?.id ?? result.records[0]?.id ?? request.currentDetailShotId,
-            status: 'Shot list updated'
+            records: result.records,
+            total: result.total,
+            detailShotId: result.records[0]?.id ?? request.currentDetailShotId,
+            status: doseAdmission?.state === 'admitted'
+              ? 'Shot record delayed — bag updated from the confirmed machine workflow'
+              : doseAdmission?.state === 'pending'
+                ? 'Shot record delayed — bag update is still being journaled'
+                : 'Shot record delayed — bag unchanged until its coffee is confirmed'
           }
         });
       }
 
+      if (result.type === 'mismatch') {
+        return await this.reconcileMismatchedRemote(
+          operation,
+          request,
+          target,
+          result.shot,
+          result.records,
+          result.total,
+          doseAdmission?.state !== 'failed' && doseAdmission != null
+        );
+      }
+
+      if (
+        (!doseAdmission || doseAdmission.state === 'failed') &&
+        target.batch &&
+        shotSelectionCompatibility(result.shot, {
+          beanId: target.bean.id,
+          batchId: target.batch.id
+        }) === 'batch-match'
+      ) {
+        void this.startDoseConsumption(
+          operation,
+          request,
+          target.bean,
+          target.batch,
+          result.shot
+        );
+      } else if (doseAdmission?.state === 'pending' && target.batch) {
+        // Never wedge shot projection on blocked storage. If acceptance later
+        // proves it did not queue anything, retry with the persisted shot
+        // identity while this completion still owns the live runtime.
+        void doseAdmission.settled.then((admitted) => {
+          if (
+            admitted ||
+            this.disposed ||
+            this.latestRunGeneration !== operation.generation ||
+            !this.deps.isRelevant(target)
+          ) return;
+          void this.startDoseConsumption(
+            operation,
+            request,
+            target.bean,
+            target.batch!,
+            result.shot
+          );
+        });
+      }
       const contextualized = await this.saveCompletedShotContext(result.shot, target.batch);
       if (!operation.isCurrent) return this.staleOutcome();
       if (!this.deps.isRelevant(target)) {
@@ -347,6 +433,51 @@ export class LiveShotCompletionFlow {
     } finally {
       operation.finish();
     }
+  }
+
+  private async reconcileMismatchedRemote(
+    operation: OperationLease,
+    request: LiveShotCompletionRequest,
+    expected: LiveShotPollingTarget,
+    shot: ShotRecord,
+    records: ShotRecord[],
+    total: number,
+    expectedDoseAlreadyAdmitted: boolean
+  ): Promise<LiveShotCompletionOutcome> {
+    const actual = this.deps.resolveShotSelection(shot);
+    const actualBean = actual?.bean ?? null;
+    const actualBatch = actual?.batch ?? null;
+    if (!this.deps.isRelevant(expected)) {
+      return this.settle(operation, request, {
+        type: 'aborted',
+        reason: 'irrelevant',
+        closeFinalizing: true
+      });
+    }
+
+    const inventoryReviewBeanIds = expectedDoseAlreadyAdmitted
+      ? [expected.bean.id]
+      : [];
+    const label = shotCoffeeLabel(shot) ??
+      (actualBean ? `${actualBean.roaster} ${actualBean.name}`.trim() : 'another coffee');
+    return this.settle(operation, request, {
+      type: 'remote-mismatch',
+      expectedBeanId: expected.bean.id,
+      expectedBatchId: expected.batch?.id ?? null,
+      actualBeanId: actualBean?.id ?? null,
+      actualBatchId: actualBatch?.id ?? null,
+      inventoryReviewBeanIds,
+      shot,
+      history: {
+        records,
+        total,
+        detailShotId: request.currentDetailShotId,
+        status: expectedDoseAlreadyAdmitted
+          ? `Conflicting ${label} shot detected — expected-bag inventory needs review`
+          : `Conflicting ${label} shot detected — no history or inventory was changed`
+      },
+      contextPersistence: 'unchanged'
+    });
   }
 
   private async saveCompletedShotContext(
@@ -417,27 +548,46 @@ export class LiveShotCompletionFlow {
     bean: Bean,
     batch: BeanBatch,
     shot: ShotRecord | null
-  ): void {
+  ): DoseAdmission | null {
+    const doseWeight = shot?.annotations?.actualDoseWeight;
+    if (
+      !shot?.id ||
+      typeof doseWeight !== 'number' ||
+      !Number.isFinite(doseWeight) ||
+      doseWeight <= 0
+    ) return null;
     const dose: LiveShotDoseConsumption = {
       bean,
       batch,
-      doseWeight: shot?.annotations?.actualDoseWeight,
-      shotId: shot?.id ?? null,
+      doseWeight,
+      shotId: shot.id,
       demo: request.demo
     };
-    // Bean usage is a physical consequence of the shot and must not wait for
-    // gateway shot persistence. Its failure is observable but never changes
-    // the completion result or leaves the live screen finalizing.
+    // Once attribution admits the physical consequence, wait only for the
+    // reconciler to accept it into its persistent journal or bounded volatile
+    // intake; the worker itself remains independent. Failure resolves false so
+    // a later persisted identity can retry while this completion still owns the
+    // runtime.
     try {
-      void Promise.resolve(this.deps.consumeDose(dose)).catch((error) => {
-        if (!this.disposed && this.latestRunGeneration === operation.generation) {
-          this.emit({ type: 'dose-failed', request, dose, error });
-        }
-      });
+      const admission = { state: 'pending' } as DoseAdmission;
+      admission.settled = Promise.resolve(this.deps.consumeDose(dose))
+        .then((admitted) => {
+          admission.state = admitted ? 'admitted' : 'failed';
+          return admitted;
+        })
+        .catch((error) => {
+          admission.state = 'failed';
+          if (!this.disposed && this.latestRunGeneration === operation.generation) {
+            this.emit({ type: 'dose-failed', request, dose, error });
+          }
+          return false;
+        });
+      return admission;
     } catch (error) {
       if (!this.disposed && this.latestRunGeneration === operation.generation) {
         this.emit({ type: 'dose-failed', request, dose, error });
       }
+      return { state: 'failed', settled: Promise.resolve(false) };
     }
   }
 
@@ -507,6 +657,10 @@ export class LiveShotCompletionFlow {
 
 function batchForBean(bean: Bean | null, batch: BeanBatch | null): BeanBatch | null {
   return bean && batch?.beanId === bean.id ? batch : null;
+}
+
+function isConfirmedAttribution(selection: LiveShotSelection): boolean {
+  return selection.source === 'confirmed-batch' || selection.source === 'confirmed-bean';
 }
 
 function subjectFor(request: LiveShotCompletionRequest): string {

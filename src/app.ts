@@ -81,6 +81,7 @@ import {
   parseNumberInput,
   profileBaseTemperature,
   ratioFor,
+  recipeFromWorkflow,
   recipeFromShot,
   roastAgeLabel,
   selectInitialBean,
@@ -237,6 +238,11 @@ import {
   LiveShotCompletionFlow,
   type LiveShotCompletionEvent
 } from './controllers/liveShotCompletionFlow';
+import {
+  resolveLiveShotAttribution,
+  resolvePersistedShotSelection,
+  type LiveShotAttribution
+} from './controllers/liveShotAttribution';
 import {
   StartupFlow,
   type StartupEffectPlan,
@@ -1205,7 +1211,7 @@ export class BeanieApp {
   /** Forces gateway refreshes after an ambiguous create until a later receipt. */
   private readonly inventoryReviewBeanIds = new Set<string>();
   /** Caller-side outbox admissions fired from live-shot completion. */
-  private readonly activeDoseAdmissions = new Set<Promise<void>>();
+  private readonly activeDoseAdmissions = new Set<Promise<boolean>>();
   /**
    * Foreground inventory writes stay fail-closed until durable dose work has
    * been discovered and reserved in this process. Reads/bootstrap must not
@@ -1245,10 +1251,14 @@ export class BeanieApp {
     },
     loadFirstShots: ({ bean, batch }) => this.loadFirstShots(bean, batch),
     loadLatestShotCandidates: () => this.loadLatestShotCandidates(),
-    isRelevant: ({ bean, batch }) =>
-      this.selectedBean()?.id === bean.id &&
-      this.selectedBatch()?.id === batch?.id &&
-      !this.state.liveActive,
+    // Completion follows the physical pull even if the user changes the
+    // visible coffee while the gateway persists it. Projection is fenced at
+    // settlement so another coffee's history is never overwritten.
+    isRelevant: () => !this.disposed && !this.state.liveActive,
+    resolveShotSelection: (shot) => resolvePersistedShotSelection(shot, {
+      beans: this.state.beans,
+      batchesByBean: this.state.batchesByBean
+    }),
     consumeDose: ({ bean, batch, doseWeight, shotId, demo }) =>
       this.consumeBatchDoseForShot(bean, batch.id, doseWeight, shotId, demo),
     readPendingTweak: () => readPendingDerekTweak(),
@@ -1266,6 +1276,8 @@ export class BeanieApp {
     }
   });
   private readonly liveShot = new LiveShotSession();
+  private capturedLiveShotAttribution: (LiveShotAttribution & { readonly draft: RecipeDraft }) | null = null;
+  private resumeDeferredRecipeAfterLiveShot = false;
   private liveChart: LiveChart | null = null;
   private liveCanvas: HTMLCanvasElement | null = null;
   private readonly liveReadouts = new LiveReadouts();
@@ -4391,12 +4403,48 @@ export class BeanieApp {
     const panelDecision = liveShotPanelDecision(wasActive, active);
     if (panelDecision === 'started') {
       this.liveReadouts.beginSession();
+      this.capturedLiveShotAttribution = this.currentLiveShotAttribution();
+      if (
+        frameState.previousMachineState === 'sleeping' &&
+        this.recipeApply.snapshot.deferredUntilWake
+      ) {
+        // A direct sleep -> espresso transition leaves no safe idle window in
+        // which to update the machine. Keep this pull on the confirmed workflow
+        // and apply the deferred selection on the first idle frame afterward.
+        this.resumeDeferredRecipeAfterLiveShot = true;
+      }
       this.captureLiveGhost();
       // A pull is hands-off, so heartbeat at the start to keep the machine awake.
       this.sendPresenceHeartbeat();
       // First active frame: render once to mount the live panel + canvas, then draw.
       // Clear any leftover finalizing from a just-prior shot so this one takes over.
-      this.setState({ liveActive: true, liveFinalizing: false, status: 'Live shot' });
+      const selectedBean = this.selectedBean();
+      const selectedBatch = this.selectedBatch();
+      const attributionUnresolved =
+        this.capturedLiveShotAttribution?.source === 'explicit-unresolved';
+      const attributionMismatch = Boolean(
+        this.capturedLiveShotAttribution?.bean &&
+        selectedBean &&
+        (
+          this.capturedLiveShotAttribution.bean.id !== selectedBean.id ||
+          (
+            this.capturedLiveShotAttribution.batch?.id &&
+            selectedBatch?.id &&
+            this.capturedLiveShotAttribution.batch.id !== selectedBatch.id
+          )
+        )
+      );
+      this.setState({
+        asleep: false,
+        appAwake: false,
+        liveActive: true,
+        liveFinalizing: false,
+        status: attributionUnresolved
+          ? 'Live shot — machine coffee identity is unavailable; bag inventory will not change'
+          : attributionMismatch && this.capturedLiveShotAttribution?.bean
+            ? `Live shot — selected coffee was not applied; last confirmed workflow is ${beanLabel(this.capturedLiveShotAttribution.bean)}`
+            : 'Live shot'
+      });
       return;
     }
     if (panelDecision === 'ended') {
@@ -4405,6 +4453,16 @@ export class BeanieApp {
       this.sendPresenceHeartbeat();
       this.onShotEnded();
       return;
+    }
+    if (
+      panelDecision === 'idle' &&
+      machine &&
+      this.resumeDeferredRecipeAfterLiveShot &&
+      machine.state.state !== 'sleeping' &&
+      !isBrewState(machine.state.state)
+    ) {
+      this.resumeDeferredRecipeAfterLiveShot = false;
+      void this.recipeApply.resumeAfterWake();
     }
     if (panelDecision === 'idle' && machine && this.consumeNoScaleBrewFlashIfNeeded(machine, frameState.previousMachineState, tMs)) return;
     if (panelDecision === 'active') {
@@ -4431,6 +4489,10 @@ export class BeanieApp {
       // A fresh sleep returns to the screensaver; a real wake ends it. Either
       // transition clears the app-awake-while-asleep override.
       this.setState({ asleep: decision.asleep, appAwake: false });
+      // The machine may have been woken from its own controls or another
+      // client, so observed telemetry must resume a recipe deferred while it
+      // slept just as reliably as Beanie's explicit Wake action does.
+      if (!decision.asleep) void this.recipeApply.resumeAfterWake();
       return true;
     }
     if (decision.type === 'enter-service') {
@@ -4622,7 +4684,10 @@ export class BeanieApp {
   // Resolve the reference shot once at pull start; building a chart model
   // walks the whole measurement array, far too slow for the per-frame path.
   private captureLiveGhost(): void {
-    if (this.cleaningInProgress) {
+    if (
+      this.cleaningInProgress ||
+      this.capturedLiveShotAttribution?.bean?.id !== this.selectedBean()?.id
+    ) {
       this.liveGhostModel = null;
       this.liveGhostShotId = null;
       return;
@@ -4747,7 +4812,7 @@ export class BeanieApp {
   // steps, not the recipe's.
   private liveProfile(): Profile | null {
     if (this.cleaningInProgress) return this.state.workflow?.profile ?? null;
-    return this.state.draft?.profile ?? null;
+    return this.capturedLiveShotAttribution?.draft.profile ?? this.state.draft?.profile ?? null;
   }
 
   // Parsed steps of the active profile, memoized by profile reference so the
@@ -4787,14 +4852,16 @@ export class BeanieApp {
       !this.cleaningInProgress &&
       (this.decisionLog.stop?.reason === 'noScale' ||
         this.isNoScaleBlockedLiveAbort(shotWindow));
-    const bean = this.selectedBean();
-    const batch = this.selectedBatch();
+    const attribution = this.capturedLiveShotAttribution ?? this.currentLiveShotAttribution();
+    this.capturedLiveShotAttribution = null;
+    const bean = attribution.bean;
+    const batch = attribution.batch;
     const optimisticShot = !this.cleaningInProgress && !noScaleBlockedAbort && bean
       ? optimisticShotFromLive(
           bean,
           batch,
-          this.state.workflow,
-          normalizeDraft(this.state.draft, this.state.profiles, this.state.grinders),
+          attribution.workflow,
+          attribution.draft,
           shotWindow
         )
       : null;
@@ -4802,7 +4869,7 @@ export class BeanieApp {
     void this.liveShotCompletion.complete({
       cleaningInProgress: this.cleaningInProgress,
       noScaleBlockedAbort,
-      selection: { bean, batch },
+      selection: attribution,
       demo: this.state.demo,
       currentShots: this.state.shots,
       currentShotsTotal: this.state.shotsTotal,
@@ -4889,6 +4956,24 @@ export class BeanieApp {
           console.error('[Beanie] Save shot context failed', outcome.contextError);
         }
         this.liveShot.reset();
+        const targetVisible = this.selectedBean()?.id === outcome.beanId;
+        if (!targetVisible) {
+          const targetBean = this.state.beans.find((bean) => bean.id === outcome.beanId) ?? null;
+          this.setState({
+            beans: targetBean ? promoteBean(this.state.beans, targetBean.id) : this.state.beans,
+            beanUsageAt: {
+              ...this.state.beanUsageAt,
+              ...beanUsageForBean(outcome.beanId, outcome.history.records)
+            },
+            liveActive: false,
+            liveFinalizing: false,
+            status: outcome.type === 'remote-complete' && targetBean
+              ? `Shot saved under ${beanLabel(targetBean)}`
+              : outcome.history.status
+          });
+          this.shotRefreshTask.trigger();
+          return;
+        }
         this.setState({
           shots: outcome.history.records,
           shotsTotal: outcome.history.total,
@@ -4899,14 +4984,28 @@ export class BeanieApp {
           },
           liveActive: false,
           liveFinalizing: false,
-          detailShotId: outcome.type === 'remote-fallback'
-            ? outcome.optimisticShot?.id ?? outcome.history.records[0]?.id ?? this.state.detailShotId
-            : outcome.history.detailShotId,
+          detailShotId: outcome.history.detailShotId,
           derekTweakChip: outcome.type === 'remote-complete'
             ? null
             : this.state.derekTweakChip,
           status: outcome.history.status
         });
+        return;
+      }
+      case 'remote-mismatch': {
+        if (outcome.contextError !== undefined) {
+          console.error('[Beanie] Save mismatched shot context failed', outcome.contextError);
+        }
+        this.liveShot.reset();
+        for (const beanId of outcome.inventoryReviewBeanIds) {
+          this.inventoryReviewBeanIds.add(beanId);
+        }
+        this.setState({
+          liveActive: false,
+          liveFinalizing: false,
+          status: outcome.history.status
+        });
+        this.shotRefreshTask.trigger();
         return;
       }
       case 'aborted':
@@ -4933,9 +5032,9 @@ export class BeanieApp {
     doseWeight: number | null | undefined,
     shotId: string | null,
     demo: boolean
-  ): Promise<void> {
+  ): Promise<boolean> {
     const execution = this.runBatchDoseForShot(bean, batchId, doseWeight, shotId, demo);
-    let tracked: Promise<void>;
+    let tracked: Promise<boolean>;
     tracked = execution.finally(() => this.activeDoseAdmissions.delete(tracked));
     this.activeDoseAdmissions.add(tracked);
     return tracked;
@@ -4947,12 +5046,12 @@ export class BeanieApp {
     doseWeight: number | null | undefined,
     shotId: string | null,
     demo: boolean
-  ): Promise<void> {
+  ): Promise<boolean> {
     const dose = positiveNumber(doseWeight);
-    if (dose == null || !shotId) return;
+    if (dose == null || !shotId) return false;
     const batch = (this.state.batchesByBean[bean.id] ?? []).find((item) => item.id === batchId);
     const remaining = positiveNumber(batch?.weightRemaining);
-    if (!batch || remaining == null) return;
+    if (!batch || remaining == null) return false;
     const next = Math.max(0, round(remaining - dose, 1));
     if (demo) {
       await this.saveBatchStoragePatch(
@@ -4961,7 +5060,7 @@ export class BeanieApp {
         { beanId: bean.id, weightRemaining: next },
         `Bag: ${formatGrams(next)} left`
       );
-      return;
+      return true;
     }
 
     const at = new Date().toISOString();
@@ -5041,12 +5140,14 @@ export class BeanieApp {
       } finally {
         queued.releaseProjection();
       }
+      return true;
     } catch (error) {
       if (reservationCreated && !settlementPending) {
         this.beanInventory.releasePendingRemainingWeight(idempotencyKey);
       }
       console.error('[Beanie] Could not journal dose deduction', error);
       this.setState({ status: 'Bag update could not be queued' });
+      return false;
     }
   }
 
@@ -5650,7 +5751,9 @@ export class BeanieApp {
       authorityRevision !== this.startupAuthorityRevision ||
       !this.hasLiveGatewayReadAuthority() ||
       this.state.busy ||
-      !this.canResyncRecipe()
+      this.state.liveActive ||
+      !this.canResyncRecipe() ||
+      this.state.modal != null
     ) return;
     // The selected coffee can travel in the workflow (context.beanId) or, when
     // the workflow carries no bean, in last-bean-id. The fingerprint includes
@@ -9073,6 +9176,35 @@ export class BeanieApp {
       : null;
     if (selected && !isFinishedBatch(selected)) return selected;
     return latestBatch(batches.filter(isUsableBatch)) ?? latestBatch(batches);
+  }
+
+  private currentLiveShotAttribution(): LiveShotAttribution & { readonly draft: RecipeDraft } {
+    const confirmedWorkflow =
+      this.state.demo || this.state.startupPhase === 'connected'
+        ? this.machineWorkflowCommands.snapshot.shadow
+        : null;
+    const attribution = resolveLiveShotAttribution(
+      confirmedWorkflow,
+      {
+        beans: this.state.beans,
+        batchesByBean: this.state.batchesByBean
+      },
+      {
+        bean: this.selectedBean(),
+        batch: this.selectedBatch()
+      }
+    );
+    const usesConfirmedRecipe =
+      attribution.workflow != null && attribution.source !== 'ui-fallback';
+    const workflow = usesConfirmedRecipe
+      ? attribution.workflow
+      : this.state.workflow;
+    const draft = normalizeDraft(
+      usesConfirmedRecipe ? recipeFromWorkflow(workflow) : this.state.draft,
+      this.state.profiles,
+      this.state.grinders
+    );
+    return { ...attribution, workflow, draft };
   }
 
   private workflowMatchesBean(bean: Bean, batches: BeanBatch[] = this.state.batchesByBean[bean.id] ?? []): boolean {

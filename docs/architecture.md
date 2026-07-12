@@ -76,8 +76,30 @@ The live shot path is intentionally more direct for performance:
 - WebSocket frames are ingested by the app shell.
 - Pure telemetry helpers merge partial machine/scale frames.
 - `LiveShot` tracks the active shot model.
+- The first active espresso frame snapshots the gateway-confirmed workflow
+  shadow. Coffee, batch, profile, and optimistic presentation for that pull do
+  not follow a later mutable UI selection.
 - While brewing, Beanie patches stable DOM readouts and redraws the canvas
   instead of re-rendering the whole app.
+- After the pour, `LiveShotCompletionFlow` admits a persisted candidate only
+  when its explicit bean/batch identity does not conflict with that snapshot.
+  When both a locally resolved gateway-confirmed batch and a positive captured
+  dose are present, dose acceptance starts immediately without blocking record
+  polling. The reconciler uses its persistent journal when available and a
+  bounded volatile retry intake during a storage outage. A fallback UI
+  attribution waits for an exact persisted batch match. An explicit mismatch is
+  shown to the user and never mutates the foreign shot, its bag, or the visible
+  coffee's history. If a confirmed expected-bag dose had already been accepted,
+  that bag is marked for inventory review rather than attempting a second
+  corrective mutation.
+
+Adding inventory is deliberately separate from selecting a machine recipe.
+The label scanner saves the bean and bag, closes with a “select it to brew”
+status, and leaves the active coffee untouched. Selecting that coffee through
+the normal picker is the action that stages/applies its workflow. A recipe
+deferred while the DE1 sleeps resumes on either Beanie's Wake action or an
+observed physical/remote wake transition. If that wake enters espresso
+directly, application waits for the first safe post-shot idle frame.
 
 ### Mutation And Machine Command Topology
 

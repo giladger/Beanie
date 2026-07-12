@@ -546,9 +546,6 @@ export class ScannerFlow {
     }
 
     this.host.markInventoryReview(beanId, false);
-    const selectedBatch = created.type === 'created' || created.phase === 'persist-storage'
-      ? created.batch
-      : null;
     this.cancelScannerWork();
     const settled = this.host.state();
     this.host.setState({
@@ -559,20 +556,13 @@ export class ScannerFlow {
         beanId,
         created.projection.batches
       ),
-      ...(selectedBatch ? { selectedBatchId: selectedBatch.id } : {}),
       modal: null,
       scanner: null,
       status: created.type === 'reconciliation-required'
-        ? created.status
-        : existing ? 'Added a bag from the label' : 'Added a bean from the label'
-    });
-    if (!selectedBatch) return;
-    await this.host.selectBean(beanId, {
-      // Scanning stock updates the selected draft but, as before extraction,
-      // does not send a new recipe to the physical machine implicitly.
-      apply: false,
-      preferWorkflow: false,
-      preferredBatchId: selectedBatch.id
+        ? `${created.status} — select ${beanLabel(bean)} to brew`
+        : existing
+          ? `Added a bag for ${beanLabel(bean)} — select it to brew`
+          : `Added ${beanLabel(bean)} — select it to brew`
     });
   }
 }

@@ -1,10 +1,13 @@
 import type { ShotRecord } from '../api/types';
+import { shotSelectionCompatibility } from './liveShotAttribution';
 
 export interface LiveShotCompletionContext {
   previousShotIds: Set<string>;
   startedAtMs: number | null;
   endedAtMs: number | null;
   optimisticShot: ShotRecord | null;
+  expectedBeanId: string | null;
+  expectedBatchId: string | null;
 }
 
 export interface LiveShotWindow {
@@ -16,6 +19,7 @@ export interface LiveShotEndInput {
   cleaningInProgress: boolean;
   noScaleBlockedAbort: boolean;
   beanId: string | null;
+  beanBatchId: string | null;
   demo: boolean;
   currentShots: ShotRecord[];
   shotWindow: LiveShotWindow;
@@ -65,6 +69,12 @@ export type LiveShotRefreshResult =
       total: number;
     }
   | {
+      type: 'mismatch';
+      shot: ShotRecord;
+      records: ShotRecord[];
+      total: number;
+    }
+  | {
       type: 'aborted';
     };
 
@@ -82,7 +92,9 @@ export function liveShotEndDecision(input: LiveShotEndInput): LiveShotEndDecisio
         previousShotIds: new Set(input.currentShots.map((shot) => shot.id)),
         startedAtMs: input.shotWindow.startMs,
         endedAtMs: input.shotWindow.lastActiveMs ?? input.nowMs,
-        optimisticShot: input.optimisticShot
+        optimisticShot: input.optimisticShot,
+        expectedBeanId: input.beanId,
+        expectedBatchId: input.beanBatchId
       },
       status: 'Saving shot…'
     };
@@ -103,6 +115,7 @@ export async function waitForCompletedLiveShot(
 ): Promise<LiveShotRefreshResult> {
   let lastRecords: ShotRecord[] = [];
   let lastTotal = 0;
+  let conflictingShot: ShotRecord | null = null;
 
   for (let attempt = 0; attempt < delaysMs.length; attempt += 1) {
     const delayMs = delaysMs[attempt] ?? 0;
@@ -124,28 +137,94 @@ export async function waitForCompletedLiveShot(
     if (completedShot) {
       return { type: 'completed', shot: completedShot, records, total };
     }
+    conflictingShot =
+      conflictingCompletedLiveShot(records, context, false) ??
+      conflictingCompletedLiveShot(latestRecords, context, attempt === delaysMs.length - 1) ??
+      conflictingShot;
   }
 
   if (!deps.stillRelevant()) return { type: 'aborted' };
+  if (conflictingShot) {
+    return { type: 'mismatch', shot: conflictingShot, records: lastRecords, total: lastTotal };
+  }
   return { type: 'fallback', records: lastRecords, total: lastTotal };
 }
 
 export function completedLiveShot(
   records: ShotRecord[],
-  context: { previousShotIds: Set<string>; startedAtMs: number | null; endedAtMs: number | null },
+  context: Pick<
+    LiveShotCompletionContext,
+    'previousShotIds' | 'startedAtMs' | 'endedAtMs' | 'expectedBeanId' | 'expectedBatchId'
+  >,
   allowFallback: boolean
 ): ShotRecord | null {
+  const compatible = (shot: ShotRecord) => {
+    const compatibility = shotSelectionCompatibility(shot, {
+      beanId: context.expectedBeanId,
+      batchId: context.expectedBatchId
+    });
+    if (context.expectedBatchId) return compatibility === 'batch-match';
+    if (context.expectedBeanId) {
+      return compatibility === 'batch-match' || compatibility === 'bean-match';
+    }
+    return compatibility !== 'conflict';
+  };
   const newShot = records.find(
-    (shot) => !context.previousShotIds.has(shot.id) && shotMatchesLiveWindow(shot, context)
+    (shot) =>
+      !context.previousShotIds.has(shot.id) &&
+      shotMatchesLiveWindow(shot, context) &&
+      compatible(shot)
   );
   if (newShot) return newShot;
 
-  const timeMatch = records.find((shot) => shotMatchesLiveWindow(shot, context));
+  const timeMatch = records.find(
+    (shot) =>
+      !context.previousShotIds.has(shot.id) &&
+      shotMatchesLiveWindow(shot, context) &&
+      compatible(shot)
+  );
   if (timeMatch) return timeMatch;
 
   if (!allowFallback) return null;
   const newest = records[0] ?? null;
   if (!newest || context.previousShotIds.has(newest.id)) return null;
+  if (!compatible(newest)) return null;
+  const timestamp = Date.parse(newest.timestamp);
+  return context.startedAtMs == null || !Number.isFinite(timestamp) ? newest : null;
+}
+
+function conflictingCompletedLiveShot(
+  records: ShotRecord[],
+  context: Pick<
+    LiveShotCompletionContext,
+    'previousShotIds' | 'startedAtMs' | 'endedAtMs' | 'expectedBeanId' | 'expectedBatchId'
+  >,
+  allowFallback: boolean
+): ShotRecord | null {
+  const conflicts = (shot: ShotRecord) =>
+    shotSelectionCompatibility(shot, {
+      beanId: context.expectedBeanId,
+      batchId: context.expectedBatchId
+    }) === 'conflict';
+  const newShot = records.find(
+    (shot) =>
+      !context.previousShotIds.has(shot.id) &&
+      shotMatchesLiveWindow(shot, context) &&
+      conflicts(shot)
+  );
+  if (newShot) return newShot;
+
+  const timeMatch = records.find(
+    (shot) =>
+      !context.previousShotIds.has(shot.id) &&
+      shotMatchesLiveWindow(shot, context) &&
+      conflicts(shot)
+  );
+  if (timeMatch) return timeMatch;
+
+  if (!allowFallback) return null;
+  const newest = records[0] ?? null;
+  if (!newest || context.previousShotIds.has(newest.id) || !conflicts(newest)) return null;
   const timestamp = Date.parse(newest.timestamp);
   return context.startedAtMs == null || !Number.isFinite(timestamp) ? newest : null;
 }

@@ -344,9 +344,15 @@ acknowledged copy, but `createdAt` and the replay payload always come from the
 earliest admission.
 
 Deductions and reclaims use distinct stable keys derived from the shot identity
-available at their own boundary plus the physical batch. A live optimistic shot
-ID may differ from the later persisted gateway shot ID, so correctness never
-depends on key-prefix or wall-clock tie ordering. On enqueue the outbox
+available at their own boundary plus the physical batch. For a live pull with
+a locally resolved batch from the gateway-confirmed workflow and a positive
+captured dose, reconciler acceptance starts before record polling and polling
+does not wait for storage latency. Acceptance may land in the persistent
+journal or its bounded volatile retry intake. A UI fallback waits for the
+persisted gateway shot and an exact batch match. The accepted live command can
+therefore carry an optimistic shot ID that differs from the later persisted ID,
+so correctness never depends on key-prefix or wall-clock tie ordering. On
+enqueue the outbox
 atomically canonicalizes older dose routes and places each new record after the
 maximum existing `createdAt` for that bean aggregate, even when the clock moved
 backwards. An identical key must still match the mutation kind and physical

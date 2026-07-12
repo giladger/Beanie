@@ -563,6 +563,274 @@ await run('an offline Wake rejection keeps the sleeping presentation intact', as
   app.dispose();
 });
 
+await run('an observed physical wake resumes a recipe deferred by sleep', async () => {
+  const root = new FakeElement();
+  const app = new BeanieApp(root as unknown as HTMLElement);
+  let resumes = 0;
+  const harness = app as unknown as {
+    setState(next: Record<string, unknown>): void;
+    applyLiveTelemetryIdleDecision(decision: { type: 'set-asleep'; asleep: boolean }): boolean;
+    recipeApply: {
+      resumeAfterWake(): Promise<{ type: 'no-candidate' }>;
+    };
+  };
+  harness.recipeApply.resumeAfterWake = async () => {
+    resumes += 1;
+    return { type: 'no-candidate' };
+  };
+  harness.setState({ asleep: true, appAwake: false });
+
+  harness.applyLiveTelemetryIdleDecision({ type: 'set-asleep', asleep: true });
+  equal(resumes, 0);
+  harness.applyLiveTelemetryIdleDecision({ type: 'set-asleep', asleep: false });
+  await flushAsync();
+
+  equal(resumes, 1);
+  app.dispose();
+});
+
+await run('a direct sleep to espresso wake defers recipe resume until post-shot idle', async () => {
+  const root = new FakeElement();
+  const app = new BeanieApp(root as unknown as HTMLElement);
+  let resumes = 0;
+  const machine = (state: string, substate?: string) => ({
+    timestamp: '2026-07-12T14:46:28.000Z',
+    state: { state, ...(substate ? { substate } : {}) },
+    flow: 1,
+    pressure: 2,
+    targetFlow: 2,
+    targetPressure: 6,
+    mixTemperature: 930,
+    groupTemperature: 930,
+    targetMixTemperature: 930,
+    targetGroupTemperature: 930,
+    profileFrame: 0,
+    steamTemperature: 120
+  });
+  const sleeping = machine('sleeping');
+  const pouring = machine('espresso', 'pouring');
+  const idle = machine('idle');
+  const harness = app as unknown as {
+    state: { asleep: boolean; liveActive: boolean };
+    setState(next: Record<string, unknown>): void;
+    ingestLiveFrame(
+      machineFrame: unknown,
+      scaleFrame: null,
+      atMs: number,
+      currentMachine: unknown,
+      currentScale: null
+    ): void;
+    onShotEnded(): void;
+    recipeApply: {
+      snapshot: { deferredUntilWake: boolean };
+      resumeAfterWake(): Promise<{ type: 'no-candidate' }>;
+    };
+  };
+  Object.defineProperty(harness.recipeApply, 'snapshot', {
+    configurable: true,
+    value: { deferredUntilWake: true }
+  });
+  harness.recipeApply.resumeAfterWake = async () => {
+    resumes += 1;
+    return { type: 'no-candidate' };
+  };
+  harness.onShotEnded = () => {
+    harness.setState({ liveActive: false, liveFinalizing: false });
+  };
+  harness.setState({
+    demo: true,
+    startupPhase: 'demo',
+    asleep: true,
+    appAwake: false,
+    machine: sleeping,
+    scale: null,
+    liveActive: false,
+    liveFinalizing: false
+  });
+
+  harness.ingestLiveFrame(pouring, null, 1_000, sleeping, null);
+  equal(harness.state.asleep, false);
+  equal(harness.state.liveActive, true);
+  equal(resumes, 0);
+
+  harness.ingestLiveFrame(idle, null, 2_000, pouring, null);
+  equal(resumes, 0);
+  harness.ingestLiveFrame(idle, null, 3_000, idle, null);
+  await flushAsync();
+
+  equal(resumes, 1);
+  app.dispose();
+});
+
+await run('a workflow resync that finishes after a shot starts cannot change coffee selection', async () => {
+  const root = new FakeElement();
+  const app = new BeanieApp(root as unknown as HTMLElement);
+  const oldBean = { id: 'old-bean', roaster: 'Old', name: 'Coffee' };
+  const newBean = { id: 'new-bean', roaster: 'New', name: 'Coffee' };
+  const workflowGate: { finish?: (response: Response) => void } = {};
+  let selectionCalls = 0;
+  const nativeFetch = globalThis.fetch;
+  const harness = app as unknown as {
+    state: { workflow: { context?: { beanId?: string | null } } | null };
+    setState(next: Record<string, unknown>): void;
+    selectBean(beanId: string, options: unknown): Promise<void>;
+    resyncWorkflowAndBean(): Promise<void>;
+  };
+  harness.selectBean = async () => {
+    selectionCalls += 1;
+  };
+  globalThis.fetch = (async (input: unknown) => {
+    if (!String(input).includes('/api/v1/workflow')) return nativeFetch(input as RequestInfo | URL);
+    return new Promise<Response>((resolve) => {
+      workflowGate.finish = resolve;
+    });
+  }) as typeof fetch;
+
+  try {
+    harness.setState({
+      settingsLoaded: true,
+      loading: false,
+      startupPhase: 'connected',
+      gatewayLinkDown: false,
+      demo: false,
+      busy: false,
+      liveActive: false,
+      applyState: 'idle',
+      modal: null,
+      beans: [oldBean, newBean],
+      selectedBeanId: oldBean.id,
+      batchesByBean: {
+        [oldBean.id]: [{ id: 'old-batch', beanId: oldBean.id }],
+        [newBean.id]: [{ id: 'new-batch', beanId: newBean.id }]
+      },
+      selectedBatchId: 'old-batch',
+      workflow: {
+        name: 'Old workflow',
+        profile: { title: 'Old profile', steps: [] },
+        context: { beanId: oldBean.id, beanBatchId: 'old-batch' }
+      }
+    });
+
+    const resync = harness.resyncWorkflowAndBean();
+    await flushAsync();
+    harness.setState({ liveActive: true });
+    const workflowResponse = workflowGate.finish;
+    if (!workflowResponse) throw new Error('Expected workflow request to be pending');
+    workflowResponse({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        name: 'New workflow',
+        profile: { title: 'New profile', steps: [] },
+        context: { beanId: newBean.id, beanBatchId: 'new-batch' }
+      })
+    } as Response);
+    await resync;
+
+    equal(selectionCalls, 0);
+    equal(harness.state.workflow?.context?.beanId, oldBean.id);
+  } finally {
+    globalThis.fetch = nativeFetch;
+    app.dispose();
+  }
+});
+
+await run('live attribution follows the confirmed machine workflow instead of the visible draft', () => {
+  const root = new FakeElement();
+  const app = new BeanieApp(root as unknown as HTMLElement);
+  const alchemist = { id: 'alchemist', roaster: 'DAK', name: 'The Alchemist' };
+  const purple = { id: 'purple', roaster: 'DAK', name: 'Purple Rain' };
+  const alchemistBatch = { id: 'alchemist-batch', beanId: alchemist.id };
+  const purpleBatch = { id: 'purple-batch', beanId: purple.id };
+  const confirmedWorkflow = {
+    name: 'DAK The Alchemist',
+    profile: { title: 'Gentle and sweet', steps: [] },
+    context: {
+      beanBatchId: alchemistBatch.id,
+      grinderSetting: '2',
+      targetDoseWeight: 18,
+      targetYield: 38
+    }
+  };
+  const harness = app as unknown as {
+    setState(next: Record<string, unknown>): void;
+    machineWorkflowCommands: { synchronizeAuthoritative(workflow: unknown): void };
+    currentLiveShotAttribution(): {
+      source: string;
+      bean: { id: string } | null;
+      batch: { id: string } | null;
+      draft: { grinderSetting?: string | null };
+    };
+  };
+  harness.setState({
+    startupPhase: 'connected',
+    beans: [alchemist, purple],
+    batchesByBean: {
+      [alchemist.id]: [alchemistBatch],
+      [purple.id]: [purpleBatch]
+    },
+    selectedBeanId: purple.id,
+    selectedBatchId: purpleBatch.id,
+    workflow: confirmedWorkflow,
+    draft: {
+      profileTitle: 'Gentle and sweet',
+      profile: { title: 'Gentle and sweet', steps: [] },
+      grinderSetting: '4',
+      dose: 18,
+      yield: 38
+    }
+  });
+  harness.machineWorkflowCommands.synchronizeAuthoritative(confirmedWorkflow);
+
+  const attribution = harness.currentLiveShotAttribution();
+
+  equal(attribution.source, 'confirmed-batch');
+  equal(attribution.bean?.id, alchemist.id);
+  equal(attribution.batch?.id, alchemistBatch.id);
+  equal(attribution.draft.grinderSetting, '2');
+  app.dispose();
+});
+
+await run('offline cached workflow shadow is not treated as confirmed live attribution', () => {
+  const root = new FakeElement();
+  const app = new BeanieApp(root as unknown as HTMLElement);
+  const cachedBean = { id: 'cached', roaster: 'Old', name: 'Cached' };
+  const selectedBean = { id: 'selected', roaster: 'Live', name: 'Selection' };
+  const cachedBatch = { id: 'cached-batch', beanId: cachedBean.id };
+  const selectedBatch = { id: 'selected-batch', beanId: selectedBean.id };
+  const cachedWorkflow = { context: { beanBatchId: cachedBatch.id } };
+  const harness = app as unknown as {
+    setState(next: Record<string, unknown>): void;
+    machineWorkflowCommands: { synchronizeAuthoritative(workflow: unknown): void };
+    currentLiveShotAttribution(): {
+      source: string;
+      bean: { id: string } | null;
+      batch: { id: string } | null;
+    };
+  };
+  harness.setState({
+    startupPhase: 'offline-cache',
+    demo: false,
+    beans: [cachedBean, selectedBean],
+    batchesByBean: {
+      [cachedBean.id]: [cachedBatch],
+      [selectedBean.id]: [selectedBatch]
+    },
+    selectedBeanId: selectedBean.id,
+    selectedBatchId: selectedBatch.id,
+    workflow: cachedWorkflow,
+    draft: {}
+  });
+  harness.machineWorkflowCommands.synchronizeAuthoritative(cachedWorkflow);
+
+  const attribution = harness.currentLiveShotAttribution();
+
+  equal(attribution.source, 'ui-fallback');
+  equal(attribution.bean?.id, selectedBean.id);
+  equal(attribution.batch?.id, selectedBatch.id);
+  app.dispose();
+});
+
 await run('BeanieApp projects settings mutation outcomes through the extracted flow', async () => {
   const root = new FakeElement();
   const app = new BeanieApp(root as unknown as HTMLElement);
@@ -675,6 +943,71 @@ await run('BeanieApp projects local shot completion and dose inventory together'
   equal(harness.state.batchesByBean[bean.id]?.[0]?.weightRemaining, 82);
   equal(harness.state.liveActive, false);
   equal(harness.state.liveFinalizing, false);
+  app.dispose();
+});
+
+await run('completion for a different confirmed coffee cannot overwrite visible history', () => {
+  const root = new FakeElement();
+  const app = new BeanieApp(root as unknown as HTMLElement);
+  const alchemist = { id: 'alchemist', roaster: 'DAK', name: 'The Alchemist' };
+  const purple = { id: 'purple', roaster: 'DAK', name: 'Purple Rain' };
+  const purpleShot = {
+    id: 'purple-existing',
+    timestamp: '2026-07-12T14:00:00.000Z',
+    workflow: { context: { beanId: purple.id, beanBatchId: 'purple-batch' } },
+    annotations: null,
+    metadata: null,
+    measurements: []
+  };
+  const alchemistShot = {
+    id: 'alchemist-saved',
+    timestamp: '2026-07-12T14:46:28.000Z',
+    workflow: { context: { beanId: alchemist.id, beanBatchId: 'alchemist-batch' } },
+    annotations: { actualDoseWeight: 18, actualYield: 18.6 },
+    metadata: null,
+    measurements: []
+  };
+  const harness = app as unknown as {
+    state: { shots: Array<{ id: string }>; liveFinalizing: boolean; status: string };
+    setState(next: Record<string, unknown>): void;
+    handleLiveShotCompletionEvent(event: unknown): void;
+  };
+  harness.setState({
+    beans: [purple, alchemist],
+    selectedBeanId: purple.id,
+    selectedBatchId: 'purple-batch',
+    batchesByBean: {
+      [purple.id]: [{ id: 'purple-batch', beanId: purple.id }],
+      [alchemist.id]: [{ id: 'alchemist-batch', beanId: alchemist.id }]
+    },
+    shots: [purpleShot],
+    shotsTotal: 1,
+    detailShotId: purpleShot.id,
+    liveActive: false,
+    liveFinalizing: true
+  });
+
+  harness.handleLiveShotCompletionEvent({
+    type: 'settled',
+    request: {},
+    outcome: {
+      type: 'remote-complete',
+      beanId: alchemist.id,
+      batchId: 'alchemist-batch',
+      shot: alchemistShot,
+      history: {
+        records: [alchemistShot],
+        total: 1,
+        detailShotId: alchemistShot.id,
+        status: 'Shot saved'
+      },
+      contextPersistence: 'unchanged'
+    }
+  });
+
+  equal(harness.state.shots[0]?.id, purpleShot.id);
+  equal(harness.state.liveFinalizing, false);
+  equal(harness.state.status, 'Shot saved under DAK The Alchemist');
   app.dispose();
 });
 

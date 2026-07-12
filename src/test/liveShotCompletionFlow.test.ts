@@ -42,8 +42,8 @@ await run('local completion projects optimistic history and starts dose consumpt
   const deps = dependencies(calls, {
     consumeDose: (input) => {
       calls.push(`dose:${input.bean.id}:${input.batch.id}:${input.shotId}:${input.doseWeight}`);
-      return new Promise<void>((resolve) => {
-        finishDose = resolve;
+      return new Promise<boolean>((resolve) => {
+        finishDose = () => resolve(true);
       });
     }
   });
@@ -69,6 +69,103 @@ await run('local completion projects optimistic history and starts dose consumpt
   requiredCallback<() => void>(finishDose)();
 });
 
+await run('confirmed machine attribution starts dose acceptance before polling without a retry', async () => {
+  const calls: string[] = [];
+  let releasePage: PageResolver | null = null;
+  const completed = shot('saved', START_MS + 12_000, { actualDoseWeight: 18, actualYield: 36 });
+  const flow = new LiveShotCompletionFlow(dependencies(calls, {
+    loadFirstShots: () => new Promise((resolve) => {
+      calls.push('page:bean-1:batch-1');
+      releasePage = resolve;
+    }),
+    consumeDose: async (input) => {
+      calls.push(`dose:${input.shotId}`);
+      return true;
+    }
+  }));
+
+  const completion = flow.complete(request({
+    selection: { bean: bean(), batch: batch(), source: 'confirmed-batch' }
+  }));
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  includes(calls, 'dose:pending');
+  requiredCallback<PageResolver>(releasePage)({ records: [completed], total: 1 });
+  const outcome = await completion;
+
+  equal(outcome.type, 'remote-complete');
+  equal(calls.indexOf('dose:pending') < calls.indexOf('page:bean-1:batch-1'), true);
+  equal(calls.filter((call) => call.startsWith('dose:')).length, 1);
+  notIncludes(calls, 'dose:saved');
+});
+
+await run('blocked dose acceptance never wedges persisted shot projection', async () => {
+  const calls: string[] = [];
+  const completed = shot('saved', START_MS + 12_000, { actualDoseWeight: 18 });
+  const flow = new LiveShotCompletionFlow(dependencies(calls, {
+    loadFirstShots: async () => ({ records: [completed], total: 1 }),
+    consumeDose: () => new Promise<boolean>(() => {})
+  }));
+
+  const outcome = await flow.complete(request({
+    selection: { bean: bean(), batch: batch(), source: 'confirmed-batch' }
+  }));
+
+  equal(outcome.type, 'remote-complete');
+  equal(outcome.type === 'remote-complete' ? outcome.shot.id : null, completed.id);
+});
+
+await run('a failed pending dose acceptance cannot retry after flow disposal', async () => {
+  const calls: string[] = [];
+  let finishDose: ((accepted: boolean) => void) | null = null;
+  const completed = shot('saved', START_MS + 12_000, { actualDoseWeight: 18 });
+  const flow = new LiveShotCompletionFlow(dependencies(calls, {
+    loadFirstShots: async () => ({ records: [completed], total: 1 }),
+    consumeDose: (input) => {
+      calls.push(`dose:${input.shotId}`);
+      return new Promise<boolean>((resolve) => {
+        finishDose = resolve;
+      });
+    }
+  }));
+
+  const outcome = await flow.complete(request({
+    selection: { bean: bean(), batch: batch(), source: 'confirmed-batch' }
+  }));
+  equal(outcome.type, 'remote-complete');
+
+  flow.dispose();
+  requiredCallback<(accepted: boolean) => void>(finishDose)(false);
+  await Promise.resolve();
+  await Promise.resolve();
+
+  deepEqual(calls.filter((call) => call.startsWith('dose:')), ['dose:pending']);
+});
+
+await run('failed early dose acceptance retries once with persisted shot identity', async () => {
+  const calls: string[] = [];
+  const completed = shot('saved', START_MS + 12_000, { actualDoseWeight: 18 });
+  let admissions = 0;
+  const flow = new LiveShotCompletionFlow(dependencies(calls, {
+    loadFirstShots: async () => ({ records: [completed], total: 1 }),
+    consumeDose: async (input) => {
+      calls.push(`dose:${input.shotId}`);
+      admissions += 1;
+      return admissions > 1;
+    }
+  }));
+
+  const outcome = await flow.complete(request({
+    selection: { bean: bean(), batch: batch(), source: 'confirmed-batch' }
+  }));
+  await Promise.resolve();
+
+  equal(outcome.type, 'remote-complete');
+  deepEqual(calls.filter((call) => call.startsWith('dose:')), ['dose:pending', 'dose:saved']);
+});
+
 await run('remote completion polls, rebases shot context, caches it, and projects settled history', async () => {
   const calls: string[] = [];
   const events: LiveShotCompletionEvent[] = [];
@@ -82,8 +179,9 @@ await run('remote completion polls, rebases shot context, caches it, and project
   const deps = dependencies(calls, {
     consumeDose: async (input) => {
       calls.push(`dose:${input.shotId}`);
-      await new Promise<void>(() => {});
+      await new Promise<boolean>(() => {});
       doseResolved = true;
+      return true;
     },
     loadFirstShots: async (target) => {
       calls.push(`page:${target.bean.id}:${target.batch?.id}`);
@@ -144,12 +242,110 @@ await run('remote completion polls, rebases shot context, caches it, and project
   equal(captured.update?.annotations?.extras?.derekTweak, 'Grind finer');
   deepEqual(events.map((event) => event.type), ['routed', 'settled']);
   equal(doseResolved, false);
-  includes(calls, 'dose:pending');
+  includes(calls, 'dose:saved');
+  equal(calls.indexOf('dose:saved') > calls.indexOf('page:bean-1:batch-1'), true);
+  notIncludes(calls, 'dose:pending');
   includes(calls, 'invalidate-pages');
   includes(calls, 'serialize:saved');
   includes(calls, 'clear-tweak');
   includes(calls, 'invalidate-shot:saved');
   includes(calls, 'cache-shot:saved');
+});
+
+await run('conflicting persisted batch is surfaced without mutating a foreign shot or bag', async () => {
+  const calls: string[] = [];
+  const purpleBean: Bean = { id: 'bean-2', roaster: 'DAK', name: 'Purple Rain' };
+  const purpleBatch: BeanBatch = {
+    id: 'batch-2',
+    beanId: purpleBean.id,
+    weight: 250,
+    weightRemaining: 250
+  };
+  const persisted: ShotRecord = {
+    ...shot('saved-purple', START_MS + 12_000, { actualDoseWeight: 18, actualYield: 18.6 }),
+    workflow: {
+      context: {
+        beanBatchId: purpleBatch.id,
+        coffeeRoaster: purpleBean.roaster,
+        coffeeName: purpleBean.name
+      }
+    }
+  };
+  const flow = new LiveShotCompletionFlow(dependencies(calls, {
+    loadFirstShots: async () => ({ records: [], total: 0 }),
+    loadLatestShotCandidates: async () => [persisted],
+    resolveShotSelection: () => ({ bean: purpleBean, batch: purpleBatch }),
+    consumeDose: async (input) => {
+      calls.push(`dose:${input.bean.id}:${input.batch.id}:${input.shotId}`);
+      return true;
+    }
+  }));
+
+  const outcome = await flow.complete(request({ currentShots: [] }));
+
+  equal(outcome.type, 'remote-mismatch');
+  if (outcome.type === 'remote-mismatch') {
+    equal(outcome.expectedBeanId, 'bean-1');
+    equal(outcome.expectedBatchId, 'batch-1');
+    equal(outcome.actualBeanId, purpleBean.id);
+    equal(outcome.actualBatchId, purpleBatch.id);
+    equal(outcome.shot.id, persisted.id);
+    equal(outcome.history.records.length, 0);
+    equal(
+      outcome.history.status,
+      'Conflicting DAK Purple Rain shot detected — no history or inventory was changed'
+    );
+    equal(outcome.contextPersistence, 'unchanged');
+  }
+  equal(calls.some((call) => call.startsWith('dose:')), false);
+  equal(calls.some((call) => call.startsWith('update:')), false);
+  notIncludes(calls, 'dose:pending');
+});
+
+await run('a late conflict preserves one expected-bag admission and flags inventory review', async () => {
+  const calls: string[] = [];
+  const actualBean: Bean = { id: 'bean-2', roaster: 'DAK', name: 'Purple Rain' };
+  const actualBatch: BeanBatch = {
+    id: 'batch-2',
+    beanId: actualBean.id,
+    weight: 250,
+    weightRemaining: 250
+  };
+  const persisted: ShotRecord = {
+    ...shot('saved-other', START_MS + 12_000, { actualDoseWeight: 18 }),
+    workflow: {
+      context: {
+        beanBatchId: actualBatch.id,
+        coffeeRoaster: actualBean.roaster,
+        coffeeName: actualBean.name
+      }
+    }
+  };
+  const flow = new LiveShotCompletionFlow(dependencies(calls, {
+    loadFirstShots: async () => ({ records: [], total: 0 }),
+    loadLatestShotCandidates: async () => [persisted],
+    resolveShotSelection: () => ({ bean: actualBean, batch: actualBatch }),
+    consumeDose: async (input) => {
+      calls.push(`dose:${input.bean.id}:${input.batch.id}:${input.shotId}`);
+      return true;
+    }
+  }));
+
+  const outcome = await flow.complete(request({
+    selection: { bean: bean(), batch: batch(), source: 'confirmed-batch' }
+  }));
+
+  equal(outcome.type, 'remote-mismatch');
+  if (outcome.type === 'remote-mismatch') {
+    deepEqual(outcome.inventoryReviewBeanIds, ['bean-1']);
+    equal(
+      outcome.history.status,
+      'Conflicting DAK Purple Rain shot detected — expected-bag inventory needs review'
+    );
+  }
+  includes(calls, 'dose:bean-1:batch-1:pending');
+  equal(calls.some((call) => call.includes('bean-2:batch-2')), false);
+  equal(calls.some((call) => call.startsWith('update:')), false);
 });
 
 await run('shot-context persistence failure keeps freshness local and does not fail completion', async () => {
@@ -260,7 +456,7 @@ await run('dose failure is observable and independent from an already-settled co
   equal(events[2]?.type === 'dose-failed' ? events[2].error : null, doseError);
 });
 
-await run('exhausted remote polling falls back to the optimistic shot', async () => {
+await run('exhausted UI-fallback polling neither publishes nor deducts an unconfirmed optimistic shot', async () => {
   const calls: string[] = [];
   const previous = shot('old', START_MS - 60_000);
   const optimistic = shot('pending', START_MS, { actualDoseWeight: 18 });
@@ -270,6 +466,7 @@ await run('exhausted remote polling falls back to the optimistic shot', async ()
   }));
 
   const outcome = await flow.complete(request({
+    selection: { bean: bean(), batch: batch(), source: 'ui-fallback' },
     currentShots: [previous],
     currentShotsTotal: 4,
     optimisticShot: optimistic
@@ -277,12 +474,13 @@ await run('exhausted remote polling falls back to the optimistic shot', async ()
 
   equal(outcome.type, 'remote-fallback');
   if (outcome.type === 'remote-fallback') {
-    deepEqual(outcome.history.records.map((item) => item.id), ['pending', 'old']);
+    deepEqual(outcome.history.records.map((item) => item.id), ['old']);
     equal(outcome.history.total, 4);
-    equal(outcome.history.detailShotId, 'pending');
-    equal(outcome.history.status, 'Shot list updated');
+    equal(outcome.history.detailShotId, 'old');
+    equal(outcome.history.status, 'Shot record delayed — bag unchanged until its coffee is confirmed');
   }
   equal(calls.filter((call) => call === 'invalidate-pages').length, 5);
+  equal(calls.some((call) => call.startsWith('dose:')), false);
 });
 
 await run('selection irrelevance aborts polling and publishes finalizing cleanup', async () => {
@@ -461,8 +659,10 @@ function dependencies(
       return [];
     },
     isRelevant: () => true,
+    resolveShotSelection: () => ({ bean: bean(), batch: batch() }),
     consumeDose: async (input) => {
       calls.push(`dose:${input.shotId}`);
+      return true;
     },
     readPendingTweak: () => null,
     clearPendingTweak: () => {
