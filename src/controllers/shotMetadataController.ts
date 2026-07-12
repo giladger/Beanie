@@ -144,7 +144,7 @@ export async function executeShotDeletion(
   const baseStatus = input.demo
     ? 'Shot deleted (demo)'
     : deleteAlreadyAbsent ? 'Shot already deleted' : 'Shot deleted';
-  const status = deletionStatus(baseStatus, reclaim, reclaimWarning);
+  const status = shotDeletionStatus(baseStatus, reclaim, reclaimWarning);
 
   return {
     type: 'deleted',
@@ -158,7 +158,7 @@ export async function executeShotDeletion(
   };
 }
 
-function deletionStatus(
+export function shotDeletionStatus(
   baseStatus: string,
   reclaim: ShotDoseReclaimSettlement | null,
   reclaimWarning: unknown

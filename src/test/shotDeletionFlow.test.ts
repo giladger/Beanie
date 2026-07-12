@@ -1,6 +1,6 @@
 import type { BeanBatch, ShotRecord } from '../api/types';
 import {
-  ShotDeletionFlow,
+  ShotDeletionFlow as ProductionShotDeletionFlow,
   type CompletedShotDeletionFlowResult,
   type ShotDeletionFlowDependencies,
   type ShotDeletionFlowSnapshot
@@ -11,7 +11,10 @@ import {
   type ShotDeleteReclaimClaim,
   type ShotDeleteReclaimTransaction
 } from '../controllers/doseMutationReconciler';
-import { pendingDoseReclaimIdempotencyKey } from '../domain/mutationOutbox';
+import {
+  IdempotencyConflictError,
+  pendingDoseReclaimIdempotencyKey
+} from '../domain/mutationOutbox';
 import type { BackgroundTaskScheduler } from '../runtime/backgroundTask';
 
 const SOURCE_ID = shotDeleteReclaimIdempotencyKey('shot-1');
@@ -19,14 +22,28 @@ const CHILD_ID = pendingDoseReclaimIdempotencyKey('shot-1', 'batch-1');
 
 class InertScheduler implements BackgroundTaskScheduler {
   cancelCalls = 0;
+  readonly pending = new Set<number>();
   private nextHandle = 0;
 
   schedule(_callback: () => void, _delayMs: number): unknown {
-    return ++this.nextHandle;
+    const handle = ++this.nextHandle;
+    this.pending.add(handle);
+    return handle;
   }
 
-  cancel(_handle: unknown): void {
+  cancel(handle: unknown): void {
     this.cancelCalls += 1;
+    this.pending.delete(handle as number);
+  }
+}
+
+/** Every flow uses a non-host scheduler unless a test explicitly supplies one. */
+class ShotDeletionFlow extends ProductionShotDeletionFlow {
+  constructor(
+    deps: ShotDeletionFlowDependencies,
+    options: { readonly scheduler?: BackgroundTaskScheduler } = {}
+  ) {
+    super(deps, { scheduler: options.scheduler ?? new InertScheduler() });
   }
 }
 
@@ -132,6 +149,78 @@ await run('durable prepare precedes DELETE and the claim is acquired inside the 
   equal(result.type === 'deleted' ? result.shotProjection.shotsTotal : null, 0);
 });
 
+await run('handoff to an acknowledged child reports its terminal receipt instead of queued work', async () => {
+  let existingCalls = 0;
+  let childReservations = 0;
+  const flow = new ShotDeletionFlow(dependencies(deletionSnapshot(), {
+    handoffShotDeleteReclaim: async () => ({
+      inserted: false,
+      idempotencyKey: CHILD_ID,
+      settlementPending: false,
+      expectedRemaining: 98,
+      durability: 'indexeddb',
+      releaseProjection: () => {}
+    }),
+    existingReclaim: async (_shotId, _batchId, projectionRevision) => {
+      equal(projectionRevision, 0);
+      existingCalls += 1;
+      return {
+        beanId: 'bean-1',
+        batchId: 'batch-1',
+        dose: 18,
+        state: 'acknowledged',
+        outcome: 'committed',
+        resolvedRemaining: 98,
+        durability: 'indexeddb'
+      };
+    },
+    reservePendingRemainingWeight: (reservation) => {
+      if (reservation.idempotencyKey === CHILD_ID) childReservations += 1;
+      return true;
+    }
+  }));
+
+  const result = await flow.execute(deleteInput());
+
+  equal(result.type, 'deleted');
+  equal(existingCalls, 1);
+  equal(childReservations, 0);
+  equal(result.type === 'deleted' ? result.reclaim?.type : null, 'reclaimed');
+  equal(result.type === 'deleted' && result.reclaim?.type === 'reclaimed'
+    ? result.reclaim.resolvedRemaining
+    : null, 98);
+  equal(result.type === 'deleted' ? result.status : null, 'Shot deleted · Bag: 98g left');
+});
+
+await run('cache-time inventory changes fence the optimistic reclaim and request review', async () => {
+  let snapshot = deletionSnapshot();
+  let revision = 0;
+  let commitCalls = 0;
+  const flow = new ShotDeletionFlow(dependencies(() => snapshot, {
+    remainingWeightRevision: () => revision,
+    invalidateShotMutation: async () => {
+      snapshot = {
+        ...snapshot,
+        batchesByBean: {
+          'bean-1': [{ ...snapshot.batchesByBean['bean-1']![0]!, weightRemaining: 70 }]
+        }
+      };
+      revision += 1;
+    },
+    commitInventoryProjection: () => {
+      commitCalls += 1;
+    }
+  }));
+
+  const result = await flow.execute(deleteInput());
+
+  equal(result.type, 'deleted');
+  equal(commitCalls, 0);
+  equal(snapshot.batchesByBean['bean-1']?.[0]?.weightRemaining, 70);
+  equal(result.type === 'deleted' ? result.inventoryReviewBeanId : null, 'bean-1');
+  equal(result.type === 'deleted' ? result.reclaim?.type : null, 'queued');
+});
+
 await run('a first owned 404 atomically hands off the reclaim without decrementing remote total', async () => {
   const missing = new Error('missing');
   let outcome: string | null = null;
@@ -159,6 +248,53 @@ await run('a first owned 404 atomically hands off the reclaim without decrementi
   equal(result.type === 'deleted' ? result.shotProjection.shots.length : null, 0);
   equal(result.type === 'deleted' ? result.shotProjection.shotsTotal : null, 1);
   equal(result.type === 'deleted' ? result.status : null, 'Shot already deleted · Bag: 100g left');
+});
+
+await run('acknowledged source outcome distinguishes committed DELETE from already absent', async () => {
+  for (const deleteOutcome of ['committed', 'already-applied'] as const) {
+    let laneCalls = 0;
+    let existingCalls = 0;
+    const flow = new ShotDeletionFlow(dependencies(deletionSnapshot(), {
+      prepareShotDeleteReclaim: async () => ({
+        ...prepared(transaction()),
+        inserted: false,
+        state: 'acknowledged',
+        deleteOutcome
+      }),
+      runDeleteShotTransaction: async () => {
+        laneCalls += 1;
+        throw new Error('acknowledged source must not dispatch DELETE');
+      },
+      existingReclaim: async () => {
+        existingCalls += 1;
+        return {
+          beanId: 'bean-1',
+          batchId: 'batch-1',
+          dose: 18,
+          state: 'acknowledged',
+          outcome: 'committed',
+          resolvedRemaining: 100,
+          durability: 'indexeddb'
+        };
+      }
+    }));
+
+    const result = await flow.execute(deleteInput());
+
+    equal(result.type, 'deleted');
+    equal(laneCalls, 0);
+    equal(existingCalls, 1);
+    equal(result.type === 'deleted' ? result.deleteAlreadyAbsent : null,
+      deleteOutcome === 'already-applied');
+    equal(result.type === 'deleted' ? result.reclaim?.type : null, 'reclaimed');
+    equal(result.type === 'deleted' ? result.shotProjection.shots.length : null, 0);
+    equal(result.type === 'deleted' ? result.shotProjection.shotsTotal : null,
+      deleteOutcome === 'committed' ? 0 : 1);
+    equal(result.type === 'deleted' ? result.status : null,
+      deleteOutcome === 'committed'
+        ? 'Shot deleted · Bag: 100g left'
+        : 'Shot already deleted · Bag: 100g left');
+  }
 });
 
 await run('a non-404 DELETE failure retains the transaction for retry and leaves the shot visible', async () => {
@@ -211,6 +347,79 @@ await run('a non-404 DELETE failure retains the transaction for retry and leaves
   equal(releases.length, 0);
   equal(snapshot.shots.length, 1);
   equal(snapshot.shotsTotal, 1);
+});
+
+await run('a queued reclaim source prevents a later delete-without-reclaim from issuing bare DELETE', async () => {
+  const scheduler = new InertScheduler();
+  let claimCalls = 0;
+  let remoteDeleteCalls = 0;
+  let laneCalls = 0;
+  const releases: string[] = [];
+  const flow = new ShotDeletionFlow(dependencies(deletionSnapshot(), {
+    runDeleteShotTransaction: async (_shotId, execute) => {
+      laneCalls += 1;
+      return execute(async () => {
+        remoteDeleteCalls += 1;
+      });
+    },
+    claimShotDeleteReclaim: async () => {
+      claimCalls += 1;
+      return null;
+    },
+    releasePendingRemainingWeight: (idempotencyKey) => {
+      releases.push(idempotencyKey);
+    }
+  }), { scheduler });
+
+  const first = await flow.execute(deleteInput());
+  const second = await flow.execute({ ...deleteInput(), reclaim: null });
+  await waitFor(() => claimCalls >= 2);
+
+  equal(first.type, 'queued');
+  equal(second.type, 'queued');
+  equal(remoteDeleteCalls, 0);
+  equal(laneCalls >= 1, true);
+  equal(releases.length, 0);
+  await flow.disposeAndWait();
+  equal(scheduler.pending.size, 0);
+});
+
+await run('exact-lane and claim exceptions retain the source and arm recovery', async () => {
+  for (const failurePoint of ['lane', 'claim'] as const) {
+    const scheduler = new InertScheduler();
+    const failure = new Error(`${failurePoint} failed`);
+    const retryErrors: unknown[] = [];
+    const releases: string[] = [];
+    let remoteDeleteCalls = 0;
+    const flow = new ShotDeletionFlow(dependencies(deletionSnapshot(), {
+      runDeleteShotTransaction: async (_shotId, execute) => {
+        if (failurePoint === 'lane') throw failure;
+        return execute(async () => {
+          remoteDeleteCalls += 1;
+        });
+      },
+      claimShotDeleteReclaim: async () => {
+        if (failurePoint === 'claim') throw failure;
+        return claim(SOURCE_ID, transaction());
+      },
+      onTransactionRetry: (error) => {
+        retryErrors.push(error);
+      },
+      releasePendingRemainingWeight: (idempotencyKey) => {
+        releases.push(idempotencyKey);
+      }
+    }), { scheduler });
+
+    const result = await flow.execute(deleteInput());
+
+    equal(result.type, 'queued');
+    equal(retryErrors[0], failure);
+    equal(remoteDeleteCalls, 0);
+    equal(releases.length, 0);
+    equal(scheduler.pending.size, 1);
+    await flow.disposeAndWait();
+    equal(scheduler.pending.size, 0);
+  }
 });
 
 await run('persistent prepare rejection, including memory-only storage, never dispatches DELETE', async () => {
@@ -314,6 +523,37 @@ await run('handoff failure after DELETE leaves the source reservation owned for 
   equal(releases.length, 0);
 });
 
+await run('a deterministic child conflict terminates the source and requests manual review', async () => {
+  let terminationOutcome: string | null = null;
+  let retryCalls = 0;
+  const flow = new ShotDeletionFlow(dependencies(deletionSnapshot(), {
+    handoffShotDeleteReclaim: async () => {
+      throw new IdempotencyConflictError(CHILD_ID);
+    },
+    terminateShotDeleteReclaim: async (_claim, _reason, outcome) => {
+      terminationOutcome = outcome;
+      return true;
+    },
+    retryShotDeleteReclaim: async (claimed) => {
+      retryCalls += 1;
+      return {
+        retained: true,
+        retryAt: new Date('2026-07-12T10:00:30.000Z'),
+        attemptCount: claimed.attemptCount
+      };
+    }
+  }));
+
+  const result = await flow.execute(deleteInput());
+
+  equal(result.type, 'deleted');
+  equal(terminationOutcome, 'committed');
+  equal(retryCalls, 0);
+  equal(result.type === 'deleted' ? result.inventoryReviewBeanId : null, 'bean-1');
+  equal(result.type === 'deleted' ? result.status : null, 'Shot deleted · Bag reclaim failed');
+  equal(result.type === 'deleted' ? result.shotProjection.shots.length : null, 0);
+});
+
 await run('recovery reserves without overlay, handles an owned 404, and completes through callback', async () => {
   const scheduler = new InertScheduler();
   const missing = new Error('missing');
@@ -402,6 +642,103 @@ await run('recovery reserves without overlay, handles an owned 404, and complete
   ]);
   await flow.disposeAndWait();
   equal(scheduler.cancelCalls > 0, true);
+  equal(scheduler.pending.size, 0);
+});
+
+await run('a later recovery pass observes another context handoff and resumes its child', async () => {
+  const scheduler = new InertScheduler();
+  const discovered = transaction();
+  const reservations: string[] = [];
+  const retained: string[] = [];
+  const releases: string[] = [];
+  const recovered: CompletedShotDeletionFlowResult[] = [];
+  const existingProjectionRevisions: Array<number | undefined> = [];
+  let discoveryCalls = 0;
+  let prepareCalls = 0;
+  let claimCalls = 0;
+  let deleteCalls = 0;
+  let anotherContextAcknowledged = false;
+  let fenceCalls = 0;
+  const flow = new ShotDeletionFlow(dependencies(deletionSnapshot(), {
+    pendingShotDeleteReclaims: async () => {
+      discoveryCalls += 1;
+      return discoveryCalls === 1
+        ? [{ idempotencyKey: SOURCE_ID, state: 'pending' as const, transaction: discovered }]
+        : [];
+    },
+    prepareShotDeleteReclaim: async () => {
+      prepareCalls += 1;
+      return {
+        ...prepared(discovered),
+        inserted: false,
+        state: anotherContextAcknowledged ? 'acknowledged' as const : 'pending' as const
+      };
+    },
+    reservePendingRemainingWeight: (reservation) => {
+      reservations.push(reservation.idempotencyKey);
+      return true;
+    },
+    retainPendingRemainingWeight: (adjustment) => {
+      retained.push(adjustment.idempotencyKey);
+      return true;
+    },
+    releasePendingRemainingWeight: (idempotencyKey) => {
+      releases.push(idempotencyKey);
+    },
+    runDeleteShotTransaction: async (_shotId, execute) => execute(async () => {
+      deleteCalls += 1;
+    }),
+    claimShotDeleteReclaim: async () => {
+      claimCalls += 1;
+      return null;
+    },
+    remainingWeightRevision: () => 23,
+    existingReclaim: async (_shotId, _batchId, projectionRevision) => {
+      existingProjectionRevisions.push(projectionRevision);
+      return {
+        beanId: 'bean-1',
+        batchId: 'batch-1',
+        dose: 18,
+        state: 'pending',
+        expectedRemaining: 100,
+        durability: 'indexeddb'
+      };
+    },
+    onRemoteDeleteSettled: () => {
+      fenceCalls += 1;
+    },
+    onRecoveredDeletion: (result) => {
+      recovered.push(result);
+    }
+  }), { scheduler });
+
+  await flow.start();
+
+  equal(prepareCalls, 1);
+  equal(claimCalls, 1);
+  equal(deleteCalls, 0);
+  equal(reservations.join(','), SOURCE_ID);
+  equal(retained.length, 0);
+  equal(releases.length, 0);
+  equal(recovered.length, 0);
+
+  anotherContextAcknowledged = true;
+  await flow.trigger();
+  await waitFor(() => recovered.length === 1);
+
+  equal(prepareCalls, 2);
+  equal(claimCalls, 1);
+  equal(deleteCalls, 0);
+  equal(reservations.join(','), `${SOURCE_ID},${SOURCE_ID},${CHILD_ID}`);
+  equal(retained.join(','), CHILD_ID);
+  equal(releases.join(','), SOURCE_ID);
+  equal(existingProjectionRevisions.join(','), '23');
+  equal(fenceCalls, 1);
+  equal(recovered[0]?.deleteAlreadyAbsent, true);
+  equal(recovered[0]?.reclaim?.type, 'queued');
+  equal(recovered[0]?.shotProjection.shots.length, 0);
+  await flow.disposeAndWait();
+  equal(scheduler.pending.size, 0);
 });
 
 await run('demo reclaim remains local and never touches the durable transaction journal', async () => {
@@ -529,6 +866,7 @@ function dependencies(
       retryAt: new Date('2026-07-12T10:00:30.000Z'),
       attemptCount: claimed.attemptCount
     }),
+    terminateShotDeleteReclaim: async () => true,
     handoffShotDeleteReclaim: async () => reclaimResult(),
     existingReclaim: async () => null,
     remainingWeightRevision: () => 0,
@@ -551,6 +889,7 @@ function prepared(input: ShotDeleteReclaimTransaction): PreparedShotDeleteReclai
     inserted: true,
     durability: 'indexeddb',
     state: 'pending',
+    deleteOutcome: null,
     transaction: { ...input }
   };
 }

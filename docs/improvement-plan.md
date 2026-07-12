@@ -81,10 +81,23 @@ AI-agent work does not infer completion from extracted filenames alone.
   settle locally without a second write. Inventory reads preserve omitted
   protected batches and UI-owned fields, update confirmed baselines only across
   the correct read/mutation boundary, and sanitize or omit cache writes so
-  optimism cannot become offline truth. `ShotDeletionFlow` owns delete/reclaim
-  sequencing, but the hard-crash interval between successful remote DELETE and
-  reclaim admission remains open. Plugin state is allowlist-sanitized and
+  optimism cannot become offline truth. Plugin state is allowlist-sanitized and
   session/revision/touched-field fenced.
+- Architecture extraction phase four: reclaiming shot deletion now persists a
+  shot-scoped transaction in the existing mutation outbox before DELETE. The
+  transaction occupies the bean inventory's causal slot, is claimed only
+  inside the exact shot lane, and atomically hands that slot to the ordinary
+  dose-reclaim worker after a 2xx response or owned 404. Restart discovery
+  classifies sources and released children from one outbox snapshot, restores
+  non-overlaying stock reservations, and seeds replay ownership before a
+  cross-context handoff can hide the source;
+  unavailable durable storage or untracked remaining weight fails before
+  DELETE. An admitted reclaim intent cannot be bypassed by a later bare delete,
+  while deterministic child conflicts terminate into explicit inventory review
+  instead of blocking a bean forever. Graceful shutdown drains deletion and
+  journal/dose work before releasing waiters and closing the shared gateway
+  coordinator. True cross-device exactly-once still requires gateway DELETE
+  receipts.
 
 ## Deferred — architecture debt (ordered by value)
 
@@ -93,45 +106,38 @@ Per [architecture.md](architecture.md), workflow policy should leave
 a manageable small shell for a repository maintained primarily by AI agents.
 The remaining work starts here:
 
-1. **Delete/reclaim transaction journal.** The current order is remote DELETE,
-   durable reclaim enqueue, then cache invalidation. A process crash between the
-   first two steps can delete the shot without recording the inverse inventory
-   delta. Persist a combined command before DELETE and advance it to
-   reclaim-ready only after deletion succeeds; its owned record must authorize
-   the ambiguous 404 recovery path. True cross-device exactly-once replay still
-   depends on gateway idempotency receipts.
-2. **Extract `BeanSelectionFlow`.** Move selection mode/provenance, batch and
+1. **Extract `BeanSelectionFlow`.** Move selection mode/provenance, batch and
    shot acquisition, effective-bag restarts, recipe scheduling, and stale-result
    fencing behind one narrow controller-owned contract.
-3. **Extract `DoseDeductionAdmissionFlow`.** Move completed-shot dose intent,
+2. **Extract `DoseDeductionAdmissionFlow`.** Move completed-shot dose intent,
    reservation, durable admission, optimism/canonicalization, cache projection,
    and release out of `BeanieApp` while retaining the existing reconciler and
    inventory authorities.
-4. **Cached offline shot hydration.** `StartupFlow` uses cached latest shots for
+3. **Cached offline shot hydration.** `StartupFlow` uses cached latest shots for
    bean usage and initial selection, but its cached projection does not populate
    the shell's shot list. Define the selected-bean/batch filtering contract and
    publish the cached page so History is useful during a cold offline start.
-5. **Harden settings contracts.** Replace plain-string field keys and cast-built
+4. **Harden settings contracts.** Replace plain-string field keys and cast-built
    patches with group-indexed keys. Make public cache/repository/settings
    capability parameters required and fail closed instead of defaulting true.
-6. **Expose inventory-journal readiness in the stock UI.** Runtime adapters and
+5. **Expose inventory-journal readiness in the stock UI.** Runtime adapters and
    submit handlers fail closed, but bag mutation controls still look enabled
    until the user clicks and receives the read-only status. Pass an explicit
    capability into the bean-picker/storage views and disable only mutation
    controls while preserving inventory browsing.
-7. **Finish controller boundary injection.** Remove gateway/cache singleton
+6. **Finish controller boundary injection.** Remove gateway/cache singleton
    imports from scanner, Derek, and profile-editor flows; move scanner
    `location`/`document` and profile-editor `HTMLElement` access behind shell
    adapters.
-8. **Remaining optimistic one-offs.** Move `setMachineRefillLevel` to its
+7. **Remaining optimistic one-offs.** Move `setMachineRefillLevel` to its
    matching controller with revisioned confirmed rollback and stale-result
    fencing.
-9. **Shared demo/remote save helper.** Six controller save flows repeat the
+8. **Shared demo/remote save helper.** Six controller save flows repeat the
    same skeleton (demo id minting, `(demo)` status suffix, fail-soft cache
    write). A `saveWithDemoFallback` helper would collapse ~150 lines.
-10. **Profile (de)serialization out of `profileEditor.ts`** (the
+9. **Profile (de)serialization out of `profileEditor.ts`** (the
    `readStep`/`writeStep`/alias tables, ~200 lines) into `domain/profileModel`.
-11. **`hotWaterDataForNativeWorkflow`** and the thrice-duplicated
+10. **`hotWaterDataForNativeWorkflow`** and the thrice-duplicated
    `positiveNumber`/`formatNumber` helpers → `domain/waterSettings`.
 
 ## Deferred — smaller cleanups
@@ -154,6 +160,10 @@ The remaining work starts here:
 - Consecutive shell projections around wake and hot-water weight-stop outcomes
   can still cause multiple full innerHTML rebuilds — coalesce where statuses
   allow without moving lifecycle ownership back into `BeanieApp`.
+- Shot-cache invalidation remains auxiliary after the atomic delete/reclaim
+  handoff. A crash in that final interval cannot lose inventory work, but an
+  offline restart may show stale history until a connected refresh; a durable
+  cleanup marker would close that presentation-only gap.
 - `cache.ts` writes `schemaVersion` per entry but never reads it — check on
   read or clear stores on version bump.
 - The production JavaScript bundle is about 839 KB minified and still trips

@@ -9,6 +9,7 @@ import {
   type DurableMutationRecord,
   type DurableMutationOutboxOptions,
   type MutationOutboxDurability,
+  type MutationOutboxState,
   type MutationReceiptOutcome
 } from '../domain/mutationOutbox';
 import { resolvePendingDose, type PendingDose } from '../domain/pendingDoses';
@@ -18,11 +19,13 @@ import { beanInventoryMutationKey } from './beanInventoryController';
 
 export const PENDING_DOSE_MUTATION_KIND = 'pending-dose-deduction';
 export const PENDING_DOSE_RECLAIM_MUTATION_KIND = 'pending-dose-reclaim';
+export const PENDING_SHOT_DELETE_RECLAIM_KIND = 'pending-shot-delete-reclaim';
 export const DOSE_MUTATION_LEASE_MS = 5 * 60 * 1000;
 export const DOSE_MUTATION_RECONCILE_INTERVAL_MS = 60_000;
 export const DOSE_MUTATION_TOMBSTONE_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 const DOSE_MUTATION_WORKER_ID = 'beanie-dose-reconciler';
+const SHOT_DELETE_RECLAIM_WORKER_ID = 'beanie-shot-delete-reclaim';
 const RETRY_BASE_MS = 30_000;
 const RETRY_MAX_MS = 60 * 60 * 1000;
 const TOMBSTONE_PRUNE_LIMIT = 500;
@@ -38,6 +41,47 @@ export interface EnqueueDoseReclaimInput extends PendingDose {
   shotId: string;
   /** Process-local optimistic field revision; deliberately not journal payload. */
   projectionRevision?: number;
+}
+
+export type PrepareShotDeleteReclaimInput = EnqueueDoseReclaimInput;
+
+export interface ShotDeleteReclaimTransaction extends PendingDose {
+  readonly shotId: string;
+}
+
+type DurableShotDeleteReclaimStorage = Exclude<MutationOutboxDurability, 'memory'>;
+type PendingShotDeleteReclaimState = Exclude<MutationOutboxState, 'acknowledged'>;
+
+export interface PreparedShotDeleteReclaim {
+  readonly idempotencyKey: string;
+  readonly inserted: boolean;
+  readonly durability: DurableShotDeleteReclaimStorage;
+  readonly state: MutationOutboxState;
+  /** DELETE receipt when the source is already acknowledged. */
+  readonly deleteOutcome: Extract<
+    MutationReceiptOutcome,
+    'committed' | 'already-applied'
+  > | null;
+  readonly transaction: ShotDeleteReclaimTransaction;
+}
+
+export interface PendingShotDeleteReclaimReservation {
+  readonly idempotencyKey: string;
+  readonly state: PendingShotDeleteReclaimState;
+  readonly transaction: ShotDeleteReclaimTransaction;
+}
+
+export interface ShotDeleteReclaimClaim {
+  readonly idempotencyKey: string;
+  readonly transaction: ShotDeleteReclaimTransaction;
+  readonly leaseToken: string;
+  readonly attemptCount: number;
+}
+
+export interface ShotDeleteReclaimRetry {
+  readonly retained: boolean;
+  readonly retryAt: Date;
+  readonly attemptCount: number;
 }
 
 export interface DoseMutationEnqueueResult {
@@ -108,6 +152,11 @@ export interface DoseMutationCanonicalization {
 export interface PendingDoseAdjustmentReservation {
   readonly idempotencyKey: string;
   readonly entry: DoseMutationAdjustmentEntry;
+}
+
+export interface PendingDoseMutationWork {
+  readonly adjustments: readonly PendingDoseAdjustmentReservation[];
+  readonly shotDeleteReclaims: readonly PendingShotDeleteReclaimReservation[];
 }
 
 export interface DoseMutationReconcilerDependencies {
@@ -231,12 +280,269 @@ export class DoseMutationReconciler {
   }
 
   /**
+   * Persist ownership of a shot DELETE and its eventual inventory inverse
+   * before the remote DELETE can be dispatched. Unlike live dose admission,
+   * this boundary has no volatile fallback: without persistent evidence, a
+   * later 404 could not safely authorize the reclaim.
+   */
+  prepareShotDeleteReclaim(
+    input: PrepareShotDeleteReclaimInput
+  ): Promise<PreparedShotDeleteReclaim> {
+    return this.serializeAdmission(async () => {
+      this.assertOpen();
+      validateEnqueueInput(input);
+      await this.ensureLegacyMigrated();
+      const durability = await this.outbox.durability();
+      if (!isDurableShotDeleteStorage(durability)) {
+        throw new Error('Shot deletion requires persistent mutation storage');
+      }
+
+      const idempotencyKey = shotDeleteReclaimIdempotencyKey(input.shotId);
+      const transaction = shotDeleteReclaimPayload(input);
+      const queued = await this.outbox.enqueue({
+        idempotencyKey,
+        kind: PENDING_SHOT_DELETE_RECLAIM_KIND,
+        aggregateKey: beanInventoryMutationKey(input.beanId),
+        payload: transaction,
+        physicalIdentity: shotDeleteReclaimPhysicalIdentity(transaction),
+        createdAt: new Date(input.at),
+        causalOrder: 'aggregate',
+        canonicalAggregateKey: canonicalDoseAggregateKey
+      });
+      if (!isDurableShotDeleteStorage(queued.durability)) {
+        throw new Error('Shot deletion requires persistent mutation storage');
+      }
+      if (!isShotDeleteReclaimPayload(queued.record.payload)) {
+        throw new Error('Shot delete/reclaim journal contains an invalid payload');
+      }
+      if (queued.record.state === 'acknowledged') {
+        this.projectionRevisions.delete(idempotencyKey);
+      } else if (
+        queued.inserted &&
+        input.projectionRevision != null &&
+        !this.projectionRevisions.has(idempotencyKey)
+      ) {
+        this.projectionRevisions.set(idempotencyKey, input.projectionRevision);
+      }
+      return {
+        idempotencyKey,
+        inserted: queued.inserted,
+        durability: queued.durability,
+        state: queued.record.state,
+        deleteOutcome: queued.record.state === 'acknowledged' &&
+          (queued.record.receipt?.outcome === 'committed' ||
+            queued.record.receipt?.outcome === 'already-applied')
+          ? queued.record.receipt.outcome
+          : receiptDeleteOutcome(queued.record.receipt?.details),
+        transaction: queued.record.payload
+      };
+    });
+  }
+
+  /** Restore reservations for delete transactions before stock writes open. */
+  pendingShotDeleteReclaims(): Promise<readonly PendingShotDeleteReclaimReservation[]> {
+    return this.pendingWork().then((work) => work.shotDeleteReclaims);
+  }
+
+  /**
+   * Discover both journal phases from one backend snapshot. Splitting these
+   * reads lets another context hand off between them, leaving startup with
+   * neither the old source nor its newly released child reservation.
+   */
+  pendingWork(): Promise<PendingDoseMutationWork> {
+    return this.serializeAdmission(async () => {
+      this.assertOpen();
+      await this.ensureLegacyMigrated();
+      const records = await this.outbox.list<unknown>([
+        'pending',
+        'in-flight',
+        'retry-wait'
+      ]);
+      const adjustments: PendingDoseAdjustmentReservation[] = [];
+      const shotDeleteReclaims: PendingShotDeleteReclaimReservation[] = [];
+      for (const record of records) {
+        if (isDoseMutationKind(record.kind) && isPendingDosePayload(record.payload)) {
+          this.awaitedSettlements.set(record.idempotencyKey, {
+            kind: record.kind,
+            fallback: record.payload
+          });
+          adjustments.push({
+            idempotencyKey: record.idempotencyKey,
+            entry: adjustmentEntry(record.kind, record.payload)
+          });
+          continue;
+        }
+        if (record.kind !== PENDING_SHOT_DELETE_RECLAIM_KIND) continue;
+        if (!isShotDeleteReclaimPayload(record.payload)) {
+          throw new Error('Shot delete/reclaim journal contains an invalid payload');
+        }
+        shotDeleteReclaims.push({
+          idempotencyKey: record.idempotencyKey,
+          state: record.state as PendingShotDeleteReclaimState,
+          transaction: record.payload
+        });
+      }
+      return { adjustments, shotDeleteReclaims };
+    });
+  }
+
+  /** Claim the known delete transaction without bypassing its shot command lane. */
+  async claimShotDeleteReclaim(
+    idempotencyKey: string
+  ): Promise<ShotDeleteReclaimClaim | null> {
+    this.assertOpen();
+    const claim = await this.outbox.claimDueById<unknown>({
+      idempotencyKey,
+      kind: PENDING_SHOT_DELETE_RECLAIM_KIND,
+      ownerId: SHOT_DELETE_RECLAIM_WORKER_ID,
+      leaseMs: DOSE_MUTATION_LEASE_MS,
+      now: this.deps.now()
+    });
+    if (!claim) return null;
+    if (!isShotDeleteReclaimPayload(claim.record.payload)) {
+      const error = new Error('Shot delete/reclaim journal contains an invalid payload');
+      await this.outbox.markRetry({
+        idempotencyKey,
+        leaseToken: claim.leaseToken,
+        retryAt: retryTime(claim.record.attemptCount, this.deps.now()),
+        error,
+        now: this.deps.now()
+      });
+      throw error;
+    }
+    return {
+      idempotencyKey,
+      transaction: claim.record.payload,
+      leaseToken: claim.leaseToken,
+      attemptCount: claim.record.attemptCount
+    };
+  }
+
+  renewShotDeleteReclaim(claim: ShotDeleteReclaimClaim): Promise<boolean> {
+    this.assertOpen();
+    return this.outbox.renewLease({
+      idempotencyKey: claim.idempotencyKey,
+      leaseToken: claim.leaseToken,
+      leaseMs: DOSE_MUTATION_LEASE_MS,
+      now: this.deps.now()
+    });
+  }
+
+  async retryShotDeleteReclaim(
+    claim: ShotDeleteReclaimClaim,
+    error: unknown
+  ): Promise<ShotDeleteReclaimRetry> {
+    this.assertOpen();
+    const now = this.deps.now();
+    const retryAt = retryTime(claim.attemptCount, now);
+    const retained = await this.outbox.markRetry({
+      idempotencyKey: claim.idempotencyKey,
+      leaseToken: claim.leaseToken,
+      retryAt,
+      error,
+      now
+    });
+    return { retained, retryAt, attemptCount: claim.attemptCount };
+  }
+
+  /** End a deterministic handoff conflict without blocking the bean forever. */
+  terminateShotDeleteReclaim(
+    claim: ShotDeleteReclaimClaim,
+    reason: 'reclaim-idempotency-conflict',
+    deleteOutcome: Extract<MutationReceiptOutcome, 'committed' | 'already-applied'>
+  ): Promise<boolean> {
+    this.assertOpen();
+    return this.outbox.acknowledge({
+      idempotencyKey: claim.idempotencyKey,
+      leaseToken: claim.leaseToken,
+      outcome: 'not-applicable',
+      details: { shotId: claim.transaction.shotId, reason, deleteOutcome },
+      now: this.deps.now()
+    });
+  }
+
+  /**
+   * Atomically record DELETE success and release its normal reclaim child into
+   * the existing dose worker. The child inherits the source aggregate causal
+   * slot, so a newer inventory command cannot overtake the inverse delta.
+   */
+  async handoffShotDeleteReclaim(
+    claim: ShotDeleteReclaimClaim,
+    outcome: Extract<MutationReceiptOutcome, 'committed' | 'already-applied'>
+  ): Promise<DoseReclaimEnqueueResult | null> {
+    this.assertOpen();
+    const childIdempotencyKey = pendingDoseReclaimIdempotencyKey(
+      claim.transaction.shotId,
+      claim.transaction.batchId
+    );
+    const childAlreadyAwaited = this.awaitedSettlements.has(childIdempotencyKey);
+    const releaseProjection = this.holdProjection(childIdempotencyKey);
+    try {
+      const queued = await this.outbox.acknowledgeAndEnqueue({
+        sourceIdempotencyKey: claim.idempotencyKey,
+        sourceKind: PENDING_SHOT_DELETE_RECLAIM_KIND,
+        sourceLeaseToken: claim.leaseToken,
+        command: {
+          idempotencyKey: childIdempotencyKey,
+          kind: PENDING_DOSE_RECLAIM_MUTATION_KIND,
+          aggregateKey: beanInventoryMutationKey(claim.transaction.beanId),
+          payload: adjustmentPayload(claim.transaction),
+          physicalIdentity: doseAdjustmentPhysicalIdentity(claim.transaction)
+        },
+        outcome,
+        details: { shotId: claim.transaction.shotId },
+        now: this.deps.now()
+      });
+      if (!queued) {
+        releaseProjection();
+        return null;
+      }
+      const child = isPendingDosePayload(queued.record.payload)
+        ? queued.record.payload
+        : adjustmentPayload(claim.transaction);
+      const sourceRevision = this.projectionRevisions.get(claim.idempotencyKey);
+      this.projectionRevisions.delete(claim.idempotencyKey);
+      if (queued.record.state === 'acknowledged') {
+        if (!childAlreadyAwaited) this.projectionRevisions.delete(childIdempotencyKey);
+        releaseProjection();
+        if (childAlreadyAwaited) {
+          this.task.start();
+          void this.trigger();
+        }
+      } else {
+        if (
+          sourceRevision != null &&
+          !this.projectionRevisions.has(childIdempotencyKey)
+        ) this.projectionRevisions.set(childIdempotencyKey, sourceRevision);
+        this.awaitedSettlements.set(childIdempotencyKey, {
+          kind: PENDING_DOSE_RECLAIM_MUTATION_KIND,
+          fallback: child
+        });
+        this.task.start();
+        void this.trigger();
+      }
+      return {
+        inserted: queued.inserted,
+        idempotencyKey: childIdempotencyKey,
+        settlementPending: queued.record.state !== 'acknowledged',
+        expectedRemaining: child.expectedRemaining,
+        durability: queued.durability,
+        releaseProjection
+      };
+    } catch (error) {
+      releaseProjection();
+      throw error;
+    }
+  }
+
+  /**
    * A 404 DELETE may resume only a reclaim this client journaled previously;
    * absence cannot prove whether another client already returned the dose.
    */
   async existingReclaim(
     shotId: string,
-    batchId: string
+    batchId: string,
+    projectionRevision?: number
   ): Promise<ExistingDoseReclaim | null> {
     this.assertOpen();
     await this.admissionTail;
@@ -262,6 +568,14 @@ export class DoseMutationReconciler {
     ) return null;
     const durability = await this.outbox.durability();
     if (record.state !== 'acknowledged') {
+      this.awaitedSettlements.set(key, {
+        kind: PENDING_DOSE_RECLAIM_MUTATION_KIND,
+        fallback: record.payload
+      });
+      if (
+        projectionRevision != null &&
+        !this.projectionRevisions.has(key)
+      ) this.projectionRevisions.set(key, projectionRevision);
       return {
         beanId: record.payload.beanId,
         batchId: record.payload.batchId,
@@ -284,28 +598,7 @@ export class DoseMutationReconciler {
 
   /** Discover durable work before foreground inventory controls become writable. */
   pendingAdjustments(): Promise<readonly PendingDoseAdjustmentReservation[]> {
-    return this.serializeAdmission(async () => {
-      this.assertOpen();
-      await this.ensureLegacyMigrated();
-      const records = await this.outbox.list<PendingDose>([
-        'pending',
-        'in-flight',
-        'retry-wait'
-      ]);
-      const pending: PendingDoseAdjustmentReservation[] = [];
-      for (const record of records) {
-        if (!isDoseMutationKind(record.kind) || !isPendingDosePayload(record.payload)) continue;
-        this.awaitedSettlements.set(record.idempotencyKey, {
-          kind: record.kind,
-          fallback: record.payload
-        });
-        pending.push({
-          idempotencyKey: record.idempotencyKey,
-          entry: adjustmentEntry(record.kind, record.payload)
-        });
-      }
-      return pending;
-    });
+    return this.pendingWork().then((work) => work.adjustments);
   }
 
   private async enqueueAdjustment(
@@ -897,9 +1190,61 @@ function isDoseMutationKind(value: string): value is DoseMutationKind {
 }
 
 function canonicalDoseAggregateKey(record: Readonly<DurableMutationRecord>): string {
-  return isDoseMutationKind(record.kind) && isPendingDosePayload(record.payload)
-    ? beanInventoryMutationKey(record.payload.beanId)
-    : record.aggregateKey;
+  if (isDoseMutationKind(record.kind) && isPendingDosePayload(record.payload)) {
+    return beanInventoryMutationKey(record.payload.beanId);
+  }
+  if (
+    record.kind === PENDING_SHOT_DELETE_RECLAIM_KIND &&
+    isShotDeleteReclaimPayload(record.payload)
+  ) return beanInventoryMutationKey(record.payload.beanId);
+  return record.aggregateKey;
+}
+
+export function shotDeleteReclaimIdempotencyKey(shotId: string): string {
+  if (!shotId.trim()) throw new Error('shotId must not be empty');
+  return `shot-delete-reclaim:v1:${encodeURIComponent(shotId.trim())}`;
+}
+
+function shotDeleteReclaimPayload(
+  input: PrepareShotDeleteReclaimInput
+): ShotDeleteReclaimTransaction {
+  return {
+    shotId: input.shotId,
+    beanId: input.beanId,
+    batchId: input.batchId,
+    dose: input.dose,
+    expectedRemaining: input.expectedRemaining,
+    at: input.at
+  };
+}
+
+function shotDeleteReclaimPhysicalIdentity(
+  transaction: ShotDeleteReclaimTransaction
+): string {
+  return JSON.stringify([
+    transaction.shotId,
+    transaction.beanId,
+    transaction.batchId,
+    transaction.dose
+  ]);
+}
+
+function isShotDeleteReclaimPayload(value: unknown): value is ShotDeleteReclaimTransaction {
+  if (!isPendingDosePayload(value)) return false;
+  return typeof (value as Partial<ShotDeleteReclaimTransaction>).shotId === 'string' &&
+    (value as ShotDeleteReclaimTransaction).shotId.trim().length > 0;
+}
+
+function isDurableShotDeleteStorage(
+  durability: MutationOutboxDurability
+): durability is DurableShotDeleteReclaimStorage {
+  return durability === 'indexeddb' || durability === 'local-storage';
+}
+
+function retryTime(attemptCount: number, now: Date): Date {
+  const exponent = Math.min(7, Math.max(0, attemptCount - 1));
+  const retryDelayMs = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** exponent);
+  return new Date(now.getTime() + retryDelayMs);
 }
 
 function finiteNonNegative(value: number | null | undefined): number | null {
@@ -914,6 +1259,14 @@ function receiptRemaining(details: unknown): number | null {
   if (!details || typeof details !== 'object') return null;
   const value = (details as { weightRemaining?: unknown }).weightRemaining;
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function receiptDeleteOutcome(
+  details: unknown
+): Extract<MutationReceiptOutcome, 'committed' | 'already-applied'> | null {
+  if (!details || typeof details !== 'object') return null;
+  const value = (details as { deleteOutcome?: unknown }).deleteOutcome;
+  return value === 'committed' || value === 'already-applied' ? value : null;
 }
 
 function sameDoseMutationInput(

@@ -255,7 +255,10 @@ import {
   type ShotDoseReclaimPlan,
   shotEnjoymentUpdate
 } from './controllers/shotMetadataController';
-import { ShotDeletionFlow } from './controllers/shotDeletionFlow';
+import {
+  ShotDeletionFlow,
+  type CompletedShotDeletionFlowResult
+} from './controllers/shotDeletionFlow';
 import {
   cleaningStartPlan,
   cleaningThresholdPlan,
@@ -1533,7 +1536,8 @@ export class BeanieApp {
         batchesByBean: this.state.batchesByBean
       }),
       runtimeRevision: () => this.runtimeProvenanceRevision,
-      deleteShot: (id) => this.runExactCommand(`shot:${id}`, () => gateway.deleteShot(id)),
+      runDeleteShotTransaction: (id, run) =>
+        this.runExactCommand(`shot:${id}`, () => run(() => gateway.deleteShot(id))),
       isAlreadyDeleted: (error) =>
         error instanceof GatewayRequestError && error.issue.statusCode === 404,
       onRemoteDeleteSettled: () => {
@@ -1546,9 +1550,28 @@ export class BeanieApp {
         batchId: intent.batchId,
         dose: intent.dose
       })),
-      existingReclaim: (shotId, batchId) =>
-        this.doseMutationReconciler.existingReclaim(shotId, batchId),
-      enqueueReclaim: (input) => this.doseMutationReconciler.enqueueReclaim(input),
+      prepareShotDeleteReclaim: (input) =>
+        this.doseMutationReconciler.prepareShotDeleteReclaim(input),
+      pendingShotDeleteReclaims: () =>
+        this.doseMutationReconciler.pendingShotDeleteReclaims(),
+      claimShotDeleteReclaim: (idempotencyKey) =>
+        this.doseMutationReconciler.claimShotDeleteReclaim(idempotencyKey),
+      retryShotDeleteReclaim: (claim, error) =>
+        this.doseMutationReconciler.retryShotDeleteReclaim(claim, error),
+      terminateShotDeleteReclaim: (claim, reason, outcome) =>
+        this.doseMutationReconciler.terminateShotDeleteReclaim(
+          claim,
+          reason,
+          outcome
+        ),
+      handoffShotDeleteReclaim: (claim, outcome) =>
+        this.doseMutationReconciler.handoffShotDeleteReclaim(claim, outcome),
+      existingReclaim: (shotId, batchId, projectionRevision) =>
+        this.doseMutationReconciler.existingReclaim(
+          shotId,
+          batchId,
+          projectionRevision
+        ),
       remainingWeightRevision: (batchId) =>
         this.beanInventory.remainingWeightRevision(batchId),
       reservePendingRemainingWeight: (reservation) =>
@@ -1566,6 +1589,15 @@ export class BeanieApp {
         void this.doseMutationReconciler.trigger().catch((error) => {
           console.error('[Beanie] Dose reconciliation wake failed', error);
         });
+      },
+      onRecoveredDeletion: (result) => {
+        if (!this.disposed) this.commitShotDeletionResult(result, true);
+      },
+      onTransactionRetry: (error) => {
+        console.error('[Beanie] Shot deletion transaction will retry', error);
+      },
+      onAuxiliaryFailure: (operation, error) => {
+        console.error(`[Beanie] Shot deletion ${operation} failed`, error);
       },
       now: () => new Date()
     });
@@ -1700,9 +1732,23 @@ export class BeanieApp {
 
   private async hydrateDoseReconciliation(): Promise<void> {
     try {
-      const pending = await this.doseMutationReconciler.pendingAdjustments();
+      const pendingWork = await this.doseMutationReconciler.pendingWork();
+      const pending = pendingWork.adjustments;
+      const pendingDeletions = pendingWork.shotDeleteReclaims;
       if (this.disposed) return;
       const affectedBeanIds = new Set<string>();
+      // A delete transaction reserves its physical bag and causal position,
+      // but the inverse delta is not display truth until DELETE has settled
+      // and the journal atomically releases the normal reclaim command.
+      for (const deletion of pendingDeletions) {
+        const transaction = deletion.transaction;
+        this.beanInventory.reservePendingRemainingWeight({
+          idempotencyKey: deletion.idempotencyKey,
+          beanId: transaction.beanId,
+          batchId: transaction.batchId,
+          fieldRevision: this.beanInventory.remainingWeightRevision(transaction.batchId)
+        });
+      }
       for (const adjustment of pending) {
         const fieldRevision = this.beanInventory.remainingWeightRevision(
           adjustment.entry.batchId
@@ -1743,6 +1789,9 @@ export class BeanieApp {
       void this.doseMutationReconciler.start().catch((error) => {
         console.error('[Beanie] Dose reconciler startup failed', error);
       });
+      void this.shotDeletionFlow.start(pendingDeletions).catch((error) => {
+        console.error('[Beanie] Shot deletion recovery startup failed', error);
+      });
       if (this.hasConnectedGatewayAuthority()) void this.migrateStorageEventsOnce();
     } catch (error) {
       if (this.disposed) return;
@@ -1775,21 +1824,24 @@ export class BeanieApp {
     this.settingsStoreSync.dispose();
     this.recipeApply.dispose();
     this.machineService.dispose();
-    this.beanInventory.releaseAllPendingRemainingWeights();
     const deletionDrain = this.shotDeletionFlow.disposeAndWait();
     const doseAdmissionDrain = Promise.allSettled([...this.activeDoseAdmissions]);
-    const commandDrain = this.gatewayMutations.disposeAndWait();
-    // Keep the journal open until an admitted DELETE has had its chance to
-    // enqueue the inverse dose. Hard process death remains the documented
-    // cross-resource gap; graceful teardown must not manufacture that gap.
-    const doseDrain = Promise.all([deletionDrain, doseAdmissionDrain])
-      .then(() => this.doseMutationReconciler.dispose());
-    this.disposeDrain = Promise.all([
-      deletionDrain,
-      doseAdmissionDrain,
-      doseDrain,
-      commandDrain
-    ]).then(async () => {
+    // The shared journal and exact gateway lanes remain live until an admitted
+    // DELETE can atomically release its reclaim and every dose admission/claim
+    // has drained. Disposing the command coordinator earlier would strand a
+    // durable transaction after its local owner had already shut down.
+    const mutationDrain = deletionDrain
+      .then(() => doseAdmissionDrain)
+      .then(() => this.doseMutationReconciler.dispose())
+      .then(() => {
+        // Successful journal work releases its own reservations in causal
+        // order. Any remainder belongs to work left durable for restart; wake
+        // those local waiters only as the command coordinator is closing so
+        // they cannot overtake the retained physical adjustment.
+        this.beanInventory.releaseAllPendingRemainingWeights();
+        return this.gatewayMutations.disposeAndWait();
+      });
+    this.disposeDrain = mutationDrain.then(async () => {
       // Let command-promise continuations publish their final projection, then
       // drain the shared per-bean cache lane before a replacement app starts.
       await Promise.resolve();
@@ -3269,6 +3321,17 @@ export class BeanieApp {
       this.setState({ busy: false, status: 'Delete shot failed' });
       return;
     }
+    if (result.type === 'queued') {
+      this.setState({ busy: false, status: result.status });
+      return;
+    }
+    this.commitShotDeletionResult(result);
+  }
+
+  private commitShotDeletionResult(
+    result: CompletedShotDeletionFlowResult,
+    recovered = false
+  ): void {
     if (result.inventoryReviewBeanId) {
       this.inventoryReviewBeanIds.add(result.inventoryReviewBeanId);
     }
@@ -3290,8 +3353,10 @@ export class BeanieApp {
         shotEditField: null,
         shotBeanEdit: null
       } : {}),
-      busy: false,
-      status: result.status
+      ...(recovered ? {} : {
+        busy: false,
+        status: result.status
+      })
     });
     if (result.deleteAlreadyAbsent) this.shotRefreshTask.trigger();
   }

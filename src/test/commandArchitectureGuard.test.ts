@@ -84,6 +84,28 @@ run('durable dose and shot deletion primitives have one production owner each', 
   );
 });
 
+run('startup discovers both mutation phases from one outbox snapshot', () => {
+  const app = requiredParsedFile('app.ts');
+  const counts = new Map<string, number>();
+  visit(app.source, (node) => {
+    if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return;
+    const receiver = node.expression.expression;
+    if (
+      !ts.isPropertyAccessExpression(receiver) ||
+      receiver.name.text !== 'doseMutationReconciler'
+    ) return;
+    const method = node.expression.name.text;
+    counts.set(method, (counts.get(method) ?? 0) + 1);
+  });
+  ok(
+    counts.get('pendingWork') === 1 &&
+      (counts.get('pendingAdjustments') ?? 0) === 0 &&
+      counts.get('pendingShotDeleteReclaims') === 1,
+    'app startup must use one pendingWork snapshot; the single source-only read belongs ' +
+      'to ShotDeletionFlow recovery wiring'
+  );
+});
+
 run('legacy controller singleton exceptions cannot spread to new flows', () => {
   const allowed = new Set([
     'controllers/derekFlow.ts',

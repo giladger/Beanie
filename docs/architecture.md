@@ -27,9 +27,12 @@ At runtime the app loop is:
    hydration as independent tracks.
 2. `StartupFlow` gates presentation content on synced settings, loads gateway/cache data
    through startup repositories, and publishes an explicit connectivity plan.
-3. `DoseMutationReconciler.pendingAdjustments()` migrates legacy dose work,
-   discovers every unsettled durable adjustment, and gives the shell the
-   reservations that must be restored before stock writes become writable.
+3. `DoseMutationReconciler.pendingWork()` migrates legacy dose work and
+   classifies unsettled adjustments and pre-DELETE transactions from one
+   outbox snapshot. The shell restores all stock reservations and seeds
+   deletion recovery before writes become writable, but overlays only
+   adjustment scalars; a delete transaction does not become display truth
+   until its atomic reclaim handoff.
 4. `BeanieApp` keeps one `AppState` object and re-renders after `setState()`.
 5. User actions are dispatched through `data-action` attributes.
 6. App methods parse DOM/form values and delegate policy to controllers/domain
@@ -252,7 +255,7 @@ Current controller map:
 | `cleaningWorkflowController.ts` | Cleaning start blockers, cleaning workflow creation/load result, finish/count/profile-pick plans. |
 | `cleaningWizardController.ts` | Cleaning wizard step transitions and action completion. |
 | `derekController.ts` / `derekFlow.ts` | Derek question state, streaming lifecycle, suggestions, and saved-answer restoration. |
-| `doseMutationReconciler.ts` | Durable ordered dose adjustments: startup discovery and legacy-migration gating, first-admission replay metadata, shot deductions and deletion reclaims through one aggregate-head worker, volatile-promotion canonicalization, projection hand-off barriers, cross-context tombstone settlement, scalar-only typed outcomes, and the per-bean inventory lane. |
+| `doseMutationReconciler.ts` | The single durable inventory outbox owner: startup discovery and legacy-migration gating, pre-DELETE transaction admission/claim/retry/atomic reclaim handoff, shot deductions and released deletion reclaims through one aggregate-head worker, first-admission replay metadata, projection barriers, cross-context tombstone settlement, scalar-only outcomes, and the per-bean inventory lane. |
 | [`liveShotCompletionFlow.ts`](../src/controllers/liveShotCompletionFlow.ts) | Shot-end routing, remote polling, optimistic fallback, freshness/Derek-context persistence, dose dispatch, and stale/disposal fencing. |
 | `liveShotController.ts` | Pure shot-completion matching, polling primitives, fallback, and routing decisions used by `LiveShotCompletionFlow`. |
 | [`machineActionFlow.ts`](../src/controllers/machineActionFlow.ts) | Physical start/stop admission, repeated dispatch-time safety, and contiguous workflow/calibration/state commands. |
@@ -268,7 +271,7 @@ Current controller map:
 | `settingsController.ts` | Reaprime settings/account/device/plugin operations. |
 | [`settingsMutationFlow.ts`](../src/controllers/settingsMutationFlow.ts) | Per-resource optimistic settings identity, monotonic confirmed baselines, targeted reconcile/rollback, and stale/superseded/disposed outcomes. |
 | [`settingsStoreSync.ts`](../src/controllers/settingsStoreSync.ts) | Synced-store load/poll/reload fencing, synchronous write admission, per-key latest-wins writes, retry/discard, snapshots, and disposal. |
-| [`shotDeletionFlow.ts`](../src/controllers/shotDeletionFlow.ts) | Cross-resource shot deletion: remote/404 handling, replay-safe durable reclaim admission or owned-journal resume, optimistic inventory/provenance fencing, latest-state projections, and graceful drain ownership. |
+| [`shotDeletionFlow.ts`](../src/controllers/shotDeletionFlow.ts) | Cross-resource shot deletion: fail-closed durable prepare, exact shot-lane claim/DELETE, owned-404 recovery, atomic reclaim handoff, startup replay, reservation transfer, optimistic inventory/provenance fencing, latest-state projections, and graceful drain ownership. |
 | `shotMetadataController.ts` | Shot score/edit persistence plus deletion primitives: preview-vs-intent separation, remote/cache/reclaim sequencing, partial-success status, and pure latest-state list projection. |
 | [`startupFlow.ts`](../src/controllers/startupFlow.ts) | Settings-gated boot/reconnect acquisition, cache/demo fallback policy, transport-revision and single-flight/disposal fencing, startup projections, and the exhaustive offline/limited/connected effect matrix. |
 
@@ -666,22 +669,28 @@ Use `shotMetadataController.ts` for persistence and pure deletion primitives;
 use `ShotDeletionFlow` for the cross-resource delete/reclaim workflow. A delete
 dialog may retain a before/after
 preview, but the mutation boundary receives only immutable bean/batch/dose
-intent. Remote reclaims must be journaled through `DoseMutationReconciler`
-before optional cache cleanup; do not send an absolute preview weight to the
-gateway. The worker resolves `+dose`, capped by the bag's original weight,
-against a fresh remaining-weight scalar inside the canonical per-bean lane.
+intent. A remote reclaiming deletion must first persist a
+`pending-shot-delete-reclaim` transaction through `DoseMutationReconciler`;
+do not send an absolute preview weight to the gateway. The transaction reserves
+the canonical per-bean causal slot while `ShotDeletionFlow` claims it inside
+the exact `shot:<id>` lane and dispatches DELETE. A 2xx response or a 404
+owned by that pre-existing transaction atomically acknowledges the source and
+releases the ordinary `pending-dose-reclaim` child in the same causal slot.
+Only that child reaches the inventory worker. The worker resolves `+dose`,
+capped by the bag's original weight, against a fresh remaining-weight scalar
+inside the canonical per-bean lane.
 The replay heuristic requires a tracked admission scalar. If current local
-stock is missing or untracked, request authoritative inventory review instead
-of journaling an unbounded `+dose` or promoting the display-only modal preview.
-
-The current remote order is DELETE shot, enqueue the durable reclaim, then
-invalidate the shot cache. This minimizes the unprotected interval but cannot
-eliminate a process crash after DELETE succeeds and before enqueue completes.
-If a retry sees 404, it may resume only a reclaim already owned by this
-reconciler; creating a new reclaim would risk returning the same dose twice
-after another client deleted it. Closing the gap requires a combined
-delete/reclaim command journaled before DELETE, as described in
-[runtime ownership](runtime-ownership-and-consistency.md#delete--reclaim-boundary).
+stock is missing or untracked—or persistent journal storage is unavailable—the
+flow fails before DELETE instead of journaling an unbounded `+dose`, accepting
+memory-only ownership evidence, or promoting the display-only modal preview.
+Restart discovery reserves delete-pending bags without overlaying the future
+reclaim scalar, then replays the owned DELETE. Once that source exists, a later
+delete-without-reclaim action cannot bypass or cancel it; cancellation after an
+ambiguous DELETE would be physically unsafe. A deterministic child identity
+conflict acknowledges the source as manual-review work so it cannot block every
+later mutation for the bean. See
+[runtime ownership](runtime-ownership-and-consistency.md#delete--reclaim-boundary)
+for crash and cross-device limits.
 
 Keep shot edit form rendering in views and form parsing in `BeanieApp`. Move
 policy into the controller when it touches gateway/cache/demo behavior.

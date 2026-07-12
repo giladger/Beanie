@@ -163,7 +163,6 @@ function installBrowserFakes(): void {
 installBrowserFakes();
 
 const { BeanieApp } = await import('../app');
-const { GatewayRequestError } = await import('../api/gateway');
 const { demoSettingsBundle } = await import('../domain/settingsModel');
 const { beanieCache } = await import('../domain/cache');
 const {
@@ -208,11 +207,11 @@ await run('blocked dose journal discovery does not block application bootstrap',
     inventoryJournalReady: boolean;
     load(): Promise<void>;
     doseMutationReconciler: {
-      pendingAdjustments(): Promise<readonly never[]>;
+      pendingWork(): Promise<never>;
     };
   };
   harness.load = async () => { loadCalls += 1; };
-  harness.doseMutationReconciler.pendingAdjustments = () => new Promise(() => {});
+  harness.doseMutationReconciler.pendingWork = () => new Promise(() => {});
 
   app.start();
   await flushAsync();
@@ -226,6 +225,7 @@ await run('dose journal hydration overlays pending physical inventory before ena
   const root = new FakeElement();
   const app = new BeanieApp(root as unknown as HTMLElement);
   let reconcilerStarts = 0;
+  let discoveredDeletes = 0;
   const harness = app as unknown as {
     state: {
       batchesByBean: Record<string, Array<{ id: string; weightRemaining?: number | null }>>;
@@ -234,45 +234,85 @@ await run('dose journal hydration overlays pending physical inventory before ena
     setState(next: Record<string, unknown>): void;
     prepareDoseReconciliation(): Promise<void>;
     doseMutationReconciler: {
-      pendingAdjustments(): Promise<readonly [{
-        idempotencyKey: string;
-        entry: {
-          adjustment: 'deduction';
-          shotId: string;
-          beanId: string;
-          batchId: string;
-          dose: number;
-          expectedRemaining: number;
-          at: string;
-        };
-      }]>;
+      pendingWork(): Promise<{
+        adjustments: readonly [{
+          idempotencyKey: string;
+          entry: {
+            adjustment: 'deduction';
+            shotId: string;
+            beanId: string;
+            batchId: string;
+            dose: number;
+            expectedRemaining: number;
+            at: string;
+          };
+        }];
+        shotDeleteReclaims: readonly [{
+          idempotencyKey: string;
+          state: 'pending';
+          transaction: {
+            shotId: string;
+            beanId: string;
+            batchId: string;
+            dose: number;
+            expectedRemaining: number;
+            at: string;
+          };
+        }];
+      }>;
       start(): Promise<void>;
+    };
+    shotDeletionFlow: {
+      start(discovered: readonly unknown[]): Promise<void>;
     };
   };
   harness.setState({
     batchesByBean: {
-      'bean-1': [{ id: 'batch-1', weightRemaining: 100 }]
+      'bean-1': [
+        { id: 'batch-1', weightRemaining: 100 },
+        { id: 'batch-delete', weightRemaining: 50 }
+      ]
     }
   });
-  harness.doseMutationReconciler.pendingAdjustments = async () => [{
-    idempotencyKey: 'dose-1',
-    entry: {
-      adjustment: 'deduction',
-      shotId: 'shot-1',
-      beanId: 'bean-1',
-      batchId: 'batch-1',
-      dose: 18,
-      expectedRemaining: 82,
-      at: '2026-07-12T10:00:00.000Z'
-    }
-  }];
+  harness.doseMutationReconciler.pendingWork = async () => ({
+    adjustments: [{
+      idempotencyKey: 'dose-1',
+      entry: {
+        adjustment: 'deduction',
+        shotId: 'shot-1',
+        beanId: 'bean-1',
+        batchId: 'batch-1',
+        dose: 18,
+        expectedRemaining: 82,
+        at: '2026-07-12T10:00:00.000Z'
+      }
+    }],
+    shotDeleteReclaims: [{
+      idempotencyKey: 'shot-delete-reclaim:v1:shot-delete',
+      state: 'pending',
+      transaction: {
+        shotId: 'shot-delete',
+        beanId: 'bean-1',
+        batchId: 'batch-delete',
+        dose: 18,
+        expectedRemaining: 68,
+        at: '2026-07-12T10:00:00.000Z'
+      }
+    }]
+  });
   harness.doseMutationReconciler.start = async () => { reconcilerStarts += 1; };
+  harness.shotDeletionFlow.start = async (discovered) => {
+    discoveredDeletes = discovered.length;
+  };
 
   await harness.prepareDoseReconciliation();
 
   equal(harness.inventoryJournalReady, true);
   equal(harness.state.batchesByBean['bean-1']?.[0]?.weightRemaining, 82);
+  // The delete source reserves ordering but must not project its future +dose.
+  equal(harness.state.batchesByBean['bean-1']?.[1]?.weightRemaining, 50);
   equal(reconcilerStarts, 1);
+  equal(discoveredDeletes, 1);
   app.dispose();
 });
 
@@ -1220,6 +1260,15 @@ await run('BeanieApp deletion adapter journals and projects a remote dose reclai
     measurements: []
   };
   const queued: Array<Record<string, unknown>> = [];
+  const transaction = {
+    shotId: shot.id,
+    beanId: bean.id,
+    batchId: batch.id,
+    dose: 18,
+    expectedRemaining: 100,
+    at: '2026-07-12T10:00:00.000Z'
+  };
+  const sourceId = 'shot-delete-reclaim:v1:shot-1';
   const harness = app as unknown as {
     state: {
       shots: Array<{ id: string }>;
@@ -1228,19 +1277,145 @@ await run('BeanieApp deletion adapter journals and projects a remote dose reclai
     };
     setState(next: Record<string, unknown>): void;
     performDeleteShot(reclaim: boolean): Promise<void>;
-    runExactCommand<T>(key: string, run: () => T | PromiseLike<T>): Promise<T | undefined>;
+    runExactCommand<T>(key: string, run: () => T | PromiseLike<T>): Promise<T>;
     doseMutationReconciler: {
-      enqueueReclaim(input: Record<string, unknown>): Promise<DoseMutationEnqueueResult>;
+      prepareShotDeleteReclaim(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+      claimShotDeleteReclaim(idempotencyKey: string): Promise<Record<string, unknown>>;
+      handoffShotDeleteReclaim(
+        claim: Record<string, unknown>,
+        outcome: string
+      ): Promise<DoseMutationEnqueueResult>;
     };
   };
-  harness.runExactCommand = async () => undefined;
-  harness.doseMutationReconciler.enqueueReclaim = async (input) => {
+  harness.runExactCommand = async <T>(_key: string, run: () => T | PromiseLike<T>) =>
+    await run();
+  harness.doseMutationReconciler.prepareShotDeleteReclaim = async (input) => {
     queued.push(input);
+    return {
+      inserted: true,
+      idempotencyKey: sourceId,
+      durability: 'local-storage',
+      state: 'pending',
+      transaction
+    };
+  };
+  harness.doseMutationReconciler.claimShotDeleteReclaim = async () => ({
+    idempotencyKey: sourceId,
+    transaction,
+    leaseToken: 'lease-1',
+    attemptCount: 1
+  });
+  harness.doseMutationReconciler.handoffShotDeleteReclaim = async () => ({
+      inserted: true,
+      idempotencyKey: 'reclaim-1',
+      settlementPending: true,
+      expectedRemaining: 100,
+      durability: 'indexeddb',
+      releaseProjection: () => {}
+  });
+  harness.setState({
+    settingsLoaded: true,
+    loading: false,
+    startupPhase: 'connected',
+    demo: false,
+    beans: [bean],
+    batchesByBean: { [bean.id]: [batch] },
+    shots: [shot],
+    shotsTotal: 1,
+    detailShotId: shot.id,
+    deleteShotTarget: {
+      shotId: shot.id,
+      reclaim: {
+        intent: { beanId: bean.id, batchId: batch.id, dose: 18 },
+        preview: { dose: 18, remaining: 82, next: 100 }
+      }
+    }
+  });
+
+  const nativeFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+    if (
+      String(input).includes(`/api/v1/shots/${shot.id}`) &&
+      init?.method === 'DELETE'
+    ) return { ok: true, status: 204 } as Response;
+    return nativeFetch(input as RequestInfo | URL, init);
+  }) as typeof fetch;
+  try {
+    await harness.performDeleteShot(true);
+
+    equal(queued[0]?.expectedRemaining, 100);
+    equal(queued[0]?.shotId, shot.id);
+    equal(harness.state.batchesByBean[bean.id]?.[0]?.weightRemaining, 100);
+    equal(harness.state.shots.length, 0);
+    equal(harness.state.shotsTotal, 0);
+  } finally {
+    globalThis.fetch = nativeFetch;
+    app.dispose();
+  }
+});
+
+await run('an owned 404 releases its durable reclaim without double-decrementing total', async () => {
+  const root = new FakeElement();
+  const app = new BeanieApp(root as unknown as HTMLElement);
+  const bean = { id: 'bean-1', roaster: 'Test', name: 'Coffee' };
+  const batch = { id: 'batch-1', beanId: bean.id, weight: 100, weightRemaining: 82 };
+  const shot = {
+    id: 'shot-1',
+    timestamp: '2026-07-12T10:00:00.000Z',
+    workflow: { context: { beanId: bean.id, beanBatchId: batch.id } },
+    annotations: { actualDoseWeight: 18 },
+    measurements: []
+  };
+  let handoffCalls = 0;
+  const transaction = {
+    shotId: shot.id,
+    beanId: bean.id,
+    batchId: batch.id,
+    dose: 18,
+    expectedRemaining: 100,
+    at: '2026-07-12T10:00:00.000Z'
+  };
+  const sourceId = 'shot-delete-reclaim:v1:shot-1';
+  const harness = app as unknown as {
+    state: {
+      shots: Array<{ id: string }>;
+      shotsTotal: number;
+      status: string;
+      batchesByBean: Record<string, Array<{ id: string; weightRemaining?: number | null }>>;
+    };
+    setState(next: Record<string, unknown>): void;
+    performDeleteShot(reclaim: boolean): Promise<void>;
+    runExactCommand<T>(key: string, run: () => T | PromiseLike<T>): Promise<T>;
+    shotRefreshTask: { trigger(): void };
+    doseMutationReconciler: {
+      prepareShotDeleteReclaim(): Promise<Record<string, unknown>>;
+      claimShotDeleteReclaim(): Promise<Record<string, unknown>>;
+      handoffShotDeleteReclaim(): Promise<DoseMutationEnqueueResult>;
+    };
+  };
+  harness.runExactCommand = async <T>(_key: string, run: () => T | PromiseLike<T>) =>
+    await run();
+  harness.shotRefreshTask.trigger = () => {};
+  harness.doseMutationReconciler.prepareShotDeleteReclaim = async () => ({
+    inserted: true,
+    idempotencyKey: sourceId,
+    durability: 'local-storage',
+    state: 'pending',
+    transaction
+  });
+  harness.doseMutationReconciler.claimShotDeleteReclaim = async () => ({
+    idempotencyKey: sourceId,
+    transaction,
+    leaseToken: 'lease-1',
+    attemptCount: 1
+  });
+  harness.doseMutationReconciler.handoffShotDeleteReclaim = async () => {
+    handoffCalls += 1;
     return {
       inserted: true,
       idempotencyKey: 'reclaim-1',
       settlementPending: true,
-      expectedRemaining: Number(input.expectedRemaining),
+      expectedRemaining: 100,
       durability: 'indexeddb',
       releaseProjection: () => {}
     };
@@ -1264,86 +1439,26 @@ await run('BeanieApp deletion adapter journals and projects a remote dose reclai
     }
   });
 
-  await harness.performDeleteShot(true);
+  const nativeFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+    if (
+      String(input).includes(`/api/v1/shots/${shot.id}`) &&
+      init?.method === 'DELETE'
+    ) return { ok: false, status: 404, text: async () => '' } as Response;
+    return nativeFetch(input as RequestInfo | URL, init);
+  }) as typeof fetch;
+  try {
+    await harness.performDeleteShot(true);
 
-  equal(queued[0]?.expectedRemaining, 100);
-  equal(queued[0]?.shotId, shot.id);
-  equal(harness.state.batchesByBean[bean.id]?.[0]?.weightRemaining, 100);
-  equal(harness.state.shots.length, 0);
-  equal(harness.state.shotsTotal, 0);
-  app.dispose();
-});
-
-await run('a stale 404 row cannot create a new reclaim or double-decrement total', async () => {
-  const root = new FakeElement();
-  const app = new BeanieApp(root as unknown as HTMLElement);
-  const bean = { id: 'bean-1', roaster: 'Test', name: 'Coffee' };
-  const batch = { id: 'batch-1', beanId: bean.id, weight: 100, weightRemaining: 82 };
-  const shot = {
-    id: 'shot-1',
-    timestamp: '2026-07-12T10:00:00.000Z',
-    workflow: { context: { beanId: bean.id, beanBatchId: batch.id } },
-    annotations: { actualDoseWeight: 18 },
-    measurements: []
-  };
-  let enqueueCalls = 0;
-  const harness = app as unknown as {
-    state: {
-      shots: Array<{ id: string }>;
-      shotsTotal: number;
-      status: string;
-      batchesByBean: Record<string, Array<{ id: string; weightRemaining?: number | null }>>;
-    };
-    setState(next: Record<string, unknown>): void;
-    performDeleteShot(reclaim: boolean): Promise<void>;
-    runExactCommand<T>(key: string, run: () => T | PromiseLike<T>): Promise<T>;
-    shotRefreshTask: { trigger(): void };
-    doseMutationReconciler: {
-      existingReclaim(): Promise<null>;
-      enqueueReclaim(): Promise<never>;
-    };
-  };
-  harness.runExactCommand = async () => {
-    throw new GatewayRequestError({
-      resource: 'shot',
-      kind: 'http',
-      message: 'not found',
-      statusCode: 404
-    });
-  };
-  harness.shotRefreshTask.trigger = () => {};
-  harness.doseMutationReconciler.existingReclaim = async () => null;
-  harness.doseMutationReconciler.enqueueReclaim = async () => {
-    enqueueCalls += 1;
-    throw new Error('unexpected enqueue');
-  };
-  harness.setState({
-    settingsLoaded: true,
-    loading: false,
-    startupPhase: 'connected',
-    demo: false,
-    beans: [bean],
-    batchesByBean: { [bean.id]: [batch] },
-    shots: [shot],
-    shotsTotal: 1,
-    detailShotId: shot.id,
-    deleteShotTarget: {
-      shotId: shot.id,
-      reclaim: {
-        intent: { beanId: bean.id, batchId: batch.id, dose: 18 },
-        preview: { dose: 18, remaining: 82, next: 100 }
-      }
-    }
-  });
-
-  await harness.performDeleteShot(true);
-
-  equal(enqueueCalls, 0);
-  equal(harness.state.batchesByBean[bean.id]?.[0]?.weightRemaining, 82);
-  equal(harness.state.shots.length, 0);
-  equal(harness.state.shotsTotal, 1);
-  equal(harness.state.status, 'Shot already deleted · Bag unchanged');
-  app.dispose();
+    equal(handoffCalls, 1);
+    equal(harness.state.batchesByBean[bean.id]?.[0]?.weightRemaining, 100);
+    equal(harness.state.shots.length, 0);
+    equal(harness.state.shotsTotal, 1);
+    equal(harness.state.status, 'Shot already deleted · Bag: 100g left');
+  } finally {
+    globalThis.fetch = nativeFetch;
+    app.dispose();
+  }
 });
 
 await run('terminal not-applicable reclaim corrects optimistic inventory and requests refresh', () => {
@@ -1384,7 +1499,7 @@ await run('terminal not-applicable reclaim corrects optimistic inventory and req
   app.dispose();
 });
 
-await run('graceful disposal drains DELETE into the reclaim journal before closing it', async () => {
+await run('graceful disposal drains DELETE handoff before closing the shared journal', async () => {
   const root = new FakeElement();
   const app = new BeanieApp(root as unknown as HTMLElement);
   const bean = { id: 'bean-1', roaster: 'Test', name: 'Coffee' };
@@ -1404,25 +1519,46 @@ await run('graceful disposal drains DELETE into the reclaim journal before closi
   const deleteStart = new Promise<void>((resolve) => {
     deleteStarted = resolve;
   });
-  let enqueueCalls = 0;
-  let disposedAtEnqueue = true;
+  let handoffCalls = 0;
+  let disposedAtHandoff = true;
+  const transaction = {
+    shotId: shot.id,
+    beanId: bean.id,
+    batchId: batch.id,
+    dose: 18,
+    expectedRemaining: 100,
+    at: '2026-07-12T10:00:00.000Z'
+  };
+  const sourceId = 'shot-delete-reclaim:v1:shot-1';
   const harness = app as unknown as {
     setState(next: Record<string, unknown>): void;
     performDeleteShot(reclaim: boolean): Promise<void>;
     runExactCommand<T>(key: string, run: () => T | PromiseLike<T>): Promise<T>;
     doseMutationReconciler: {
       disposed: boolean;
-      enqueueReclaim(): Promise<DoseMutationEnqueueResult>;
+      prepareShotDeleteReclaim(): Promise<Record<string, unknown>>;
+      claimShotDeleteReclaim(): Promise<Record<string, unknown>>;
+      handoffShotDeleteReclaim(): Promise<DoseMutationEnqueueResult>;
     };
   };
-  harness.runExactCommand = async <T>() => {
-    deleteStarted();
-    await deleteGate;
-    return undefined as T;
-  };
-  harness.doseMutationReconciler.enqueueReclaim = async () => {
-    enqueueCalls += 1;
-    disposedAtEnqueue = harness.doseMutationReconciler.disposed;
+  harness.runExactCommand = async <T>(_key: string, run: () => T | PromiseLike<T>) =>
+    await run();
+  harness.doseMutationReconciler.prepareShotDeleteReclaim = async () => ({
+    inserted: true,
+    idempotencyKey: sourceId,
+    durability: 'local-storage',
+    state: 'pending',
+    transaction
+  });
+  harness.doseMutationReconciler.claimShotDeleteReclaim = async () => ({
+    idempotencyKey: sourceId,
+    transaction,
+    leaseToken: 'lease-1',
+    attemptCount: 1
+  });
+  harness.doseMutationReconciler.handoffShotDeleteReclaim = async () => {
+    handoffCalls += 1;
+    disposedAtHandoff = harness.doseMutationReconciler.disposed;
     return {
       inserted: true,
       idempotencyKey: 'reclaim-1',
@@ -1450,14 +1586,96 @@ await run('graceful disposal drains DELETE into the reclaim journal before closi
     }
   });
 
-  const deleting = harness.performDeleteShot(true);
-  await deleteStart;
-  const disposing = app.disposeAsync();
-  releaseDelete();
-  await Promise.all([deleting, disposing]);
+  const nativeFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+    if (
+      String(input).includes(`/api/v1/shots/${shot.id}`) &&
+      init?.method === 'DELETE'
+    ) {
+      deleteStarted();
+      await deleteGate;
+      return { ok: true, status: 204 } as Response;
+    }
+    return nativeFetch(input as RequestInfo | URL, init);
+  }) as typeof fetch;
+  try {
+    const deleting = harness.performDeleteShot(true);
+    await deleteStart;
+    const disposing = app.disposeAsync();
+    releaseDelete();
+    await Promise.all([deleting, disposing]);
 
-  equal(enqueueCalls, 1);
-  equal(disposedAtEnqueue, false);
+    equal(handoffCalls, 1);
+    equal(disposedAtHandoff, false);
+  } finally {
+    globalThis.fetch = nativeFetch;
+  }
+});
+
+await run('shutdown releases inventory waiters only after deletion and journal drains', async () => {
+  const root = new FakeElement();
+  const app = new BeanieApp(root as unknown as HTMLElement);
+  const events: string[] = [];
+  const harness = app as unknown as {
+    shotDeletionFlow: { disposeAndWait(): Promise<void> };
+    doseMutationReconciler: { dispose(): Promise<void> };
+    beanInventory: { releaseAllPendingRemainingWeights(): void };
+    gatewayMutations: { disposeAndWait(): Promise<void> };
+  };
+  harness.shotDeletionFlow.disposeAndWait = async () => { events.push('deletion'); };
+  harness.doseMutationReconciler.dispose = async () => { events.push('journal'); };
+  harness.beanInventory.releaseAllPendingRemainingWeights = () => { events.push('release'); };
+  harness.gatewayMutations.disposeAndWait = async () => { events.push('gateway'); };
+
+  await app.disposeAsync();
+
+  equal(events.join(','), 'deletion,journal,release,gateway');
+});
+
+await run('recovered deletion projection does not clear unrelated foreground busy state', () => {
+  const root = new FakeElement();
+  const app = new BeanieApp(root as unknown as HTMLElement);
+  const shot = {
+    id: 'recovered-shot',
+    timestamp: '2026-07-12T10:00:00.000Z',
+    workflow: { context: {} },
+    measurements: []
+  };
+  const harness = app as unknown as {
+    state: { busy: boolean; status: string; shots: Array<{ id: string }> };
+    setState(next: Record<string, unknown>): void;
+    commitShotDeletionResult(result: Record<string, unknown>, recovered: boolean): void;
+  };
+  harness.setState({
+    busy: true,
+    status: 'Saving settings',
+    shots: [shot],
+    shotsTotal: 1,
+    detailShotId: shot.id
+  });
+
+  harness.commitShotDeletionResult({
+    type: 'deleted',
+    shotId: shot.id,
+    remote: true,
+    deleteAlreadyAbsent: true,
+    reclaim: null,
+    status: 'Shot already deleted',
+    inventoryReviewBeanId: null,
+    shotProjection: {
+      shots: [],
+      shotsTotal: 1,
+      detailShotId: null,
+      compareShotId: null,
+      removed: true,
+      removedCurrentDetail: true
+    }
+  }, true);
+
+  equal(harness.state.shots.length, 0);
+  equal(harness.state.busy, true);
+  equal(harness.state.status, 'Saving settings');
+  app.dispose();
 });
 
 await run('a delayed demo delete cannot remove shots from the replacement live runtime', async () => {

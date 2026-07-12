@@ -489,28 +489,80 @@ explicit external contract gap, not hidden client certainty.
 
 ### Delete / reclaim boundary
 
-Shot deletion is a two-resource workflow. On a normal remote deletion the
-current sequence is:
+Shot deletion is a two-resource workflow. A reclaiming remote deletion uses one
+transaction in the same outbox as dose work:
 
 ```text
-DELETE shot -> enqueue pending-dose-reclaim -> invalidate shot cache
+persist pending-shot-delete-reclaim on bean aggregate
+  -> acquire exact shot:<id> lane
+  -> claim known transaction by id
+  -> DELETE shot
+  -> atomically acknowledge source + release pending-dose-reclaim child
+  -> invalidate shot cache
 ```
 
-Putting cache cleanup last avoids widening the important interval, and once the
-reclaim is journaled it receives the same retry, aggregate ordering, and
-tombstone guarantees as a deduction, subject to the selected durability mode.
-However, a process crash after DELETE succeeds and before the enqueue commits
-can still leave the deleted shot's dose deducted from inventory. A later DELETE
-then reports 404, which proves only that the shot is absent—not who deleted it or
-whether inventory was already reclaimed. Beanie therefore resumes reclaim on
-404 only when its outbox (or explicit volatile intake) already contains that
-shot/batch reclaim; it does not invent a new one from stale modal data.
+The source key is shot-only
+(`shot-delete-reclaim:v1:<shotId>`), so retrying the same shot with changed
+bean, batch, or dose identity is an idempotency conflict. Its payload keeps the
+first admission's `expectedRemaining` heuristic and occupies the
+`bean-inventory:<beanId>` causal position before DELETE. The exact by-id claim
+deliberately ignores aggregate-head eligibility: DELETE is physically
+serialized by the shot lane while the source record reserves the future
+inventory slot. The claim happens only after acquiring that lane, immediately
+before HTTP dispatch, so it cannot expire while waiting behind another delete.
 
-Closing this gap requires a combined delete/reclaim command persisted before
-DELETE and a state transition that releases the reclaim only after deletion is
-acknowledged. If the process restarts into a 404, that pre-existing command is
-the ownership evidence authorizing the inverse delta. Gateway-side idempotency
-receipts remain necessary for true cross-device exactly-once execution.
+The handoff is one backend mutation. It verifies the active source lease,
+records the DELETE outcome, and creates or deduplicates the normal reclaim
+child on the same aggregate. A new child inherits the source's `createdAt`
+slot; an existing physically identical child keeps its first-admission payload
+and operational progress. A conflicting child aborts the entire mutation, so
+the source is not falsely acknowledged. The standard dose worker still claims
+only deduction/reclaim kinds and therefore cannot execute later same-bean work
+while the delete source occupies the aggregate head.
+
+This closes the local hard-crash gap:
+
+- before durable prepare, no DELETE is authorized;
+- after prepare but before or during DELETE, restart discovery retains the
+  source and retries it;
+- after a successful DELETE or lost response but before handoff, the lease
+  eventually expires and the owned retry receives 404, which authorizes the
+  atomic handoff;
+- after handoff, the existing dose worker owns the inverse delta and its normal
+  retry/tombstone rules apply.
+
+Persistent evidence is mandatory. IndexedDB is preferred and localStorage is
+accepted only under its documented single-context limitation; memory and
+volatile intake fail before DELETE. Missing/untracked bag weight also fails
+before DELETE because the flow cannot create a replay heuristic safely.
+Startup reserves every unsettled delete transaction so foreground stock writes
+cannot overtake it, but does **not** overlay `expectedRemaining` until the
+reclaim child exists. One `pendingWork()` snapshot classifies sources and
+children together; the shell seeds those sources into deletion recovery before
+it starts, closing the cross-context race where a handoff could otherwise occur
+between two discovery reads. The source reservation is transferred
+synchronously to the child before source waiters are released.
+
+The first durable shot intent wins. If DELETE is queued and the visible shot is
+submitted again without reclaim, the flow resumes/queues the existing source
+instead of issuing a bare DELETE. It cannot safely cancel after a lost response
+because the shot may already be absent while the inverse delta is still owed.
+A physically conflicting reclaim child is a deterministic invariant failure,
+not a network retry: the source is acknowledged `not-applicable`, the shot
+deletion remains truthful, and the bean is flagged for manual inventory review
+so one corrupt command cannot block the aggregate forever.
+
+An owned 404 is local evidence that this client intended the combined
+operation, not a gateway receipt proving which device deleted the shot. A
+no-reclaim/bare 404 never invents an inventory delta, and gateway-side DELETE
+idempotency receipts are still required for true cross-device exactly-once
+execution when multiple devices race.
+
+Cache invalidation is deliberately after the atomic physical handoff and is not
+part of that transaction. A crash in this final auxiliary interval cannot lose
+or duplicate inventory work, but cached/offline History may remain stale until
+the next connected shot refresh. A future durable cleanup marker can close that
+presentation-only gap.
 
 ## Dependency enforcement
 
@@ -557,12 +609,16 @@ Beanie shuts down outside-in:
    remove the store push handler;
 2. suspend presentation producers/consumers;
 3. stop supervised sockets;
-4. stop new deletion/dose admissions, release local inventory waiters, and
-   drain admitted DELETE, journal admission, durable worker, and command work;
-5. after command continuations run, drain the serialized inventory-cache tail;
-6. drop telemetry subscribers;
-7. dispose render islands and shrink chart/native resources;
-8. cancel remaining one-shot domain safety timers.
+4. stop new deletion/dose admissions;
+5. drain admitted DELETE/handoff work, then dose admissions and the shared
+   reconciler/outbox;
+6. release only the remaining local inventory waiters and immediately dispose
+   the gateway command coordinator, so retained restart work cannot be
+   overtaken during teardown;
+7. after command continuations run, drain the serialized inventory-cache tail;
+8. drop telemetry subscribers;
+9. dispose render islands and shrink chart/native resources;
+10. cancel remaining one-shot domain safety timers.
 
 Queued commands become disposed. An already-started physical command is allowed
 to report its real result; stale UI leases prevent it from mutating a dead app.
