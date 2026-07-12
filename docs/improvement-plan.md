@@ -49,32 +49,38 @@ the items deliberately deferred, so future work can pick them up with context.
   `beanWorkflow.saveBean`; shot-metadata saves share `persistShotUpdate`; the
   detail/calibrator chart model is cached per shot instead of being rebuilt on
   every render.
+- Architecture extraction: one `GatewayMutationCoordinator` now owns command
+  scheduling; `MachineWorkflowCommands` is the typed authority for physical
+  mutations; and recipe apply, settings-store sync, cleaning execution, machine
+  action, and machine-service lifecycles have dedicated controllers/flows.
+  Controllers expose narrow snapshots/events/outcomes rather than `AppState`.
+  Targeted settings-bundle operations preserve unrelated concurrent edits on
+  rollback, and `commandArchitectureGuard.test.ts` protects the ownership
+  boundaries. See [architecture.md](architecture.md#mutation-and-machine-command-topology)
+  for the command and state invariants.
 
 ## Deferred — architecture debt (ordered by value)
 
-Per docs/architecture.md, workflow policy should leave `BeanieApp`. The biggest
-liftable chunks, none DOM/timer-coupled:
+Per [architecture.md](architecture.md), workflow policy should leave
+`BeanieApp`. With recipe application and the core command/service flows now
+extracted, the remaining liftable work starts here:
 
 1. **`freezeBatchPortion`** (app.ts, ~70 lines). The only batch flow bypassing
    `BeanWorkflowController`; has a partial-failure hole (createBatch succeeds,
    updateBatch fails → frozen batch exists remotely but never lands in state).
-2. **`applyDraft`** (app.ts, ~66 lines). The core dial-in apply policy
-   (request-id guards, draft-signature staleness, demo split, cache
-   write-through) is fully testable with injected deps; the debounce timer
-   stays in the shell.
-3. **Shot-end pipeline** (`saveFreshnessForCompletedShot` first — a textbook
+2. **Shot-end pipeline** (`saveFreshnessForCompletedShot` first — a textbook
    `shotMetadataController` job; the optimistic list-merge policy in
    `onShotEnded`/`refreshShotsAfterLiveShot` later).
-4. **`deleteShot`** → `shotMetadataController`; **`savePluginConfig`** secret
+3. **`deleteShot`** → `shotMetadataController`; **`savePluginConfig`** secret
    merge → `domain/pluginSettings`; small optimistic one-offs
    (`setNoScaleBlock`, `setMachineRefillLevel`, `togglePlugin`, …) → their
    matching controllers.
-5. **Shared demo/remote save helper.** Six controller save flows repeat the
+4. **Shared demo/remote save helper.** Six controller save flows repeat the
    same skeleton (demo id minting, `(demo)` status suffix, fail-soft cache
    write). A `saveWithDemoFallback` helper would collapse ~150 lines.
-6. **Profile (de)serialization out of `profileEditor.ts`** (the
+5. **Profile (de)serialization out of `profileEditor.ts`** (the
    `readStep`/`writeStep`/alias tables, ~200 lines) into `domain/profileModel`.
-7. **`hotWaterDataForNativeWorkflow`** and the thrice-duplicated
+6. **`hotWaterDataForNativeWorkflow`** and the thrice-duplicated
    `positiveNumber`/`formatNumber` helpers → `domain/waterSettings`.
 
 ## Deferred — smaller cleanups
@@ -95,8 +101,9 @@ liftable chunks, none DOM/timer-coupled:
 - `shotGraphModel` computes `maxY`/`hasData`/`missingSeries` that production
   discards; the fixed `maxY: 12` silently clips spikes — consider
   `Math.max(12, model.maxY)`.
-- Consecutive `setState` calls in `machineAction`/`wake`/`stopHotWaterAtWeight`
-  cause 2–4 full innerHTML rebuilds per action — coalesce where statuses allow.
+- Consecutive shell projections around wake and hot-water weight-stop outcomes
+  can still cause multiple full innerHTML rebuilds — coalesce where statuses
+  allow without moving lifecycle ownership back into `BeanieApp`.
 - `cache.ts` writes `schemaVersion` per entry but never reads it — check on
   read or clear stores on version bump.
 - Demo fidelity gaps: scanner extraction skips the empty-photos validation,

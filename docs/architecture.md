@@ -47,7 +47,54 @@ The live shot path is intentionally more direct for performance:
 - While brewing, Beanie patches stable DOM readouts and redraws the canvas
   instead of re-rendering the whole app.
 
+### Mutation And Machine Command Topology
+
+All queued gateway mutations share one scheduler. Feature controllers submit
+through narrow ports; they do not create coordinators or call physical machine
+transports directly.
+
+```text
+BeanieApp (composition and UI projection)
+  -> feature controllers
+       -> MachineWorkflowCommands (physical machine mutations)
+            -> GatewayMutationCoordinator
+       -> GatewayMutationCoordinator (other keyed gateway mutations)
+            -> WorkflowCommandCoordinator (one concrete instance)
+                 -> injected gateway transports
+```
+
+[`GatewayMutationCoordinator`](../src/runtime/gatewayMutationCoordinator.ts)
+is the application-facing owner of the low-level scheduler. It exposes exact
+FIFO barriers and keyed latest-wins submissions without exposing the underlying
+policy API. [`MachineWorkflowCommands`](../src/controllers/machineWorkflowCommands.ts)
+is the only typed authority for physical workflow, calibration, machine-setting,
+refill, and state mutations. Compound commands receive an owned machine lane so
+their steps stay contiguous without submitting nested work to the same queue.
+
 ## Directory Responsibilities
+
+### `src/architecture/`
+
+Executable dependency-direction policy. `dependencyPolicy.ts` defines the
+allowed layer graph and names each temporary file-to-file exception with a
+reason and migration. Add a narrow debt entry only for a deliberate transition;
+remove it in the same change that removes the dependency.
+
+### `src/runtime/`
+
+Shared lifecycle, authority, and mutation-scheduling primitives.
+
+- `workflowCommandCoordinator.ts`: low-level exact-FIFO/latest-wins scheduling
+  policy. Feature code must not instantiate it.
+- `gatewayMutationCoordinator.ts`: the single application-facing scheduler
+  owner and the narrow mutation port injected into controllers.
+- `operationAuthority.ts`: cancellation/staleness authority for multi-step
+  operations.
+- `backgroundTask.ts`, `disposableScope.ts`, and `presentationActivity.ts`:
+  bounded asynchronous work, disposal, and presentation lifecycle helpers.
+
+Runtime modules define cross-feature mechanics, not product workflow policy.
+Feature-specific orchestration belongs in `src/controllers/`.
 
 ### `src/api/`
 
@@ -86,6 +133,8 @@ Examples:
 - `resourceState.ts`: shared source/writability metadata for independently
   loaded resources.
 - `settingsModel.ts`: declarative settings UI model.
+- `settingsBundleMutation.ts`: targeted settings-bundle operations and their
+  pure reducer.
 - `shotRecord.ts`: service-shot filtering.
 
 Prefer domain modules for deterministic calculations and reusable policy that
@@ -112,23 +161,36 @@ Current controller map:
 | Controller | Owns |
 | --- | --- |
 | `beanWorkflowController.ts` | Bean selection, bean/batch/grinder mutation policy, optimistic rollback, cache invalidation decisions. |
+| [`cleaningExecutionFlow.ts`](../src/controllers/cleaningExecutionFlow.ts) | Cleaning workflow staging and the one exact machine-lane command that loads and optionally starts it, with explicit completion/authority/cancellation outcomes. |
 | `cleaningWorkflowController.ts` | Cleaning start blockers, cleaning workflow creation/load result, finish/count/profile-pick plans. |
 | `cleaningWizardController.ts` | Cleaning wizard step transitions and action completion. |
 | `derekController.ts` / `derekFlow.ts` | Derek question state, streaming lifecycle, suggestions, and saved-answer restoration. |
 | `doseMutationReconciler.ts` | Durable dose-deduction replay and conflict-safe reconciliation. |
 | `liveShotController.ts` | Shot completion matching, polling, fallback, and shot-end routing decisions. |
+| [`machineActionFlow.ts`](../src/controllers/machineActionFlow.ts) | Physical start/stop admission, repeated dispatch-time safety, and contiguous workflow/calibration/state commands. |
 | `machineExecutionController.ts` | Machine command preflight, hot-water weight stop orchestration, steam workflow padding/restore, command gateway sequencing. |
 | `machineServiceController.ts` | Machine service progress/timer/stop-request state transitions. |
+| [`machineServiceFlow.ts`](../src/controllers/machineServiceFlow.ts) | Ongoing service lifecycle after start: progress, timed/manual stop, duration extension, restoration, stop feedback, timers, events, and disposal. |
 | `machineSettingsWorkflowController.ts` | Steam/water/flush workflow persistence, preset/value planning, steam purge readback, settings patch planning. |
+| [`machineWorkflowCommands.ts`](../src/controllers/machineWorkflowCommands.ts) | Typed physical-mutation authority, desired/confirmed workflow tracking, live-authority checks, and non-nestable owned lanes. |
 | `profileEditorController.ts` | Profile save persistence, favorite profile policy, profile picker/editor input decisions. |
 | `profileEditorFlow.ts` | Profile editor session ownership and UI-facing orchestration. |
+| [`recipeApplyController.ts`](../src/controllers/recipeApplyController.ts) | Recipe staging, semantic operation authority, debounce/wake deferral, and latest-wins workflow/calibration persistence. |
 | `scannerFlow.ts` | Scanner onboarding, image conversion, Gemini request lifecycle, review, and save orchestration. |
 | `settingsController.ts` | Reaprime settings/account/device/plugin operations. |
+| [`settingsStoreSync.ts`](../src/controllers/settingsStoreSync.ts) | Synced-store load/poll/reload fencing, synchronous write admission, per-key latest-wins writes, retry/discard, snapshots, and disposal. |
 | `shotMetadataController.ts` | Shot score/edit persistence, demo behavior, cache update/failure decisions. |
 
 If a new flow has more than one async step, optimistic state, demo/remote split,
 cache invalidation, rollback, or user-facing status policy, it probably belongs
 in a controller.
+
+Controllers own their public state contracts. Define a feature-specific
+readable snapshot interface containing only the fields the controller needs,
+plus precise patch, event, request, and outcome types. The shell can satisfy
+these structurally, but a controller must not import `BeanieApp`, `AppState`, or
+an app-wide state mutation surface. [`scannerFlowContract.ts`](../src/controllers/scannerFlowContract.ts)
+is an example of a narrow controller-owned boundary.
 
 ### `src/views/`
 
@@ -395,16 +457,25 @@ controller/domain function and keep only the adapter in `BeanieApp`.
 
 Use existing machine modules first:
 
+- physical mutation scheduling and authority:
+  `machineWorkflowCommands.ts` through the shared
+  `GatewayMutationCoordinator`
+- physical start/stop admission and compound start commands:
+  `machineActionFlow.ts`
+- cleaning workflow load/start commands:
+  `cleaningExecutionFlow.ts`
+- recipe staging, debounce, and apply commands:
+  `recipeApplyController.ts`
 - value/preset/workflow persistence:
   `machineSettingsWorkflowController.ts`
-- action preflight/gateway sequencing/restore:
-  `machineExecutionController.ts`
-- active service progress and timers:
-  `machineServiceController.ts` and `domain/machineService.ts`
+- active service lifecycle, restoration, progress, and timers:
+  `machineServiceFlow.ts`, `machineServiceController.ts`, and
+  `domain/machineService.ts`
 - reusable water/steam/flush specs:
   `domain/waterSettings.ts`
 
-Do not put machine timing math directly in `BeanieApp`.
+Do not create a second mutation scheduler, call raw physical gateway mutations
+from a feature, or put machine timing math directly in `BeanieApp`.
 
 ### Add Shot Metadata Behavior
 
@@ -430,9 +501,40 @@ Do not mix profile serialization policy into `BeanieApp`.
 ### App State
 
 `AppState` lives in `src/app.ts`. New top-level state should be added only when
-it is truly UI/application state. If the state is owned by a controller, prefer
-the controller returning the next value instead of hiding mutable state inside
-the controller.
+it is truly UI/application state. Stateful controllers expose immutable narrow
+snapshots and events; `BeanieApp` projects those into `AppState` and rendering.
+Controllers that need to read or patch shell-owned state declare their own
+minimal structural interfaces rather than accepting `AppState` or a generic
+`setState` function. This keeps ownership explicit and prevents a controller
+from becoming a second shell.
+
+### Command And Mutation Invariants
+
+These are architectural constraints, not local implementation preferences:
+
+1. **One scheduler.** The runtime owns one `GatewayMutationCoordinator`, and it
+   is the only concrete owner of `WorkflowCommandCoordinator`. Controllers
+   receive its submission port or `MachineWorkflowCommands`; they never create
+   an independent command queue.
+2. **Desired is not confirmed.** `MachineWorkflowCommands` keeps the latest
+   local desired workflow separate from the gateway-confirmed shadow workflow.
+   Staging new intent must not falsely advance confirmed state, and a late
+   confirmation must not overwrite newer desired intent.
+3. **The owned machine lane is non-nestable.** A compound command submits once
+   and performs its ordered physical steps through the supplied
+   `OwnedMachineLane`. The lane deliberately has no scheduling method, because
+   nesting a submission on the same resource can deadlock or interleave work.
+4. **Authority is checked per step.** Admission checks improve feedback, but
+   live authority can disappear while a command is queued or between requests.
+   Revalidate at dispatch and immediately before every physical gateway side
+   effect in an owned lane.
+5. **`stopSafely()` is the only offline physical exception.** It is
+   argument-free and may request only `idle`. Wake, start, workflow, settings,
+   calibration, and refill mutations always require live authority.
+6. **Rollback is targeted.** Settings optimism uses operations from
+   [`settingsBundleMutation.ts`](../src/domain/settingsBundleMutation.ts).
+   Apply the inverse operation to the latest bundle; never restore an old whole
+   bundle or collection, which would erase unrelated concurrent changes.
 
 ### Resource Provenance
 
@@ -477,11 +579,15 @@ Direct gateway calls should be limited to:
 
 - `src/api/gateway.ts`
 - repositories
-- controller dependency adapters in `BeanieApp`
+- composition adapters in `BeanieApp`
 - `settingsController.ts` where it is constructed around the gateway
 
-If a controller needs the gateway, inject the operation. That keeps tests small
-and prevents controller code from becoming a second app shell.
+Physical mutation adapters are additionally constrained: raw workflow,
+calibration, machine-setting, refill, and machine-state gateway calls belong in
+the single `MachineWorkflowCommands` transport adapter assembled by
+`BeanieApp`. If a controller needs the gateway, inject a narrow operation or
+command port. That keeps tests small and prevents controller code from becoming
+a second app shell.
 
 ### Rendering
 
@@ -555,11 +661,55 @@ Test at the lowest useful boundary:
 Do not rely on `BeanieApp` harness tests for controller policy. The harness is
 for shell wiring.
 
+[`commandArchitectureGuard.test.ts`](../src/test/commandArchitectureGuard.test.ts)
+is an AST-level architecture test. It enforces the single scheduler owner,
+rejects legacy command coordinators, confines raw physical gateway mutations to
+the `MachineWorkflowCommands` transport adapter, and prevents controllers from
+depending on `app.ts` or `AppState`. Treat a failure as an ownership violation:
+fix the dependency direction instead of weakening the guard unless an explicit,
+documented migration changes the invariant.
+
+`dependencyArchitecture.test.ts` separately enforces the layer graph in
+`src/architecture/dependencyPolicy.ts` and rejects stale debt entries. Passing
+one architecture guard does not substitute for the other.
+
+The scheduler, machine command authority, recipe apply, settings-store sync,
+targeted settings mutation, cleaning execution, machine action, and machine
+service flows each have focused tests beside the rest of `src/test/`. When a
+command spans several physical steps, assert order, loss of authority between
+steps, cancellation/disposal, and the absence of nested scheduling.
+
+## AI-Agent Maintenance Protocol
+
+For architecture-affecting work, agents should follow this short protocol:
+
+1. Read this guide, the controller or runtime owner being changed, and
+   `commandArchitectureGuard.test.ts` before editing.
+2. Name the single owner of each state transition and side effect. Extend the
+   existing owner through a narrow port or controller-owned contract instead of
+   adding a parallel queue, authority, or shell workflow.
+3. Preserve all six command/mutation invariants above. In particular, submit a
+   compound physical command once, pass immutable requests into it, and project
+   explicit snapshots/events/outcomes back into the shell.
+4. Add tests at the lowest boundary, including stale authority, supersession,
+   partial failure, rollback against newer state, and disposal where relevant.
+5. Run `npm test` and `npm run build`. If ownership or a public contract moved,
+   update this guide in the same change and verify every local documentation
+   link.
+
 ## Review Checklist For New Code
 
 Before considering a change done:
 
 - Did new workflow policy avoid `BeanieApp`?
+- Does the change use the one shared mutation scheduler and the existing
+  `MachineWorkflowCommands` authority for physical mutations?
+- Are desired intent and gateway-confirmed shadow state still distinct?
+- Does each physical step recheck authority, with `stopSafely()` remaining the
+  only offline exception?
+- Do optimistic failures apply targeted inverse operations to current state?
+- Does each controller expose a narrow controller-owned contract rather than
+  `AppState`?
 - Are gateway/cache dependencies injected into controllers?
 - Are views pure?
 - Are status strings tested when they encode policy?
@@ -576,6 +726,13 @@ Before considering a change done:
 Avoid these:
 
 - adding large business workflows directly to `BeanieApp`
+- instantiating another `WorkflowCommandCoordinator` or feature-local gateway
+  mutation queue
+- scheduling from inside an owned machine lane
+- passing `AppState`, a generic app-state patcher, or `BeanieApp` into a
+  controller
+- rolling back an entire settings bundle or array after a targeted optimistic
+  mutation
 - calling `gateway.*` from a view or component
 - reading DOM from a controller
 - importing singleton gateway/cache objects into pure policy modules

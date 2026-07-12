@@ -309,11 +309,14 @@ inversions are admitted only as exact file-to-file debt entries with a reason
 and migration. Removing an inversion makes its debt entry stale and fails the
 test, so the exception must be deleted in the same change.
 
-The largest remaining debt is flow hosts exposing `state(): AppState`. The
-target is narrow query/command ports plus operation leases and atomic guarded
-reducers. The migration order is scanner, Derek, profile editor, bean workflow,
-then the remaining app-local async counters. New whole-state flow dependencies
-are forbidden by policy rather than accepted as precedent.
+Scanner, Derek, and profile-editor flows now expose controller-owned narrow
+state/patch contracts instead of `state(): AppState`. Recipe, machine-action,
+cleaning, active-service, and settings-store concurrency likewise publish
+explicit requests, outcomes, snapshots, or events. The AST-level
+`commandArchitectureGuard.test.ts` prevents controllers from importing
+`app.ts`/`AppState`, confines physical gateway mutations to the one machine
+transport adapter, and prevents a second low-level command scheduler. Remaining
+inversions stay visible as exact debt entries rather than becoming precedent.
 
 ## Shutdown order
 
