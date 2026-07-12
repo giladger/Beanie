@@ -237,9 +237,9 @@ import {
   cleaningThresholdPlan,
   countShotForCleaningPlan,
   finishCleaningCyclePlan,
-  loadCleaningWorkflow,
   pickCleaningProfilePlan
 } from './controllers/cleaningWorkflowController';
+import { CleaningExecutionFlow } from './controllers/cleaningExecutionFlow';
 import {
   cleaningWizardBack,
   cleaningWizardNext,
@@ -814,6 +814,11 @@ export class BeanieApp {
       connected: this.state.startupPhase === 'connected',
       sleeping: this.machineIsSleeping()
     })
+  });
+  private readonly cleaningExecution = new CleaningExecutionFlow({
+    commands: this.machineWorkflowCommands,
+    hasLiveAuthority: () => this.hasLiveMachineAuthority(),
+    isNoScaleShotBlockError
   });
   private readonly settingsController = createSettingsController({
     ...gateway,
@@ -3119,74 +3124,47 @@ export class BeanieApp {
       return;
     }
     this.cleaningInProgress = true;
-    this.machineWorkflowCommands.stageDesired(plan.workflow);
     this.setState({ busy: true, status: plan.status });
-    if (this.state.demo) {
-      const result = await loadCleaningWorkflow(plan.workflow, true, {
-        updateWorkflow: (workflow) => Promise.resolve(workflow)
-      });
-      if (result.type === 'failed') {
-        this.cleaningInProgress = false;
-        this.setState({ busy: false, status: result.status });
-        return;
+    const execution = await this.cleaningExecution.execute({
+      workflow: plan.workflow,
+      demo: this.state.demo,
+      startShot,
+      espresso: {
+        steamSettings: this.currentSteamSettings(plan.workflow),
+        hotWaterData: this.currentHotWaterData(plan.workflow),
+        rinseData: this.currentRinseData(plan.workflow),
+        twoTapSteamStop: this.usesTwoTapSteamStop()
       }
-      this.state.workflow = result.workflow;
-      if (!startShot) {
-        this.setState({ busy: false, status: 'Press the GHC to run the cleaning flush' });
-        return;
-      }
-      const started = await this.machineAction('espresso', { skipScaleCheck: true });
-      if (!started) {
-        this.cleaningInProgress = false;
-        void this.applyDraft();
-      }
-      return;
-    }
-
-    // Loading the cleaning workflow and starting the physical pull is one
-    // exact lane command. A pending recipe apply therefore cannot slip between
-    // those two awaits and make the machine run the wrong profile.
-    const preparedCleaningAction = this.prepareMachineActionCommand('espresso', plan.workflow);
-    const coordinated = await this.machineWorkflowCommands.runExact(
-      async (lane) => {
-        const result = await loadCleaningWorkflow(plan.workflow, false, {
-          updateWorkflow: (workflow) => lane.updateWorkflow(workflow)
-        });
-        const command = result.type !== 'failed' && startShot
-          ? await this.sendMachineActionInOwnedLane({
-              ...preparedCleaningAction,
-              workflow: result.workflow
-            }, lane)
-          : null;
-        return { result, command };
-      }
-    );
-    if (coordinated.status !== 'completed') {
+    });
+    if (this.disposed) return;
+    if (
+      execution.type === 'failed' ||
+      execution.type === 'authority' ||
+      execution.type === 'canceled'
+    ) {
       this.cleaningInProgress = false;
-      const error = coordinated.status === 'failed'
-        ? coordinated.error
-        : new Error(`Cleaning command ${coordinated.status}`);
-      console.error('[Beanie] Cleaning profile load failed', error);
-      this.setState({ busy: false, status: 'Cleaning profile failed' });
+      if (execution.type === 'failed') {
+        console.error('[Beanie] Cleaning execution failed', execution.error);
+        if (execution.noScaleBlocked) this.showNoScaleShotWarning({ busy: false });
+        else this.setState({ busy: false, status: execution.status });
+        if (execution.phase === 'start') void this.applyDraft();
+      } else {
+        this.setState({ busy: false, status: execution.status });
+      }
       return;
     }
-    const { result, command } = coordinated.value;
-    if (result.type === 'failed') {
-      this.cleaningInProgress = false;
-      console.error('[Beanie] Cleaning profile load failed', result.error);
-      this.setState({ busy: false, status: result.status });
-      return;
-    }
-    this.state.workflow = result.workflow;
-    if (!startShot) {
+    this.state.workflow = execution.workflow;
+    if (execution.type === 'loaded') {
       // GHC: cleaning profile is loaded and we stay armed. Do NOT restore the
       // recipe — the user starts the flush on the GHC with the profile in place.
-      this.setState({ busy: false, status: 'Press the GHC to run the cleaning flush' });
+      this.setState({ busy: false, status: execution.status });
       return;
     }
-    // The cleaning plan already performed water/sleep preflight and cleaning
-    // profiles are exempt from the ordinary espresso scale gate.
-    const started = command != null && this.finishMachineAction('espresso', null, command);
+    const command: SendMachineActionCommandResult = execution.source === 'demo'
+      ? { type: 'sent', status: execution.status, restore: null }
+      : execution.command;
+    const started = this.finishMachineAction('espresso', null, command);
+    if (started && execution.source === 'demo') this.startSimulatedShot();
     if (!started) {
       // The pull never started: leave cleaning mode so the next real shot is
       // not treated as a cleaning cycle, and re-apply the user's draft to put
