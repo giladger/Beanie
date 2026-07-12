@@ -16,6 +16,10 @@ import {
   type WakeAppZonePosition
 } from './domain/settings';
 import { waterTankMlFromMm } from './domain/waterTank';
+import {
+  draftRecipeFingerprint,
+  recipeFingerprint
+} from './domain/recipeIdentity';
 
 export type LiveChartMode = 'preset30' | 'auto';
 
@@ -237,24 +241,11 @@ export function liveChartHideMaxTimeLabel(mode: LiveChartMode, maxTime: number):
 }
 
 export function draftSignature(draft: RecipeDraft): string {
-  return signatureOf(
-    draft.profileTitle ?? null,
-    draft.dose ?? null,
-    draft.yield ?? null,
-    draft.grinderModel ?? null,
-    draft.grinderSetting ?? null
-  );
+  return draftRecipeFingerprint(draft);
 }
 
 export function workflowSignature(workflow: Workflow | null): string {
-  const ctx = workflow?.context;
-  return signatureOf(
-    workflow?.profile?.title ?? null,
-    typeof ctx?.targetDoseWeight === 'number' ? ctx.targetDoseWeight : null,
-    typeof ctx?.targetYield === 'number' ? ctx.targetYield : null,
-    ctx?.grinderModel ?? null,
-    ctx?.grinderSetting != null ? String(ctx.grinderSetting) : null
-  );
+  return recipeFingerprint(workflow);
 }
 
 export function isThemePreference(value: string | undefined): value is ThemePreference {
@@ -384,14 +375,4 @@ function isSimulatorMachine(info: MachineInfo): boolean {
     .toLowerCase();
   if (text.includes('mock') || text.includes('simulator') || text.includes('simulated')) return true;
   return info.extra?.simulated === true || info.extra?.simulation === true;
-}
-
-function signatureOf(
-  profileTitle: string | null,
-  dose: number | null,
-  yieldValue: number | null,
-  grinderModel: string | null,
-  grind: string | null
-): string {
-  return JSON.stringify([profileTitle, dose, yieldValue, grinderModel, grind]);
 }

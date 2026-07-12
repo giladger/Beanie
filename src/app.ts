@@ -44,7 +44,6 @@ import {
 import {
   capitalize,
   clockLabel,
-  draftSignature,
   formatNumber,
   isBrewState,
   isDecentAppWebView,
@@ -91,6 +90,11 @@ import {
   shotFilterForBean,
   yieldForRatio
 } from './domain/beanWorkflow';
+import {
+  createRecipeCandidate,
+  recipeOperationSubject,
+  type RecipeCandidate
+} from './domain/recipeIdentity';
 import { batchOptionLabel, dateInputValue } from './domain/beanDisplay';
 import {
   markStorageEventsMigrated,
@@ -1840,6 +1844,9 @@ export class BeanieApp {
       writeLastBeanId: options.remember === false ? () => {} : writeLastBeanId
     });
     if (!selection) return;
+    if (this.applyTimer != null) window.clearTimeout(this.applyTimer);
+    this.applyTimer = null;
+    this.applyAuthority.invalidate(new Error(`Superseded by bean selection ${beanId}`));
     // A staged Derek tweak belongs to the bean it was suggested for.
     this.setState({ ...selection.state, derekTweakChip: null });
 
@@ -2297,8 +2304,8 @@ export class BeanieApp {
   }
 
   private async applyDraft(): Promise<void> {
-    const bean = this.selectedBean();
-    if (!bean) return;
+    const candidate = this.currentRecipeCandidate();
+    if (!candidate) return;
 
     if (!this.state.demo && this.state.startupPhase !== 'connected') {
       this.setState({ applyState: 'stale', status: 'Recipe changes are read-only until live data reconnects' });
@@ -2311,11 +2318,8 @@ export class BeanieApp {
       return;
     }
 
-    const draft = normalizeDraft(this.state.draft, this.state.profiles, this.state.grinders);
-    const batch = this.selectedBatch();
-    const update = buildWorkflowUpdate(bean, batch, draft, draft.profile, this.state.workflow);
-    this.machineWorkflowDesired = update;
-    const signature = draftSignature(draft);
+    const { draft, workflow: update, fingerprint: signature } = candidate;
+    this.stageRecipeCandidate(candidate);
     const appliedProfileTitle = draft.profileTitle ?? draft.profile?.title ?? null;
     this.setState({ applyState: 'pending', status: 'Applying workflow' });
     if (this.state.demo) {
@@ -2339,7 +2343,7 @@ export class BeanieApp {
       ? resolvedCalibration
       : null;
     const persistCalibration = calibrationTarget != null && !this.settingsLocal;
-    const operation = this.applyAuthority.begin(`recipe:${signature}`);
+    const operation = this.applyAuthority.begin(recipeOperationSubject(signature));
     try {
       const outcome = await this.workflowCommands.submit(
         'machine',
@@ -2361,9 +2365,7 @@ export class BeanieApp {
       if (outcome.status === 'completed') {
         const workflow = outcome.value;
         void beanieCache.putWorkflow(workflow).catch(() => {});
-        const currentSignature = draftSignature(
-          normalizeDraft(this.state.draft, this.state.profiles, this.state.grinders)
-        );
+        const currentSignature = this.currentRecipeCandidate()?.fingerprint ?? null;
         if (currentSignature !== signature) {
           operation.commit(() => this.setState({
             workflow,
@@ -2393,9 +2395,7 @@ export class BeanieApp {
         }));
       } else {
         const error = outcome.error;
-        const currentSignature = draftSignature(
-          normalizeDraft(this.state.draft, this.state.profiles, this.state.grinders)
-        );
+        const currentSignature = this.currentRecipeCandidate()?.fingerprint ?? null;
         if (currentSignature !== signature) {
           operation.commit(() => this.setState({ applyState: 'stale', status: 'Draft changed; applying soon' }));
           return;
@@ -2468,8 +2468,9 @@ export class BeanieApp {
   // Debounced auto-apply: any dial-in edit pushes the draft to the workflow
   // 200ms after the last change, so there is no manual Apply button.
   private scheduleApply(): void {
-    const bean = this.selectedBean();
-    if (!bean) return;
+    const candidate = this.currentRecipeCandidate();
+    if (!candidate) return;
+    this.stageRecipeCandidate(candidate);
     if (!this.state.demo && this.state.startupPhase !== 'connected') {
       if (this.applyTimer != null) window.clearTimeout(this.applyTimer);
       this.applyTimer = null;
@@ -2479,20 +2480,38 @@ export class BeanieApp {
     // Desired workflow changes at edit time, not 200ms later when the debounce
     // fires. A physical Shot command can now capture and persist this exact
     // draft even if the timer has not run yet.
-    const draft = normalizeDraft(this.state.draft, this.state.profiles, this.state.grinders);
-    this.machineWorkflowDesired = buildWorkflowUpdate(
-      bean,
-      this.selectedBatch(),
-      draft,
-      draft.profile,
-      this.state.workflow
-    );
     if (this.state.applyState !== 'pending') this.setState({ applyState: 'pending' });
     if (this.applyTimer != null) window.clearTimeout(this.applyTimer);
     this.applyTimer = window.setTimeout(() => {
       this.applyTimer = null;
       void this.applyDraft();
     }, 200);
+  }
+
+  private currentRecipeCandidate(): (RecipeCandidate & { draft: RecipeDraft }) | null {
+    const bean = this.selectedBean();
+    if (!bean) return null;
+    const draft = normalizeDraft(this.state.draft, this.state.profiles, this.state.grinders);
+    const workflow = buildWorkflowUpdate(
+      bean,
+      this.selectedBatch(),
+      draft,
+      draft.profile,
+      this.state.workflow
+    );
+    return { ...createRecipeCandidate(workflow), draft };
+  }
+
+  private stageRecipeCandidate(candidate: RecipeCandidate): void {
+    const subject = recipeOperationSubject(candidate.fingerprint);
+    const activeSubject = this.applyAuthority.currentSubjectKey;
+    // Revocation happens at edit time, before the debounce. An older gateway
+    // request may still settle, but it no longer owns a UI commit and cannot
+    // temporarily publish Applied for a recipe the user has already changed.
+    if (activeSubject != null && activeSubject !== subject) {
+      this.applyAuthority.invalidate(new Error(`Superseded by staged ${subject}`));
+    }
+    this.machineWorkflowDesired = candidate.workflow;
   }
 
   private loadShotRecipe(shotId: string, opts: { skipDerekTip?: boolean } = {}): void {
@@ -5117,8 +5136,9 @@ export class BeanieApp {
     }
     if (this.disposed || this.state.busy || !this.canResyncRecipe()) return;
     // The selected coffee can travel in the workflow (context.beanId) or, when
-    // the workflow carries no bean, in last-bean-id; the recipe signature omits
-    // the bean. Check all three so any of them re-syncs.
+    // the workflow carries no bean, in last-bean-id. The fingerprint includes
+    // workflow bean identity, while the explicit checks also cover the local
+    // selection fallback used by older workflows.
     const lastBeanId = readLastBeanId();
     const newBeanId = workflow.context?.beanId ?? null;
     const currentBeanId = this.state.workflow?.context?.beanId ?? null;

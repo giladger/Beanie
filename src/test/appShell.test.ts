@@ -215,6 +215,7 @@ run('app shell signatures compare draft and workflow recipe identity', () => {
   const draft: RecipeDraft = {
     profileId: 'profile',
     profileTitle: 'Profile',
+    profile: { title: 'Profile', steps: [] },
     dose: 18,
     yield: 36,
     grinderId: null,

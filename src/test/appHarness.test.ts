@@ -264,6 +264,56 @@ await run('queued machine mutations re-check live authority at dispatch', async 
   app.dispose();
 });
 
+await run('staging an edited recipe immediately revokes the older apply lease', () => {
+  const root = new FakeElement();
+  const app = new BeanieApp(root as unknown as HTMLElement);
+  const harness = app as unknown as {
+    setState(next: Record<string, unknown>): void;
+    scheduleApply(): void;
+    applyAuthority: {
+      begin(subjectKey: string): { signal: AbortSignal; isCurrent: boolean };
+      currentSubjectKey: string | null;
+    };
+  };
+  harness.setState({
+    settingsLoaded: true,
+    loading: false,
+    demo: true,
+    startupPhase: 'demo',
+    beans: [{ id: 'bean-new', roaster: 'Kawa', name: 'Bourbon' }],
+    selectedBeanId: 'bean-new',
+    batchesByBean: {
+      'bean-new': [{ id: 'batch-new', beanId: 'bean-new' }]
+    },
+    selectedBatchId: 'batch-new',
+    profiles: [],
+    grinders: [],
+    workflow: {
+      profile: { title: 'Old title', steps: [{ pressure: 8 }] },
+      context: { beanId: 'bean-old', targetDoseWeight: 17, targetYield: 34 }
+    },
+    draft: {
+      profileTitle: 'New title',
+      profile: { title: 'New title', steps: [{ pressure: 9 }] },
+      brewTemp: 93,
+      dose: 18,
+      yield: 40,
+      grinderId: 'grinder-new',
+      grinderModel: 'DF64',
+      grinderSetting: '5.5'
+    }
+  });
+  const olderApply = harness.applyAuthority.begin('recipe:old-fingerprint');
+
+  harness.scheduleApply();
+
+  // No timer tick or promise turn is needed: revocation happens while staging.
+  equal(olderApply.signal.aborted, true);
+  equal(olderApply.isCurrent, false);
+  equal(harness.applyAuthority.currentSubjectKey, null);
+  app.dispose();
+});
+
 await run('an offline Wake rejection keeps the sleeping presentation intact', async () => {
   const root = new FakeElement();
   const app = new BeanieApp(root as unknown as HTMLElement);
