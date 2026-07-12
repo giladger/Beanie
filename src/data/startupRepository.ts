@@ -10,11 +10,11 @@ import type {
 } from '../api/types';
 
 export interface StartupCache {
-  putWorkflow(workflow: Workflow | null): Promise<void>;
-  putBeans(beans: readonly Bean[]): Promise<void>;
-  putGrinders(grinders: readonly Grinder[]): Promise<void>;
-  putProfiles(profiles: readonly ProfileRecord[]): Promise<void>;
-  putShotPage(query: URLSearchParams, page: PaginatedShots): Promise<void>;
+  putWorkflow(workflow: Workflow | null, canCommit?: () => boolean): Promise<void>;
+  putBeans(beans: readonly Bean[], canCommit?: () => boolean): Promise<void>;
+  putGrinders(grinders: readonly Grinder[], canCommit?: () => boolean): Promise<void>;
+  putProfiles(profiles: readonly ProfileRecord[], canCommit?: () => boolean): Promise<void>;
+  putShotPage(query: URLSearchParams, page: PaginatedShots, canCommit?: () => boolean): Promise<void>;
   getWorkflow(): Promise<Workflow | null>;
   getBeans(): Promise<Bean[]>;
   getGrinders(): Promise<Grinder[]>;
@@ -29,6 +29,7 @@ interface LoadStartupOptions {
 export interface StartupRepositoryOptions {
   cache: StartupCache;
   loadStartup?: (options: LoadStartupOptions) => Promise<GatewayStartupSnapshot>;
+  canCommit?: () => boolean;
 }
 
 export async function loadGatewayStartupWithCache(
@@ -36,7 +37,8 @@ export async function loadGatewayStartupWithCache(
   options: StartupRepositoryOptions
 ): Promise<GatewayStartupSnapshot> {
   const startup = await (options.loadStartup ?? loadGatewayStartup)({ latestShotQuery });
-  await cacheStartupData(startup.data, latestShotQuery, options.cache);
+  const canCommit = options.canCommit ?? (() => true);
+  await cacheStartupData(startup.data, latestShotQuery, options.cache, canCommit);
   const cached = await cachedStartupData(latestShotQuery, options.cache);
   const workflow = mergeStartupResource(
     startup.resources.workflow,
@@ -103,14 +105,17 @@ function mergeStartupResource<T>(
 export async function cacheStartupData(
   data: GatewayStartupSnapshot['data'],
   latestShotQuery: URLSearchParams,
-  cache: StartupCache
+  cache: StartupCache,
+  canCommit: () => boolean = () => true
 ): Promise<void> {
   const writes: Array<Promise<void>> = [];
-  if (data.workflow !== undefined) writes.push(cache.putWorkflow(data.workflow));
-  if (data.beans !== undefined) writes.push(cache.putBeans(data.beans));
-  if (data.grinders !== undefined) writes.push(cache.putGrinders(data.grinders));
-  if (data.profiles !== undefined) writes.push(cache.putProfiles(data.profiles));
-  if (data.latestShots !== undefined) writes.push(cache.putShotPage(latestShotQuery, data.latestShots));
+  if (data.workflow !== undefined && canCommit()) writes.push(cache.putWorkflow(data.workflow, canCommit));
+  if (data.beans !== undefined && canCommit()) writes.push(cache.putBeans(data.beans, canCommit));
+  if (data.grinders !== undefined && canCommit()) writes.push(cache.putGrinders(data.grinders, canCommit));
+  if (data.profiles !== undefined && canCommit()) writes.push(cache.putProfiles(data.profiles, canCommit));
+  if (data.latestShots !== undefined && canCommit()) {
+    writes.push(cache.putShotPage(latestShotQuery, data.latestShots, canCommit));
+  }
   await Promise.all(writes.map((write) => write.catch(() => {})));
 }
 

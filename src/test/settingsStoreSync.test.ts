@@ -28,6 +28,35 @@ await run('remote writes are rejected before the caller changes an unavailable c
   equal(harness.commands.submissions.length, 0);
 });
 
+await run('a failed initial load releases its memoized attempt for recovery', async () => {
+  const harness = createHarness();
+  const first = harness.sync.loadInitial();
+  harness.repository.rejectLoad(0, new Error('offline'));
+  equal((await first).type, 'failed');
+
+  harness.repository.remote.set('size', 'large');
+  const retry = harness.sync.loadInitial();
+  equal(harness.repository.loadCalls.length, 2);
+  harness.repository.commitLoad(1);
+  equal((await retry).type, 'loaded');
+  equal(harness.sync.snapshot.available, true);
+  equal(harness.repository.cache.get('size'), 'large');
+});
+
+await run('external startup authority fences the initial cache publication', async () => {
+  const harness = createHarness();
+  harness.repository.remote.set('size', 'large');
+  let current = true;
+  const load = harness.sync.loadInitial(() => current);
+  current = false;
+  equal(harness.repository.loadCalls[0]?.canCommit(), false);
+  harness.repository.commitLoad(0);
+
+  equal((await load).type, 'fenced');
+  equal(harness.repository.cache.has('size'), false);
+  equal(harness.sync.snapshot.available, false);
+});
+
 await run('local mode admits cache changes without loading or submitting remote writes', async () => {
   const harness = createHarness({ local: true });
   const result = await harness.sync.loadInitial();
@@ -189,6 +218,19 @@ await run('a current poll failure is explicit and retains prior availability', a
   includesEvent(harness.events, 'poll-failed');
 });
 
+await run('external transport authority fences a poll and demotes availability', async () => {
+  const harness = await readyHarness();
+  harness.repository.remote.set('remote-only', 'fresh');
+  let current = true;
+  const poll = harness.sync.pollNow(() => current);
+  current = false;
+  harness.repository.commitPoll(0);
+
+  equal((await poll).type, 'fenced');
+  equal(harness.repository.cache.has('remote-only'), false);
+  equal(harness.sync.snapshot.available, false);
+});
+
 await run('a successful poll recovers availability after the initial load failed', async () => {
   const harness = createHarness();
   const load = harness.sync.loadInitial();
@@ -231,6 +273,24 @@ await run('discard and reload blocks writes, adopts authority, and clears failed
   equal(harness.sync.snapshot.failedWrites.length, 0);
   equal(harness.sync.snapshot.storeError, false);
   includesEvent(harness.events, 'reload-succeeded');
+});
+
+await run('an external authority fence prevents reload cache publication and write admission', async () => {
+  const harness = await readyHarness();
+  harness.repository.cache.set('size', 'safe-cache');
+  harness.repository.remote.set('size', 'stale-response');
+  let authority = true;
+
+  const reload = harness.sync.discardAndReload(() => authority);
+  authority = false;
+  harness.repository.commitPoll(0);
+  const result = await reload;
+
+  equal(result.type, 'fenced');
+  equal(harness.repository.cache.get('size'), 'safe-cache');
+  equal(harness.sync.snapshot.available, false);
+  equal(harness.sync.admitWrite('size', 'offline-change'), false);
+  includesEvent(harness.events, 'reload-fenced');
 });
 
 await run('discard and reload refuses pending writes and retains failures after a read error', async () => {

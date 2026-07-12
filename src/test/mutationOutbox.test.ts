@@ -4,6 +4,7 @@ import {
   MUTATION_OUTBOX_STORAGE_KEY,
   MUTATION_OUTBOX_STORE_NAME,
   DurableMutationOutbox,
+  doseAdjustmentPhysicalIdentity,
   MutationOutboxCorruptionError,
   legacyPendingDoseIdempotencyKey,
   pendingDoseIdempotencyKey,
@@ -163,6 +164,25 @@ run('claims due records in creation order and records explicit attempt metadata'
   equal(claimed[0]?.record.lease?.expiresAt, '2026-07-10T10:01:30.000Z');
   equal(claimed[0]?.leaseToken, 'lease-1');
   equal((await outbox.claimDue({ ownerId: 'other', leaseMs: 1_000 })).length, 0);
+});
+
+run('aggregate causal ordering survives a backwards caller clock without delaying work', async () => {
+  const { outbox } = fakeBackedOutbox();
+  const firstRequested = new Date('2026-07-10T11:00:00.000Z');
+  const secondRequested = new Date('2026-07-10T10:00:00.000Z');
+  const first = await outbox.enqueue({
+    ...doseCommand('optimistic-shot', 'batch-1'),
+    createdAt: firstRequested,
+    causalOrder: 'aggregate'
+  });
+  const second = await outbox.enqueue({
+    ...doseCommand('persisted-shot', 'batch-1'),
+    createdAt: secondRequested,
+    causalOrder: 'aggregate'
+  });
+
+  equal(second.record.createdAt > first.record.createdAt, true);
+  equal(second.record.nextAttemptAt, secondRequested.toISOString());
 });
 
 run('claims only the mutation kinds owned by a worker', async () => {
@@ -601,6 +621,42 @@ run('promotes fallback records into IndexedDB without splitting the journal', as
     factory.rawKeys(MUTATION_OUTBOX_DB_NAME, MUTATION_OUTBOX_STORE_NAME).length,
     1
   );
+});
+
+run('fallback promotion preserves first-admission dose replay metadata', async () => {
+  const storage = new FakeStorage();
+  const { asIDBFactory } = createFakeIndexedDb();
+  const identity = doseAdjustmentPhysicalIdentity({
+    beanId: 'bean-for-batch-1', batchId: 'batch-1', dose: 18
+  });
+  const early = {
+    ...doseCommand('shot-first-metadata', 'batch-1'),
+    kind: 'pending-dose-deduction',
+    physicalIdentity: identity,
+    createdAt: new Date('2026-07-10T10:00:00.000Z')
+  };
+  const indexed = new DurableMutationOutbox({ indexedDB: asIDBFactory, storage: null });
+  await indexed.enqueue(early);
+  await indexed.dispose();
+
+  const fallback = new DurableMutationOutbox({ indexedDB: null, storage });
+  await fallback.enqueue({
+    ...early,
+    payload: {
+      ...early.payload,
+      expectedRemaining: 64,
+      at: '2026-07-10T11:00:00.000Z'
+    },
+    createdAt: new Date('2026-07-10T11:00:00.000Z')
+  });
+  await fallback.dispose();
+
+  const promoted = new DurableMutationOutbox({ indexedDB: asIDBFactory, storage });
+  const record = await promoted.get<DosePayload>(early.idempotencyKey);
+  equal(record?.payload.expectedRemaining, 82);
+  equal(record?.payload.at, '2026-07-10T10:00:00.000Z');
+  equal(storage.getItem(MUTATION_OUTBOX_STORAGE_KEY), null);
+  await promoted.dispose();
 });
 
 run('fails closed instead of overwriting a corrupt authoritative fallback journal', async () => {

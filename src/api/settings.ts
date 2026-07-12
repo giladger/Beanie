@@ -457,20 +457,29 @@ export function demoPlugins(): PluginInfo[] {
   ];
 }
 
-// Per-plugin configuration. `values` carries the non-secret settings; `secretsSet`
-// flags which secret fields (e.g. a password) currently have a value on the
-// gateway — the secret itself is never sent to the browser.
+// Raw per-plugin gateway configuration. Current Reaprime returns its complete
+// stored map, including manifest-secure fields; callers must sanitize it before
+// placing it in editor/AppState. Whole-map keep/verify semantics currently rely
+// on that readable in-lane value; a redacted gateway would need an explicit
+// keep-stored-secret/verify-stored-credential contract before this can change.
 export interface PluginSettings {
   values: Record<string, string | number | boolean>;
   secretsSet: Record<string, boolean>;
 }
+
+declare const rawPluginSettingsBrand: unique symbol;
+
+/** Wire-only settings; Reaprime may include readable values for secure fields. */
+export type RawPluginSettings = PluginSettings & {
+  readonly [rawPluginSettingsBrand]: true;
+};
 
 export interface PluginVerifyResult {
   ok: boolean;
   message: string;
 }
 
-export function readPluginSettings(value: unknown): PluginSettings {
+export function readPluginSettings(value: unknown): RawPluginSettings {
   const r = rec(value);
   // Accept either an envelope ({ values, secretsSet }) or a flat settings map —
   // reaprime returns the bare settings object, so default to treating the top
@@ -487,7 +496,7 @@ export function readPluginSettings(value: unknown): PluginSettings {
   const rawSecrets = rec(r.secretsSet);
   const secretsSet: Record<string, boolean> = {};
   for (const [key, entry] of Object.entries(rawSecrets)) secretsSet[key] = entry === true;
-  return { values, secretsSet };
+  return { values, secretsSet } as RawPluginSettings;
 }
 
 export function readPluginVerify(value: unknown): PluginVerifyResult {
@@ -514,7 +523,7 @@ export function readVisualizerImport(value: unknown): VisualizerImportResult {
 export function demoPluginSettings(id: string): PluginSettings {
   if (id.replace(/\.reaplugin$/i, '').toLowerCase() === 'visualizer') {
     return {
-      values: { Username: 'demo@visualizer.coffee', Password: 'demo-password', AutoUpload: true, LengthThreshold: 6 },
+      values: { Username: 'demo@visualizer.coffee', AutoUpload: true, LengthThreshold: 6 },
       secretsSet: { Password: true }
     };
   }

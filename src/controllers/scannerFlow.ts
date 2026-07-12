@@ -472,8 +472,7 @@ export class ScannerFlow {
         {
           createBean: (input) => gateway.createBean(input),
           updateBean: (id, input) => gateway.updateBean(id, input),
-          putBeans: (next) => beanieCache.putBeans(next),
-          putBeanBatches: (id, batches) => beanieCache.putBeanBatches(id, batches)
+          putBeans: (next) => beanieCache.putBeans(next)
         }
       );
       if (!this.scannerSessionAlive(session)) return;

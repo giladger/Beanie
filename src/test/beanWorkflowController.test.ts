@@ -277,7 +277,6 @@ await run('bean workflow controller saves demo beans without gateway calls', asy
 await run('bean workflow controller saves remote beans and writes cache', async () => {
   const controller = new BeanWorkflowController();
   let cachedBeans = 0;
-  let cachedBatchesFor: string | null = null;
   const result = await controller.saveBean(
     {
       beans: [bean('bean-1')],
@@ -294,9 +293,6 @@ await run('bean workflow controller saves remote beans and writes cache', async 
       },
       putBeans: async (beans) => {
         cachedBeans = beans.length;
-      },
-      putBeanBatches: async (beanId) => {
-        cachedBatchesFor = beanId;
       }
     }
   );
@@ -305,7 +301,6 @@ await run('bean workflow controller saves remote beans and writes cache', async 
   equal(result.type === 'saved' ? result.bean.id : null, 'remote-new');
   equal(result.type === 'saved' ? result.bean.createdAt : null, '1970-01-01T00:00:00.123Z');
   equal(cachedBeans, 2);
-  equal(cachedBatchesFor, 'remote-new');
   equal(result.type === 'saved' ? result.status : null, 'Bean added');
 });
 
@@ -327,8 +322,7 @@ await run('bean workflow controller reports remote save failures without changin
       updateBean: async () => {
         throw new Error('nope');
       },
-      putBeans: async () => {},
-      putBeanBatches: async () => {}
+      putBeans: async () => {}
     }
   );
 
@@ -490,9 +484,6 @@ function failingBeanDeps() {
     },
     putBeans: async () => {
       throw new Error('unexpected cache write');
-    },
-    putBeanBatches: async () => {
-      throw new Error('unexpected batch cache write');
     }
   };
 }

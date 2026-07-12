@@ -84,8 +84,12 @@ export interface LegacyGeminiKeyGateway {
  * A local value wins so migration never replaces a key chosen on this device.
  * Failures are allowed to bubble so startup can warn and a later launch retries.
  */
-export async function migrateLegacyGeminiApiKey(gateway: LegacyGeminiKeyGateway): Promise<boolean> {
+export async function migrateLegacyGeminiApiKey(
+  gateway: LegacyGeminiKeyGateway,
+  canCommit: () => boolean = () => true
+): Promise<boolean> {
   const remote = await gateway.storeGet('beanie', legacyGeminiStoreKey);
+  if (!canCommit()) return false;
   if (typeof remote !== 'string' || !remote.trim()) return false;
   if (readGeminiApiKey() == null) {
     writeGeminiApiKey(remote);
@@ -93,6 +97,9 @@ export async function migrateLegacyGeminiApiKey(gateway: LegacyGeminiKeyGateway)
       throw new Error('Could not persist the migrated Gemini key on this device');
     }
   }
+  // A local copy is safe to retain if the transport era changed here. Leave
+  // the legacy remote value untouched and retry its deletion next startup.
+  if (!canCommit()) return false;
   await gateway.storeDelete('beanie', legacyGeminiStoreKey);
   return true;
 }

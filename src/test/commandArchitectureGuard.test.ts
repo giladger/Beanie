@@ -46,6 +46,92 @@ run('the low-level workflow scheduler has one concrete application owner', () =>
   );
 });
 
+run('application composition constructs exactly one gateway and one machine authority', () => {
+  const expectations = [
+    {
+      target: 'runtime/gatewayMutationCoordinator.ts',
+      exported: 'GatewayMutationCoordinator'
+    },
+    {
+      target: 'controllers/machineWorkflowCommands.ts',
+      exported: 'MachineWorkflowCommands'
+    }
+  ] as const;
+  for (const expectation of expectations) {
+    const locations = constructorLocations(expectation.target, expectation.exported);
+    ok(
+      locations.length === 1 && locations[0]?.startsWith('app.ts:'),
+      `${expectation.exported} must be constructed exactly once in app.ts; found:\n` +
+        locations.join('\n')
+    );
+  }
+});
+
+run('durable dose and shot deletion primitives have one production owner each', () => {
+  const outboxes = constructorLocations('domain/mutationOutbox.ts', 'DurableMutationOutbox');
+  ok(
+    outboxes.length === 1 && outboxes[0]?.startsWith('controllers/doseMutationReconciler.ts:'),
+    'DurableMutationOutbox must be constructed only by DoseMutationReconciler:\n' + outboxes.join('\n')
+  );
+
+  const calls = importedCallLocations(
+    'controllers/shotMetadataController.ts',
+    'executeShotDeletion'
+  );
+  ok(
+    calls.length === 1 && calls[0]?.startsWith('controllers/shotDeletionFlow.ts:'),
+    'executeShotDeletion must be called only by ShotDeletionFlow:\n' + calls.join('\n')
+  );
+});
+
+run('legacy controller singleton exceptions cannot spread to new flows', () => {
+  const allowed = new Set([
+    'controllers/derekFlow.ts',
+    'controllers/profileEditorFlow.ts',
+    'controllers/scannerFlow.ts'
+  ]);
+  const singletonTargets = new Set(['api/gateway.ts', 'domain/cache.ts']);
+  const offenders: string[] = [];
+  for (const parsed of parsedFiles.filter((file) => file.path.startsWith('controllers/'))) {
+    for (const statement of parsed.source.statements) {
+      if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+      const target = resolveLocalModule(parsed.file, statement.moduleSpecifier.text);
+      if (!target || !singletonTargets.has(relativePath(target))) continue;
+      if (!allowed.has(parsed.path)) {
+        offenders.push(`${locationOf(parsed, statement)} imports ${relativePath(target)}`);
+      }
+    }
+  }
+  ok(
+    offenders.length === 0,
+    'inject gateway/cache capabilities into new controller flows; the three listed legacy ' +
+      `exceptions are extraction debt only:\n${offenders.join('\n')}`
+  );
+});
+
+run('legacy singleton controllers cannot acquire physical machine, stock, or deletion calls', () => {
+  const forbidden = new Set([
+    ...physicalGatewayMutations,
+    'createBatch',
+    'updateBatch',
+    'deleteShot'
+  ]);
+  const offenders: string[] = [];
+  for (const parsed of parsedFiles.filter((file) => file.path.startsWith('controllers/'))) {
+    const gatewayNames = namedImportLocalNames(parsed, 'api/gateway.ts', 'gateway');
+    if (gatewayNames.size === 0) continue;
+    visit(parsed.source, (node) => {
+      const method = directGatewayMember(node, gatewayNames);
+      if (method && forbidden.has(method)) offenders.push(`${locationOf(parsed, node)} gateway.${method}`);
+    });
+  }
+  ok(
+    offenders.length === 0,
+    'physical gateway capabilities belong to typed composition owners, never legacy singleton flows:\n' +
+      offenders.join('\n')
+  );
+});
+
 run('application feature code does not revive the legacy workflowCommands scheduler', () => {
   const offenders: string[] = [];
   for (const parsed of parsedFiles.filter(isFeatureCompositionFile)) {
@@ -102,6 +188,76 @@ run('app batch writes are injected into inventory owners or use the canonical be
     'raw batch writes must be ports injected into BeanInventoryController/' +
       'DoseMutationReconciler or callbacks owned by ' +
       `runExactCommand(beanInventoryMutationKey(beanId), ...):\n${offenders.join('\n')}`
+  );
+});
+
+run('app shot deletion transport is injected only into the shot deletion owner', () => {
+  const app = requiredParsedFile('app.ts');
+  const gatewayNames = namedImportLocalNames(app, 'api/gateway.ts', 'gateway');
+  const calls: string[] = [];
+  const offenders: string[] = [];
+
+  visit(app.source, (node) => {
+    if (directGatewayMember(node, gatewayNames) !== 'deleteShot') return;
+    calls.push(locationOf(app, node));
+    if (
+      !hasOwningConstructor(node, new Set(['ShotDeletionFlow'])) ||
+      !hasExactShotLane(node)
+    ) {
+      offenders.push(locationOf(app, node));
+    }
+  });
+
+  ok(
+    calls.length === 1 && offenders.length === 0,
+    'gateway.deleteShot must appear exactly once in ShotDeletionFlow wiring and ' +
+      `the canonical shot:<id> exact lane; found ${calls.length} call(s), bypasses:\n${offenders.join('\n')}`
+  );
+});
+
+run('app batch collection reads stay in the inventory owner or canonical bean lane', () => {
+  const app = requiredParsedFile('app.ts');
+  const gatewayNames = namedImportLocalNames(app, 'api/gateway.ts', 'gateway');
+  const calls: string[] = [];
+  const offenders: string[] = [];
+  visit(app.source, (node) => {
+    if (directGatewayMember(node, gatewayNames) !== 'batches') return;
+    calls.push(locationOf(app, node));
+    if (
+      !hasOwningConstructor(node, new Set(['BeanInventoryController'])) &&
+      !hasCanonicalInventoryLane(node)
+    ) offenders.push(locationOf(app, node));
+  });
+  ok(
+    calls.length === 3 && offenders.length === 0,
+    'gateway batch collection reads must be injected into BeanInventoryController or enter ' +
+      'runExactCommand(beanInventoryMutationKey(beanId)); ' +
+      `found ${calls.length} call(s), bypasses:\n${offenders.join('\n')}`
+  );
+});
+
+run('bean inventory contract and policy internals stay behind the facade', () => {
+  const offenders: string[] = [];
+  for (const parsed of parsedFiles) {
+    for (const statement of parsed.source.statements) {
+      const specifier = moduleSpecifierOf(statement);
+      if (!specifier) continue;
+      const target = resolveLocalModule(parsed.file, specifier.text);
+      if (!target) continue;
+      const targetPath = relativePath(target);
+      const allowed = targetPath === 'controllers/beanInventoryContract.ts'
+        ? parsed.path === 'controllers/beanInventoryController.ts' ||
+          parsed.path === 'controllers/beanInventoryPolicy.ts'
+        : targetPath === 'controllers/beanInventoryPolicy.ts'
+          ? parsed.path === 'controllers/beanInventoryController.ts'
+          : true;
+      if (!allowed) offenders.push(`${locationOf(parsed, statement)} imports ${targetPath}`);
+    }
+  }
+  ok(
+    offenders.length === 0,
+    'feature consumers must import the BeanInventoryController facade, not its contract/policy internals:\n' +
+      offenders.join('\n')
   );
 });
 
@@ -243,6 +399,67 @@ function workflowCoordinatorImports(parsed: ParsedFile): {
   return { identifiers, namespaces };
 }
 
+function constructorLocations(targetPath: string, exportedName: string): string[] {
+  const locations: string[] = [];
+  for (const parsed of parsedFiles) {
+    const bindings = importedBindings(parsed, targetPath, exportedName);
+    if (bindings.identifiers.size === 0 && bindings.namespaces.size === 0) continue;
+    visit(parsed.source, (node) => {
+      if (!ts.isNewExpression(node)) return;
+      const direct = ts.isIdentifier(node.expression) && bindings.identifiers.has(node.expression.text);
+      const namespaced = ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        bindings.namespaces.has(node.expression.expression.text) &&
+        node.expression.name.text === exportedName;
+      if (direct || namespaced) locations.push(locationOf(parsed, node));
+    });
+  }
+  return locations;
+}
+
+function importedCallLocations(targetPath: string, exportedName: string): string[] {
+  const locations: string[] = [];
+  for (const parsed of parsedFiles) {
+    const bindings = importedBindings(parsed, targetPath, exportedName);
+    visit(parsed.source, (node) => {
+      if (!ts.isCallExpression(node)) return;
+      const direct = ts.isIdentifier(node.expression) && bindings.identifiers.has(node.expression.text);
+      const namespaced = ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        bindings.namespaces.has(node.expression.expression.text) &&
+        node.expression.name.text === exportedName;
+      if (direct || namespaced) locations.push(locationOf(parsed, node));
+    });
+  }
+  return locations;
+}
+
+function importedBindings(
+  parsed: ParsedFile,
+  targetPath: string,
+  exportedName: string
+): { identifiers: Set<string>; namespaces: Set<string> } {
+  const identifiers = new Set<string>();
+  const namespaces = new Set<string>();
+  for (const statement of parsed.source.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const target = resolveLocalModule(parsed.file, statement.moduleSpecifier.text);
+    if (!target || relativePath(target) !== targetPath) continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (!bindings) continue;
+    if (ts.isNamespaceImport(bindings)) {
+      namespaces.add(bindings.name.text);
+      continue;
+    }
+    for (const element of bindings.elements) {
+      if ((element.propertyName?.text ?? element.name.text) === exportedName && !element.isTypeOnly) {
+        identifiers.add(element.name.text);
+      }
+    }
+  }
+  return { identifiers, namespaces };
+}
+
 function directGatewayMember(node: ts.Node, gatewayNames: ReadonlySet<string>): string | null {
   if (
     ts.isPropertyAccessExpression(node) &&
@@ -280,6 +497,21 @@ function hasCanonicalInventoryLane(node: ts.Node): boolean {
       ts.isCallExpression(key) &&
       ts.isIdentifier(key.expression) &&
       key.expression.text === 'beanInventoryMutationKey';
+  }
+  return false;
+}
+
+function hasExactShotLane(node: ts.Node): boolean {
+  for (let current = node.parent; current; current = current.parent) {
+    if (!ts.isCallExpression(current) || current.arguments.length < 2) continue;
+    const method = current.expression;
+    if (!ts.isPropertyAccessExpression(method) || method.name.text !== 'runExactCommand') continue;
+    const key = current.arguments[0];
+    return Boolean(
+      key &&
+      ((ts.isTemplateExpression(key) && key.head.text === 'shot:') ||
+        (ts.isStringLiteralLike(key) && key.text.startsWith('shot:')))
+    );
   }
   return false;
 }

@@ -1,5 +1,7 @@
 import type { SettingsBundle } from '../domain/settingsModel';
 import { demoSettingsBundle } from '../domain/settingsModel';
+import { readPluginSettings } from '../api/settings';
+import { sanitizePluginSettings } from '../domain/pluginSettings';
 import {
   createSettingsController,
   type SettingsControllerGateway
@@ -102,6 +104,24 @@ await run('settings controller resets machine settings locally or through the ga
   equal(gateway.calls.resetMachine, 1);
 });
 
+await run('committed settings actions remain truthful when their refresh fails', async () => {
+  const gateway = fakeGateway();
+  const controller = createSettingsController(gateway);
+  gateway.wakeSchedules = async () => { throw new Error('refresh failed'); };
+  const schedule = await controller.addWakeSchedule({
+    time: '08:30', local: false, current: []
+  });
+  equal(schedule.status, 'Wake schedule added — refresh unavailable');
+
+  gateway.machineSettings = async () => { throw new Error('refresh failed'); };
+  const reset = await controller.resetMachineSettings({
+    local: false,
+    bundle: demoSettingsBundle()
+  });
+  equal(reset.status, 'Machine settings reset — refresh unavailable');
+  equal(gateway.calls.resetMachine, 1);
+});
+
 await run('settings controller loads, saves, and verifies plugin settings', async () => {
   const gateway = fakeGateway();
   const controller = createSettingsController(gateway);
@@ -129,7 +149,10 @@ await run('settings controller loads, saves, and verifies plugin settings', asyn
   const demoVerify = await controller.verifyPluginSettings({
     local: true,
     id: 'visualizer',
-    settings: { values: { Username: '' }, secretsSet: {} }
+    settings: sanitizePluginSettings('visualizer', {
+      values: { Username: '' },
+      secretsSet: {}
+    })
   });
   equal(demoVerify.tone, 'warn');
 
@@ -202,15 +225,15 @@ function fakeGateway(): SettingsControllerGateway & {
     },
     pluginSettings: async function (this: { failPluginSettings: boolean }) {
       if (this.failPluginSettings) throw new Error('plugin settings unavailable');
-      return {
-        values: { Username: 'person@example.com', Password: 'secret' },
+      return readPluginSettings({
+        values: { Username: 'person@example.com' },
         secretsSet: { Password: true }
-      };
+      });
     },
-    updatePluginSettings: async () => {
+    savePluginSettingsChanges: async () => {
       calls.pluginSave += 1;
     },
-    verifyPlugin: async () => {
+    verifyStoredPluginSettings: async () => {
       calls.pluginVerify += 1;
       return { ok: true, message: 'Credentials verified' };
     },

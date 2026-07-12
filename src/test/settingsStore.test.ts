@@ -154,6 +154,20 @@ await run('loadAllFromStore seeds the store from a legacy localStorage value', a
   uninstallFakeLocalStorage();
 });
 
+await run('a lost startup authority sends no legacy settings seed and retains local migration data', async () => {
+  resetEnv();
+  const legacy = new Map([['beanie:settings:ui-scale', 'compact']]);
+  installFakeLocalStorage(legacy);
+  const gateway = new FakeGateway();
+  const committed = await loadAllFromStore(gateway, () => false);
+
+  equal(committed, false);
+  equal(gateway.sets.length, 0);
+  equal(legacy.get('beanie:settings:ui-scale'), 'compact');
+  equal(getSyncedItem(uiScaleKey), null);
+  uninstallFakeLocalStorage();
+});
+
 await run('pollFromStore reports only the keys that changed', async () => {
   resetEnv();
   setSyncedItem(uiScaleKey, 'compact');

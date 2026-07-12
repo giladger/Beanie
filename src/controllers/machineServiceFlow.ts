@@ -208,6 +208,19 @@ export class MachineServiceFlow {
     this.restore = null;
   }
 
+  /**
+   * Clear service-local timers, progress, and restore intent while keeping the
+   * flow reusable. Used when demo telemetry is replaced by a real gateway
+   * session so no simulated service can act on the live machine workflow.
+   */
+  resetSession(): void {
+    if (this.disposed) return;
+    this.cancelTimedStop();
+    this.cancelStopFeedback();
+    this.restore = null;
+    this.progress.reset();
+  }
+
   track(input: MachineServiceTrackInput): MachineServiceTrackResult {
     const nowMs = input.nowMs ?? this.now();
     const transition = this.progress.track(input.state, input.substate, nowMs);

@@ -77,7 +77,6 @@ export interface SaveBeanDeps {
   createBean(fields: Partial<Bean>): Promise<Bean>;
   updateBean(id: string, fields: Partial<Bean>): Promise<Bean>;
   putBeans(beans: Bean[]): Promise<void>;
-  putBeanBatches(beanId: string, batches: BeanBatch[]): Promise<void>;
 }
 
 export type SaveBeanResult =
@@ -187,7 +186,9 @@ export class BeanWorkflowController {
     const preferredBatch = input.options.preferredBatchId
       ? batches.find((batch) => batch.id === input.options.preferredBatchId) ?? null
       : null;
-    const selectedBatch = preferredBatch ?? latestBatch(batches.filter(isUsableBatch)) ?? latestBatch(batches);
+    const selectedBatch = preferredBatch ??
+      latestBatch(batches.filter(isUsableBatch)) ??
+      latestBatch(batches);
     const { records: shots, total: shotsTotal } = await input.loadFirstShots(bean, selectedBatch);
     if (!input.isCurrent(selection)) return { type: 'stale' };
 
@@ -246,7 +247,6 @@ export class BeanWorkflowController {
         ? input.beans.map((item) => (item.id === input.editingId ? savedBean : item))
         : [savedBean, ...input.beans];
       await deps.putBeans(beans).catch(() => {});
-      if (!editing) await deps.putBeanBatches(bean.id, []).catch(() => {});
       return {
         type: 'saved',
         bean: savedBean,

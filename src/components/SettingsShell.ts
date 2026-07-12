@@ -63,6 +63,10 @@ interface SettingsRenderOptions {
   resourceStates?: SettingsResourceStates | null;
   /** Whether gateway-backed Beanie preferences can be changed safely. */
   syncedPreferencesWritable?: boolean;
+  /** Effective live capability for gateway-only actions without a resource key. */
+  gatewayActionsWritable?: boolean;
+  /** Machine actions may remain available in the simulated demo runtime. */
+  machineActionsWritable?: boolean;
   scannerKeySet?: boolean;
 }
 
@@ -204,7 +208,7 @@ function settingsSections(
         terms: 'descale sleep routine defaults water level low tank refill warning alert steam flush clean flow calibration',
         html: [
           renderPhoneMachineLinks(options),
-          renderMaintenanceSection(),
+          renderMaintenanceSection(options),
           renderSection('Water level alerts', renderWaterAlertRows(model, options))
         ].join('')
       },
@@ -221,7 +225,7 @@ function settingsSections(
         id: 'account',
         title: 'Account',
         terms: 'decent account login email password credentials link unlink serial',
-        html: renderDecentAccountSection(decentAccount)
+        html: renderDecentAccountSection(decentAccount, options)
       },
       {
         id: 'plugins',
@@ -382,18 +386,23 @@ function renderPhoneMachineLinks(options: SettingsRenderOptions): string {
   ].join(''));
 }
 
-function renderMaintenanceSection(): string {
+function renderMaintenanceSection(options: SettingsRenderOptions): string {
+  const writable = options.machineActionsWritable !== false;
   const stateBtn = (state: string, label: string): string =>
-    `<button type="button" class="text-button" data-action="settings-machine-state" data-value="${state}">${escapeHtml(label)}</button>`;
+    `<button type="button" class="text-button" data-action="settings-machine-state" data-value="${state}" ${writable ? '' : 'disabled'}>${escapeHtml(label)}</button>`;
   return renderSection('Maintenance', [
     settingControlRow('Descale', 'Run the descaling cycle on the machine', stateBtn('descaling', 'Start descale')),
     settingControlRow('Sleep', 'Put the machine to sleep', stateBtn('sleeping', 'Sleep'))
   ].join(''));
 }
 
-function renderDecentAccountSection(account: DecentAccountPanelState): string {
+function renderDecentAccountSection(
+  account: DecentAccountPanelState,
+  options: SettingsRenderOptions
+): string {
   const status = account.status;
   const loggedIn = status?.loggedIn === true;
+  const writable = account.source === 'demo' || options.gatewayActionsWritable !== false;
   const message = account.message
     ? `<span class="settings-plugin-verify ${account.message.tone}">${escapeHtml(account.message.text)}</span>`
     : '';
@@ -413,14 +422,14 @@ function renderDecentAccountSection(account: DecentAccountPanelState): string {
         'Link your Decent Espresso account for account-backed machine checks.',
         account.source === 'loading' ? 'muted' : 'warn'
       );
-  const refreshButton = `<button type="button" class="text-button" data-action="settings-account-refresh" ${account.saving || account.source === 'loading' ? 'disabled' : ''}>${icon('refresh-cw')}<span>Refresh</span></button>`;
+  const refreshButton = `<button type="button" class="text-button" data-action="settings-account-refresh" ${!writable || account.saving || account.source === 'loading' ? 'disabled' : ''}>${icon('refresh-cw')}<span>Refresh</span></button>`;
   const form = loggedIn
     ? `
       <div class="settings-line">
         <div><span>Decent Account</span><small>Remove the linked account from this tablet.</small></div>
         <span class="settings-plugin-buttons">
           ${refreshButton}
-          <button type="button" class="text-button danger" data-action="settings-account-logout" ${account.saving ? 'disabled' : ''}>${icon('log-out')}<span>${account.saving ? 'Unlinking...' : 'Unlink'}</span></button>
+          <button type="button" class="text-button danger" data-action="settings-account-logout" ${!writable || account.saving ? 'disabled' : ''}>${icon('log-out')}<span>${account.saving ? 'Unlinking...' : 'Unlink'}</span></button>
         </span>
       </div>
       ${message}`
@@ -428,14 +437,14 @@ function renderDecentAccountSection(account: DecentAccountPanelState): string {
       ${settingControlRow(
         'Email',
         'Decent Espresso account email.',
-        (a11y) => `<input class="settings-input settings-plugin-text" type="email" data-action="settings-account-field" data-key="email" value="${escapeAttr(account.emailDraft)}" autocomplete="username" spellcheck="false" ${a11y.attributes} />`,
+        (a11y) => `<input class="settings-input settings-plugin-text" type="email" data-action="settings-account-field" data-key="email" value="${escapeAttr(account.emailDraft)}" autocomplete="username" spellcheck="false" ${writable ? '' : 'disabled '}${a11y.attributes} />`,
         '',
         'account-email'
       )}
       ${settingControlRow(
         'Password',
         'Sent to the gateway for secure account linking.',
-        (a11y) => `<input class="settings-input settings-plugin-text" type="password" data-action="settings-account-field" data-key="password" value="${escapeAttr(account.passwordDraft)}" autocomplete="current-password" spellcheck="false" ${a11y.attributes} />`,
+        (a11y) => `<input class="settings-input settings-plugin-text" type="password" data-action="settings-account-field" data-key="password" value="${escapeAttr(account.passwordDraft)}" autocomplete="current-password" spellcheck="false" ${writable ? '' : 'disabled '}${a11y.attributes} />`,
         '',
         'account-password'
       )}
@@ -443,13 +452,14 @@ function renderDecentAccountSection(account: DecentAccountPanelState): string {
         ${message || unavailable}
         <span class="settings-plugin-buttons">
           ${refreshButton}
-          <button type="button" class="text-button primary" data-action="settings-account-login" ${account.saving || account.source === 'loading' ? 'disabled' : ''}>${icon('log-in')}<span>${account.saving ? 'Linking...' : 'Link'}</span></button>
+          <button type="button" class="text-button primary" data-action="settings-account-login" ${!writable || account.saving || account.source === 'loading' ? 'disabled' : ''}>${icon('log-in')}<span>${account.saving ? 'Linking...' : 'Link'}</span></button>
         </span>
       </div>`;
   return renderSection('Decent Account', `${statusRow}${form}`);
 }
 
 function renderDangerActions(options: SettingsRenderOptions): string {
+  const gatewayWritable = options.gatewayActionsWritable !== false;
   const resetDisabled = !(['de1', 'advanced', 'calibration'] as const)
     .every((key) => settingsResourceWritable(options.resourceStates ?? null, key));
   return `
@@ -457,7 +467,7 @@ function renderDangerActions(options: SettingsRenderOptions): string {
       ${settingControlRow(
         'Firmware update',
         'Upload a DE1 firmware file and let the machine apply it',
-        `<label class="text-button danger"><input type="file" accept=".bin,.fw,.dfu" data-action="settings-firmware" hidden />${icon('upload')}<span>Upload…</span></label>`
+        `<label class="text-button danger ${gatewayWritable ? '' : 'disabled'}" ${gatewayWritable ? '' : 'aria-disabled="true"'}><input type="file" accept=".bin,.fw,.dfu" data-action="settings-firmware" ${gatewayWritable ? '' : 'disabled'} hidden />${icon('upload')}<span>Upload…</span></label>`
       )}
       ${settingControlRow(
         'Reset machine settings',

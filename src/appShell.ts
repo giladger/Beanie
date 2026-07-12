@@ -1,5 +1,4 @@
 import type {
-  GatewayStartupSnapshot,
   MachineInfo,
   MachineSnapshot,
   MachineState,
@@ -22,12 +21,6 @@ import {
 } from './domain/recipeIdentity';
 
 export type LiveChartMode = 'preset30' | 'auto';
-
-export function startupStatusLabel(status: GatewayStartupSnapshot['status']): string {
-  if (status === 'partial-failure') return 'Connected with limited data';
-  if (status === 'gateway-unavailable') return 'Offline with cached data';
-  return 'Connected';
-}
 
 export function temp(value: number | null | undefined): string {
   return value == null ? '--' : `${Math.round(value)}°C`;

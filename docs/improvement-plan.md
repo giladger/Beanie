@@ -1,10 +1,9 @@
-# Beanie Improvement Plan (2026-06-10 review)
+# Beanie Improvement Plan (2026-07-12 architecture review)
 
-A four-track review (shell, controllers/domain, views/components, api/data/tests)
-produced a set of verified findings. The bug fixes and the highest-value
-cleanups landed as the commit series ending at "Drop invalid collection items
-instead of failing whole gateway reads". This file records what was fixed and
-the items deliberately deferred, so future work can pick them up with context.
+This plan combines the original four-track review with the architecture and
+runtime-consistency implementation reviewed on 2026-07-12. It records what is
+actually implemented and the remaining debt in value order, so future human or
+AI-agent work does not infer completion from extracted filenames alone.
 
 ## Landed
 
@@ -70,22 +69,69 @@ the items deliberately deferred, so future work can pick them up with context.
   imperative sequencer; ambiguous creates preserve their complete retry intent,
   and queued partial freezes rebase from authoritative source weight while
   fencing delayed dose/UI projections.
+- Architecture extraction phase three: `StartupFlow` owns single-flight
+  boot/reconnect and its capability matrix, while dose-journal hydration runs
+  independently so blocked IndexedDB does not block presentation. Foreground
+  inventory writes fail closed until legacy migration and durable discovery
+  have reserved and overlaid every unsettled adjustment; hydration failures
+  retry. Dose physical identity is bean/batch/dose, with `at` and
+  `expectedRemaining` retained from the first admission. Legacy migration gates
+  live and volatile ordering, volatile duplicates rebase to canonical metadata,
+  and one context can observe another context's acknowledged tombstone and
+  settle locally without a second write. Inventory reads preserve omitted
+  protected batches and UI-owned fields, update confirmed baselines only across
+  the correct read/mutation boundary, and sanitize or omit cache writes so
+  optimism cannot become offline truth. `ShotDeletionFlow` owns delete/reclaim
+  sequencing, but the hard-crash interval between successful remote DELETE and
+  reclaim admission remains open. Plugin state is allowlist-sanitized and
+  session/revision/touched-field fenced.
 
 ## Deferred — architecture debt (ordered by value)
 
 Per [architecture.md](architecture.md), workflow policy should leave
-`BeanieApp`. With recipe application and the core command/service flows now
-extracted, the remaining liftable work starts here:
+`BeanieApp`. At 10,000+ lines, `src/app.ts` is safer than before but is not yet
+a manageable small shell for a repository maintained primarily by AI agents.
+The remaining work starts here:
 
-1. **`deleteShot`** → `shotMetadataController`; **`savePluginConfig`** secret
-   merge → `domain/pluginSettings`; remaining optimistic one-offs such as
-   `setMachineRefillLevel` → their matching controllers.
-2. **Shared demo/remote save helper.** Six controller save flows repeat the
+1. **Delete/reclaim transaction journal.** The current order is remote DELETE,
+   durable reclaim enqueue, then cache invalidation. A process crash between the
+   first two steps can delete the shot without recording the inverse inventory
+   delta. Persist a combined command before DELETE and advance it to
+   reclaim-ready only after deletion succeeds; its owned record must authorize
+   the ambiguous 404 recovery path. True cross-device exactly-once replay still
+   depends on gateway idempotency receipts.
+2. **Extract `BeanSelectionFlow`.** Move selection mode/provenance, batch and
+   shot acquisition, effective-bag restarts, recipe scheduling, and stale-result
+   fencing behind one narrow controller-owned contract.
+3. **Extract `DoseDeductionAdmissionFlow`.** Move completed-shot dose intent,
+   reservation, durable admission, optimism/canonicalization, cache projection,
+   and release out of `BeanieApp` while retaining the existing reconciler and
+   inventory authorities.
+4. **Cached offline shot hydration.** `StartupFlow` uses cached latest shots for
+   bean usage and initial selection, but its cached projection does not populate
+   the shell's shot list. Define the selected-bean/batch filtering contract and
+   publish the cached page so History is useful during a cold offline start.
+5. **Harden settings contracts.** Replace plain-string field keys and cast-built
+   patches with group-indexed keys. Make public cache/repository/settings
+   capability parameters required and fail closed instead of defaulting true.
+6. **Expose inventory-journal readiness in the stock UI.** Runtime adapters and
+   submit handlers fail closed, but bag mutation controls still look enabled
+   until the user clicks and receives the read-only status. Pass an explicit
+   capability into the bean-picker/storage views and disable only mutation
+   controls while preserving inventory browsing.
+7. **Finish controller boundary injection.** Remove gateway/cache singleton
+   imports from scanner, Derek, and profile-editor flows; move scanner
+   `location`/`document` and profile-editor `HTMLElement` access behind shell
+   adapters.
+8. **Remaining optimistic one-offs.** Move `setMachineRefillLevel` to its
+   matching controller with revisioned confirmed rollback and stale-result
+   fencing.
+9. **Shared demo/remote save helper.** Six controller save flows repeat the
    same skeleton (demo id minting, `(demo)` status suffix, fail-soft cache
    write). A `saveWithDemoFallback` helper would collapse ~150 lines.
-3. **Profile (de)serialization out of `profileEditor.ts`** (the
+10. **Profile (de)serialization out of `profileEditor.ts`** (the
    `readStep`/`writeStep`/alias tables, ~200 lines) into `domain/profileModel`.
-4. **`hotWaterDataForNativeWorkflow`** and the thrice-duplicated
+11. **`hotWaterDataForNativeWorkflow`** and the thrice-duplicated
    `positiveNumber`/`formatNumber` helpers → `domain/waterSettings`.
 
 ## Deferred — smaller cleanups
@@ -110,6 +156,9 @@ extracted, the remaining liftable work starts here:
   allow without moving lifecycle ownership back into `BeanieApp`.
 - `cache.ts` writes `schemaVersion` per entry but never reads it — check on
   read or clear stores on version bump.
+- The production JavaScript bundle is about 839 KB minified and still trips
+  Vite's 500 KB warning — split infrequently used settings/editor/scanner
+  surfaces behind dynamic imports without fragmenting runtime ownership.
 - Demo fidelity gaps: scanner extraction skips the empty-photos validation,
   demo shot lists ignore the selected batch, demo machine settings start
   undefined.

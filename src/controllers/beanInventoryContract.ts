@@ -42,11 +42,40 @@ export interface RemainingWeightReconciliation {
   readonly batchId: string;
   /** Local optimistic value that still has to own the projection. */
   readonly expectedCurrent: number;
-  /** Fresh remote result to publish when ownership is unchanged. */
-  readonly resolvedRemaining: number;
+  /** Fresh remote result to publish; null records missing/untracked authority. */
+  readonly resolvedRemaining: number | null;
   /** Intent revision captured when the external projection was admitted. */
   readonly fieldRevision: number | null;
 }
+
+/** Local-only projection used by the simulator; real reclaims require the durable outbox. */
+export interface DemoDoseReclaimRequest {
+  readonly beanId: string;
+  readonly batchId: string;
+  /** Positive physical dose to return to the source bag. */
+  readonly dose: number;
+}
+
+export type DoseReclaimNotApplicableReason =
+  | 'invalid-dose'
+  | 'missing-batch'
+  | 'untracked-remaining';
+
+export type DemoDoseReclaimOutcome =
+  | {
+      type: 'reclaimed';
+      batch: BeanBatch;
+      projection: BeanInventoryProjection;
+      previousRemaining: number;
+      resolvedRemaining: number;
+      reclaimedDose: number;
+      status: 'Dose reclaimed (demo)';
+    }
+  | {
+      type: 'not-applicable';
+      reason: DoseReclaimNotApplicableReason;
+      status: 'Dose reclaim not applicable';
+    };
 
 export type BatchUpdatePurpose = 'edit' | 'stock' | 'finish';
 

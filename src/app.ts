@@ -56,13 +56,11 @@ import {
   hasGroupHeadController,
   machineCommandsAvailable,
   machineStatusView,
-  nonNegativeNumber,
   positiveNumber,
   presentationOccluded,
   round,
   scaleConnected,
   sleepOverlayModel,
-  startupStatusLabel,
   water,
   workflowSignature,
   type LiveChartMode,
@@ -84,7 +82,6 @@ import {
   profileBaseTemperature,
   ratioFor,
   recipeFromShot,
-  recipeFromWorkflow,
   roastAgeLabel,
   selectInitialBean,
   shotFilterForBean,
@@ -212,7 +209,7 @@ import {
   type SettingsResourceKey,
   type SettingsResourceStates
 } from './domain/resourceState';
-import type { DecentAccountStatus, DisplayState, PluginSettings } from './api/settings';
+import type { DecentAccountStatus, DisplayState } from './api/settings';
 import { readDisplayState } from './api/settings';
 import { createSettingsController } from './controllers/settingsController';
 import {
@@ -241,9 +238,18 @@ import {
   type LiveShotCompletionEvent
 } from './controllers/liveShotCompletionFlow';
 import {
+  StartupFlow,
+  type StartupEffectPlan,
+  type StartupPhase,
+  type StartupProjection
+} from './controllers/startupFlow';
+import {
   saveShotUpdate,
+  shotDoseReclaimPlan,
+  type ShotDoseReclaimPlan,
   shotEnjoymentUpdate
 } from './controllers/shotMetadataController';
+import { ShotDeletionFlow } from './controllers/shotDeletionFlow';
 import {
   cleaningStartPlan,
   cleaningThresholdPlan,
@@ -272,10 +278,14 @@ import {
   updateSteamPurgeModeAndReadBack
 } from './controllers/machineSettingsWorkflowController';
 import {
+  buildPluginSettingsSavePlan,
+  createPluginConfigState,
   normalizePluginId,
-  pluginFieldDefault,
   pluginSettingsSpec,
-  type PluginConfigState
+  rebasePluginSettingsPayload,
+  settlePluginSettingsSave,
+  type PluginConfigState,
+  type SanitizedPluginSettings
 } from './domain/pluginSettings';
 import {
   createProfileEditorState,
@@ -341,7 +351,12 @@ import {
   readPendingDoses,
   writePendingDoses
 } from './domain/pendingDoses';
-import { DoseMutationReconciler } from './controllers/doseMutationReconciler';
+import {
+  DoseMutationReconciler,
+  type DoseMutationCanonicalization,
+  type DoseMutationSettlement
+} from './controllers/doseMutationReconciler';
+import { pendingDoseIdempotencyKey } from './domain/mutationOutbox';
 import { rebaseChangedFields } from './domain/rebaseMutation';
 import {
 
@@ -436,10 +451,14 @@ import {
   screensaverShowsPhotos
 } from './domain/screensaver';
 import {
+  captureSyncedCache,
+  clearSyncedCache,
   loadAllFromStore,
   pollFromStore,
+  restoreSyncedCache,
   setStorePushHandler,
-  SETTINGS_STORE_NAMESPACE
+  SETTINGS_STORE_NAMESPACE,
+  type SyncedSettingsCacheSnapshot
 } from './domain/settingsStore';
 import {
   cleaningDue,
@@ -611,20 +630,9 @@ interface BatchStorageTarget {
   batchId: string;
 }
 
-// A shot's dose handed back to the bag it was pulled from when the shot is
-// deleted — the inverse of consumeBatchDoseForShot. `remaining`/`next` are the
-// bag weights before and after, kept for the confirm dialog's before→after line.
-interface ReclaimPlan {
-  bean: Bean;
-  batch: BeanBatch;
-  dose: number;
-  remaining: number;
-  next: number;
-}
-
 interface DeleteShotTarget {
   shotId: string;
-  reclaim: ReclaimPlan | null;
+  reclaim: ShotDoseReclaimPlan | null;
 }
 
 export interface AppState {
@@ -657,7 +665,7 @@ export interface AppState {
   settingsStoreAvailable: boolean;
   settingsSearch: string;
   demo: boolean;
-  startupPhase: 'starting' | 'connecting' | 'connected' | 'limited' | 'offline-cache' | 'demo' | 'retrying';
+  startupPhase: StartupPhase;
   loading: boolean;
   busy: boolean;
   status: string;
@@ -793,15 +801,22 @@ function isPhoneTab(value: string | undefined): value is PhoneTab {
   return value === 'home' || value === 'scan' || value === 'beans' || value === 'shots' || value === 'settings';
 }
 
+function isSettingsMachineState(value: string | undefined): value is MachineState {
+  return value === 'descaling' || value === 'sleeping';
+}
+
 export class BeanieApp {
   private readonly gatewayMutations = new GatewayMutationCoordinator<string>();
   private readonly settingsStoreSync = new SettingsStoreSync(
     {
       load: (canCommit) => loadAllFromStore(gateway, canCommit),
       poll: (canCommit) => pollFromStore(gateway, canCommit),
-      write: (key, value) => value === null
-        ? gateway.storeDelete(SETTINGS_STORE_NAMESPACE, key)
-        : gateway.storeSet(SETTINGS_STORE_NAMESPACE, key, value)
+      write: (key, value) => {
+        this.requireConnectedGatewayAuthority();
+        return value === null
+          ? gateway.storeDelete(SETTINGS_STORE_NAMESPACE, key)
+          : gateway.storeSet(SETTINGS_STORE_NAMESPACE, key, value);
+      }
     },
     this.gatewayMutations
   );
@@ -847,47 +862,82 @@ export class BeanieApp {
   });
   private readonly settingsController = createSettingsController({
     ...gateway,
-    scanDevices: () => this.runExactCommand('devices', () => gateway.scanDevices()),
-    connectPreferredDevices: () => this.runExactCommand(
+    settings: () => this.readConnectedSetting(() => gateway.settings()),
+    presenceSettings: () => this.readConnectedSetting(() => gateway.presenceSettings()),
+    displayState: () => this.readConnectedSetting(() => gateway.displayState()),
+    skins: () => this.readConnectedSetting(() => gateway.skins()),
+    plugins: () => this.readConnectedSetting(() => gateway.plugins()),
+    devices: () => this.readConnectedSetting(() => gateway.devices()),
+    wakeSchedules: () => this.readConnectedSetting(() => gateway.wakeSchedules()),
+    decentAccount: () => this.readConnectedSetting(() => gateway.decentAccount()),
+    machineSettings: () => this.readConnectedSetting(() => gateway.machineSettings()),
+    machineAdvancedSettings: () =>
+      this.readConnectedSetting(() => gateway.machineAdvancedSettings()),
+    calibration: () => this.readConnectedSetting(() => gateway.calibration()),
+    scanDevices: () => this.runExactConnectedCommand('devices', () => gateway.scanDevices()),
+    connectPreferredDevices: () => this.runExactConnectedCommand(
       'devices',
       () => gateway.connectPreferredDevices()
     ),
-    connectDevice: (id) => this.runExactCommand(
+    connectDevice: (id) => this.runExactConnectedCommand(
       'devices',
       () => gateway.connectDevice(id)
     ),
-    disconnectDevice: (id) => this.runExactCommand(
+    disconnectDevice: (id) => this.runExactConnectedCommand(
       'devices',
       () => gateway.disconnectDevice(id)
     ),
     requestState: (state) => this.runExactMachineCommand(
-      (lane) => lane.requestState(state as MachineState)
+      (lane) => lane.requestState(state)
     ),
-    addWakeSchedule: (schedule) => this.runExactCommand(
+    addWakeSchedule: (schedule) => this.runExactConnectedCommand(
       'wake-schedules',
       () => gateway.addWakeSchedule(schedule)
     ),
-    updateWakeSchedule: (id, body) => this.runExactCommand(
+    updateWakeSchedule: (id, body) => this.runExactConnectedCommand(
       `wake-schedule:${id}`,
       () => gateway.updateWakeSchedule(id, body)
     ),
-    deleteWakeSchedule: (id) => this.runExactCommand(
+    deleteWakeSchedule: (id) => this.runExactConnectedCommand(
       `wake-schedule:${id}`,
       () => gateway.deleteWakeSchedule(id)
     ),
-    loginDecentAccount: (email, password) => this.runExactCommand(
+    loginDecentAccount: (email, password) => this.runExactConnectedCommand(
       'decent-account',
       () => gateway.loginDecentAccount(email, password)
     ),
-    logoutDecentAccount: () => this.runExactCommand(
+    logoutDecentAccount: () => this.runExactConnectedCommand(
       'decent-account',
       () => gateway.logoutDecentAccount()
     ),
-    updatePluginSettings: (id, values) => this.runExactCommand(
+    pluginSettings: (id) => this.runExactConnectedCommand(
       `plugin:${id}`,
-      () => gateway.updatePluginSettings(id, values)
+      () => this.readConnectedSetting(() => gateway.pluginSettings(id))
     ),
-    updateSettings: (patch) => this.runExactCommand(
+    savePluginSettingsChanges: (id, values) => this.runExactConnectedCommand(
+      `plugin:${id}`,
+      async () => {
+        // Rebase this panel's changed keys on a fresh in-lane snapshot so an
+        // older editor cannot replace unrelated plugin changes.
+        const current = await gateway.pluginSettings(id);
+        this.requireConnectedGatewayAuthority();
+        await gateway.updatePluginSettings(id, rebasePluginSettingsPayload(current, values));
+      }
+    ),
+    verifyStoredPluginSettings: (id) => this.runExactConnectedCommand(
+      `plugin:${id}`,
+      async () => {
+        // Reaprime's verifier still requires the saved credential body. Keep
+        // the raw secret inside this one lane callback and never project it.
+        const current = await gateway.pluginSettings(id);
+        this.requireConnectedGatewayAuthority();
+        return gateway.verifyPlugin(id, {
+          username: String(current.values.Username ?? ''),
+          password: String(current.values.Password ?? '')
+        });
+      }
+    ),
+    updateSettings: (patch) => this.runExactConnectedCommand(
       'gateway-settings',
       () => gateway.updateSettings(patch)
     ),
@@ -900,7 +950,7 @@ export class BeanieApp {
     updateCalibration: (value) => this.runExactMachineCommand(
       (lane) => lane.updateCalibration(value)
     ),
-    updatePresenceSettings: (patch) => this.runExactCommand(
+    updatePresenceSettings: (patch) => this.runExactConnectedCommand(
       'presence-settings',
       () => gateway.updatePresenceSettings(patch)
     ),
@@ -911,14 +961,17 @@ export class BeanieApp {
   private readonly settingsMutations = new SettingsMutationFlow({
     persistField: (group, key, value) =>
       this.settingsController.persistSetting(group, key, value),
-    setDisplayBrightness: (brightness) => this.setGatewayBrightnessLatest(brightness),
+    setDisplayBrightness: (brightness) => this.setGatewayBrightnessLatest(
+      brightness,
+      { requiresConnectedAuthority: true }
+    ),
     deleteSchedule: async (id) =>
       (await this.settingsController.deleteWakeSchedule({ id, local: false })).ok,
     updateSchedule: async (id, patch) => {
       if (patch.enabled == null) throw new Error('Wake schedule toggle requires enabled');
       await this.settingsController.toggleWakeSchedule({ id, enabled: patch.enabled, local: false });
     },
-    setPluginLoaded: (id, loaded) => this.runExactCommand(
+    setPluginLoaded: (id, loaded) => this.runExactConnectedCommand(
       `plugin:${id}`,
       () => loaded ? gateway.enablePlugin(id) : gateway.disablePlugin(id)
     )
@@ -1069,8 +1122,46 @@ export class BeanieApp {
     run: () => this.retryStartupConnection(),
     onError: (error) => console.warn('[Beanie] Startup reconnect failed', error)
   });
+  private readonly startupFlow = new StartupFlow(
+    {
+      loadSettings: () => this.loadSettings(),
+      loadCached: (query) => cachedStartupData(query, beanieCache),
+      loadGateway: (query, canCommit) => loadGatewayStartupWithCache(query, {
+        cache: beanieCache,
+        canCommit
+      }),
+      loadMachineInfo: () => gateway.machineInfo(),
+      loadMachineState: () => gateway.machineState(),
+      readLastBeanId,
+      onAuxiliaryFailure: (operation, error) => {
+        const label = operation === 'machine-info' ? 'machine info' : 'machine state';
+        console.warn(`[Beanie] Could not load ${label}`, error);
+      },
+      onFailure: (error) => {
+        console.warn('[Beanie] Gateway unavailable; using demo data', error);
+      }
+    },
+    {
+      snapshot: () => ({
+        hasUsableData: this.state.workflow != null && this.state.beans.length > 0,
+        demo: this.state.demo,
+        appliedSignature: this.state.appliedSignature,
+        batchesByBean: this.state.batchesByBean,
+        settingsRecoveryRequired: this.settingsRecoveryRequired,
+        authorityRevision: this.startupAuthorityRevision
+      }),
+      commit: (projection) => this.commitStartupProjection(projection),
+      workflowMatchesBean: (bean) => this.workflowMatchesBean(bean),
+      selectBean: (beanId, options) => this.selectBean(beanId, options),
+      scheduleApply: () => this.scheduleApply(),
+      recoverSettings: () => this.recoverSettingsFromDemo(),
+      applyEffects: (plan) => this.applyStartupEffects(plan),
+      enterDemo: () => this.loadDemo()
+    }
+  );
   private readonly loadMoreAuthority = new OperationAuthority();
   private readonly doseMutationReconciler: DoseMutationReconciler;
+  private readonly shotDeletionFlow: ShotDeletionFlow;
   private readonly imageTranscoder = new BoundedImageTranscoder();
   private readonly telemetryStore = new TelemetryStore();
   private readonly machineStream: SocketSupervisor<MachineSnapshot>;
@@ -1094,15 +1185,35 @@ export class BeanieApp {
   // Memoised so the boot settings load runs once; the scanner awaits it too.
   private settingsLoadPromise: Promise<void> | null = null;
   private settingsBundleLoadPromise: Promise<void> | null = null;
-  private startupLoadInFlight = false;
+  private settingsBundleLoadGeneration = 0;
+  private settingsRecoveryRequired = false;
+  private demoSettingsSnapshot: {
+    readonly cache: SyncedSettingsCacheSnapshot;
+    readonly theme: SettingsPreferences['theme'];
+  } | null = null;
+  /** Invalidates startup/read projections admitted before a transport demotion. */
+  private startupAuthorityRevision = 0;
+  /** Separates async feature work admitted under demo vs live provenance. */
+  private runtimeProvenanceRevision = 0;
   private shotRefreshInFlight = false;
   private beanRefreshInFlight = false;
   private beanUsageRefreshRequestId = 0;
   private shotCacheGeneration = 0;
+  private pluginConfigSession = 0;
   /** Fences async inventory projections across selection ABA/user intent. */
   private selectionRevision = 0;
   /** Forces gateway refreshes after an ambiguous create until a later receipt. */
   private readonly inventoryReviewBeanIds = new Set<string>();
+  /** Caller-side outbox admissions fired from live-shot completion. */
+  private readonly activeDoseAdmissions = new Set<Promise<void>>();
+  /**
+   * Foreground inventory writes stay fail-closed until durable dose work has
+   * been discovered and reserved in this process. Reads/bootstrap must not
+   * wait on IndexedDB, which can remain blocked indefinitely by another tab.
+   */
+  private inventoryJournalReady = false;
+  private doseJournalHydrationInFlight: Promise<void> | null = null;
+  private doseJournalHydrationRetryTimer: number | null = null;
 
   private readonly beanWorkflow = new BeanWorkflowController();
   private readonly beanInventory = new BeanInventoryController(
@@ -1117,8 +1228,12 @@ export class BeanieApp {
     this.gatewayMutations,
     {
       batches: (beanId) => gateway.batches(beanId),
-      createBatch: (beanId, batch, options) => gateway.createBatch(beanId, batch, options),
-      updateBatch: (batchId, patch) => gateway.updateBatch(batchId, patch),
+      createBatch: (beanId, batch, options) => this.inventoryJournalReady
+        ? gateway.createBatch(beanId, batch, options)
+        : Promise.reject(new Error('Inventory journal is not ready')),
+      updateBatch: (batchId, patch) => this.inventoryJournalReady
+        ? gateway.updateBatch(batchId, patch)
+        : Promise.reject(new Error('Inventory journal is not ready')),
       putBeanBatches: (beanId, batches) => beanieCache.putBeanBatches(beanId, batches)
     }
   );
@@ -1298,14 +1413,31 @@ export class BeanieApp {
         if (this.state.gatewayLinkDown) this.handleGatewayReconnected();
       },
       onClose: ({ willRetry }) => {
-        if (willRetry && !this.state.gatewayLinkDown) {
+        if (!willRetry) return;
+        // Even a repeated close while the offline banner is already visible
+        // invalidates HTTP/selection work admitted under the prior socket era.
+        this.startupAuthorityRevision += 1;
+        const releaseSettingsGate =
+          this.settingsRecoveryRequired && !this.state.settingsLoaded;
+        if (!this.state.gatewayLinkDown) {
           this.setState({
             gatewayLinkDown: true,
             startupPhase: this.state.demo ? 'demo' : 'offline-cache',
-            status: this.state.demo ? this.state.status : 'Offline — showing last-known data while reconnecting'
+            loading: false,
+            status: this.state.demo ? this.state.status : 'Offline — showing last-known data while reconnecting',
+            settingsStoreAvailable: false,
+            ...(releaseSettingsGate ? {
+              settingsLoaded: true
+            } : {})
           });
-          if (!this.state.demo) this.startupRetryTask.start();
+        } else if (releaseSettingsGate) {
+          this.setState({
+            loading: false,
+            settingsLoaded: true,
+            settingsStoreAvailable: false
+          });
         }
+        this.applyStartupEffects({ type: 'retry-only' });
       },
       onFailure: (failure) => {
         if (failure.phase === 'decode') console.warn('[Beanie] Bad machine frame', failure.error);
@@ -1370,19 +1502,60 @@ export class BeanieApp {
       readLegacy: () => readPendingDoses(),
       clearLegacy: () => writePendingDoses([]),
       now: () => new Date(),
-      onBatchSaved: (batch, entry, resolvedRemaining, projectionRevision) =>
-        this.adoptFlushedBatch(
-          batch,
-          entry.expectedRemaining,
-          resolvedRemaining,
-          projectionRevision
-        ),
+      onAdjustmentCanonicalized: (canonicalization) =>
+        this.adoptCanonicalDoseAdjustment(canonicalization),
+      onAdjustmentSettled: (settlement) => this.adoptSettledDoseAdjustment(settlement),
       onRetryScheduled: () => {
         if (!this.disposed) this.setState({ status: 'Bag update failed — will retry' });
       },
       onWorkerError: (error) => {
         if (!this.disposed) console.error('[Beanie] Dose reconciliation failed', error);
       }
+    });
+    this.shotDeletionFlow = new ShotDeletionFlow({
+      snapshot: () => ({
+        shots: this.state.shots,
+        shotsTotal: this.state.shotsTotal,
+        detailShotId: this.state.detailShotId,
+        compareShotId: this.state.compareShotId,
+        batchesByBean: this.state.batchesByBean
+      }),
+      runtimeRevision: () => this.runtimeProvenanceRevision,
+      deleteShot: (id) => this.runExactCommand(`shot:${id}`, () => gateway.deleteShot(id)),
+      isAlreadyDeleted: (error) =>
+        error instanceof GatewayRequestError && error.issue.statusCode === 404,
+      onRemoteDeleteSettled: () => {
+        // Fence reads started both before and during the DELETE request.
+        this.shotCacheGeneration += 1;
+      },
+      invalidateShotMutation: (id) => beanieCache.invalidateShotMutation(id),
+      reclaimDemo: (intent) => Promise.resolve(this.beanInventory.reclaimDemoDose({
+        beanId: intent.beanId,
+        batchId: intent.batchId,
+        dose: intent.dose
+      })),
+      existingReclaim: (shotId, batchId) =>
+        this.doseMutationReconciler.existingReclaim(shotId, batchId),
+      enqueueReclaim: (input) => this.doseMutationReconciler.enqueueReclaim(input),
+      remainingWeightRevision: (batchId) =>
+        this.beanInventory.remainingWeightRevision(batchId),
+      reservePendingRemainingWeight: (reservation) =>
+        this.beanInventory.reservePendingRemainingWeight(reservation),
+      retainPendingRemainingWeight: (adjustment) =>
+        this.beanInventory.retainPendingRemainingWeight(adjustment),
+      releasePendingRemainingWeight: (idempotencyKey) =>
+        this.beanInventory.releasePendingRemainingWeight(idempotencyKey),
+      commitInventoryProjection: (projection) => {
+        if (this.disposed) return;
+        this.adoptInventoryProjection(projection);
+        if (!this.state.demo) void this.beanInventory.cacheProjection(projection);
+      },
+      wakeReconciliation: () => {
+        void this.doseMutationReconciler.trigger().catch((error) => {
+          console.error('[Beanie] Dose reconciliation wake failed', error);
+        });
+      },
+      now: () => new Date()
     });
     this.appScope.own(this.telemetryStore.subscribeChannel('machine', (frame) => {
       this.handleMachineTelemetry(frame.value, frame.previous, frame.observedAtMs);
@@ -1403,6 +1576,7 @@ export class BeanieApp {
     this.appScope.own(this.beanRefreshTask);
     this.appScope.own(this.settingsSyncTask);
     this.appScope.own(this.startupRetryTask);
+    this.appScope.own(this.startupFlow);
     this.appScope.own(this.gatewayMutations);
     this.appScope.own(this.settingsStoreSync);
     this.appScope.own(this.settingsMutations);
@@ -1423,7 +1597,6 @@ export class BeanieApp {
     this.appScope.own(this.machineService);
     this.appScope.own(this.machineService.subscribe((event) => this.handleMachineServiceEvent(event)));
     this.appScope.own(this.loadMoreAuthority);
-    this.appScope.own(this.doseMutationReconciler);
     this.derekFlow = new DerekFlow({
       state: () => this.state,
       setState: (next) => this.setState(next),
@@ -1489,23 +1662,98 @@ export class BeanieApp {
     this.render();
     this.armClockTimer();
     this.syncSaverPhotoTimer();
-    // Durable physical mutations reconcile independently of UI/bootstrap
-    // mode. An offline startup enters retry-wait instead of leaving the journal
-    // dormant for the whole session.
-    void this.doseMutationReconciler.start().catch((error) => {
-      console.error('[Beanie] Dose reconciler startup failed', error);
-    });
-    void this.loadScreensaverPhotos();
+    // Data presentation must not wait on IndexedDB: an open transaction in
+    // another tab can leave its `onblocked` path pending indefinitely. The
+    // journal hydrates independently and owns only inventory-write authority.
     void this.load();
+    void this.prepareDoseReconciliation();
+    void this.loadScreensaverPhotos();
     if (isHandoffArrival(location.search)) {
       history.replaceState(null, '', location.pathname);
       void this.scannerFlow.openLabelScanner({ fromHandoff: true });
     }
   }
 
+  private prepareDoseReconciliation(): Promise<void> {
+    if (this.disposed || this.inventoryJournalReady) return Promise.resolve();
+    if (this.doseJournalHydrationInFlight) return this.doseJournalHydrationInFlight;
+    const hydration = this.hydrateDoseReconciliation().finally(() => {
+      if (this.doseJournalHydrationInFlight === hydration) {
+        this.doseJournalHydrationInFlight = null;
+      }
+    });
+    this.doseJournalHydrationInFlight = hydration;
+    return hydration;
+  }
+
+  private async hydrateDoseReconciliation(): Promise<void> {
+    try {
+      const pending = await this.doseMutationReconciler.pendingAdjustments();
+      if (this.disposed) return;
+      const affectedBeanIds = new Set<string>();
+      for (const adjustment of pending) {
+        const fieldRevision = this.beanInventory.remainingWeightRevision(
+          adjustment.entry.batchId
+        );
+        this.beanInventory.reservePendingRemainingWeight({
+          idempotencyKey: adjustment.idempotencyKey,
+          beanId: adjustment.entry.beanId,
+          batchId: adjustment.entry.batchId,
+          fieldRevision
+        });
+        this.beanInventory.retainPendingRemainingWeight({
+          idempotencyKey: adjustment.idempotencyKey,
+          beanId: adjustment.entry.beanId,
+          batchId: adjustment.entry.batchId,
+          expectedRemaining: adjustment.entry.expectedRemaining,
+          fieldRevision
+        });
+        affectedBeanIds.add(adjustment.entry.beanId);
+      }
+      this.inventoryJournalReady = true;
+      if (this.doseJournalHydrationRetryTimer != null) {
+        window.clearTimeout(this.doseJournalHydrationRetryTimer);
+        this.doseJournalHydrationRetryTimer = null;
+      }
+      if (affectedBeanIds.size > 0) {
+        const batchesByBean = { ...this.state.batchesByBean };
+        for (const beanId of affectedBeanIds) {
+          const batches = batchesByBean[beanId];
+          if (batches) {
+            batchesByBean[beanId] = this.beanInventory.overlayPendingRemainingWeights(
+              beanId,
+              batches
+            );
+          }
+        }
+        this.setState({ batchesByBean });
+      }
+      void this.doseMutationReconciler.start().catch((error) => {
+        console.error('[Beanie] Dose reconciler startup failed', error);
+      });
+      if (this.hasConnectedGatewayAuthority()) void this.migrateStorageEventsOnce();
+    } catch (error) {
+      if (this.disposed) return;
+      console.error('[Beanie] Dose journal hydration failed', error);
+      this.setState({ status: 'Bag changes are read-only — local journal unavailable' });
+      if (this.doseJournalHydrationRetryTimer == null) {
+        this.doseJournalHydrationRetryTimer = window.setTimeout(() => {
+          this.doseJournalHydrationRetryTimer = null;
+          void this.prepareDoseReconciliation();
+        }, 30_000);
+      }
+    }
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    // Revoke every async read/cache publication before beginning the drains.
+    // Repository adapters recheck these generations at each write boundary.
+    this.runtimeProvenanceRevision += 1;
+    this.startupAuthorityRevision += 1;
+    this.shotCacheGeneration += 1;
+    this.startupFlow.dispose();
     setStorePushHandler(null);
     this.presentationActivity.dispose();
     this.disposeLiveStreams();
@@ -1515,15 +1763,36 @@ export class BeanieApp {
     this.settingsStoreSync.dispose();
     this.recipeApply.dispose();
     this.machineService.dispose();
-    const doseDrain = this.doseMutationReconciler.dispose();
+    this.beanInventory.releaseAllPendingRemainingWeights();
+    const deletionDrain = this.shotDeletionFlow.disposeAndWait();
+    const doseAdmissionDrain = Promise.allSettled([...this.activeDoseAdmissions]);
     const commandDrain = this.gatewayMutations.disposeAndWait();
-    this.disposeDrain = Promise.all([doseDrain, commandDrain]).then(() => undefined);
+    // Keep the journal open until an admitted DELETE has had its chance to
+    // enqueue the inverse dose. Hard process death remains the documented
+    // cross-resource gap; graceful teardown must not manufacture that gap.
+    const doseDrain = Promise.all([deletionDrain, doseAdmissionDrain])
+      .then(() => this.doseMutationReconciler.dispose());
+    this.disposeDrain = Promise.all([
+      deletionDrain,
+      doseAdmissionDrain,
+      doseDrain,
+      commandDrain
+    ]).then(async () => {
+      // Let command-promise continuations publish their final projection, then
+      // drain the shared per-bean cache lane before a replacement app starts.
+      await Promise.resolve();
+      await this.beanInventory.drainCache();
+    });
     void this.disposeDrain.catch((error) => {
       console.error('[Beanie] Runtime disposal drain failed', error);
     });
     this.appScope.dispose();
     this.telemetryStore.dispose();
     if (this.statusFeedbackTimer != null) window.clearTimeout(this.statusFeedbackTimer);
+    if (this.doseJournalHydrationRetryTimer != null) {
+      window.clearTimeout(this.doseJournalHydrationRetryTimer);
+      this.doseJournalHydrationRetryTimer = null;
+    }
     this.derekFlow.dispose();
     this.scannerFlow.cancelScannerWork();
     this.screensaverImportGeneration += 1;
@@ -1644,6 +1913,7 @@ export class BeanieApp {
     // screen-off; once it's no longer awake-over-asleep, drop a stale timer.
     if (this.state.appAwake) this.armWakeAppIdleTimer();
     else this.clearWakeAppIdleTimer();
+    if (!this.hasConnectedGatewayAuthority()) return;
     if (Date.now() - this.lastPresenceHeartbeatMs < PRESENCE_HEARTBEAT_INTERVAL_MS) return;
     this.sendPresenceHeartbeat();
   }
@@ -1653,7 +1923,7 @@ export class BeanieApp {
   // reaprime's idle-sleep timeout fires right after the shot. We ping it at the
   // shot's start and end so the sleep window counts from the end of the pull.
   private sendPresenceHeartbeat(): void {
-    if (this.state.demo) return;
+    if (!this.hasConnectedGatewayAuthority()) return;
     this.lastPresenceHeartbeatMs = Date.now();
     void gateway.heartbeat().catch((error) => {
       console.warn('[Beanie] Presence heartbeat failed', error);
@@ -1661,181 +1931,139 @@ export class BeanieApp {
   }
 
   private async load(): Promise<void> {
-    if (this.startupLoadInFlight || this.disposed) return;
-    this.startupLoadInFlight = true;
-    let hadUsableData = this.state.workflow != null && this.state.beans.length > 0;
-    const prevSignature = this.state.appliedSignature;
-    this.setState({
-      loading: true,
-      startupPhase: hadUsableData ? 'retrying' : 'connecting',
-      status: hadUsableData ? 'Reconnecting to Decent.app…' : 'Loading Decent.app data'
-    });
-    // Settings live only in the gateway store now — load them (the spinner shows
-    // until this resolves) before rendering real content.
-    await this.loadSettings();
-    try {
-      const latestShotQuery = new URLSearchParams({ limit: '50', offset: '0', order: 'desc' });
-      if (!hadUsableData) {
-        const cached = await cachedStartupData(latestShotQuery, beanieCache);
-        if (cached.workflow && cached.beans && cached.beans.length > 0 && !this.disposed) {
-          const selected = selectInitialBean(
-            cached.beans,
-            cached.workflow,
-            readLastBeanId(),
-            cached.latestShots?.items[0]
-          );
-          const grinders = cached.grinders ?? [];
-          const profiles = cached.profiles ?? [];
-          this.machineWorkflowCommands.synchronizeAuthoritative(cached.workflow);
-          this.setState({
-            workflow: cached.workflow,
-            beans: cached.beans,
-            beanUsageAt: beanUsageFromShots(cached.beans, cached.latestShots?.items ?? [], {}),
-            grinders,
-            profiles,
-            selectedBeanId: selected?.id ?? null,
-            draft: normalizeDraft(recipeFromWorkflow(cached.workflow), profiles, grinders),
-            appliedSignature: workflowSignature(cached.workflow),
-            demo: false,
-            startupPhase: 'offline-cache',
-            gatewayLinkDown: true,
-            loading: false,
-            status: 'Offline — showing cached data while reconnecting'
-          });
-          hadUsableData = true;
-        }
-      }
-      const startup = await loadGatewayStartupWithCache(latestShotQuery, { cache: beanieCache });
-      const workflow = startup.data.workflow;
-      const beans = startup.data.beans;
-      if (!workflow || !beans) {
-        throw new Error('Essential gateway startup data was unavailable');
-      }
-      const grinders = startup.data.grinders ?? [];
-      const profiles = startup.data.profiles ?? [];
-      const latestShots = startup.data.latestShots ?? {
-        items: [],
-        total: 0,
-        limit: Number(latestShotQuery.get('limit') ?? 0),
-        offset: Number(latestShotQuery.get('offset') ?? 0)
-      };
-      const [machineInfo, machine] = await Promise.all([
-        gateway.machineInfo().catch((error) => {
-          console.warn('[Beanie] Could not load machine info', error);
-          return null;
-        }),
-        gateway.machineState().catch((error) => {
-          console.warn('[Beanie] Could not load machine state', error);
-          return null;
-        })
-      ]);
-      if (this.disposed) return;
-      const machineSleeping = machine?.state?.state === 'sleeping';
-      const offlineWithCache = startup.status === 'gateway-unavailable';
-      const limited = startup.status === 'partial-failure';
-      const recoveringFromDemo = this.state.demo;
+    const outcome = await this.startupFlow.load();
+    if (outcome.type === 'ignored' && outcome.reason === 'authority-changed' && !this.disposed) {
+      // A socket can close/open while the initial (non-task-owned) boot is
+      // awaiting HTTP. Ensure that stale completion immediately hands off to
+      // the retry owner instead of waiting for its next 30-second interval.
+      this.startupRetryTask.trigger();
+    }
+  }
 
-      this.machineWorkflowCommands.synchronizeAuthoritative(workflow);
-      this.setState({
-        workflow,
-        beans,
-        beanUsageAt: beanUsageFromShots(beans, latestShots.items, this.state.batchesByBean),
-        grinders,
-        profiles,
-        machineInfo,
-        machine,
-        asleep: machineSleeping,
-        demo: false,
-        startupPhase: offlineWithCache ? 'offline-cache' : limited ? 'limited' : 'connected',
-        gatewayLinkDown: offlineWithCache,
-        loading: false,
-        status: machineSleeping ? 'Machine asleep' : startupStatusLabel(startup.status),
-        ...(recoveringFromDemo
-          ? {
-              settingsBundle: null,
-              settingsSource: null,
-              settingsResources: null,
-              settingsStoreAvailable: false,
-              pluginConfig: null,
-              decentAccountSource: null
-            }
-          : {})
-      });
-      if (recoveringFromDemo) {
+  private commitStartupProjection(projection: StartupProjection): void {
+    if (projection.type === 'loading') {
+      // Loading/retrying is itself an authority demotion. Stop periodic
+      // producers immediately; terminal effects will explicitly restart the
+      // owners allowed by the resulting connectivity mode.
+      this.shotRefreshTask.stop();
+      this.beanRefreshTask.stop();
+      this.clearAutomaticWriteTimers();
+    }
+    if (projection.type === 'cached' || projection.type === 'gateway') {
+      // Machine command authority must move before a render or selection can
+      // observe the new workflow.
+      this.machineWorkflowCommands.synchronizeAuthoritative(projection.authoritativeWorkflow);
+    }
+    if (projection.type === 'gateway') {
+      const restoredSettings = projection.resetDemoSettings
+        ? this.restoreSettingsBeforeDemo()
+        : {};
+      if (projection.resetDemoSettings) {
+        this.settingsRecoveryRequired = true;
         this.settingsLoadPromise = null;
-        void this.loadSettings().then(() => {
-          if (this.state.view === 'settings' || this.state.phoneTab === 'settings') void this.loadReaSettings();
-        });
+        this.settingsBundleLoadGeneration += 1;
+        this.settingsBundleLoadPromise = null;
+        this.pluginConfigSession += 1;
+        this.scannerFlow.cancelScannerWork();
+        this.recipeApply.cancel(new Error('Demo authority replaced by gateway data'));
+        this.resetDemoRuntimeForGateway();
       }
-      if (offlineWithCache) {
-        // Cached startup is read-only continuity. Do not immediately fire bean
-        // refreshes, heartbeats, selection writes, or machine settings calls at
-        // a gateway the startup snapshot already proved unavailable.
+      if (projection.resetDemoSettings || projection.settingsRecoveryPending) {
+        this.setState({
+          ...projection.patch,
+          ...(projection.resetDemoSettings ? demoRecoveryTransientReset() : {}),
+          ...restoredSettings,
+          // Offline cached continuity remains usable but read-only. A live
+          // reconnect with a forced-store obligation returns to the boot gate
+          // until the authoritative settings reload has actually succeeded.
+          settingsLoaded: !projection.settingsRecoveryPending,
+          settingsBundle: null,
+          settingsSource: null,
+          settingsResources: null,
+          settingsStoreAvailable: false,
+          machineCapabilities: null,
+          machineSettings: null,
+          pluginConfig: null,
+          decentAccountSource: null
+        });
+        return;
+      }
+    }
+    if (projection.type === 'retained-fallback' && projection.releaseSettingsGate) {
+      this.setState({
+        ...projection.patch,
+        // The authoritative store reload failed. Keep the shell available with
+        // last-safe/default preferences, but retain the sticky recovery marker
+        // and no connected write authority for the next retry.
+        settingsLoaded: true,
+        settingsStoreAvailable: false
+      });
+      return;
+    }
+    this.setState(projection.patch);
+  }
+
+  private applyStartupEffects(plan: StartupEffectPlan): void {
+    switch (plan.type) {
+      case 'retry-only':
+        this.shotRefreshTask.stop();
+        this.beanRefreshTask.stop();
+        this.clearAutomaticWriteTimers();
+        this.startupRetryTask.start();
+        return;
+      case 'offline':
+        // Cached startup is read-only continuity. Do not fire bean refreshes,
+        // heartbeats, selection writes, or settings calls at an unavailable gateway.
+        this.shotRefreshTask.stop();
+        this.beanRefreshTask.stop();
+        this.clearAutomaticWriteTimers();
         this.startLiveStreams();
         this.startupRetryTask.start();
         return;
-      }
-      const selected = selectInitialBean(beans, workflow, readLastBeanId(), latestShots.items[0]);
-      if (selected) {
-        const wantsStartupApply = !this.workflowMatchesBean(selected);
-        await this.selectBean(selected.id, {
-          apply: !limited && wantsStartupApply && !machineSleeping,
-          preferWorkflow: true,
-          remember: !limited
-        });
-        if (!limited && wantsStartupApply && machineSleeping) {
-          this.scheduleApply();
-          this.setState({ status: 'Machine asleep — tap Wake to load recipe' });
-        }
-      }
-      if (prevSignature != null && workflowSignature(workflow) !== prevSignature) {
-        this.setState({ applyState: 'stale', status: 'Workflow changed on the machine' });
-      }
-      if (limited) {
-        // Mixed gateway/cache startup is presentation-only until every source
-        // is authoritative. In particular, never auto-apply a recipe chosen
-        // from a cached shot or enforce a machine mode from partial data.
+      case 'limited':
+        // Mixed gateway/cache data is presentation-only until every source is
+        // authoritative; in particular, never enforce a machine mode here.
+        this.clearAutomaticWriteTimers();
         this.startLiveStreams();
         this.shotRefreshTask.start();
         this.beanRefreshTask.start();
         this.startupRetryTask.start();
         return;
-      }
-      if (
-        this.machineService.snapshot.restorePending &&
-        machineServiceState(machine?.state?.state) == null
-      ) {
-        void this.machineService.restoreAfterEnd(false);
-      }
-      void this.refreshBeanUsage(beans);
-      this.noteUserActivity();
-      void this.enforceGatewayTrackingMode();
-      void this.loadMachineControlState();
-      this.startLiveStreams();
-      this.shotRefreshTask.start();
-      this.beanRefreshTask.start();
-      this.startupRetryTask.stop();
-      void this.migrateStorageEventsOnce();
-    } catch (error) {
-      if (this.disposed) return;
-      console.warn('[Beanie] Gateway unavailable; using demo data', error);
-      if (hadUsableData) {
-        const demo = this.state.demo;
-        this.setState({
-          loading: false,
-          startupPhase: demo ? 'demo' : 'offline-cache',
-          gatewayLinkDown: !demo,
-          status: demo
-            ? 'DEMO — sample data · gateway still unavailable'
-            : 'Offline — showing cached data · retrying automatically'
-        });
-        this.startupRetryTask.start();
-      } else {
-        this.loadDemo();
-      }
-    } finally {
-      this.startupLoadInFlight = false;
+      case 'connected':
+        if (!this.hasConnectedGatewayAuthority()) {
+          this.applyStartupEffects({ type: 'retry-only' });
+          return;
+        }
+        if (
+          this.machineService.snapshot.restorePending &&
+          machineServiceState(plan.machine?.state?.state) == null
+        ) {
+          void this.machineService.restoreAfterEnd(false);
+        }
+        void this.refreshBeanUsage(plan.beans);
+        this.noteUserActivity();
+        void this.enforceGatewayTrackingMode();
+        void this.loadMachineControlState();
+        this.startLiveStreams();
+        this.shotRefreshTask.start();
+        this.beanRefreshTask.start();
+        // Socket demotion disables synced settings immediately. Rehydrate their
+        // capability on the new transport era instead of waiting for a timer.
+        this.settingsSyncTask.trigger();
+        this.startupRetryTask.stop();
+        void this.doseMutationReconciler.trigger();
+        void this.migrateStorageEventsOnce();
+        return;
     }
+  }
+
+  private clearAutomaticWriteTimers(): void {
+    this.clearSleepBrightnessTimer();
+    if (this.sleepWakeRestoreTimer != null) {
+      window.clearTimeout(this.sleepWakeRestoreTimer);
+      this.sleepWakeRestoreTimer = null;
+    }
+    this.clearWakeAppIdleTimer();
   }
 
   private async retryStartupConnection(): Promise<void> {
@@ -1851,10 +2079,12 @@ export class BeanieApp {
    * how Beanie behaves. Best-effort: a failure just leaves the current mode.
    */
   private async enforceGatewayTrackingMode(): Promise<void> {
-    if (this.state.demo) return;
+    if (!this.hasConnectedGatewayAuthority()) return;
     try {
       await this.runExactCommand('gateway-settings', () =>
-        gateway.updateSettings({ gatewayMode: 'tracking' })
+        this.hasConnectedGatewayAuthority()
+          ? gateway.updateSettings({ gatewayMode: 'tracking' })
+          : Promise.resolve()
       );
     } catch (error) {
       console.warn('[Beanie] Could not set gateway control mode to tracking', error);
@@ -1862,6 +2092,12 @@ export class BeanieApp {
   }
 
   private loadDemo(): void {
+    if (!this.state.demo && this.demoSettingsSnapshot == null) {
+      this.demoSettingsSnapshot = {
+        cache: captureSyncedCache(),
+        theme: this.state.settingsPreferences.theme
+      };
+    }
     const demoShotUsage = demoBeans.flatMap((bean) => demoShotsForBean(bean));
     this.setState({
       workflow: demoWorkflow,
@@ -1897,11 +2133,16 @@ export class BeanieApp {
   }
 
   private async loadMachineControlState(): Promise<void> {
-    if (this.state.demo) return;
+    if (!this.hasConnectedGatewayAuthority()) return;
+    const authorityRevision = this.startupAuthorityRevision;
     const [capabilities, settings] = await Promise.allSettled([
       gateway.machineCapabilities(),
       gateway.machineSettings()
     ]);
+    if (
+      authorityRevision !== this.startupAuthorityRevision ||
+      !this.hasConnectedGatewayAuthority()
+    ) return;
     const next: Partial<AppState> = {};
     if (capabilities.status === 'fulfilled') next.machineCapabilities = capabilities.value;
     if (settings.status === 'fulfilled') next.machineSettings = settings.value;
@@ -1910,11 +2151,28 @@ export class BeanieApp {
 
   private async selectBean(
     beanId: string,
-    options: { apply: boolean; preferWorkflow: boolean; preferredBatchId?: string | null; remember?: boolean }
+    options: {
+      apply: boolean;
+      preferWorkflow: boolean;
+      preferredBatchId?: string | null;
+      /** Internal selection mode to preserve while reloading a changed effective bag. */
+      selectedBatchIdOverride?: string | null;
+      remember?: boolean;
+      allowMaintenanceWrites?: boolean;
+    }
   ): Promise<void> {
+    const authorityRevision = this.startupAuthorityRevision;
+    const provenanceRevision = this.runtimeProvenanceRevision;
+    const selectionProjectionRevisionAtStart =
+      this.beanInventory.latestProjection(beanId)?.selectionRevision ?? 0;
+    let loadedProjectionRevision = this.beanInventory.cacheRevision(beanId);
+    const startedInDemo = this.state.demo;
     const canApply = options.apply && (this.state.demo || this.state.startupPhase === 'connected');
+    const canPersistSelection = options.remember ?? this.state.startupPhase === 'connected';
+    const allowMaintenanceWrites = (options.allowMaintenanceWrites ??
+      this.state.startupPhase === 'connected') && this.inventoryJournalReady;
     const selection = this.beanWorkflow.beginBeanSelection(beanId, this.state.beans, {
-      writeLastBeanId: options.remember === false ? () => {} : writeLastBeanId
+      writeLastBeanId: canPersistSelection ? writeLastBeanId : () => {}
     });
     if (!selection) return;
     this.recipeApply.cancel(new Error(`Superseded by bean selection ${beanId}`));
@@ -1925,14 +2183,22 @@ export class BeanieApp {
       selection,
       options: {
         preferWorkflow: options.preferWorkflow,
-        preferredBatchId: options.preferredBatchId
+        ...(Object.prototype.hasOwnProperty.call(options, 'preferredBatchId')
+          ? { preferredBatchId: options.preferredBatchId }
+          : {})
       },
       beans: this.state.beans,
       workflow: this.state.workflow,
       profiles: this.state.profiles,
       grinders: this.state.grinders,
       fallbackDraft: this.state.draft,
-      loadBatches: (selected) => this.loadBatches(selected),
+      loadBatches: async (selected) => {
+        return this.loadBatches(
+          selected,
+          allowMaintenanceWrites,
+          (revision) => { loadedProjectionRevision = revision; }
+        );
+      },
       loadFirstShots: (selected, selectedBatch) => this.loadFirstShots(selected, selectedBatch),
       isCurrent: (current) =>
         this.beanWorkflow.isCurrentBeanSelection(current) &&
@@ -1940,10 +2206,93 @@ export class BeanieApp {
       workflowMatchesBean: (selected, batches) => this.workflowMatchesBean(selected, batches)
     });
     if (result.type === 'stale') return;
+    if (
+      this.disposed ||
+      provenanceRevision !== this.runtimeProvenanceRevision ||
+      (!startedInDemo && authorityRevision !== this.startupAuthorityRevision)
+    ) {
+      if (
+        this.beanWorkflow.isCurrentBeanSelection(selection) &&
+        this.state.selectedBeanId === selection.bean.id &&
+        this.state.busy
+      ) {
+        this.setState({ busy: false });
+      }
+      return;
+    }
+    const latestProjection = this.beanInventory.latestProjection(result.bean.id);
+    const latestSelectedBatchId = latestProjection &&
+      Object.prototype.hasOwnProperty.call(latestProjection.projection, 'selectedBatchId')
+      ? latestProjection.projection.selectedBatchId ?? null
+      : undefined;
+    const latestBatchesWon = Boolean(
+      latestProjection && latestProjection.revision > loadedProjectionRevision
+    );
+    const committedBatches = latestBatchesWon
+      ? [...latestProjection!.projection.batches]
+      : [...result.batches];
+    let winningSelectedBatchId = result.selectedBatch?.id ?? null;
+    let winningSelectionMode: string | null | undefined;
+    if (
+      latestProjection?.selectionRevision != null &&
+      latestProjection.selectionRevision > selectionProjectionRevisionAtStart &&
+      latestSelectedBatchId !== undefined
+    ) {
+      winningSelectionMode = latestSelectedBatchId;
+      const explicitlySelected = latestSelectedBatchId
+        ? committedBatches.find((batch) => batch.id === latestSelectedBatchId) ?? null
+        : null;
+      winningSelectedBatchId = explicitlySelected && !isFinishedBatch(explicitlySelected)
+        ? explicitlySelected.id
+        : latestBatch(committedBatches.filter(isUsableBatch))?.id ??
+          latestBatch(committedBatches)?.id ??
+          null;
+    } else if (latestBatchesWon) {
+      const resultBatch = result.selectedBatch
+        ? committedBatches.find((batch) => batch.id === result.selectedBatch?.id) ?? null
+        : null;
+      const selectionWasExplicit = Object.prototype.hasOwnProperty.call(
+        options,
+        'preferredBatchId'
+      );
+      if (
+        (resultBatch && isFinishedBatch(resultBatch)) ||
+        (result.selectedBatch && !resultBatch) ||
+        (!result.selectedBatch && !selectionWasExplicit && committedBatches.length > 0)
+      ) {
+        winningSelectedBatchId =
+          latestBatch(committedBatches.filter(isUsableBatch))?.id ??
+          latestBatch(committedBatches)?.id ??
+          null;
+      }
+    }
+    if (winningSelectedBatchId !== (result.selectedBatch?.id ?? null)) {
+      // A finish/create projection changed the effective bag while shots for
+      // the prior bag were loading. Restart the selection so shots and draft
+      // provenance match the winning bag instead of only swapping its id.
+      await this.selectBean(result.bean.id, {
+        ...options,
+        preferredBatchId: winningSelectedBatchId,
+        ...(winningSelectionMode === undefined
+          ? {}
+          : { selectedBatchIdOverride: winningSelectionMode }),
+        remember: false,
+        allowMaintenanceWrites
+      });
+      return;
+    }
+    const committedSelectedBatchId = winningSelectionMode !== undefined
+      ? winningSelectionMode
+      : Object.prototype.hasOwnProperty.call(options, 'selectedBatchIdOverride')
+        ? options.selectedBatchIdOverride ?? null
+      : result.selectedBatch &&
+          committedBatches.some((candidate) => candidate.id === result.selectedBatch?.id)
+        ? result.selectedBatch.id
+        : null;
 
     this.setState({
-      batchesByBean: { ...this.state.batchesByBean, [result.bean.id]: result.batches },
-      selectedBatchId: result.selectedBatch?.id ?? null,
+      batchesByBean: { ...this.state.batchesByBean, [result.bean.id]: committedBatches },
+      selectedBatchId: committedSelectedBatchId,
       shots: result.shots,
       shotsTotal: result.shotsTotal,
       shotsLoadingMore: false,
@@ -1959,24 +2308,94 @@ export class BeanieApp {
       appliedSignature: workflowSignature(this.state.workflow),
       status: options.apply && !canApply ? 'Coffee selected; recipe is read-only until live data reconnects' : result.status
     });
+    this.beanInventory.rememberSelectionProjection(
+      result.bean.id,
+      committedBatches,
+      committedSelectedBatchId
+    );
 
     if (canApply) {
       await this.applyDraft();
     }
   }
 
-  private async loadBatches(bean: Bean): Promise<BeanBatch[]> {
-    if (this.state.demo) return this.state.batchesByBean[bean.id] ?? [];
-    return loadBeanBatches(bean.id, {
+  private async loadBatches(
+    bean: Bean,
+    allowMaintenanceWrites = this.state.startupPhase === 'connected',
+    resolveProjectionRevision?: (revision: number) => void
+  ): Promise<BeanBatch[]> {
+    if (this.state.demo) {
+      resolveProjectionRevision?.(this.beanInventory.cacheRevision(bean.id));
+      return this.state.batchesByBean[bean.id] ?? [];
+    }
+    const provenanceRevision = this.runtimeProvenanceRevision;
+    const authorityRevision = this.startupAuthorityRevision;
+    const readToken = this.beanInventory.beginCacheRead(bean.id);
+    let readPublication: Awaited<
+      ReturnType<BeanInventoryController['cacheProjectionFromRead']>
+    > | undefined;
+    const readStillOwned = () =>
+      !this.disposed &&
+      provenanceRevision === this.runtimeProvenanceRevision &&
+      authorityRevision === this.startupAuthorityRevision;
+    const batches = await loadBeanBatches(bean.id, {
       gateway: {
-        batches: (beanId) => gateway.batches(beanId),
+        batches: (beanId) => this.runExactCommand(
+          beanInventoryMutationKey(bean.id),
+          () => {
+            if (!readStillOwned()) throw new Error('Inventory read runtime was replaced');
+            return gateway.batches(beanId);
+          }
+        ),
         updateBatch: (id, batch) => this.runExactCommand(
           beanInventoryMutationKey(bean.id),
-          () => gateway.updateBatch(id, batch)
+          () => {
+            if (!allowMaintenanceWrites || !this.hasConnectedGatewayAuthority()) {
+              return Promise.resolve(undefined);
+            }
+            return gateway.updateBatch(id, batch);
+          }
         )
       },
-      cache: beanieCache
+      cache: {
+        getBeanBatches: (beanId) => beanieCache.getBeanBatches(beanId),
+        putBeanBatches: async (beanId, batches) => {
+          if (!readStillOwned()) return;
+          readPublication = await this.beanInventory.cacheProjectionFromRead({
+            beanId,
+            batches: [...batches],
+            shouldScheduleApply: false
+          }, readToken);
+        }
+      },
+      allowMaintenanceWrites,
+      canWriteMaintenance: () =>
+        this.inventoryJournalReady && this.hasConnectedGatewayAuthority()
     });
+    if (!readStillOwned()) {
+      resolveProjectionRevision?.(this.beanInventory.cacheRevision(bean.id));
+      return [...(this.state.batchesByBean[bean.id] ?? [])];
+    }
+    const settledRevision = readPublication?.revision ?? readToken.projectionRevision;
+    if (
+      !this.beanInventory.cacheReadIsCurrent(readToken) ||
+      this.beanInventory.cacheRevision(bean.id) !== settledRevision
+    ) {
+      const currentRevision = this.beanInventory.cacheRevision(bean.id);
+      resolveProjectionRevision?.(currentRevision);
+      return [...(
+        this.beanInventory.latestProjectionBatches(bean.id) ??
+        this.state.batchesByBean[bean.id] ??
+        []
+      )];
+    }
+    resolveProjectionRevision?.(settledRevision);
+    return readPublication
+      ? [...readPublication.projection.batches]
+      : [...(
+          this.beanInventory.latestProjectionBatches(bean.id) ??
+          this.beanInventory.overlayPendingRemainingWeights(bean.id, batches)
+        )];
   }
 
   // First open of this version: copy every cached batch's freeze/thaw history up
@@ -1984,22 +2403,45 @@ export class BeanieApp {
   // a localStorage flag), best-effort and off the critical path. The flag is only
   // set on a clean pass, so an offline launch retries on the next open.
   private async migrateStorageEventsOnce(): Promise<void> {
-    if (this.state.demo || readStorageEventsMigrated()) return;
+    if (
+      !this.inventoryJournalReady ||
+      !this.hasConnectedGatewayAuthority() ||
+      readStorageEventsMigrated()
+    ) return;
+    const authorityRevision = this.startupAuthorityRevision;
+    const authorityCurrent = () =>
+      !this.disposed &&
+      this.inventoryJournalReady &&
+      authorityRevision === this.startupAuthorityRevision &&
+      this.hasConnectedGatewayAuthority();
     try {
       const { migrated, completed } = await migrateStorageEventsToGateway({
         gateway: {
-          batches: (beanId) => gateway.batches(beanId),
+          batches: (beanId) => this.runExactCommand(
+            beanInventoryMutationKey(beanId),
+            () => {
+              if (!authorityCurrent()) {
+                throw new Error('Storage migration read authority was lost');
+              }
+              return gateway.batches(beanId);
+            }
+          ),
           updateBatch: (id, batch) => {
             if (!batch.beanId) return Promise.reject(new Error('Storage migration batch has no bean owner'));
             return this.runExactCommand(
               beanInventoryMutationKey(batch.beanId),
-              () => gateway.updateBatch(id, batch)
+              () => {
+                if (!authorityCurrent()) {
+                  throw new Error('Storage migration write authority was lost');
+                }
+                return gateway.updateBatch(id, batch);
+              }
             );
           }
         },
         cache: beanieCache
       });
-      if (completed) markStorageEventsMigrated();
+      if (completed && authorityCurrent()) markStorageEventsMigrated();
       if (migrated > 0) console.info(`[Beanie] Migrated freeze/thaw history for ${migrated} batch(es)`);
     } catch (error) {
       console.warn('[Beanie] Freeze/thaw migration failed; will retry next open', error);
@@ -2053,7 +2495,11 @@ export class BeanieApp {
     const bean = this.state.beans.find((item) => item.id === beanId);
     if (!bean) return;
     this.setState({ status: 'Loading batches' });
-    const batches = await this.loadBatches(bean);
+    const batches = await this.loadBatches(
+      bean,
+      this.state.startupPhase === 'connected'
+    );
+    if (this.disposed) return;
     this.setState({
       batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
       status: 'Batches loaded'
@@ -2100,10 +2546,11 @@ export class BeanieApp {
 
   private async loadMoreShots(): Promise<void> {
     const bean = this.selectedBean();
-    if (!bean || this.state.demo || this.state.shotsLoadingMore) return;
+    if (!bean || this.state.demo || this.state.busy || this.state.shotsLoadingMore) return;
     if (this.state.shots.length >= this.state.shotsTotal) return;
     const offset = this.state.shots.length;
     const batch = this.selectedBatch();
+    const mutationGeneration = this.shotCacheGeneration;
     const operation = this.loadMoreAuthority.begin(
       `shots:${bean.id}:${batch?.id ?? 'all'}:${offset}`
     );
@@ -2112,6 +2559,8 @@ export class BeanieApp {
       const { records } = await this.fetchShotPage(bean, batch, offset);
       if (
         !operation.isCurrent ||
+        mutationGeneration !== this.shotCacheGeneration ||
+        this.state.busy ||
         this.selectedBean()?.id !== bean.id ||
         this.selectedBatch()?.id !== batch?.id
       ) return;
@@ -2263,6 +2712,7 @@ export class BeanieApp {
 
   private async refreshBeans(options: { force?: boolean; allowModal?: boolean } = {}): Promise<void> {
     if (this.state.demo || this.disposed || this.beanRefreshInFlight) return;
+    if (!options.force && !this.hasLiveGatewayReadAuthority()) return;
     if (this.state.busy) return;
     if (!options.allowModal && this.state.modal && !this.canRefreshBeansInsideModal()) return;
     if (
@@ -2273,9 +2723,15 @@ export class BeanieApp {
     ) return;
 
     this.beanRefreshInFlight = true;
+    const authorityRevision = this.startupAuthorityRevision;
     try {
       const beans = await gateway.beans();
-      if (this.disposed || !beansChanged(this.state.beans, beans)) return;
+      if (
+        this.disposed ||
+        authorityRevision !== this.startupAuthorityRevision ||
+        !this.hasLiveGatewayReadAuthority() ||
+        !beansChanged(this.state.beans, beans)
+      ) return;
 
       const beanIds = new Set(beans.map((bean) => bean.id));
       const selectedBeanId = this.state.selectedBeanId && beanIds.has(this.state.selectedBeanId)
@@ -2309,10 +2765,16 @@ export class BeanieApp {
   // eagerly load every bean's batches. Ask the gateway for one scoped summary
   // per bean so the ordering reflects each bean's actual latest pull.
   private async refreshBeanUsage(beans: readonly Bean[] = this.state.beans): Promise<void> {
-    if (this.state.demo || this.disposed || beans.length === 0) return;
+    if (!this.hasLiveGatewayReadAuthority() || this.disposed || beans.length === 0) return;
     const requestId = ++this.beanUsageRefreshRequestId;
+    const authorityRevision = this.startupAuthorityRevision;
     const usage = await loadLatestBeanUsage(beans, gateway);
-    if (this.disposed || requestId !== this.beanUsageRefreshRequestId) return;
+    if (
+      this.disposed ||
+      requestId !== this.beanUsageRefreshRequestId ||
+      authorityRevision !== this.startupAuthorityRevision ||
+      !this.hasLiveGatewayReadAuthority()
+    ) return;
 
     const beanIds = new Set(this.state.beans.map((bean) => bean.id));
     const beanUsageAt = { ...this.state.beanUsageAt };
@@ -2332,7 +2794,7 @@ export class BeanieApp {
 
   private async refreshVisibleShots(): Promise<void> {
     const bean = this.selectedBean();
-    if (!bean || this.state.demo || this.shotRefreshInFlight) return;
+    if (!bean || !this.hasLiveGatewayReadAuthority() || this.state.busy || this.shotRefreshInFlight) return;
     if (this.presentationActivity.isSuspended) return;
     if (document.visibilityState !== 'visible' || this.state.view !== 'workbench') return;
     if (this.state.liveActive || this.state.liveFinalizing || this.state.shotsLoadingMore) return;
@@ -2342,9 +2804,15 @@ export class BeanieApp {
 
     this.shotRefreshInFlight = true;
     const batch = this.selectedBatch();
+    const mutationGeneration = this.shotCacheGeneration;
+    const authorityRevision = this.startupAuthorityRevision;
     try {
       const { records, total } = await this.fetchShotPage(bean, batch, 0);
       if (
+        mutationGeneration !== this.shotCacheGeneration ||
+        authorityRevision !== this.startupAuthorityRevision ||
+        !this.hasLiveGatewayReadAuthority() ||
+        this.state.busy ||
         this.selectedBean()?.id !== bean.id ||
         this.selectedBatch()?.id !== batch?.id ||
         this.state.liveActive ||
@@ -2474,6 +2942,35 @@ export class BeanieApp {
     if (outcome.status === 'completed') return outcome.value;
     if (outcome.status === 'failed') throw outcome.error;
     throw new Error(`${resourceKey} command ${outcome.status}`);
+  }
+
+  private runExactConnectedCommand<Value>(
+    resourceKey: string,
+    run: () => Value | PromiseLike<Value>
+  ): Promise<Value> {
+    return this.runExactCommand(resourceKey, () => {
+      this.requireConnectedGatewayAuthority();
+      return run();
+    });
+  }
+
+  private async readConnectedSetting<Value>(read: () => Promise<Value>): Promise<Value> {
+    this.requireConnectedGatewayAuthority();
+    const authorityRevision = this.startupAuthorityRevision;
+    const value = await read();
+    if (
+      authorityRevision !== this.startupAuthorityRevision ||
+      !this.hasConnectedGatewayAuthority()
+    ) {
+      throw new Error('Settings read authority was lost');
+    }
+    return value;
+  }
+
+  private requireConnectedGatewayAuthority(): void {
+    if (!this.hasConnectedGatewayAuthority()) {
+      throw new Error('Gateway setting is read-only until live data reconnects');
+    }
   }
 
   private async runExactMachineCommand<Value>(
@@ -2721,15 +3218,17 @@ export class BeanieApp {
     });
   }
 
-  // Open the confirm dialog; the actual delete (and optional reclaim) runs from
-  // its buttons via performDeleteShot. The reclaim plan is computed now, while
-  // the shot still names the bag and dose, so the dialog can show before→after.
+  // The dialog owns only a preview. Execution sends the immutable dose delta to
+  // ShotDeletionFlow, which admits replay-safe remote work to the durable outbox.
   private deleteShot(shotId: string): void {
     const shot = this.state.shots.find((item) => item.id === shotId);
     if (!shot) return;
     this.setState({
       modal: 'delete-shot',
-      deleteShotTarget: { shotId, reclaim: this.reclaimableDoseForShot(shot) }
+      deleteShotTarget: {
+        shotId,
+        reclaim: shotDoseReclaimPlan(shot, this.state.beans, this.state.batchesByBean)
+      }
     });
   }
 
@@ -2737,46 +3236,52 @@ export class BeanieApp {
     const target = this.state.deleteShotTarget;
     if (!target) return;
     const shotId = target.shotId;
-    const reclaimPlan = reclaim ? target.reclaim : null;
+    const reclaimIntent = reclaim ? target.reclaim?.intent ?? null : null;
+    const demo = this.state.demo;
+    const provenanceRevision = this.runtimeProvenanceRevision;
+    if (!demo) this.shotCacheGeneration += 1;
+    this.setState({ busy: true, status: 'Deleting shot', modal: null, deleteShotTarget: null });
+    const result = await this.shotDeletionFlow.execute({
+      shotId,
+      reclaim: reclaimIntent,
+      demo
+    });
 
-    const applyDeletedShot = (status: string) => {
-      const shots = this.state.shots.filter((item) => item.id !== shotId);
-      const visibleShots = shots.filter((item) => !isServiceShot(item));
-      this.setState({
-        shots,
-        shotsTotal: Math.max(0, this.state.shotsTotal - 1),
-        detailShotId: visibleShots[0]?.id ?? null,
-        compareShotId: this.state.compareShotId === shotId ? null : this.state.compareShotId,
-        modal: null,
-        deleteShotTarget: null,
+    if (
+      result.type === 'superseded' ||
+      provenanceRevision !== this.runtimeProvenanceRevision
+    ) return;
+
+    if (result.type === 'failed') {
+      console.error('[Beanie] Delete shot failed', result.error);
+      this.setState({ busy: false, status: 'Delete shot failed' });
+      return;
+    }
+    if (result.inventoryReviewBeanId) {
+      this.inventoryReviewBeanIds.add(result.inventoryReviewBeanId);
+    }
+    if (result.cacheWarning !== undefined) {
+      console.error('[Beanie] Deleted shot cache invalidation failed', result.cacheWarning);
+    }
+    if (result.reclaimWarning !== undefined) {
+      console.error('[Beanie] Deleted shot dose reclaim failed', result.reclaimWarning);
+    }
+    const projection = result.shotProjection;
+    this.setState({
+      shots: projection.shots,
+      shotsTotal: projection.shotsTotal,
+      detailShotId: projection.detailShotId,
+      compareShotId: projection.compareShotId,
+      ...(projection.removedCurrentDetail ? {
         editDialog: null,
         shotEdit: null,
         shotEditField: null,
-        shotBeanEdit: null,
-        busy: false,
-        status
-      });
-    };
-
-    this.setState({ busy: true, status: 'Deleting shot', modal: null, deleteShotTarget: null });
-    if (this.state.demo) {
-      if (reclaimPlan) await this.applyDoseReclaim(reclaimPlan);
-      applyDeletedShot(
-        reclaimPlan ? `Shot deleted (demo) · Bag: ${formatGrams(reclaimPlan.next)} left` : 'Shot deleted (demo)'
-      );
-      return;
-    }
-
-    try {
-      await this.runExactCommand(`shot:${shotId}`, () => gateway.deleteShot(shotId));
-      this.shotCacheGeneration += 1;
-      await beanieCache.invalidateShotMutation(shotId);
-      if (reclaimPlan) await this.applyDoseReclaim(reclaimPlan);
-      applyDeletedShot(reclaimPlan ? `Shot deleted · Bag: ${formatGrams(reclaimPlan.next)} left` : 'Shot deleted');
-    } catch (error) {
-      console.error('[Beanie] Delete shot failed', error);
-      this.setState({ busy: false, status: 'Delete shot failed' });
-    }
+        shotBeanEdit: null
+      } : {}),
+      busy: false,
+      status: result.status
+    });
+    if (result.deleteAlreadyAbsent) this.shotRefreshTask.trigger();
   }
 
   private shotUpdateFromDraft(shot: ShotRecord, draft: ShotEditDraft): ShotUpdate {
@@ -2942,8 +3447,7 @@ export class BeanieApp {
     }, {
       createBean: (input) => gateway.createBean(input),
       updateBean: (id, input) => gateway.updateBean(id, input),
-      putBeans: (beans) => beanieCache.putBeans(beans),
-      putBeanBatches: (beanId, batches) => beanieCache.putBeanBatches(beanId, batches)
+      putBeans: (beans) => beanieCache.putBeans(beans)
     });
 
     if (result.type === 'failed') {
@@ -3193,6 +3697,7 @@ export class BeanieApp {
     }
     this.cleaningInProgress = true;
     this.setState({ busy: true, status: plan.status });
+    const provenanceRevision = this.runtimeProvenanceRevision;
     const execution = await this.cleaningExecution.execute({
       workflow: plan.workflow,
       demo: this.state.demo,
@@ -3204,7 +3709,7 @@ export class BeanieApp {
         twoTapSteamStop: this.usesTwoTapSteamStop()
       }
     });
-    if (this.disposed) return;
+    if (this.disposed || provenanceRevision !== this.runtimeProvenanceRevision) return;
     if (
       execution.type === 'failed' ||
       execution.type === 'authority' ||
@@ -3469,6 +3974,10 @@ export class BeanieApp {
   }
 
   private observeSleepBrightnessState(sleeping: boolean): void {
+    if (!this.hasConnectedGatewayAuthority()) {
+      this.clearSleepBrightnessTimer();
+      return;
+    }
     if (sleeping) {
       // The user kept the app awake while the machine sleeps — leave the screen lit.
       if (this.state.appAwake) return;
@@ -3489,7 +3998,7 @@ export class BeanieApp {
   private verifySleepBrightnessRestored(): void {
     const dimLevel = this.lastSleepDimLevel;
     this.lastSleepDimLevel = null;
-    if (this.state.demo || dimLevel == null) {
+    if (!this.hasConnectedGatewayAuthority() || dimLevel == null) {
       void this.refreshDisplayStateSilently();
       return;
     }
@@ -3497,15 +4006,21 @@ export class BeanieApp {
     this.sleepWakeRestoreTimer = window.setTimeout(() => {
       this.sleepWakeRestoreTimer = null;
       void (async () => {
+        if (!this.hasConnectedGatewayAuthority()) return;
         try {
           // Wait out a dim PUT still in flight so we observe its result.
           if (this.sleepDimPromise) await this.sleepDimPromise;
+          if (!this.hasConnectedGatewayAuthority()) return;
           const display = await gateway.displayState();
+          if (!this.hasConnectedGatewayAuthority()) return;
           if (display.requestedBrightness > dimLevel) {
             this.patchBundle({ display });
             return;
           }
-          const restored = await this.setGatewayBrightnessLatest(this.wakeAppRestoreBrightness);
+          const restored = await this.setGatewayBrightnessLatest(
+            this.wakeAppRestoreBrightness,
+            { requiresConnectedAuthority: true }
+          );
           if (restored) this.patchBundle({ display: restored });
         } catch (error) {
           console.warn('[Beanie] Wake brightness restore check failed', error);
@@ -3515,7 +4030,12 @@ export class BeanieApp {
   }
 
   private scheduleSleepBrightnessDim(delayMs: number): void {
-    if (this.disposed || this.state.demo || this.sleepBrightnessDimmed || this.state.appAwake) return;
+    if (
+      this.disposed ||
+      !this.hasConnectedGatewayAuthority() ||
+      this.sleepBrightnessDimmed ||
+      this.state.appAwake
+    ) return;
     if (this.sleepBrightnessTimer != null) {
       if (delayMs > 0) return;
       this.clearSleepBrightnessTimer();
@@ -3533,7 +4053,7 @@ export class BeanieApp {
   }
 
   private async dimDisplayForSleep(): Promise<void> {
-    if (this.state.demo || this.sleepBrightnessDimmed || this.state.appAwake) return;
+    if (!this.hasConnectedGatewayAuthority() || this.sleepBrightnessDimmed || this.state.appAwake) return;
     // The dim is deferred ~1s; if the machine woke in that window, don't black
     // out the screen (and don't fight reaprime's wake-restore).
     if (!this.machineIsSleeping()) return;
@@ -3546,11 +4066,23 @@ export class BeanieApp {
     // Publish the PUT so a concurrent wake-app tap restores brightness only
     // after this dim lands — otherwise the two writes race and the dim can win last.
     const dim = (async () => {
+      let applied = false;
       try {
-        const display = await this.setGatewayBrightnessLatest(level);
-        if (display) this.patchBundle({ display });
+        const display = await this.setGatewayBrightnessLatest(
+          level,
+          { requiresConnectedAuthority: true }
+        );
+        if (display) {
+          applied = true;
+          this.patchBundle({ display });
+        }
       } catch (error) {
         console.warn('[Beanie] Sleep brightness dim failed', error);
+      } finally {
+        if (!applied) {
+          this.sleepBrightnessDimmed = false;
+          this.lastSleepDimLevel = null;
+        }
       }
     })();
     this.sleepDimPromise = dim;
@@ -3559,21 +4091,34 @@ export class BeanieApp {
   }
 
   private async refreshDisplayStateSilently(): Promise<void> {
-    if (this.state.demo) return;
+    if (!this.hasConnectedGatewayAuthority()) return;
     try {
-      this.patchBundle({ display: await gateway.displayState() });
+      this.patchBundle({ display: await this.readConnectedSetting(() => gateway.displayState()) });
     } catch {
       // Display state is best-effort; machine controls should stay quiet.
     }
   }
 
-  private async setGatewayBrightnessLatest(brightness: number): Promise<DisplayState | null> {
+  private async setGatewayBrightnessLatest(
+    brightness: number,
+    options: { requiresConnectedAuthority?: boolean } = {}
+  ): Promise<DisplayState | null> {
+    const authorityRevision = this.startupAuthorityRevision;
+    const authorityCurrent = () =>
+      !options.requiresConnectedAuthority ||
+      (
+        authorityRevision === this.startupAuthorityRevision &&
+        this.hasConnectedGatewayAuthority()
+      );
+    if (!authorityCurrent()) return null;
     const outcome = await this.gatewayMutations.latest(
       'display',
       'brightness',
-      () => gateway.setDisplayBrightness(brightness)
+      () => authorityCurrent()
+        ? gateway.setDisplayBrightness(brightness)
+        : Promise.resolve(null)
     );
-    if (outcome.status === 'completed') return outcome.value;
+    if (outcome.status === 'completed' && authorityCurrent()) return outcome.value;
     if (outcome.status === 'failed') throw outcome.error;
     return null;
   }
@@ -3590,11 +4135,14 @@ export class BeanieApp {
     this.lastSleepDimLevel = null;
     this.setState({ appAwake: true, status: 'App awake — machine still asleep' });
     this.armWakeAppIdleTimer();
-    if (this.state.demo || !wasDimmed) return;
+    if (!this.hasConnectedGatewayAuthority() || !wasDimmed) return;
     try {
       // Wait out any dim PUT still in flight so our restore is the last write.
       if (this.sleepDimPromise) await this.sleepDimPromise;
-      const display = await this.setGatewayBrightnessLatest(this.wakeAppRestoreBrightness);
+      const display = await this.setGatewayBrightnessLatest(
+        this.wakeAppRestoreBrightness,
+        { requiresConnectedAuthority: true }
+      );
       if (display) this.patchBundle({ display });
     } catch (error) {
       console.warn('[Beanie] Wake-app brightness restore failed', error);
@@ -3625,6 +4173,20 @@ export class BeanieApp {
     if (this.state.demo || !this.state.appAwake || !this.machineIsSleeping()) return;
     this.setState({ appAwake: false });
     this.scheduleSleepBrightnessDim(0);
+  }
+
+  /** Automatic gateway writes require the fully authoritative startup mode. */
+  private hasConnectedGatewayAuthority(): boolean {
+    return !this.state.demo &&
+      this.state.startupPhase === 'connected' &&
+      !this.state.gatewayLinkDown;
+  }
+
+  /** Periodic gateway reads may run in limited mode, but never across demotion. */
+  private hasLiveGatewayReadAuthority(): boolean {
+    return !this.state.demo &&
+      (this.state.startupPhase === 'connected' || this.state.startupPhase === 'limited') &&
+      !this.state.gatewayLinkDown;
   }
 
   // Flash a translucent preview of the wake-app zone over the current view for
@@ -3708,11 +4270,7 @@ export class BeanieApp {
   // down (shots pulled from another UI, beans edited, machine state moved).
   private handleGatewayReconnected(): void {
     this.setState({ gatewayLinkDown: false, status: 'Gateway reconnected' });
-    if (this.state.startupPhase === 'offline-cache') this.startupRetryTask.trigger();
-    void this.refreshBeans({ force: true });
-    void this.refreshBeanUsage();
-    void this.refreshVisibleShots();
-    void this.doseMutationReconciler.trigger();
+    if (this.state.startupPhase !== 'connected') this.startupRetryTask.trigger();
   }
 
   private handleScaleTelemetry(
@@ -4369,7 +4927,21 @@ export class BeanieApp {
 
   // A pulled shot consumes its dose from the bag it was brewed from, so the
   // remaining weight tracks itself; bags without a tracked weight are left alone.
-  private async consumeBatchDoseForShot(
+  private consumeBatchDoseForShot(
+    bean: Bean,
+    batchId: string,
+    doseWeight: number | null | undefined,
+    shotId: string | null,
+    demo: boolean
+  ): Promise<void> {
+    const execution = this.runBatchDoseForShot(bean, batchId, doseWeight, shotId, demo);
+    let tracked: Promise<void>;
+    tracked = execution.finally(() => this.activeDoseAdmissions.delete(tracked));
+    this.activeDoseAdmissions.add(tracked);
+    return tracked;
+  }
+
+  private async runBatchDoseForShot(
     bean: Bean,
     batchId: string,
     doseWeight: number | null | undefined,
@@ -4393,6 +4965,15 @@ export class BeanieApp {
     }
 
     const at = new Date().toISOString();
+    const projectionRevision = this.beanInventory.remainingWeightRevision(batch.id);
+    const idempotencyKey = pendingDoseIdempotencyKey(shotId, batch.id);
+    const reservationCreated = this.beanInventory.reservePendingRemainingWeight({
+      idempotencyKey,
+      beanId: bean.id,
+      batchId: batch.id,
+      fieldRevision: projectionRevision
+    });
+    let settlementPending = false;
     try {
       // Journal before the first network attempt. A process death anywhere
       // after this await leaves a reclaimable command rather than lost beans.
@@ -4402,22 +4983,68 @@ export class BeanieApp {
         beanId: bean.id,
         dose,
         expectedRemaining: next,
-        projectionRevision: this.beanInventory.remainingWeightRevision(batch.id),
+        projectionRevision,
         at
       });
-      if (queued.inserted) {
-        const batches = (this.state.batchesByBean[bean.id] ?? []).map((item) =>
-          item.id === batch.id ? { ...item, weightRemaining: next } : item
-        );
-        this.setState({
-          batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
-          status: queued.durability === 'indexeddb' || queued.durability === 'local-storage'
-            ? `Bag: ${formatGrams(next)} left`
-            : `Bag: ${formatGrams(next)} left — device storage unavailable`
-        });
-        void beanieCache.putBeanBatches(bean.id, batches).catch(() => {});
+      settlementPending = queued.settlementPending;
+      if (!queued.settlementPending) {
+        this.beanInventory.releasePendingRemainingWeight(idempotencyKey);
+        // An acknowledged tombstone will never emit settlement again. Force a
+        // fresh inventory hydration instead of trusting a possibly older cache.
+        this.inventoryReviewBeanIds.add(bean.id);
+      }
+      const admittedRemaining = queued.expectedRemaining;
+      if (!queued.inserted && queued.settlementPending) {
+        this.inventoryReviewBeanIds.add(bean.id);
+        if (remaining === admittedRemaining) {
+          this.beanInventory.retainPendingRemainingWeight({
+            idempotencyKey: queued.idempotencyKey,
+            beanId: bean.id,
+            batchId: batch.id,
+            expectedRemaining: admittedRemaining,
+            fieldRevision: projectionRevision
+          });
+        }
+      }
+      try {
+        const currentBatches = this.state.batchesByBean[bean.id] ?? [];
+        const currentBatch = currentBatches.find((item) => item.id === batch.id);
+        const stillOwnsProjection =
+          !this.disposed &&
+          this.beanInventory.remainingWeightRevision(batch.id) === projectionRevision &&
+          currentBatch?.weightRemaining === remaining;
+        if (queued.inserted && stillOwnsProjection) {
+          const batches = currentBatches.map((item) =>
+            item.id === batch.id ? { ...item, weightRemaining: admittedRemaining } : item
+          );
+          this.beanInventory.retainPendingRemainingWeight({
+            idempotencyKey: queued.idempotencyKey,
+            beanId: bean.id,
+            batchId: batch.id,
+            expectedRemaining: admittedRemaining,
+            fieldRevision: projectionRevision
+          });
+          this.setState({
+            batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
+            status: queued.durability === 'indexeddb' || queued.durability === 'local-storage'
+              ? `Bag: ${formatGrams(admittedRemaining)} left`
+              : `Bag: ${formatGrams(admittedRemaining)} left — device storage unavailable`
+          });
+          void this.beanInventory.cacheProjection({
+            beanId: bean.id,
+            batches,
+            shouldScheduleApply: false
+          });
+        } else if (queued.inserted && !stillOwnsProjection && !this.disposed) {
+          this.inventoryReviewBeanIds.add(bean.id);
+        }
+      } finally {
+        queued.releaseProjection();
       }
     } catch (error) {
+      if (reservationCreated && !settlementPending) {
+        this.beanInventory.releasePendingRemainingWeight(idempotencyKey);
+      }
       console.error('[Beanie] Could not journal dose deduction', error);
       this.setState({ status: 'Bag update could not be queued' });
     }
@@ -4434,46 +5061,59 @@ export class BeanieApp {
     }
   }
 
-  private adoptFlushedBatch(
-    saved: BeanBatch,
-    expectedRemaining: number,
-    resolvedRemaining: number,
-    projectionRevision: number | null
+  private adoptSettledDoseAdjustment(settlement: DoseMutationSettlement): void {
+    if (this.disposed) {
+      this.beanInventory.releasePendingRemainingWeight(settlement.idempotencyKey);
+      return;
+    }
+    const hasLaterPendingAdjustment = this.beanInventory.hasPendingRemainingWeightAfter(
+      settlement.idempotencyKey,
+      settlement.entry.beanId,
+      settlement.entry.batchId
+    );
+    const projection = hasLaterPendingAdjustment || settlement.entry.expectedRemaining == null
+      ? null
+      : this.beanInventory.reconcileRemainingWeight({
+          beanId: settlement.entry.beanId,
+          batchId: settlement.entry.batchId,
+          expectedCurrent: settlement.entry.expectedRemaining,
+          resolvedRemaining: settlement.resolvedRemaining,
+          fieldRevision: settlement.projectionRevision
+        });
+    this.beanInventory.releasePendingRemainingWeight(settlement.idempotencyKey);
+    if (projection) this.adoptInventoryProjection(projection);
+    if (
+      settlement.outcome === 'not-applicable' ||
+      (!projection && !hasLaterPendingAdjustment)
+    ) {
+      // A skipped/stale optimistic scalar cannot safely absorb the durable
+      // worker's absolute result. Retain a refresh obligation so the next bag
+      // inspection reconciles fresh authority rather than hiding divergence.
+      this.inventoryReviewBeanIds.add(settlement.entry.beanId);
+    }
+  }
+
+  private adoptCanonicalDoseAdjustment(
+    canonicalization: DoseMutationCanonicalization
   ): void {
     if (this.disposed) return;
     const projection = this.beanInventory.reconcileRemainingWeight({
-      beanId: saved.beanId,
-      batchId: saved.id,
-      expectedCurrent: expectedRemaining,
-      resolvedRemaining: saved.weightRemaining ?? resolvedRemaining,
-      fieldRevision: projectionRevision
+      beanId: canonicalization.entry.beanId,
+      batchId: canonicalization.entry.batchId,
+      expectedCurrent: canonicalization.projectedExpectedRemaining,
+      resolvedRemaining: canonicalization.entry.expectedRemaining,
+      fieldRevision: canonicalization.projectionRevision
+    });
+    this.beanInventory.retainPendingRemainingWeight({
+      idempotencyKey: canonicalization.idempotencyKey,
+      beanId: canonicalization.entry.beanId,
+      batchId: canonicalization.entry.batchId,
+      expectedRemaining: canonicalization.entry.expectedRemaining,
+      fieldRevision: canonicalization.projectionRevision ??
+        this.beanInventory.remainingWeightRevision(canonicalization.entry.batchId)
     });
     if (projection) this.adoptInventoryProjection(projection);
-  }
-
-  // The inverse of consumeBatchDoseForShot: a deleted shot can return its dose to
-  // the bag it was pulled from. Only bags with a tracked remaining weight qualify
-  // (remaining may be 0 if this shot emptied it), and we never refill past the
-  // bag's original weight.
-  private reclaimableDoseForShot(shot: ShotRecord): ReclaimPlan | null {
-    const dose = positiveNumber(shot.annotations?.actualDoseWeight);
-    if (dose == null) return null;
-    const found = this.batchAndBeanForId(shot.workflow?.context?.beanBatchId ?? null);
-    if (!found) return null;
-    const remaining = nonNegativeNumber(found.batch.weightRemaining);
-    if (remaining == null) return null;
-    const cap = positiveNumber(found.batch.weight);
-    const next = round(cap == null ? remaining + dose : Math.min(cap, remaining + dose), 1);
-    return { bean: found.bean, batch: found.batch, dose, remaining, next };
-  }
-
-  private async applyDoseReclaim(plan: ReclaimPlan): Promise<void> {
-    const { bean, batch, next } = plan;
-    const batchInput: Partial<BeanBatch> = {
-      beanId: bean.id,
-      weightRemaining: next
-    };
-    await this.saveBatchStoragePatch(bean, batch.id, batchInput, `Bag: ${formatGrams(next)} left`);
+    else this.inventoryReviewBeanIds.add(canonicalization.entry.beanId);
   }
 
   // Demo affordance: replay a deterministic simulated shot at real-time pacing so
@@ -4505,6 +5145,26 @@ export class BeanieApp {
       this.simTimer = null;
     }
     this.liveShot.reset();
+  }
+
+  /** Revoke every runtime owner whose inputs came from the demo session. */
+  private resetDemoRuntimeForGateway(): void {
+    this.runtimeProvenanceRevision += 1;
+    this.stopSimulatedShot();
+    this.liveShotCompletion.cancelCurrent(new Error('Demo runtime replaced by gateway data'));
+    this.machineService.resetSession();
+    this.cleaningInProgress = false;
+    this.machineProgressReturnView = null;
+    this.decisionLog = emptyDecisionLog();
+    this.liveGhostModel = null;
+    this.liveGhostShotId = null;
+    this.lastScaleFrameMs = null;
+    this.noScaleBrewFlashStartedMs = null;
+    this.noScaleShotWarningUntilMs = 0;
+    this.lastWaterAlert = 'none';
+    this.waterAlertProjector.reset();
+    this.liveReadouts.beginSession();
+    this.clearAutomaticWriteTimers();
   }
 
   private async onClick(event: Event): Promise<void> {
@@ -4737,6 +5397,14 @@ export class BeanieApp {
    */
   private pushSettingToStore(storeKey: string, value: string | null): boolean {
     if (this.state.demo) return true;
+    if (!this.hasConnectedGatewayAuthority()) {
+      queueMicrotask(() => {
+        if (this.disposed) return;
+        this.applyLoadedSettings(false);
+        this.setState({ status: 'Synced settings are read-only until live data reconnects' });
+      });
+      return false;
+    }
     if (!this.settingsStoreSync.admitWrite(storeKey, value)) {
       // Domain writers update their own view state after returning. Re-read the
       // untouched authoritative cache on the next microtask to roll that view
@@ -4760,7 +5428,14 @@ export class BeanieApp {
    */
   private loadSettings(): Promise<void> {
     if (!this.settingsLoadPromise) {
-      this.settingsLoadPromise = this.runLoadSettings();
+      const attempt = this.runLoadSettings();
+      this.settingsLoadPromise = attempt;
+      // The startup flow releases its own single-flight lease in `finally`.
+      // Release this memoized gate too so an unexpected rejected attempt does
+      // not make every later reconnect await the same rejected promise.
+      void attempt.catch(() => {
+        if (this.settingsLoadPromise === attempt) this.settingsLoadPromise = null;
+      });
     }
     return this.settingsLoadPromise;
   }
@@ -4770,17 +5445,24 @@ export class BeanieApp {
       this.applyLoadedSettings(true);
       return;
     }
-    const result = await this.settingsStoreSync.loadInitial();
+    const authorityRevision = this.startupAuthorityRevision;
+    const authorityCurrent = () =>
+      !this.disposed &&
+      authorityRevision === this.startupAuthorityRevision &&
+      !this.state.gatewayLinkDown;
+    const result = await this.settingsStoreSync.loadInitial(authorityCurrent);
     try {
       if (result.type === 'loaded' && !this.disposed) {
         try {
-          await migrateLegacyGeminiApiKey(gateway);
+          if (authorityCurrent()) {
+            await migrateLegacyGeminiApiKey(gateway, authorityCurrent);
+          }
         } catch (error) {
           // Do not make all preferences unavailable because a best-effort secret
           // cleanup failed. The next real startup retries the migration.
           console.warn('[Beanie] Legacy scanner key cleanup failed; will retry', error);
         }
-        if (!this.disposed) this.applyLoadedSettings(true);
+        if (authorityCurrent()) this.applyLoadedSettings(true);
         return;
       }
       if (result.type === 'failed') {
@@ -4793,6 +5475,32 @@ export class BeanieApp {
       // Initial failure is recoverable: keep polling instead of making the
       // fallback defaults sticky for the lifetime of the app.
       if (!this.disposed) this.settingsSyncTask.start();
+    }
+  }
+
+  /** Demo edits share the process cache, so live recovery must replace it from the store. */
+  private async recoverSettingsFromDemo(): Promise<void> {
+    const authorityRevision = this.startupAuthorityRevision;
+    const authorityCurrent = () =>
+      authorityRevision === this.startupAuthorityRevision &&
+      !this.state.gatewayLinkDown;
+    const result = await this.settingsStoreSync.discardAndReload(authorityCurrent);
+    if (
+      this.disposed ||
+      authorityRevision !== this.startupAuthorityRevision ||
+      this.state.gatewayLinkDown
+    ) return;
+    if (result.type !== 'reloaded') {
+      this.settingsLoadPromise = null;
+      const detail = result.type === 'failed' ? result.error : result.type;
+      throw new Error('Synced settings could not be refreshed after demo', { cause: detail });
+    }
+    this.applyLoadedSettings(true);
+    this.settingsRecoveryRequired = false;
+    this.demoSettingsSnapshot = null;
+    this.settingsLoadPromise = Promise.resolve();
+    if (this.state.view === 'settings' || this.state.phoneTab === 'settings') {
+      await this.loadReaSettings();
     }
   }
 
@@ -4816,6 +5524,49 @@ export class BeanieApp {
   }
 
   /**
+   * Demo controls intentionally use the synchronous settings APIs, so isolate
+   * that process-local cache generation. Leaving demo restores the exact
+   * pre-demo values until a connected discard-and-reload replaces them.
+   */
+  private restoreSettingsBeforeDemo(): Pick<
+    AppState,
+    | 'settingsPreferences'
+    | 'favoriteProfiles'
+    | 'favoriteBeans'
+    | 'machinePresetLabels'
+    | 'machinePresetValues'
+    | 'machinePresetSelection'
+    | 'hotWaterStopMode'
+    | 'cleaning'
+    | 'cleaningProfileOverride'
+    | 'cleaningThreshold'
+  > {
+    const snapshot = this.demoSettingsSnapshot;
+    if (snapshot) {
+      restoreSyncedCache(snapshot.cache);
+      writeSettingsPreferencePatch({ theme: snapshot.theme });
+    } else {
+      // Defensive fallback for a runtime created before snapshot support: an
+      // empty cache yields explicit product defaults, never demo-derived data.
+      clearSyncedCache();
+    }
+    const settingsPreferences = readSettingsPreferences();
+    applySettingsPreferences(settingsPreferences);
+    return {
+      settingsPreferences,
+      favoriteProfiles: readFavoriteProfiles(),
+      favoriteBeans: readFavoriteBeans(),
+      machinePresetLabels: readMachinePresetLabels(),
+      machinePresetValues: readMachinePresetValues(),
+      machinePresetSelection: readMachinePresetSelection(),
+      hotWaterStopMode: readHotWaterStopMode(),
+      cleaning: readCleaningState(),
+      cleaningProfileOverride: readCleaningProfileOverride(),
+      cleaningThreshold: readCleaningThreshold()
+    };
+  }
+
+  /**
    * Pick up changes made on another device sharing this gateway — synced
    * settings, plus the selected coffee and the workflow recipe. Runs on a timer
    * and immediately on window focus.
@@ -4824,20 +5575,33 @@ export class BeanieApp {
     if (
       this.presentationActivity.isSuspended ||
       this.disposed ||
-      this.state.startupPhase === 'offline-cache' ||
-      this.state.startupPhase === 'retrying'
+      !this.hasLiveGatewayReadAuthority()
     ) return;
-    await this.pollSettings();
-    await this.resyncWorkflowAndBean();
+    const authorityRevision = this.startupAuthorityRevision;
+    await this.pollSettings(authorityRevision);
+    if (
+      authorityRevision !== this.startupAuthorityRevision ||
+      !this.hasLiveGatewayReadAuthority()
+    ) return;
+    await this.resyncWorkflowAndBean(authorityRevision);
   }
 
   /** Live sync: re-poll the settings store; re-render only if something changed. */
-  private async pollSettings(): Promise<void> {
-    if (this.state.demo || this.disposed) return;
+  private async pollSettings(authorityRevision: number): Promise<void> {
+    if (!this.hasLiveGatewayReadAuthority() || this.disposed) return;
     const wasAvailable = this.state.settingsStoreAvailable;
-    const result = await this.settingsStoreSync.pollNow();
+    const authorityCurrent = () =>
+      !this.disposed &&
+      authorityRevision === this.startupAuthorityRevision &&
+      this.hasLiveGatewayReadAuthority();
+    const result = await this.settingsStoreSync.pollNow(authorityCurrent);
     if (result.type === 'polled') {
-      if (!this.disposed && (!wasAvailable || result.changedKeys.length > 0)) {
+      if (
+        !this.disposed &&
+        authorityRevision === this.startupAuthorityRevision &&
+        this.hasLiveGatewayReadAuthority() &&
+        (!wasAvailable || result.changedKeys.length > 0)
+      ) {
         this.applyLoadedSettings(true);
       }
     } else if (result.type === 'failed') {
@@ -4863,9 +5627,9 @@ export class BeanieApp {
    * settled after an apply) so it never clobbers an in-progress edit, apply,
    * live shot, or open dialog.
    */
-  private async resyncWorkflowAndBean(): Promise<void> {
+  private async resyncWorkflowAndBean(authorityRevision = this.startupAuthorityRevision): Promise<void> {
     if (
-      this.state.demo ||
+      !this.hasLiveGatewayReadAuthority() ||
       this.disposed ||
       this.state.busy ||
       this.state.liveActive ||
@@ -4881,7 +5645,13 @@ export class BeanieApp {
       console.warn('[Beanie] Workflow resync failed', error);
       return;
     }
-    if (this.disposed || this.state.busy || !this.canResyncRecipe()) return;
+    if (
+      this.disposed ||
+      authorityRevision !== this.startupAuthorityRevision ||
+      !this.hasLiveGatewayReadAuthority() ||
+      this.state.busy ||
+      !this.canResyncRecipe()
+    ) return;
     // The selected coffee can travel in the workflow (context.beanId) or, when
     // the workflow carries no bean, in last-bean-id. The fingerprint includes
     // workflow bean identity, while the explicit checks also cover the local
@@ -4945,12 +5715,24 @@ export class BeanieApp {
   }
 
   private retryFailedStoreWrites(): void {
+    if (!this.hasConnectedGatewayAuthority()) {
+      this.setState({ status: 'Synced settings are read-only until live data reconnects' });
+      return;
+    }
     this.settingsStoreSync.retryFailedWrites();
   }
 
   private async dismissStoreError(): Promise<void> {
-    const result = await this.settingsStoreSync.discardAndReload();
-    if (this.disposed) return;
+    if (!this.hasConnectedGatewayAuthority()) {
+      this.setState({ status: 'Could not reload gateway settings — retry when connected' });
+      return;
+    }
+    const authorityRevision = this.startupAuthorityRevision;
+    const authorityCurrent = () =>
+      authorityRevision === this.startupAuthorityRevision &&
+      this.hasConnectedGatewayAuthority();
+    const result = await this.settingsStoreSync.discardAndReload(authorityCurrent);
+    if (this.disposed || !authorityCurrent()) return;
     if (result.type === 'reloaded') {
       this.applyLoadedSettings(true);
       this.setState({ storeError: false, status: 'Gateway settings restored' });
@@ -5277,7 +6059,7 @@ export class BeanieApp {
         if (id) await this.connectDevice(id, false);
       },
       'settings-machine-state': async ({ value }) => {
-        if (value) await this.requestMachineState(value);
+        if (isSettingsMachineState(value)) await this.requestMachineState(value);
       },
       'settings-schedule-add': async () => {
         const timeInput = this.root.querySelector<HTMLInputElement>('[data-action="settings-schedule-time"]');
@@ -5987,6 +6769,7 @@ export class BeanieApp {
       settledPatch?: Partial<AppState>;
     } = {}
   ): Promise<'saved' | 'failed' | 'skipped'> {
+    if (!this.requireInventoryJournalForWrite(request.demo)) return 'failed';
     const start = this.beanInventory.startBatchUpdate(request);
     if (start.type === 'missing') return 'skipped';
     this.adoptInventoryProjection(start.projection, {
@@ -6006,6 +6789,12 @@ export class BeanieApp {
     return outcome.type === 'saved' ? 'saved' : 'failed';
   }
 
+  private requireInventoryJournalForWrite(demo: boolean): boolean {
+    if (demo || this.inventoryJournalReady) return true;
+    this.setState({ status: 'Bag changes are read-only — local journal unavailable' });
+    return false;
+  }
+
   private async submitBeanPickerBean(form: HTMLFormElement): Promise<void> {
     if (this.state.busy) return;
     const data = new FormData(form);
@@ -6013,6 +6802,7 @@ export class BeanieApp {
     if (!fields.roaster || !fields.name) return;
 
     const editingId = form.dataset.id || null;
+    if (!editingId && !this.requireInventoryJournalForWrite(this.state.demo)) return;
     this.setState({ busy: true, status: editingId ? 'Saving bean' : 'Adding bean' });
 
     if (!editingId) {
@@ -6034,8 +6824,7 @@ export class BeanieApp {
     }, {
       createBean: (input) => gateway.createBean(input),
       updateBean: (id, input) => gateway.updateBean(id, input),
-      putBeans: (beans) => beanieCache.putBeans(beans),
-      putBeanBatches: (beanId, batches) => beanieCache.putBeanBatches(beanId, batches)
+      putBeans: (beans) => beanieCache.putBeans(beans)
     });
 
     if (result.type === 'failed') {
@@ -6395,6 +7184,7 @@ export class BeanieApp {
   }
 
   private async freezeStock(beanId: string, batchId: string): Promise<void> {
+    if (!this.requireInventoryJournalForWrite(this.state.demo)) return;
     const formKey = freezeAmountFormKey(batchId);
     const amountRaw = numberOrNullInput(this.state.formNumbers[formKey] ?? null);
     const start = this.beanInventory.startFreezeStock({
@@ -6487,6 +7277,7 @@ export class BeanieApp {
     if (this.state.busy) return;
     const beanId = form.dataset.beanId;
     if (!beanId) return;
+    if (!this.requireInventoryJournalForWrite(this.state.demo)) return;
     const bean = this.state.beans.find((item) => item.id === beanId);
     if (!bean) return;
     const batchId = form.dataset.batchId || null;
@@ -7281,8 +8072,12 @@ export class BeanieApp {
           {
             phone: true,
             flowCalibration: this.flowCalibrationDisplay(),
-            resourceStates: this.state.settingsResources,
-            syncedPreferencesWritable: this.state.demo || this.state.settingsStoreAvailable,
+            resourceStates: this.effectiveSettingsResourceStates(),
+            syncedPreferencesWritable: this.state.demo || (
+              this.state.settingsStoreAvailable && this.hasConnectedGatewayAuthority()
+            ),
+            gatewayActionsWritable: this.hasConnectedGatewayAuthority(),
+            machineActionsWritable: this.hasLiveMachineAuthority(),
             scannerKeySet: readGeminiApiKey() != null
           }
         )
@@ -7913,9 +8708,13 @@ export class BeanieApp {
   }
 
   private renderDeleteShotModal(): string {
-    const plan = this.state.deleteShotTarget?.reclaim ?? null;
-    const reclaim = plan
-      ? { dose: formatGrams(plan.dose), remaining: formatGrams(plan.remaining), next: formatGrams(plan.next) }
+    const preview = this.state.deleteShotTarget?.reclaim?.preview ?? null;
+    const reclaim = preview
+      ? {
+          dose: formatGrams(preview.dose),
+          remaining: formatGrams(preview.remaining),
+          next: formatGrams(preview.next)
+        }
       : null;
     return renderDeleteShotModalView(reclaim);
   }
@@ -7959,8 +8758,12 @@ export class BeanieApp {
         undefined,
         {
           flowCalibration: this.flowCalibrationDisplay(),
-          resourceStates: this.state.settingsResources,
-          syncedPreferencesWritable: this.state.demo || this.state.settingsStoreAvailable,
+          resourceStates: this.effectiveSettingsResourceStates(),
+          syncedPreferencesWritable: this.state.demo || (
+            this.state.settingsStoreAvailable && this.hasConnectedGatewayAuthority()
+          ),
+          gatewayActionsWritable: this.hasConnectedGatewayAuthority(),
+          machineActionsWritable: this.hasLiveMachineAuthority(),
           scannerKeySet: readGeminiApiKey() != null
         }
       )}
@@ -8317,7 +9120,9 @@ export class BeanieApp {
       (this.state.settingsSource === 'gateway' || this.state.settingsSource === 'demo')
     ) return Promise.resolve();
     if (this.settingsBundleLoadPromise) return this.settingsBundleLoadPromise;
-    const load = this.runLoadReaSettings();
+    const generation = this.settingsBundleLoadGeneration;
+    const demo = this.state.demo;
+    const load = this.runLoadReaSettings(generation, demo);
     this.settingsBundleLoadPromise = load;
     const clearLoad = () => {
       if (this.settingsBundleLoadPromise === load) this.settingsBundleLoadPromise = null;
@@ -8326,10 +9131,19 @@ export class BeanieApp {
     return load;
   }
 
-  private async runLoadReaSettings(): Promise<void> {
+  private async runLoadReaSettings(generation: number, demo: boolean): Promise<void> {
+    const authorityRevision = this.startupAuthorityRevision;
+    if (!demo && !this.hasConnectedGatewayAuthority()) return;
     let result: Awaited<ReturnType<typeof this.settingsController.loadSettingsBundle>>;
-    result = await this.settingsController.loadSettingsBundle(this.state.demo);
-    if (this.disposed) return;
+    result = await this.settingsController.loadSettingsBundle(demo);
+    if (
+      this.disposed ||
+      generation !== this.settingsBundleLoadGeneration ||
+      (!demo && (
+        authorityRevision !== this.startupAuthorityRevision ||
+        !this.hasConnectedGatewayAuthority()
+      ))
+    ) return;
     this.setState({
       settingsBundle: result.bundle,
       settingsSource: result.source,
@@ -8393,7 +9207,25 @@ export class BeanieApp {
   }
 
   private settingsResourceWritable(resource: SettingsResourceKey): boolean {
-    return this.settingsLocal || settingsResourceWritable(this.state.settingsResources, resource);
+    return this.settingsLocal || (
+      this.hasConnectedGatewayAuthority() &&
+      settingsResourceWritable(this.state.settingsResources, resource)
+    );
+  }
+
+  private effectiveSettingsResourceStates(): SettingsResourceStates | null {
+    const resources = this.state.settingsResources;
+    if (!resources || this.settingsLocal || this.hasConnectedGatewayAuthority()) return resources;
+    return Object.fromEntries(
+      Object.entries(resources).map(([key, state]) => [
+        key,
+        {
+          ...state,
+          writable: false,
+          message: state.message ?? 'Live gateway authority is unavailable'
+        }
+      ])
+    ) as SettingsResourceStates;
   }
 
   private openFlowCalibrator(): void {
@@ -8644,13 +9476,22 @@ export class BeanieApp {
       this.setState({ status: 'Scale disconnected' });
       return;
     }
+    if (!this.hasConnectedGatewayAuthority()) {
+      this.setState({ status: 'Scale controls are read-only until live data reconnects' });
+      return;
+    }
+    const authorityRevision = this.startupAuthorityRevision;
+    const authorityCurrent = () =>
+      !this.disposed &&
+      authorityRevision === this.startupAuthorityRevision &&
+      this.hasConnectedGatewayAuthority();
     this.setState({ status: 'Taring scale…' });
     try {
-      await this.runExactCommand('scale', () => gateway.tareScale());
-      this.setState({ status: 'Scale tared' });
+      await this.runExactConnectedCommand('scale', () => gateway.tareScale());
+      if (authorityCurrent()) this.setState({ status: 'Scale tared' });
     } catch (error) {
       console.error('[Beanie] Scale tare failed', error);
-      this.setState({ status: 'Tare failed' });
+      if (authorityCurrent()) this.setState({ status: 'Tare failed' });
     }
   }
 
@@ -8692,7 +9533,7 @@ export class BeanieApp {
     if (outcome?.type === 'failed') await this.refreshDisplayStateSilently();
   }
 
-  private async requestMachineState(state: string): Promise<void> {
+  private async requestMachineState(state: MachineState): Promise<void> {
     if (!this.hasLiveMachineAuthority()) {
       this.setState({ status: 'Machine controls are read-only until live data reconnects' });
       return;
@@ -8712,17 +9553,31 @@ export class BeanieApp {
   }
 
   private async uploadFirmware(file: File): Promise<void> {
-    if (this.settingsLocal) {
+    if (this.settingsLocal || !this.hasConnectedGatewayAuthority()) {
       this.setState({ status: 'Firmware upload needs a connected gateway' });
       return;
     }
+    const authorityRevision = this.startupAuthorityRevision;
+    const authorityCurrent = () =>
+      !this.disposed &&
+      authorityRevision === this.startupAuthorityRevision &&
+      this.hasConnectedGatewayAuthority();
     this.setState({ status: `Uploading ${file.name}…`, busy: true });
     try {
-      await gateway.uploadFirmware(await file.arrayBuffer());
-      this.setState({ status: 'Firmware uploaded — restart the machine', busy: false });
+      const body = await file.arrayBuffer();
+      await this.runExactConnectedCommand('firmware', () => gateway.uploadFirmware(body));
+      if (authorityCurrent()) {
+        this.setState({ status: 'Firmware uploaded — restart the machine', busy: false });
+      } else if (!this.disposed) {
+        this.setState({ busy: false });
+      }
     } catch (error) {
       console.error('[Beanie] Firmware upload failed', error);
-      this.setState({ status: 'Firmware upload failed', busy: false });
+      if (authorityCurrent()) {
+        this.setState({ status: 'Firmware upload failed', busy: false });
+      } else if (!this.disposed) {
+        this.setState({ busy: false });
+      }
     }
   }
 
@@ -8891,7 +9746,11 @@ export class BeanieApp {
   }
 
   private async togglePluginConfig(id: string): Promise<void> {
-    if (this.state.pluginConfig?.id === id) {
+    if (
+      this.state.pluginConfig &&
+      normalizePluginId(this.state.pluginConfig.id) === normalizePluginId(id)
+    ) {
+      this.pluginConfigSession += 1;
       this.setState({ pluginConfig: null });
       return;
     }
@@ -8900,21 +9759,22 @@ export class BeanieApp {
       this.setState({ status: 'Plugin settings are unavailable — reconnect and try again' });
       return;
     }
+    const session = ++this.pluginConfigSession;
     const result = await this.settingsController.loadPluginSettings({ local: this.settingsLocal, id });
+    if (session !== this.pluginConfigSession) return;
     if (!result.settings) {
       this.setState({ pluginConfig: null, status: 'Plugin settings could not be loaded — nothing was changed' });
       return;
     }
-    this.setState({ pluginConfig: this.makePluginConfig(id, result.settings) });
+    this.setState({ pluginConfig: this.makePluginConfig(id, result.settings, session) });
   }
 
-  private makePluginConfig(id: string, settings: PluginSettings): PluginConfigState {
-    const spec = pluginSettingsSpec(id);
-    const draft: Record<string, string | number | boolean> = {};
-    for (const field of spec?.fields ?? []) {
-      draft[field.key] = field.secret ? '' : settings.values[field.key] ?? pluginFieldDefault(field);
-    }
-    return { id, settings, draft, secretEdited: {}, dirty: false, saving: false, verify: null };
+  private makePluginConfig(
+    id: string,
+    settings: SanitizedPluginSettings,
+    session = ++this.pluginConfigSession
+  ): PluginConfigState {
+    return createPluginConfigState(id, settings, session);
   }
 
   private updatePluginField(key: string, raw: string | boolean): void {
@@ -8937,58 +9797,50 @@ export class BeanieApp {
     }
     const draft = { ...config.draft, [key]: value };
     const secretEdited = field.secret ? { ...config.secretEdited, [key]: String(value) !== '' } : config.secretEdited;
-    this.setState({ pluginConfig: { ...config, draft, secretEdited, dirty: true, verify: null } });
+    const revision = config.revision + 1;
+    this.setState({
+      pluginConfig: {
+        ...config,
+        revision,
+        draft,
+        touched: { ...config.touched, [key]: true },
+        fieldRevisions: { ...config.fieldRevisions, [key]: revision },
+        secretEdited,
+        dirty: true,
+        verify: null
+      }
+    });
   }
 
   private async savePluginConfig(id: string): Promise<void> {
     const config = this.state.pluginConfig;
-    if (!config || normalizePluginId(config.id) !== normalizePluginId(id)) return;
+    if (!config || config.saving || normalizePluginId(config.id) !== normalizePluginId(id)) return;
     if (!this.settingsResourceWritable('plugins')) {
       this.setState({ status: 'Plugin settings are unavailable — nothing was saved' });
       return;
     }
     const pluginId = config.id;
-    const spec = pluginSettingsSpec(pluginId);
-    if (!spec) return;
-    // Build the payload + optimistic next state. Reaprime stores plugin settings
-    // as a whole object, so preserve existing secret values when saving other fields.
-    const payload: Record<string, string | number | boolean> = {};
-    const nextValues = { ...config.settings.values };
-    const nextSecretsSet = { ...config.settings.secretsSet };
-    for (const field of spec.fields) {
-      if (field.secret) {
-        if (config.secretEdited[field.key] && String(config.draft[field.key] ?? '') !== '') {
-          payload[field.key] = config.draft[field.key];
-          nextValues[field.key] = config.draft[field.key];
-          nextSecretsSet[field.key] = true;
-        } else if (config.settings.values[field.key] != null) {
-          payload[field.key] = config.settings.values[field.key];
-        }
-      } else {
-        payload[field.key] = config.draft[field.key];
-        nextValues[field.key] = config.draft[field.key];
-      }
-    }
-    const nextSettings: PluginSettings = { values: nextValues, secretsSet: nextSecretsSet };
-    if (this.settingsLocal) {
-      const result = await this.settingsController.savePluginSettings({ local: true, id: pluginId, payload });
-      this.setState({ pluginConfig: this.makePluginConfig(pluginId, nextSettings), status: result.status });
-      return;
-    }
+    const savePlan = buildPluginSettingsSavePlan(config);
+    if (!savePlan) return;
+    const local = this.settingsLocal;
     this.setState({ pluginConfig: { ...config, saving: true } });
-    const result = await this.settingsController.savePluginSettings({ local: false, id: pluginId, payload });
-    if (result.ok) {
-      this.setState({ pluginConfig: this.makePluginConfig(pluginId, nextSettings), status: result.status });
-    } else {
-      this.setState({
-        pluginConfig: {
-          ...config,
-          saving: false,
-          verify: { tone: 'warn', message: 'Save failed. Check plugin settings are valid.' }
-        },
-        status: result.status
-      });
+    const result = await this.settingsController.savePluginSettings({
+      local,
+      id: pluginId,
+      payload: savePlan.payload
+    });
+    let acceptedSettings: SanitizedPluginSettings | null = savePlan.settings;
+    if (result.ok && !local) {
+      const refreshed = await this.settingsController.loadPluginSettings({ local: false, id: pluginId });
+      acceptedSettings = refreshed.settings ?? acceptedSettings;
     }
+    this.setState({
+      pluginConfig: settlePluginSettingsSave(this.state.pluginConfig, savePlan, {
+        ok: result.ok,
+        settings: acceptedSettings
+      }),
+      status: result.status
+    });
   }
 
   private async verifyPluginConfig(id: string): Promise<void> {
@@ -9010,7 +9862,12 @@ export class BeanieApp {
       settings: config.settings
     });
     const current = this.state.pluginConfig;
-    if (!current || normalizePluginId(current.id) !== normalizePluginId(pluginId)) return;
+    if (
+      !current ||
+      normalizePluginId(current.id) !== normalizePluginId(pluginId) ||
+      current.session !== config.session ||
+      current.revision !== config.revision
+    ) return;
     this.setState({ pluginConfig: { ...current, verify: result } });
   }
 
@@ -9128,6 +9985,65 @@ export class BeanieApp {
     this.render();
   }
 
+}
+
+function demoRecoveryTransientReset(): Partial<AppState> {
+  return {
+    busy: false,
+    view: 'workbench',
+    phoneTab: 'home',
+    modal: null,
+    scanner: null,
+    beanPickerBeanId: null,
+    beanPickerMode: 'inspect',
+    beanPickerAutofocusSearch: false,
+    beanPickerDraftBatchBeanId: null,
+    beanPickerDraftBatch: null,
+    beanPickerEditingBeanId: null,
+    beanPickerEditingBatchId: null,
+    beanPickerFocusedBatchId: null,
+    beanPickerFreezeBatchId: null,
+    batchStorageTarget: null,
+    deleteShotTarget: null,
+    editingGrinderId: null,
+    profileEditor: null,
+    editingProfileId: null,
+    editDialog: null,
+    shotEdit: null,
+    shotEditField: null,
+    shotBeanEdit: null,
+    profileEdit: null,
+    machineEdit: null,
+    numberEdit: null,
+    machineLabelEdit: null,
+    profileImport: null,
+    profileDeleteTarget: null,
+    formNumbers: {},
+    comparePicking: false,
+    flowCalDraft: null,
+    flowCalBase: null,
+    flowCalShotId: null,
+    flowCalShots: [],
+    scale: null,
+    waterLevel: null,
+    liveActive: false,
+    liveFinalizing: false,
+    appAwake: false,
+    wakeZonePreview: null,
+    saverPreview: false,
+    waterAlertDismissed: false,
+    machineRefillLevel: null,
+    cleaningProfilePicking: false,
+    cleaningWizard: null,
+    decentAccount: null,
+    decentAccountSource: null,
+    decentAccountEmail: '',
+    decentAccountPassword: '',
+    decentAccountSaving: false,
+    decentAccountMessage: null,
+    derek: null,
+    derekTweakChip: null
+  };
 }
 
 function promoteBean(beans: Bean[], beanId: string): Bean[] {

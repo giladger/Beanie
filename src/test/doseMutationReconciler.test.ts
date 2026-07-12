@@ -2,15 +2,21 @@ import type { BeanBatch } from '../api/types';
 import {
   DOSE_MUTATION_LEASE_MS,
   PENDING_DOSE_MUTATION_KIND,
+  PENDING_DOSE_RECLAIM_MUTATION_KIND,
   DoseMutationReconciler,
+  type DoseMutationCanonicalization,
+  type DoseMutationAdjustmentEntry,
   type DoseMutationRetry,
-  type EnqueueDoseMutationInput
+  type DoseMutationSettlement,
+  type EnqueueDoseMutationInput,
+  type EnqueueDoseReclaimInput
 } from '../controllers/doseMutationReconciler';
 import {
   DurableMutationOutbox,
   IdempotencyConflictError,
   MUTATION_OUTBOX_STORAGE_KEY,
   pendingDoseIdempotencyKey,
+  pendingDoseReclaimIdempotencyKey,
   type DurableMutationOutboxOptions,
   type DurableMutationRecord,
   type MutationOutboxStorage
@@ -65,6 +71,9 @@ interface Harness {
   updates: Array<{ id: string; patch: Partial<BeanBatch>; idempotencyKey: string }>;
   exactKeys: string[];
   saved: BeanBatch[];
+  savedAdjustments: DoseMutationAdjustmentEntry[];
+  settlements: DoseMutationSettlement[];
+  canonicalizations: DoseMutationCanonicalization[];
   retries: DoseMutationRetry[];
   workerErrors: unknown[];
   setNow(value: string): void;
@@ -81,12 +90,8 @@ function createHarness(options: {
     batches: Map<string, BeanBatch>
   ) => Promise<BeanBatch>;
   beforeExact?: () => void;
-  onBatchSaved?: (
-    batch: BeanBatch,
-    entry: PendingDose,
-    resolvedRemaining: number,
-    projectionRevision: number | null
-  ) => void;
+  onAdjustmentSettled?: (settlement: DoseMutationSettlement) => void;
+  onAdjustmentCanonicalized?: (canonicalization: DoseMutationCanonicalization) => void;
   outbox?: Omit<DurableMutationOutboxOptions, 'now'>;
 } = {}): Harness {
   const storage = options.storage ?? new FakeStorage();
@@ -95,6 +100,9 @@ function createHarness(options: {
   const updates: Harness['updates'] = [];
   const exactKeys: string[] = [];
   const saved: BeanBatch[] = [];
+  const savedAdjustments: DoseMutationAdjustmentEntry[] = [];
+  const settlements: DoseMutationSettlement[] = [];
+  const canonicalizations: DoseMutationCanonicalization[] = [];
   const retries: DoseMutationRetry[] = [];
   const workerErrors: unknown[] = [];
   let legacy = [...(options.legacy ?? [])];
@@ -123,9 +131,18 @@ function createHarness(options: {
       legacy = [];
     },
     now: () => new Date(now),
-    onBatchSaved: (batch, entry, resolvedRemaining, projectionRevision) => {
-      saved.push(batch);
-      options.onBatchSaved?.(batch, entry, resolvedRemaining, projectionRevision);
+    onAdjustmentCanonicalized: (canonicalization) => {
+      canonicalizations.push(canonicalization);
+      options.onAdjustmentCanonicalized?.(canonicalization);
+    },
+    onAdjustmentSettled: (settlement) => {
+      settlements.push(settlement);
+      if (settlement.outcome === 'committed') {
+        const batch = batches.get(settlement.entry.batchId);
+        if (batch) saved.push(batch);
+        savedAdjustments.push(settlement.entry);
+      }
+      options.onAdjustmentSettled?.(settlement);
     },
     onRetryScheduled: (retry) => retries.push(retry),
     onWorkerError: (error) => workerErrors.push(error)
@@ -146,6 +163,9 @@ function createHarness(options: {
     updates,
     exactKeys,
     saved,
+    savedAdjustments,
+    settlements,
+    canonicalizations,
     retries,
     workerErrors,
     setNow: (value) => {
@@ -174,9 +194,9 @@ await run('journals before applying, serializes the aggregate, and forwards the 
       // must still pass its freshly resolved scalar to the projection owner.
       return { id: saved.id, beanId: saved.beanId };
     },
-    onBatchSaved: (_batch, _entry, resolvedRemaining, projectionRevision) => {
-      observedResolvedRemaining = resolvedRemaining;
-      observedProjectionRevision = projectionRevision;
+    onAdjustmentSettled: (settlement) => {
+      observedResolvedRemaining = settlement.resolvedRemaining;
+      observedProjectionRevision = settlement.projectionRevision;
     }
   });
   harness.batches.set('batch-1', batch('batch-1', 100));
@@ -186,6 +206,7 @@ await run('journals before applying, serializes the aggregate, and forwards the 
     projectionRevision: 7
   });
   equal(queued.inserted, true);
+  queued.releaseProjection();
   await waitFor(() => harness.saved.length === 1);
 
   equal(events.indexOf('journal') < events.indexOf('update'), true);
@@ -200,13 +221,259 @@ await run('journals before applying, serializes the aggregate, and forwards the 
   equal(observedProjectionRevision, 7);
 
   const duplicate = await harness.reconciler.enqueue({
-    ...input('shot-1', 'batch-1', 18, 82),
+    ...input('shot-1', 'batch-1', 18, 64),
+    at: '2026-07-12T12:00:00.000Z',
     projectionRevision: 99
   });
   equal(duplicate.inserted, false);
+  duplicate.releaseProjection();
   await settle();
   equal(harness.updates.length, 1);
   equal(projectionRevisionCount(harness.reconciler), 0);
+  await harness.reconciler.dispose();
+});
+
+await run('durable execution waits until its optimistic projection hand-off is released', async () => {
+  const harness = createHarness();
+  harness.batches.set('batch-1', batch('batch-1', 100));
+
+  const admission = await harness.reconciler.enqueue(
+    input('shot-held', 'batch-1', 18, 82)
+  );
+  await settle();
+  equal(harness.updates.length, 0);
+
+  admission.releaseProjection();
+  await waitFor(() => harness.settlements.length === 1);
+  equal(harness.updates[0]?.patch.weightRemaining, 82);
+  await harness.reconciler.dispose();
+});
+
+await run('durably reclaims a dose, exposes adjustment context, and deduplicates the shot', async () => {
+  const harness = createHarness();
+  harness.batches.set('batch-1', batch('batch-1', 80));
+  const input = reclaimInput('shot-reclaim', 'batch-1', 18, 98);
+
+  equal(await harness.reconciler.existingReclaim('shot-reclaim', 'batch-1'), null);
+  const queued = await harness.reconciler.enqueueReclaim(input);
+  equal(queued.inserted, true);
+  equal(queued.durability, 'local-storage');
+  deepEqual(await harness.reconciler.existingReclaim('shot-reclaim', 'batch-1'), {
+    beanId: 'bean-1',
+    batchId: 'batch-1',
+    dose: 18,
+    state: 'pending',
+    expectedRemaining: 98,
+    durability: 'local-storage'
+  });
+  queued.releaseProjection();
+  await waitFor(() => harness.saved.length === 1);
+
+  deepEqual(harness.updates[0], {
+    id: 'batch-1',
+    patch: { beanId: 'bean-1', weightRemaining: 98 },
+    idempotencyKey: pendingDoseReclaimIdempotencyKey('shot-reclaim', 'batch-1')
+  });
+  equal(harness.batches.get('batch-1')?.weightRemaining, 98);
+  equal(harness.savedAdjustments[0]?.adjustment, 'reclaim');
+  equal(harness.savedAdjustments[0]?.expectedRemaining, 98);
+  const record = harness.storage.records().find(
+    (candidate) => candidate.idempotencyKey === pendingDoseReclaimIdempotencyKey('shot-reclaim', 'batch-1')
+  );
+  equal(record?.kind, PENDING_DOSE_RECLAIM_MUTATION_KIND);
+  equal(record?.receipt?.outcome, 'committed');
+  deepEqual(await harness.reconciler.existingReclaim('shot-reclaim', 'batch-1'), {
+    beanId: 'bean-1',
+    batchId: 'batch-1',
+    dose: 18,
+    state: 'acknowledged',
+    outcome: 'committed',
+    resolvedRemaining: 98,
+    durability: 'local-storage'
+  });
+
+  const duplicate = await harness.reconciler.enqueueReclaim({
+    ...input,
+    expectedRemaining: 116,
+    at: '2026-07-12T12:00:00.000Z',
+    projectionRevision: 99
+  });
+  equal(duplicate.inserted, false);
+  duplicate.releaseProjection();
+  await settle();
+  equal(harness.updates.length, 1);
+  equal(projectionRevisionCount(harness.reconciler), 0);
+  await harness.reconciler.dispose();
+});
+
+await run('an older retry-wait deduction blocks a newer reclaim on the same inventory head', async () => {
+  let failures = 1;
+  const harness = createHarness({
+    update: async (id, patch, _key, batches) => {
+      if (failures-- > 0) throw new Error('offline');
+      const saved = { ...batches.get(id)!, ...patch };
+      batches.set(id, saved);
+      return saved;
+    }
+  });
+  harness.batches.set('batch-1', batch('batch-1', 100));
+  await enqueueDose(harness, input('shot-consumed', 'batch-1', 18, 82));
+  await waitFor(() => harness.retries.length === 1);
+  harness.updates.length = 0;
+
+  // Even an identical event timestamp keeps the already-enqueued deduction
+  // as the aggregate head before its inverse.
+  await enqueueReclaim(harness,
+    reclaimInput('shot-consumed', 'batch-1', 18, 100)
+  );
+  await settle();
+  // The newer pending reclaim is due, but the older retry head is not.
+  equal(harness.updates.length, 0);
+
+  harness.setNow('2026-07-10T10:00:30.000Z');
+  await harness.reconciler.trigger();
+  await waitFor(() => harness.saved.length === 2);
+
+  deepEqual(harness.updates.map((update) => update.patch.weightRemaining), [82, 100]);
+  deepEqual(harness.savedAdjustments.map((entry) => entry.adjustment), ['deduction', 'reclaim']);
+  equal(harness.batches.get('batch-1')?.weightRemaining, 100);
+  await harness.reconciler.dispose();
+});
+
+await run('a backward wall clock cannot order reclaim ahead of its deduction', async () => {
+  const harness = createHarness();
+  harness.batches.set('batch-1', { ...batch('batch-1', 100), weight: 100 });
+  const optimisticShotId = 'pending-live-123';
+  const persistedShotId = 'gateway-shot-456';
+  const deduction = await harness.reconciler.enqueue({
+    ...input(optimisticShotId, 'batch-1', 18, 82),
+    at: '2026-07-10T11:00:00.000Z'
+  });
+  const reclaim = await harness.reconciler.enqueueReclaim({
+    ...reclaimInput(persistedShotId, 'batch-1', 18, 100),
+    at: '2026-07-10T10:00:00.000Z'
+  });
+
+  reclaim.releaseProjection();
+  deduction.releaseProjection();
+  await waitFor(() => harness.settlements.length === 2);
+
+  deepEqual(harness.updates.map((update) => update.patch.weightRemaining), [82, 100]);
+  const records = harness.storage.records();
+  const deductionRecord = records.find(
+    (record) => record.idempotencyKey === pendingDoseIdempotencyKey(optimisticShotId, 'batch-1')
+  );
+  const reclaimRecord = records.find(
+    (record) => record.idempotencyKey === pendingDoseReclaimIdempotencyKey(persistedShotId, 'batch-1')
+  );
+  equal((reclaimRecord?.createdAt ?? '') > (deductionRecord?.createdAt ?? ''), true);
+  await harness.reconciler.dispose();
+});
+
+await run('causal admission canonicalizes legacy batch lanes before ordering', async () => {
+  const storage = new FakeStorage();
+  const seed = new DurableMutationOutbox({
+    indexedDB: null,
+    storage,
+    now: () => new Date('2026-07-10T11:00:00.000Z')
+  });
+  const legacyInput = input('legacy-route', 'batch-1', 18, 82);
+  const { shotId: _shotId, ...legacyPayload } = legacyInput;
+  await seed.enqueue({
+    idempotencyKey: pendingDoseIdempotencyKey('legacy-route', 'batch-1'),
+    kind: PENDING_DOSE_MUTATION_KIND,
+    aggregateKey: 'batch:batch-1',
+    payload: legacyPayload,
+    createdAt: new Date('2026-07-10T11:00:00.000Z')
+  });
+  await seed.dispose();
+
+  const harness = createHarness({ storage });
+  harness.batches.set('batch-1', batch('batch-1', 100));
+  const newer = await harness.reconciler.enqueue({
+    ...input('new-route', 'batch-1', 18, 64),
+    at: '2026-07-10T10:00:00.000Z'
+  });
+  const records = storage.records();
+  const legacyRecord = records.find(
+    (record) => record.idempotencyKey === pendingDoseIdempotencyKey('legacy-route', 'batch-1')
+  );
+  const newerRecord = records.find(
+    (record) => record.idempotencyKey === pendingDoseIdempotencyKey('new-route', 'batch-1')
+  );
+
+  equal(legacyRecord?.aggregateKey, 'bean-inventory:bean-1');
+  equal((newerRecord?.createdAt ?? '') > (legacyRecord?.createdAt ?? ''), true);
+  newer.releaseProjection();
+  await harness.reconciler.dispose();
+});
+
+await run('a lost reclaim response replays the same idempotency key without adding twice', async () => {
+  let receipt: BeanBatch | null = null;
+  let receiptKey: string | null = null;
+  const harness = createHarness({
+    update: async (id, patch, idempotencyKey, batches) => {
+      if (receipt) {
+        equal(idempotencyKey, receiptKey);
+        return receipt;
+      }
+      const saved = { ...batches.get(id)!, ...patch };
+      batches.set(id, saved);
+      receipt = saved;
+      receiptKey = idempotencyKey;
+      throw new Error('response lost');
+    }
+  });
+  harness.batches.set('batch-1', batch('batch-1', 70));
+  await enqueueReclaim(harness, reclaimInput('shot-lost', 'batch-1', 20, 100));
+  await waitFor(() => harness.retries.length === 1);
+  equal(harness.batches.get('batch-1')?.weightRemaining, 90);
+
+  harness.setNow('2026-07-10T10:00:30.000Z');
+  await harness.reconciler.trigger();
+  await waitFor(() => harness.saved.length === 1);
+
+  // A non-idempotent replay would apply the freshly computed 110. The gateway
+  // receipt for the stable key instead resolves the original physical +20.
+  deepEqual(harness.updates.map((update) => update.patch.weightRemaining), [90, 110]);
+  equal(harness.updates[0]?.idempotencyKey, harness.updates[1]?.idempotencyKey);
+  equal(harness.updates[0]?.idempotencyKey, pendingDoseReclaimIdempotencyKey('shot-lost', 'batch-1'));
+  equal(harness.batches.get('batch-1')?.weightRemaining, 90);
+  equal(harness.saved[0]?.weightRemaining, 90);
+  equal(harness.storage.records().find(
+    (record) => record.idempotencyKey === pendingDoseReclaimIdempotencyKey('shot-lost', 'batch-1')
+  )?.receipt?.outcome, 'committed');
+  await harness.reconciler.dispose();
+});
+
+await run('reclaim acknowledges missing, untracked, and already-applied bags without writing', async () => {
+  const harness = createHarness();
+  harness.batches.set('untracked', {
+    id: 'untracked',
+    beanId: 'bean-1',
+    weight: 250,
+    weightRemaining: null
+  });
+  harness.batches.set('already', batch('already', 98));
+
+  await enqueueReclaim(harness, reclaimInput('shot-missing', 'missing', 18, 18));
+  await enqueueReclaim(harness, reclaimInput('shot-untracked', 'untracked', 18, 18));
+  await enqueueReclaim(harness, reclaimInput('shot-already', 'already', 18, 98));
+  await waitFor(() => harness.storage.records().filter((record) => record.state === 'acknowledged').length === 3);
+
+  equal(harness.updates.length, 0);
+  equal(harness.storage.records().find((record) => record.idempotencyKey.includes('shot-missing'))?.receipt?.outcome, 'not-applicable');
+  equal(harness.storage.records().find((record) => record.idempotencyKey.includes('shot-untracked'))?.receipt?.outcome, 'not-applicable');
+  equal(harness.storage.records().find((record) => record.idempotencyKey.includes('shot-already'))?.receipt?.outcome, 'already-applied');
+  deepEqual(harness.settlements.map((settlement) => ({
+    batchId: settlement.entry.batchId,
+    outcome: settlement.outcome,
+    remaining: settlement.resolvedRemaining
+  })).sort((left, right) => left.batchId.localeCompare(right.batchId)), [
+    { batchId: 'already', outcome: 'already-applied', remaining: 98 },
+    { batchId: 'missing', outcome: 'not-applicable', remaining: null },
+    { batchId: 'untracked', outcome: 'not-applicable', remaining: null }
+  ]);
   await harness.reconciler.dispose();
 });
 
@@ -214,7 +481,7 @@ await run('an idempotency payload conflict fails closed instead of entering vola
   const updateGate = deferred<BeanBatch>();
   const harness = createHarness({ update: () => updateGate.promise });
   harness.batches.set('batch-1', batch('batch-1', 100));
-  await harness.reconciler.enqueue(input('shot-conflict', 'batch-1', 18, 82));
+  await enqueueDose(harness, input('shot-conflict', 'batch-1', 18, 82));
   await waitFor(() => harness.updates.length === 1);
 
   let conflict: unknown = null;
@@ -251,6 +518,44 @@ await run('migrates every legacy entry before clearing and preserves the per-bea
   equal(durableCountAtClear, 2);
   deepEqual(harness.updates.map((update) => update.patch.weightRemaining), [90, 80]);
   deepEqual(harness.exactKeys, ['bean-inventory:bean-1', 'bean-inventory:bean-1']);
+  await harness.reconciler.dispose();
+});
+
+await run('live admission cannot splice between records in the legacy migration epoch', async () => {
+  const storage = new FakeStorage();
+  const legacy = [
+    legacyDose('batch-1', 30, 70, '2026-07-10T09:00:00.000Z'),
+    legacyDose('batch-1', 30, 40, '2026-07-10T09:01:00.000Z')
+  ];
+  let concurrent: Promise<Awaited<ReturnType<DoseMutationReconciler['enqueueReclaim']>>> | null = null;
+  let armed = true;
+  const originalSet = storage.setItem.bind(storage);
+  let harness!: Harness;
+  storage.setItem = (key, value) => {
+    originalSet(key, value);
+    if (!armed) return;
+    armed = false;
+    concurrent = harness.reconciler.enqueueReclaim(
+      reclaimInput('live-during-legacy', 'batch-1', 50, 90)
+    );
+  };
+  harness = createHarness({ storage, legacy });
+  harness.batches.set('batch-1', { ...batch('batch-1', 100), weight: 100 });
+
+  const running = harness.reconciler.start();
+  await waitFor(() => concurrent != null);
+  const live = await concurrent!;
+  live.releaseProjection();
+  await running;
+
+  const orderedKinds = storage.records()
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+    .map((record) => record.kind);
+  deepEqual(orderedKinds, [
+    PENDING_DOSE_MUTATION_KIND,
+    PENDING_DOSE_MUTATION_KIND,
+    PENDING_DOSE_RECLAIM_MUTATION_KIND
+  ]);
   await harness.reconciler.dispose();
 });
 
@@ -350,8 +655,8 @@ await run('claims only dose mutations one at a time and uses a five-minute lease
   const harness = createHarness({ storage, update: () => updateGate.promise });
   harness.batches.set('batch-1', batch('batch-1', 100));
   harness.batches.set('batch-2', batch('batch-2', 100));
-  await harness.reconciler.enqueue(input('shot-1', 'batch-1', 18, 82));
-  await harness.reconciler.enqueue(input('shot-2', 'batch-2', 18, 82));
+  await enqueueDose(harness, input('shot-1', 'batch-1', 18, 82));
+  await enqueueDose(harness, input('shot-2', 'batch-2', 18, 82));
   await waitFor(() => harness.updates.length === 1);
 
   const records = storage.records();
@@ -376,7 +681,7 @@ await run('backs retries off exponentially and does not retry before the due tim
     }
   });
   harness.batches.set('batch-1', batch('batch-1', 100));
-  await harness.reconciler.enqueue(input('shot-1', 'batch-1', 18, 82));
+  await enqueueDose(harness, input('shot-1', 'batch-1', 18, 82));
   await waitFor(() => harness.retries.length === 1);
   equal(harness.retries[0]?.attemptCount, 1);
   equal(harness.retries[0]?.retryAt.toISOString(), '2026-07-10T10:00:30.000Z');
@@ -412,8 +717,8 @@ await run('applies the lost-response heuristic and leaves unrelated mutation kin
   const harness = createHarness({ storage });
   harness.batches.set('already', batch('already', 82));
 
-  await harness.reconciler.enqueue(input('shot-already', 'already', 18, 82));
-  await harness.reconciler.enqueue(input('shot-deleted', 'deleted', 18, 82));
+  await enqueueDose(harness, input('shot-already', 'already', 18, 82));
+  await enqueueDose(harness, input('shot-deleted', 'deleted', 18, 82));
   await waitFor(() => storage.records().filter((record) => record.state === 'acknowledged').length === 2);
 
   equal(harness.updates.length, 0);
@@ -450,7 +755,7 @@ await run('dispose waits for a claimed physical update and then closes the journ
   const gate = deferred<BeanBatch>();
   const harness = createHarness({ update: () => gate.promise });
   harness.batches.set('batch-1', batch('batch-1', 100));
-  await harness.reconciler.enqueue(input('shot-1', 'batch-1', 18, 82));
+  await enqueueDose(harness, input('shot-1', 'batch-1', 18, 82));
   await waitFor(() => harness.updates.length === 1);
 
   let disposed = false;
@@ -472,7 +777,7 @@ await run('an expired lease waiting for the aggregate lane cannot dispatch a rem
   });
   harness.batches.set('batch-1', batch('batch-1', 100));
 
-  await harness.reconciler.enqueue(input('shot-expired', 'batch-1', 18, 82));
+  await enqueueDose(harness, input('shot-expired', 'batch-1', 18, 82));
   await waitFor(() => harness.exactKeys.length === 1);
   await settle();
 
@@ -495,10 +800,10 @@ await run('volatile intake preserves projection order while IDB recovers', async
   let projectedRemaining = 100;
   const harness = createHarness({
     outbox: { indexedDB: recoveringFactory, storage: null },
-    onBatchSaved: (_saved, entry, resolvedRemaining) => {
+    onAdjustmentSettled: ({ entry, resolvedRemaining }) => {
       // Mirrors the app's stale-response fence: only the command whose desired
       // projection is still current may publish its absolute response.
-      if (projectedRemaining === entry.expectedRemaining) {
+      if (resolvedRemaining != null && projectedRemaining === entry.expectedRemaining) {
         projectedRemaining = resolvedRemaining;
       }
     }
@@ -509,6 +814,7 @@ await run('volatile intake preserves projection order while IDB recovers', async
   equal(first.inserted, true);
   equal(first.durability, 'volatile');
   if (first.inserted) projectedRemaining = 82;
+  first.releaseProjection();
   await waitFor(() => harness.saved.length === 1);
   equal(projectedRemaining, 82);
 
@@ -517,6 +823,7 @@ await run('volatile intake preserves projection order while IDB recovers', async
     input('shot-recover-b', 'batch-1', 18, secondExpected)
   );
   if (second.inserted) projectedRemaining = secondExpected;
+  second.releaseProjection();
   await waitFor(() => harness.saved.length === 2);
 
   equal(attempts, 2);
@@ -524,6 +831,196 @@ await run('volatile intake preserves projection order while IDB recovers', async
   equal(projectedRemaining, 64);
   await harness.reconciler.dispose();
 });
+
+await run('volatile promotion settles locally when recovery discovers an acknowledged tombstone', async () => {
+  const { asIDBFactory } = createFakeIndexedDb();
+  const canonicalInput = input('shot-promoted-tombstone', 'batch-1', 18, 82);
+  const { shotId: _shotId, ...canonicalPayload } = canonicalInput;
+  const key = pendingDoseIdempotencyKey(canonicalInput.shotId, canonicalInput.batchId);
+  const seed = new DurableMutationOutbox({ indexedDB: asIDBFactory, storage: null });
+  await seed.enqueue({
+    idempotencyKey: key,
+    kind: PENDING_DOSE_MUTATION_KIND,
+    aggregateKey: 'bean-inventory:bean-1',
+    payload: canonicalPayload
+  });
+  const claim = await seed.claimDue({ ownerId: 'seed', leaseMs: 30_000 });
+  await seed.acknowledge({
+    idempotencyKey: key,
+    leaseToken: claim[0]!.leaseToken,
+    outcome: 'committed',
+    details: { weightRemaining: 82 }
+  });
+  await seed.dispose();
+
+  let attempts = 0;
+  const recoveringFactory = {
+    open: (name: string, version?: number): IDBOpenDBRequest => {
+      attempts += 1;
+      if (attempts === 1) throw new DOMException('IDB temporarily unavailable', 'InvalidStateError');
+      return asIDBFactory.open(name, version);
+    }
+  } as unknown as IDBFactory;
+  let projectedRemaining = 100;
+  const harness = createHarness({
+    outbox: { indexedDB: recoveringFactory, storage: null },
+    onAdjustmentCanonicalized: (canonicalization) => {
+      if (projectedRemaining === canonicalization.projectedExpectedRemaining) {
+        projectedRemaining = canonicalization.entry.expectedRemaining;
+      }
+    },
+    onAdjustmentSettled: (settlement) => {
+      if (
+        settlement.resolvedRemaining != null &&
+        projectedRemaining === settlement.entry.expectedRemaining
+      ) projectedRemaining = settlement.resolvedRemaining;
+    }
+  });
+  harness.batches.set('batch-1', batch('batch-1', 100));
+
+  const admission = await harness.reconciler.enqueue({
+    ...canonicalInput,
+    expectedRemaining: 64,
+    at: '2026-07-12T12:00:00.000Z',
+    projectionRevision: 9
+  });
+  equal(admission.durability, 'volatile');
+  projectedRemaining = admission.expectedRemaining;
+  admission.releaseProjection();
+  await waitFor(() => harness.settlements.length === 1);
+
+  equal(harness.updates.length, 0);
+  equal(harness.canonicalizations[0]?.projectedExpectedRemaining, 64);
+  equal(harness.settlements[0]?.entry.expectedRemaining, 82);
+  equal(harness.settlements[0]?.resolvedRemaining, 82);
+  equal(projectedRemaining, 82);
+  equal(projectionRevisionCount(harness.reconciler), 0);
+  await harness.reconciler.dispose();
+});
+
+await run('volatile promotion rebases optimism to a pending record first-admission scalar', async () => {
+  const { asIDBFactory } = createFakeIndexedDb();
+  const canonicalInput = input('shot-promoted-pending', 'batch-1', 18, 82);
+  const { shotId: _shotId, ...canonicalPayload } = canonicalInput;
+  const key = pendingDoseIdempotencyKey(canonicalInput.shotId, canonicalInput.batchId);
+  const seed = new DurableMutationOutbox({ indexedDB: asIDBFactory, storage: null });
+  await seed.enqueue({
+    idempotencyKey: key,
+    kind: PENDING_DOSE_MUTATION_KIND,
+    aggregateKey: 'bean-inventory:bean-1',
+    payload: canonicalPayload
+  });
+  await seed.dispose();
+
+  let attempts = 0;
+  const recoveringFactory = {
+    open: (name: string, version?: number): IDBOpenDBRequest => {
+      attempts += 1;
+      if (attempts === 1) throw new DOMException('IDB temporarily unavailable', 'InvalidStateError');
+      return asIDBFactory.open(name, version);
+    }
+  } as unknown as IDBFactory;
+  const updateGate = deferred<BeanBatch>();
+  let projectedRemaining = 100;
+  const harness = createHarness({
+    outbox: { indexedDB: recoveringFactory, storage: null },
+    update: () => updateGate.promise,
+    onAdjustmentCanonicalized: (canonicalization) => {
+      if (projectedRemaining === canonicalization.projectedExpectedRemaining) {
+        projectedRemaining = canonicalization.entry.expectedRemaining;
+      }
+    }
+  });
+  harness.batches.set('batch-1', batch('batch-1', 100));
+
+  const admission = await harness.reconciler.enqueue({
+    ...canonicalInput,
+    expectedRemaining: 64,
+    at: '2026-07-12T12:00:00.000Z',
+    projectionRevision: 4
+  });
+  projectedRemaining = admission.expectedRemaining;
+  admission.releaseProjection();
+  await waitFor(() => harness.canonicalizations.length === 1);
+
+  equal(projectedRemaining, 82);
+  equal(harness.canonicalizations[0]?.entry.expectedRemaining, 82);
+  updateGate.resolve(batch('batch-1', 82));
+  await waitFor(() => harness.settlements.length === 1);
+  await harness.reconciler.dispose();
+});
+
+await run('a duplicate waiter observes another context acknowledging its leased command', async () => {
+  const { asIDBFactory } = createFakeIndexedDb();
+  const updateGate = deferred<BeanBatch>();
+  const first = createHarness({
+    outbox: { indexedDB: asIDBFactory, storage: null },
+    update: () => updateGate.promise
+  });
+  const second = createHarness({
+    outbox: { indexedDB: asIDBFactory, storage: null }
+  });
+  first.batches.set('batch-1', batch('batch-1', 100));
+  second.batches.set('batch-1', batch('batch-1', 100));
+  const command = input('shot-cross-context', 'batch-1', 18, 82);
+
+  const owner = await first.reconciler.enqueue(command);
+  owner.releaseProjection();
+  await waitFor(() => first.updates.length === 1);
+  const waiter = await second.reconciler.enqueue(command);
+  equal(waiter.inserted, false);
+  equal(waiter.settlementPending, true);
+  waiter.releaseProjection();
+
+  updateGate.resolve(batch('batch-1', 82));
+  await waitFor(() => first.settlements.length === 1);
+  await second.reconciler.trigger();
+  await waitFor(() => second.settlements.length === 1);
+
+  equal(second.updates.length, 0);
+  equal(second.settlements[0]?.resolvedRemaining, 82);
+  await Promise.all([first.reconciler.dispose(), second.reconciler.dispose()]);
+});
+
+await run('newer same-bean admissions stay behind volatile predecessors during recovery', async () => {
+  const { asIDBFactory } = createFakeIndexedDb();
+  let attempts = 0;
+  const recoveringFactory = {
+    open: (name: string, version?: number): IDBOpenDBRequest => {
+      attempts += 1;
+      if (attempts === 1) throw new DOMException('IDB temporarily unavailable', 'InvalidStateError');
+      return asIDBFactory.open(name, version);
+    }
+  } as unknown as IDBFactory;
+  const harness = createHarness({
+    outbox: { indexedDB: recoveringFactory, storage: null }
+  });
+  harness.batches.set('batch-1', batch('batch-1', 100));
+
+  const [first, second] = await Promise.all([
+    harness.reconciler.enqueue(input('shot-volatile-a', 'batch-1', 18, 82)),
+    harness.reconciler.enqueue(input('shot-volatile-b', 'batch-1', 18, 64))
+  ]);
+  equal(first.durability, 'volatile');
+  equal(second.durability, 'volatile');
+  first.releaseProjection();
+  second.releaseProjection();
+  await waitFor(() => harness.saved.length === 2);
+
+  deepEqual(harness.updates.map((update) => update.patch.weightRemaining), [82, 64]);
+  equal(harness.batches.get('batch-1')?.weightRemaining, 64);
+  await harness.reconciler.dispose();
+});
+
+async function enqueueDose(harness: Harness, value: EnqueueDoseMutationInput): Promise<void> {
+  const admission = await harness.reconciler.enqueue(value);
+  admission.releaseProjection();
+}
+
+async function enqueueReclaim(harness: Harness, value: EnqueueDoseReclaimInput): Promise<void> {
+  const admission = await harness.reconciler.enqueueReclaim(value);
+  admission.releaseProjection();
+}
 
 async function acknowledgeSeed(outbox: DurableMutationOutbox, id: string, now: Date): Promise<void> {
   await outbox.enqueue({
@@ -557,6 +1054,22 @@ function input(
   dose: number,
   expectedRemaining: number
 ): EnqueueDoseMutationInput {
+  return {
+    shotId,
+    batchId,
+    beanId: 'bean-1',
+    dose,
+    expectedRemaining,
+    at: '2026-07-10T10:00:00.000Z'
+  };
+}
+
+function reclaimInput(
+  shotId: string,
+  batchId: string,
+  dose: number,
+  expectedRemaining: number
+): EnqueueDoseReclaimInput {
   return {
     shotId,
     batchId,

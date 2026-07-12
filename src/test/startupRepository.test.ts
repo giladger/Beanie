@@ -98,6 +98,17 @@ await run('cacheStartupData writes loaded startup resources and ignores write fa
   equal(cache.puts.includes('shots'), true);
 });
 
+await run('cacheStartupData publishes nothing after startup authority is revoked', async () => {
+  const cache = new FakeStartupCache();
+  await cacheStartupData(
+    { workflow, beans, grinders, profiles, latestShots },
+    latestQuery(),
+    cache,
+    () => false
+  );
+  equal(cache.puts.length, 0);
+});
+
 await run('cachedStartupData does not present empty collection defaults as cached data', async () => {
   const cache = new FakeStartupCache();
   cache.workflow = workflow;

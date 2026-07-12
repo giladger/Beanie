@@ -112,8 +112,13 @@ export class BeanieIndexedDbCache {
     return (await this.openDb()) != null;
   }
 
-  async putShotPage(query: CacheQueryInput, page: PaginatedShots): Promise<void> {
-    await this.putShotSummaries(page.items);
+  async putShotPage(
+    query: CacheQueryInput,
+    page: PaginatedShots,
+    canCommit: () => boolean = () => true
+  ): Promise<void> {
+    await this.putShotSummaries(page.items, canCommit);
+    if (!canCommit()) return;
     const key = shotPageCacheKey(query);
     await this.putEntries<ShotPageCacheEntry>(storeNames.shotPages, [
       {
@@ -123,7 +128,7 @@ export class BeanieIndexedDbCache {
         updatedAt: this.timestamp(),
         schemaVersion: BEANIE_CACHE_DB_VERSION
       }
-    ]);
+    ], canCommit);
   }
 
   async getShotPage(query: CacheQueryInput): Promise<PaginatedShots | null> {
@@ -134,10 +139,14 @@ export class BeanieIndexedDbCache {
     return entry?.item ?? null;
   }
 
-  async putShotSummaries(shots: readonly ShotSummary[]): Promise<void> {
+  async putShotSummaries(
+    shots: readonly ShotSummary[],
+    canCommit: () => boolean = () => true
+  ): Promise<void> {
     await this.putEntries<CacheEntry<ShotSummary>>(
       storeNames.shotSummaries,
-      shots.map((shot) => this.entry(shot.id, shot))
+      shots.map((shot) => this.entry(shot.id, shot)),
+      canCommit
     );
   }
 
@@ -153,8 +162,8 @@ export class BeanieIndexedDbCache {
     return entry?.item ?? null;
   }
 
-  async putBeans(beans: readonly Bean[]): Promise<void> {
-    await this.putCollection(storeNames.beans, 'collection:beans:ids', beans);
+  async putBeans(beans: readonly Bean[], canCommit: () => boolean = () => true): Promise<void> {
+    await this.putCollection(storeNames.beans, 'collection:beans:ids', beans, canCommit);
   }
 
   async getBeans(): Promise<Bean[]> {
@@ -187,35 +196,35 @@ export class BeanieIndexedDbCache {
     return entries.map((entry) => entry.item);
   }
 
-  async putGrinders(grinders: readonly Grinder[]): Promise<void> {
-    await this.putCollection(storeNames.grinders, 'collection:grinders:ids', grinders);
+  async putGrinders(grinders: readonly Grinder[], canCommit: () => boolean = () => true): Promise<void> {
+    await this.putCollection(storeNames.grinders, 'collection:grinders:ids', grinders, canCommit);
   }
 
   async getGrinders(): Promise<Grinder[]> {
     return this.getCollection<Grinder>(storeNames.grinders, 'collection:grinders:ids');
   }
 
-  async putProfiles(profiles: readonly ProfileRecord[]): Promise<void> {
-    await this.putCollection(storeNames.profiles, 'collection:profiles:ids', profiles);
+  async putProfiles(profiles: readonly ProfileRecord[], canCommit: () => boolean = () => true): Promise<void> {
+    await this.putCollection(storeNames.profiles, 'collection:profiles:ids', profiles, canCommit);
   }
 
   async getProfiles(): Promise<ProfileRecord[]> {
     return this.getCollection<ProfileRecord>(storeNames.profiles, 'collection:profiles:ids');
   }
 
-  async putWorkflow(workflow: Workflow | null): Promise<void> {
+  async putWorkflow(workflow: Workflow | null, canCommit: () => boolean = () => true): Promise<void> {
     if (workflow == null) {
-      await this.deleteObject(workflowObjectKey);
+      await this.deleteObject(workflowObjectKey, canCommit);
       return;
     }
-    await this.putObject(workflowObjectKey, workflow);
+    await this.putObject(workflowObjectKey, workflow, canCommit);
   }
 
   async getWorkflow(): Promise<Workflow | null> {
     return this.getObject<Workflow>(workflowObjectKey);
   }
 
-  async putObject<T>(key: string, value: T): Promise<void> {
+  async putObject<T>(key: string, value: T, canCommit: () => boolean = () => true): Promise<void> {
     await this.putEntries<ObjectCacheEntry<T>>(storeNames.objects, [
       {
         key,
@@ -223,7 +232,7 @@ export class BeanieIndexedDbCache {
         updatedAt: this.timestamp(),
         schemaVersion: BEANIE_CACHE_DB_VERSION
       }
-    ]);
+    ], canCommit);
   }
 
   async getObject<T>(key: string): Promise<T | null>;
@@ -233,8 +242,8 @@ export class BeanieIndexedDbCache {
     return entry?.value ?? fallback ?? null;
   }
 
-  async deleteObject(key: string): Promise<void> {
-    await this.deleteKeys(storeNames.objects, [key]);
+  async deleteObject(key: string, canCommit: () => boolean = () => true): Promise<void> {
+    await this.deleteKeys(storeNames.objects, [key], canCommit);
   }
 
   // Drops only the cached shot pages so the next page fetch can discover newly
@@ -346,13 +355,15 @@ export class BeanieIndexedDbCache {
   private async putCollection<T extends { id: string }>(
     storeName: StoreName,
     orderKey: string,
-    items: readonly T[]
+    items: readonly T[],
+    canCommit: () => boolean = () => true
   ): Promise<void> {
     await this.replaceEntries<CacheEntry<T>>(
       storeName,
       orderKey,
       items.map((item) => this.entry(item.id, item)),
-      () => true
+      () => true,
+      canCommit
     );
   }
 
@@ -366,10 +377,11 @@ export class BeanieIndexedDbCache {
     storeName: StoreName,
     orderKey: string,
     entries: readonly E[],
-    isReplaced: (existing: E) => boolean
+    isReplaced: (existing: E) => boolean,
+    canCommit: () => boolean = () => true
   ): Promise<void> {
     const db = await this.openDb();
-    if (!db) return;
+    if (!db || !canCommit()) return;
 
     try {
       const tx = db.transaction([storeName, storeNames.objects], 'readwrite');
@@ -377,6 +389,11 @@ export class BeanieIndexedDbCache {
       const store = tx.objectStore(storeName);
       const nextIds = new Set(entries.map((entry) => entry.id));
       const existing = await requestToPromise<E[]>(store.getAll());
+      if (!canCommit()) {
+        tx.abort();
+        await done.catch(() => {});
+        return;
+      }
       for (const entry of existing) {
         if (isReplaced(entry) && !nextIds.has(entry.id)) store.delete(entry.id);
       }
@@ -460,11 +477,15 @@ export class BeanieIndexedDbCache {
     }
   }
 
-  private async putEntries<T>(storeName: StoreName, entries: readonly T[]): Promise<void> {
+  private async putEntries<T>(
+    storeName: StoreName,
+    entries: readonly T[],
+    canCommit: () => boolean = () => true
+  ): Promise<void> {
     if (entries.length === 0) return;
 
     const db = await this.openDb();
-    if (!db) return;
+    if (!db || !canCommit()) return;
 
     try {
       const tx = db.transaction(storeName, 'readwrite');
@@ -477,11 +498,15 @@ export class BeanieIndexedDbCache {
     }
   }
 
-  private async deleteKeys(storeName: StoreName, keys: readonly IDBValidKey[]): Promise<void> {
+  private async deleteKeys(
+    storeName: StoreName,
+    keys: readonly IDBValidKey[],
+    canCommit: () => boolean = () => true
+  ): Promise<void> {
     if (keys.length === 0) return;
 
     const db = await this.openDb();
-    if (!db) return;
+    if (!db || !canCommit()) return;
 
     try {
       const tx = db.transaction(storeName, 'readwrite');

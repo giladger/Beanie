@@ -45,10 +45,12 @@ class FakeBeanGateway implements BeanRepositoryGateway {
 class FakeBeanCache implements BeanRepositoryCache {
   batches: BeanBatch[] = [];
   writes: Array<{ beanId: string; batches: BeanBatch[] }> = [];
+  afterPut: (() => void) | null = null;
 
   async putBeanBatches(beanId: string, batchValues: readonly BeanBatch[]): Promise<void> {
     this.writes.push({ beanId, batches: [...batchValues] });
     this.batches = [...batchValues];
+    this.afterPut?.();
   }
 
   async getBeanBatches(): Promise<BeanBatch[]> {
@@ -103,6 +105,51 @@ await run('loadBeanBatches backfills cache-only storageEvents and migrates them 
   equal(gateway.updates.length, 1);
   equal(gateway.updates[0]?.id, 'batch-1');
   equal(gateway.updates[0]?.batch.storageEvents?.[0]?.at, '2026-06-03T08:00:00.000Z');
+});
+
+await run('limited reads merge cached storage history without maintenance writes', async () => {
+  const gateway = new FakeBeanGateway();
+  gateway.frozenWithoutEvents = true;
+  const cache = new FakeBeanCache();
+  cache.batches = [{
+    id: 'batch-1',
+    beanId: 'bean-1',
+    frozen: true,
+    storageEvents: [{ type: 'frozen', at: '2026-06-03T08:00:00.000Z' }]
+  }];
+
+  const loaded = await loadBeanBatches('bean-1', {
+    gateway,
+    cache,
+    allowMaintenanceWrites: false
+  });
+
+  equal(loaded[0]?.storageEvents?.length, 1);
+  equal(gateway.updates.length, 0);
+});
+
+await run('authority demotion after the read fences delayed maintenance writes', async () => {
+  const gateway = new FakeBeanGateway();
+  gateway.frozenWithoutEvents = true;
+  const cache = new FakeBeanCache();
+  cache.batches = [{
+    id: 'batch-1',
+    beanId: 'bean-1',
+    frozen: true,
+    storageEvents: [{ type: 'frozen', at: '2026-06-03T08:00:00.000Z' }]
+  }];
+  let authority = true;
+  cache.afterPut = () => { authority = false; };
+
+  const loaded = await loadBeanBatches('bean-1', {
+    gateway,
+    cache,
+    allowMaintenanceWrites: true,
+    canWriteMaintenance: () => authority
+  });
+
+  equal(loaded[0]?.storageEvents?.length, 1);
+  equal(gateway.updates.length, 0);
 });
 
 await run('loadBeanBatches does not re-migrate history the gateway already returns', async () => {

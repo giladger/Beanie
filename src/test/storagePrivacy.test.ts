@@ -45,6 +45,39 @@ await run('a device key wins migration while the obsolete remote copy is still r
   uninstallStorage();
 });
 
+await run('legacy credential migration publishes nothing after startup authority changes', async () => {
+  const values = installStorage();
+  let current = true;
+  let deleted = false;
+  const migrated = await migrateLegacyGeminiApiKey({
+    storeGet: async () => {
+      current = false;
+      return 'remote-secret';
+    },
+    storeDelete: async () => { deleted = true; }
+  }, () => current);
+
+  equal(migrated, false);
+  equal(values.has('beanie:gemini-api-key'), false);
+  equal(deleted, false);
+  uninstallStorage();
+});
+
+await run('authority loss after local credential copy leaves the remote key for retry', async () => {
+  const values = installStorage();
+  let checks = 0;
+  let deleted = false;
+  const migrated = await migrateLegacyGeminiApiKey({
+    storeGet: async () => 'remote-secret',
+    storeDelete: async () => { deleted = true; }
+  }, () => ++checks === 1);
+
+  equal(migrated, false);
+  equal(values.get('beanie:gemini-api-key'), 'remote-secret');
+  equal(deleted, false);
+  uninstallStorage();
+});
+
 await run('migration keeps the remote key when device storage cannot accept it', async () => {
   Object.defineProperty(globalThis, 'localStorage', {
     configurable: true,

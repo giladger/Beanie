@@ -83,6 +83,8 @@ function storeKeyFor(localKey: string): string {
 // on every write.
 const cache = new Map<string, string>();
 
+export type SyncedSettingsCacheSnapshot = Readonly<Record<string, string>>;
+
 /** Read a setting synchronously from the in-memory cache. */
 export function getSyncedItem(key: string): string | null {
   return cache.has(key) ? (cache.get(key) as string) : null;
@@ -129,6 +131,18 @@ export function clearSyncedCache(): void {
   cache.clear();
 }
 
+/** Capture/restore a process-local cache generation without writing remotely. */
+export function captureSyncedCache(): SyncedSettingsCacheSnapshot {
+  return Object.freeze(Object.fromEntries(cache));
+}
+
+export function restoreSyncedCache(snapshot: SyncedSettingsCacheSnapshot): void {
+  cache.clear();
+  for (const [key, value] of Object.entries(snapshot)) {
+    if (syncedKeySet.has(key) && typeof value === 'string') cache.set(key, value);
+  }
+}
+
 // --- load / poll from the store ----------------------------------------------
 
 export interface SettingsStoreGateway {
@@ -168,8 +182,12 @@ export async function loadAllFromStore(
       // moving off localStorage.
       const legacy = readLegacyLocal(key);
       if (legacy !== null) {
+        // The startup/socket authority fence applies to automatic migration
+        // writes too, not only to the final cache publication. If authority is
+        // lost, leave the legacy value in place so a later startup can retry.
+        if (!canCommit()) return [key, legacy] as const;
         await gateway.storeSet(SETTINGS_STORE_NAMESPACE, storeKey, legacy);
-        removeLegacyLocal(key);
+        if (canCommit()) removeLegacyLocal(key);
         return [key, legacy] as const;
       } else {
         return [key, null] as const;

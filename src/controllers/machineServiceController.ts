@@ -100,6 +100,14 @@ export class MachineServiceController {
     if (this.stopFor === 'steam') this.clearStopRequest();
   }
 
+  /** Drop progress and pending stop intent at a runtime provenance boundary. */
+  reset(): void {
+    this.progressState = emptyMachineServiceProgress();
+    this.stopFor = null;
+    this.stopAtMs = null;
+    this.timedSteamRequestedAtMs = null;
+  }
+
   timedSteamStopDelay(input: {
     disabled: boolean;
     twoTapStop: boolean;

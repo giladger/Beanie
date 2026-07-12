@@ -60,7 +60,7 @@ import {
   type DeviceInfo,
   type DisplayState,
   type PluginInfo,
-  type PluginSettings,
+  type RawPluginSettings,
   type PluginVerifyResult,
   type VisualizerImportResult,
   type PresenceSettings,
@@ -636,7 +636,7 @@ export const gateway = {
   disablePlugin: (id: string) =>
     fetchEmpty('settings', `/api/v1/plugins/${encodeURIComponent(id)}/disable`, { method: 'POST' }),
   pluginSettings: (id: string) =>
-    fetchJson<PluginSettings>('settings', `/api/v1/plugins/${encodeURIComponent(id)}/settings`, readPluginSettings),
+    fetchJson<RawPluginSettings>('settings', `/api/v1/plugins/${encodeURIComponent(id)}/settings`, readPluginSettings),
   updatePluginSettings: (id: string, values: Record<string, string | number | boolean>) =>
     fetchEmpty('settings', `/api/v1/plugins/${encodeURIComponent(id)}/settings`, jsonPost(values)),
   verifyPlugin: (id: string, credentials: { username: string; password: string }) =>

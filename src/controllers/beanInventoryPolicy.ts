@@ -429,6 +429,10 @@ export function positiveNumber(value: number | null | undefined): number | null 
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 }
 
+export function nonNegativeNumber(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
 export function finiteNumber(value: number): number | null {
   return Number.isFinite(value) ? value : null;
 }

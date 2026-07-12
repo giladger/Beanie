@@ -33,6 +33,8 @@ export interface DurableMutationRecord<Payload = unknown, ReceiptDetails = unkno
   kind: string;
   aggregateKey: string;
   payload: Payload;
+  /** Persisted identity when replay metadata is intentionally excluded. */
+  physicalIdentity?: string;
   state: MutationOutboxState;
   createdAt: string;
   updatedAt: string;
@@ -49,7 +51,16 @@ export interface MutationCommand<Payload = unknown> {
   kind: string;
   aggregateKey: string;
   payload: Payload;
+  /** Stable identity excluding mutable/recomputed replay metadata. */
+  physicalIdentity?: string;
   createdAt?: Date;
+  /**
+   * Atomically place this command after every previously admitted command for
+   * the aggregate, even when the caller's wall clock moved backwards.
+  */
+  causalOrder?: 'aggregate';
+  /** Atomically migrate existing routing metadata before causal placement. */
+  canonicalAggregateKey?(record: Readonly<DurableMutationRecord>): string;
 }
 
 export interface EnqueueResult<Payload = unknown> {
@@ -194,8 +205,17 @@ export class DurableMutationOutbox {
     validateCommand(command);
     return this.exclusive(async () => {
       const backend = await this.backend();
-      const createdAt = (command.createdAt ?? this.now()).toISOString();
+      const requestedCreatedAt = command.createdAt ?? this.now();
       return backend.mutate((records) => {
+        if (command.canonicalAggregateKey) {
+          for (const record of records.values()) {
+            const aggregateKey = command.canonicalAggregateKey(record);
+            requireNonEmpty(aggregateKey, 'canonicalAggregateKey');
+            if (aggregateKey !== record.aggregateKey) {
+              records.set(record.idempotencyKey, { ...record, aggregateKey });
+            }
+          }
+        }
         const existing = records.get(command.idempotencyKey);
         if (existing) {
           if (!samePhysicalCommand(existing, command)) {
@@ -204,9 +224,12 @@ export class DurableMutationOutbox {
           // aggregateKey is routing metadata, not part of the physical
           // command's identity. Re-enqueueing an otherwise identical command
           // is therefore the safe place to persist a newer canonical route.
-          const canonical = existing.aggregateKey === command.aggregateKey
+          let canonical = existing.aggregateKey === command.aggregateKey
             ? existing
             : { ...existing, aggregateKey: command.aggregateKey };
+          if (canonical.physicalIdentity == null && command.physicalIdentity != null) {
+            canonical = { ...canonical, physicalIdentity: command.physicalIdentity };
+          }
           if (canonical !== existing) records.set(existing.idempotencyKey, canonical);
           return {
             inserted: false,
@@ -215,17 +238,37 @@ export class DurableMutationOutbox {
           };
         }
 
+        const requestedCreatedAtMs = requestedCreatedAt.getTime();
+        const latestAggregateCreatedAtMs = command.causalOrder === 'aggregate'
+          ? [...records.values()].reduce(
+              (latest, record) => record.aggregateKey === command.aggregateKey
+                ? Math.max(latest, Date.parse(record.createdAt))
+                : latest,
+              Number.NEGATIVE_INFINITY
+            )
+          : Number.NEGATIVE_INFINITY;
+        const createdAt = new Date(Math.max(
+          requestedCreatedAtMs,
+          Number.isFinite(latestAggregateCreatedAtMs)
+            ? latestAggregateCreatedAtMs + 1
+            : requestedCreatedAtMs
+        )).toISOString();
         const record: DurableMutationRecord<Payload> = {
           idempotencyKey: command.idempotencyKey,
           kind: command.kind,
           aggregateKey: command.aggregateKey,
           payload: cloneValue(command.payload),
+          ...(command.physicalIdentity == null
+            ? {}
+            : { physicalIdentity: command.physicalIdentity }),
           state: 'pending',
           createdAt,
           updatedAt: createdAt,
           attemptCount: 0,
           lastAttemptAt: null,
-          nextAttemptAt: createdAt,
+          // Preserve the requested wall time for diagnostics. New pending work
+          // is immediately due; causal createdAt may advance only for ordering.
+          nextAttemptAt: requestedCreatedAt.toISOString(),
           lastError: null,
           lease: null,
           receipt: null
@@ -528,6 +571,23 @@ export function pendingDoseIdempotencyKey(shotId: string, batchId: string): stri
   return `pending-dose:v1:${keyPart(shotId, 'shotId')}:${keyPart(batchId, 'batchId')}`;
 }
 
+/** Stable key for returning one deleted shot's dose to its physical bag. */
+export function pendingDoseReclaimIdempotencyKey(shotId: string, batchId: string): string {
+  // The prefix sorts after the legacy `pending-dose:v1` prefix when two
+  // physical commands share an identical timestamp, preserving deduction
+  // before inverse-reclaim order for the same shot.
+  return `shot-dose-reclaim:v1:${keyPart(shotId, 'shotId')}:${keyPart(batchId, 'batchId')}`;
+}
+
+/** Physical dose identity; expectedRemaining/at are first-admission replay metadata. */
+export function doseAdjustmentPhysicalIdentity(input: {
+  beanId: string;
+  batchId: string;
+  dose: number;
+}): string {
+  return JSON.stringify([input.beanId, input.batchId, input.dose]);
+}
+
 /**
  * Stable migration key for entries written by the former localStorage queue,
  * which did not record a shot id. It deliberately includes every immutable
@@ -810,26 +870,70 @@ function preferredRecord(
   existing: DurableMutationRecord,
   incoming: DurableMutationRecord
 ): DurableMutationRecord {
-  if (existing.state === 'acknowledged' && incoming.state !== 'acknowledged') return existing;
-  if (incoming.state === 'acknowledged' && existing.state !== 'acknowledged') return incoming;
-  return incoming.updatedAt > existing.updatedAt ? incoming : existing;
+  const progress = existing.state === 'acknowledged' && incoming.state !== 'acknowledged'
+    ? existing
+    : incoming.state === 'acknowledged' && existing.state !== 'acknowledged'
+      ? incoming
+      : incoming.updatedAt > existing.updatedAt ? incoming : existing;
+  // Operational progress may come from either backend, but replay heuristics
+  // belong to the earliest physical admission and must never be replaced by a
+  // later duplicate merely because it has a newer updatedAt.
+  const firstAdmission = existing.createdAt <= incoming.createdAt ? existing : incoming;
+  const preferred = {
+    ...progress,
+    payload: firstAdmission.payload,
+    createdAt: firstAdmission.createdAt
+  };
+  if (preferred.physicalIdentity != null) return preferred;
+  const identity = physicalIdentity(existing) ?? physicalIdentity(incoming);
+  return identity == null ? preferred : { ...preferred, physicalIdentity: identity };
 }
 
 function validateCommand(command: MutationCommand): void {
   requireNonEmpty(command.idempotencyKey, 'idempotencyKey');
   requireNonEmpty(command.kind, 'kind');
   requireNonEmpty(command.aggregateKey, 'aggregateKey');
+  if (command.physicalIdentity !== undefined) {
+    requireNonEmpty(command.physicalIdentity, 'physicalIdentity');
+  }
   if (command.createdAt) requireValidDate(command.createdAt, 'createdAt');
+  if (command.causalOrder !== undefined && command.causalOrder !== 'aggregate') {
+    throw new Error('causalOrder must be aggregate');
+  }
 }
 
 function samePhysicalCommand(
   record: DurableMutationRecord,
-  command: Pick<MutationCommand, 'kind' | 'payload'>
+  command: Pick<MutationCommand, 'kind' | 'payload' | 'physicalIdentity'>
 ): boolean {
-  return (
-    record.kind === command.kind &&
-    structurallyEqual(record.payload, command.payload)
-  );
+  if (record.kind !== command.kind) return false;
+  const recordIdentity = physicalIdentity(record);
+  const commandIdentity = command.physicalIdentity ?? inferredDoseIdentity(command.kind, command.payload);
+  if (recordIdentity != null || commandIdentity != null) {
+    return recordIdentity != null && commandIdentity != null && recordIdentity === commandIdentity;
+  }
+  return structurallyEqual(record.payload, command.payload);
+}
+
+function physicalIdentity(record: DurableMutationRecord): string | null {
+  return record.physicalIdentity ?? inferredDoseIdentity(record.kind, record.payload);
+}
+
+function inferredDoseIdentity(kind: string, payload: unknown): string | null {
+  if (kind !== 'pending-dose-deduction' && kind !== 'pending-dose-reclaim') return null;
+  if (!payload || typeof payload !== 'object') return null;
+  const candidate = payload as { beanId?: unknown; batchId?: unknown; dose?: unknown };
+  if (
+    typeof candidate.beanId !== 'string' ||
+    typeof candidate.batchId !== 'string' ||
+    typeof candidate.dose !== 'number' ||
+    !Number.isFinite(candidate.dose)
+  ) return null;
+  return doseAdjustmentPhysicalIdentity({
+    beanId: candidate.beanId,
+    batchId: candidate.batchId,
+    dose: candidate.dose
+  });
 }
 
 function structurallyEqual(left: unknown, right: unknown): boolean {
@@ -904,6 +1008,8 @@ function isDurableMutationRecord(value: unknown): value is DurableMutationRecord
     typeof record.aggregateKey === 'string' &&
     record.aggregateKey.trim().length > 0 &&
     'payload' in record &&
+    (record.physicalIdentity === undefined ||
+      (typeof record.physicalIdentity === 'string' && record.physicalIdentity.length > 0)) &&
     isMutationState(record.state) &&
     isTimestamp(record.createdAt) &&
     isTimestamp(record.updatedAt) &&

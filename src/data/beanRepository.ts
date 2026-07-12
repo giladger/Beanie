@@ -2,7 +2,7 @@ import type { BeanBatch } from '../api/types';
 
 export interface BeanRepositoryGateway {
   batches(beanId: string): Promise<BeanBatch[]>;
-  updateBatch(id: string, batch: Partial<BeanBatch>): Promise<BeanBatch>;
+  updateBatch(id: string, batch: Partial<BeanBatch>): Promise<unknown>;
 }
 
 export interface BeanRepositoryCache {
@@ -12,7 +12,14 @@ export interface BeanRepositoryCache {
 
 export async function loadBeanBatches(
   beanId: string,
-  deps: { gateway: BeanRepositoryGateway; cache: BeanRepositoryCache }
+  deps: {
+    gateway: BeanRepositoryGateway;
+    cache: BeanRepositoryCache;
+    /** Cached/limited startup may read and merge, but must not backfill remotely. */
+    allowMaintenanceWrites?: boolean;
+    /** Rechecked after reads so an authority demotion fences delayed writes. */
+    canWriteMaintenance?(): boolean;
+  }
 ): Promise<BeanBatch[]> {
   try {
     const batches = await deps.gateway.batches(beanId);
@@ -25,10 +32,15 @@ export async function loadBeanBatches(
     const cached = await deps.cache.getBeanBatches(beanId).catch(() => []);
     const { merged, toMigrate } = mergeCachedStorageEvents(batches, cached);
     await deps.cache.putBeanBatches(beanId, merged).catch(() => {});
-    for (const batch of toMigrate) {
-      deps.gateway
-        .updateBatch(batch.id, { beanId: batch.beanId, storageEvents: batch.storageEvents })
-        .catch(() => {});
+    const canWriteMaintenance = () =>
+      deps.allowMaintenanceWrites !== false && (deps.canWriteMaintenance?.() ?? true);
+    if (canWriteMaintenance()) {
+      for (const batch of toMigrate) {
+        if (!canWriteMaintenance()) break;
+        deps.gateway
+          .updateBatch(batch.id, { beanId: batch.beanId, storageEvents: batch.storageEvents })
+          .catch(() => {});
+      }
     }
     return merged;
   } catch (error) {

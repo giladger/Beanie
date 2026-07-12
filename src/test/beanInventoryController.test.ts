@@ -43,6 +43,40 @@ await run('batch updates expose an immediate optimistic projection and preserve 
   equal(harness.repository.cached.at(-1)?.find((item) => item.id === 'source')?.roastLevel, 'dark');
 });
 
+await run('later foreground weight edits wait for an earlier physical adjustment reservation', async () => {
+  const harness = createHarness([batch('source', { weightRemaining: 82 })]);
+  harness.controller.reservePendingRemainingWeight({
+    idempotencyKey: 'pending-dose-1',
+    beanId: BEAN_ID,
+    batchId: 'source',
+    fieldRevision: 0
+  });
+  const started = requiredUpdate(harness.controller.startBatchUpdate({
+    beanId: BEAN_ID,
+    batchId: 'source',
+    patch: { weightRemaining: 80 },
+    demo: false
+  }));
+  harness.state.adopt(started.projection);
+  await flushAsync();
+
+  equal(harness.commands.submissions.length, 0);
+  const read = harness.controller.beginCacheRead(BEAN_ID);
+  const protectedRead = await harness.controller.cacheProjectionFromRead({
+    beanId: BEAN_ID,
+    batches: [batch('source', { weightRemaining: 100 })],
+    shouldScheduleApply: false
+  }, read);
+  equal(protectedRead?.projection.batches[0]?.weightRemaining, 80);
+  equal(harness.repository.cached.length, 0);
+  harness.controller.releasePendingRemainingWeight('pending-dose-1');
+  await flushAsync();
+  equal(harness.commands.submissions.length, 1);
+
+  await harness.commands.complete(0, batch('source', { weightRemaining: 80 }));
+  equal((await requiredCompletion(started)).type, 'saved');
+});
+
 await run('editing an explicitly selected older bag re-applies its recipe identity', () => {
   const harness = createHarness([
     batch('source', { roastDate: '2026-05-01', weightRemaining: 200 }),
@@ -111,6 +145,37 @@ await run('an older failure never rolls back a newer optimistic value for the sa
   const secondOutcome = await requiredCompletion(second);
   equal(secondOutcome.type, 'saved');
   equal(weight(secondOutcome.projection, 'source'), 160);
+});
+
+await run('cache publication replaces a later unconfirmed field with its confirmed baseline', async () => {
+  const harness = createHarness([batch('source', { weightRemaining: 100 })]);
+  const first = requiredUpdate(harness.controller.startBatchUpdate({
+    beanId: BEAN_ID,
+    batchId: 'source',
+    patch: { weightRemaining: 80 },
+    demo: false
+  }));
+  harness.state.adopt(first.projection);
+  const second = requiredUpdate(harness.controller.startBatchUpdate({
+    beanId: BEAN_ID,
+    batchId: 'source',
+    patch: { weightRemaining: 60 },
+    demo: false
+  }));
+  harness.state.adopt(second.projection);
+
+  await harness.commands.complete(0, batch('source', { weightRemaining: 80 }));
+  equal((await requiredCompletion(first)).type, 'saved');
+  await flushAsync();
+  equal(harness.repository.cached.at(-1)?.[0]?.weightRemaining, 80);
+  equal(harness.state.snapshot().batchesByBean[BEAN_ID]?.[0]?.weightRemaining, 60);
+
+  harness.commands.fail(1, new Error('second failed'));
+  const failed = await requiredCompletion(second);
+  equal(failed.type, 'failed');
+  harness.state.adopt(failed.projection);
+  await flushAsync();
+  equal(harness.repository.cached.at(-1)?.[0]?.weightRemaining, 80);
 });
 
 await run('field revisions fence an older failure across an A to B to A edit sequence', async () => {
@@ -765,6 +830,278 @@ await run('cache latency never delays a completion projection or overwrites late
   equal(harness.state.snapshot().batchesByBean[BEAN_ID]?.[0]?.weightRemaining, 72);
 });
 
+await run('adjacent workflow projections share the controller cache tail', async () => {
+  const harness = createHarness([batch('source', { weightRemaining: 100 })]);
+  const cacheGate = deferred<void>();
+  harness.repository.cacheGate = cacheGate.promise;
+  const older = harness.controller.cacheProjection({
+    beanId: BEAN_ID,
+    batches: [batch('source', { weightRemaining: 90 })],
+    shouldScheduleApply: false
+  });
+  const newer = harness.controller.cacheProjection({
+    beanId: BEAN_ID,
+    batches: [batch('source', { weightRemaining: 80 })],
+    shouldScheduleApply: false
+  });
+
+  await flushAsync();
+  equal(harness.repository.cached.length, 1);
+  cacheGate.resolve();
+  await Promise.all([older, newer]);
+
+  equal(harness.repository.cached.length, 2);
+  equal(harness.repository.cached.at(-1)?.[0]?.weightRemaining, 80);
+});
+
+await run('a stale repository read cannot publish after a newer inventory projection', async () => {
+  const harness = createHarness([batch('source', { weightRemaining: 100 })]);
+  const admittedRevision = harness.controller.cacheRevision(BEAN_ID);
+  await harness.controller.cacheProjection({
+    beanId: BEAN_ID,
+    batches: [batch('source', { weightRemaining: 80 })],
+    shouldScheduleApply: false
+  });
+  await harness.controller.cacheProjectionIfCurrent({
+    beanId: BEAN_ID,
+    batches: [batch('source', { weightRemaining: 100 })],
+    shouldScheduleApply: false
+  }, admittedRevision);
+
+  equal(harness.repository.cached.length, 1);
+  equal(harness.repository.cached[0]?.[0]?.weightRemaining, 80);
+});
+
+await run('concurrent inventory reads publish only the latest admitted snapshot', async () => {
+  const harness = createHarness([batch('source', { weightRemaining: 100 })]);
+  const first = harness.controller.beginCacheRead(BEAN_ID);
+  const second = harness.controller.beginCacheRead(BEAN_ID);
+
+  const stale = await harness.controller.cacheProjectionFromRead({
+    beanId: BEAN_ID,
+    batches: [batch('source', { weightRemaining: 90 })],
+    shouldScheduleApply: false
+  }, first);
+  const latest = await harness.controller.cacheProjectionFromRead({
+    beanId: BEAN_ID,
+    batches: [batch('source', { weightRemaining: 80 })],
+    shouldScheduleApply: false
+  }, second);
+
+  equal(stale, null);
+  equal(latest?.projection.batches[0]?.weightRemaining, 80);
+  equal(harness.repository.cached.length, 1);
+  equal(harness.repository.cached[0]?.[0]?.weightRemaining, 80);
+});
+
+await run('a read cannot omit a locally owned batch while its edit is pending', async () => {
+  const harness = createHarness([batch('source', { weightRemaining: 100 })]);
+  const edit = requiredUpdate(harness.controller.startBatchUpdate({
+    beanId: BEAN_ID,
+    batchId: 'source',
+    patch: { weightRemaining: 80 },
+    demo: false
+  }));
+  harness.state.adopt(edit.projection);
+  const read = harness.controller.beginCacheRead(BEAN_ID);
+  const publication = await harness.controller.cacheProjectionFromRead({
+    beanId: BEAN_ID,
+    batches: [],
+    shouldScheduleApply: false
+  }, read);
+
+  equal(publication?.projection.batches[0]?.id, 'source');
+  equal(publication?.projection.batches[0]?.weightRemaining, 80);
+  equal(harness.repository.cached.length, 0);
+  await harness.commands.complete(0, batch('source', { weightRemaining: 80 }));
+  equal((await requiredCompletion(edit)).type, 'saved');
+});
+
+await run('a lane-winning read refreshes rollback truth without replacing current optimism', async () => {
+  const harness = createHarness([batch('source', { weightRemaining: 100 })]);
+  const read = harness.controller.beginCacheRead(BEAN_ID);
+  const edit = requiredUpdate(harness.controller.startBatchUpdate({
+    beanId: BEAN_ID,
+    batchId: 'source',
+    patch: { weightRemaining: 80 },
+    demo: false
+  }));
+  harness.state.adopt(edit.projection);
+  const publication = await harness.controller.cacheProjectionFromRead({
+    beanId: BEAN_ID,
+    batches: [batch('source', { weightRemaining: 90 })],
+    shouldScheduleApply: false
+  }, read);
+  equal(publication, null);
+  equal(harness.state.snapshot().batchesByBean[BEAN_ID]?.[0]?.weightRemaining, 80);
+
+  harness.commands.fail(0, new Error('update failed'));
+  const failed = await requiredCompletion(edit);
+  equal(failed.type, 'failed');
+  equal(failed.projection.batches[0]?.weightRemaining, 90);
+});
+
+await run('a stale read cannot replace a confirmation newer than its mutation boundary', async () => {
+  const harness = createHarness([batch('source', { weightRemaining: 100 })]);
+  const staleRead = harness.controller.beginCacheRead(BEAN_ID);
+  const first = requiredUpdate(harness.controller.startBatchUpdate({
+    beanId: BEAN_ID,
+    batchId: 'source',
+    patch: { weightRemaining: 90 },
+    demo: false
+  }));
+  harness.state.adopt(first.projection);
+  await harness.commands.complete(0, batch('source', { weightRemaining: 90 }));
+  const firstOutcome = await requiredCompletion(first);
+  harness.state.adopt(firstOutcome.projection);
+
+  const second = requiredUpdate(harness.controller.startBatchUpdate({
+    beanId: BEAN_ID,
+    batchId: 'source',
+    patch: { weightRemaining: 80 },
+    demo: false
+  }));
+  harness.state.adopt(second.projection);
+  equal(await harness.controller.cacheProjectionFromRead({
+    beanId: BEAN_ID,
+    batches: [batch('source', { weightRemaining: 100 })],
+    shouldScheduleApply: false
+  }, staleRead), null);
+
+  harness.commands.fail(1, new Error('second failed'));
+  const failed = await requiredCompletion(second);
+  equal(failed.type, 'failed');
+  equal(failed.projection.batches[0]?.weightRemaining, 90);
+});
+
+await run('a read admitted under an existing owner cannot later rewrite that field baseline', async () => {
+  const harness = createHarness([batch('source', { weightRemaining: 100 })]);
+  const first = requiredUpdate(harness.controller.startBatchUpdate({
+    beanId: BEAN_ID,
+    batchId: 'source',
+    patch: { weightRemaining: 90 },
+    demo: false
+  }));
+  harness.state.adopt(first.projection);
+  const readDuringFirst = harness.controller.beginCacheRead(BEAN_ID);
+  const second = requiredUpdate(harness.controller.startBatchUpdate({
+    beanId: BEAN_ID,
+    batchId: 'source',
+    patch: { weightRemaining: 80 },
+    demo: false
+  }));
+  harness.state.adopt(second.projection);
+
+  await harness.commands.complete(0, batch('source', { weightRemaining: 90 }));
+  equal((await requiredCompletion(first)).type, 'saved');
+  equal(await harness.controller.cacheProjectionFromRead({
+    beanId: BEAN_ID,
+    batches: [batch('source', { weightRemaining: 100 })],
+    shouldScheduleApply: false
+  }, readDuringFirst), null);
+
+  harness.commands.fail(1, new Error('second failed'));
+  const failed = await requiredCompletion(second);
+  equal(failed.type, 'failed');
+  equal(failed.projection.batches[0]?.weightRemaining, 90);
+});
+
+await run('a read cannot omit a batch protected by a pending physical adjustment', async () => {
+  const harness = createHarness([batch('source', { weightRemaining: 100 })]);
+  harness.controller.reservePendingRemainingWeight({
+    idempotencyKey: 'dose-protected', beanId: BEAN_ID, batchId: 'source', fieldRevision: 0
+  });
+  harness.controller.retainPendingRemainingWeight({
+    idempotencyKey: 'dose-protected',
+    beanId: BEAN_ID,
+    batchId: 'source',
+    expectedRemaining: 82,
+    fieldRevision: 0
+  });
+  const read = harness.controller.beginCacheRead(BEAN_ID);
+  const publication = await harness.controller.cacheProjectionFromRead({
+    beanId: BEAN_ID,
+    batches: [],
+    shouldScheduleApply: false
+  }, read);
+
+  equal(publication?.projection.batches[0]?.id, 'source');
+  equal(publication?.projection.batches[0]?.weightRemaining, 82);
+  equal(harness.repository.cached.at(-1)?.[0]?.weightRemaining, 82);
+  harness.controller.releasePendingRemainingWeight('dose-protected');
+});
+
+await run('fresh reads retain the latest still-pending physical weight scalar', async () => {
+  const harness = createHarness([batch('source', { weightRemaining: 100 })]);
+  harness.controller.reservePendingRemainingWeight({
+    idempotencyKey: 'dose-1', beanId: BEAN_ID, batchId: 'source', fieldRevision: 0
+  });
+  harness.controller.retainPendingRemainingWeight({
+    idempotencyKey: 'dose-1',
+    beanId: BEAN_ID,
+    batchId: 'source',
+    expectedRemaining: 82,
+    fieldRevision: 0
+  });
+  harness.controller.reservePendingRemainingWeight({
+    idempotencyKey: 'dose-2', beanId: BEAN_ID, batchId: 'source', fieldRevision: 0
+  });
+  harness.controller.retainPendingRemainingWeight({
+    idempotencyKey: 'dose-2',
+    beanId: BEAN_ID,
+    batchId: 'source',
+    expectedRemaining: 64,
+    fieldRevision: 0
+  });
+  const read = harness.controller.beginCacheRead(BEAN_ID);
+  const publication = await harness.controller.cacheProjectionFromRead({
+    beanId: BEAN_ID,
+    batches: [batch('source', { weightRemaining: 100 })],
+    shouldScheduleApply: false
+  }, read);
+
+  equal(publication?.projection.batches[0]?.weightRemaining, 64);
+  equal(harness.controller.hasPendingRemainingWeightAfter('dose-1', BEAN_ID, 'source'), true);
+  harness.controller.releasePendingRemainingWeight('dose-1');
+  equal(
+    harness.controller.overlayPendingRemainingWeights(
+      BEAN_ID,
+      [batch('source', { weightRemaining: 82 })]
+    )[0]?.weightRemaining,
+    64
+  );
+  harness.controller.releasePendingRemainingWeight('dose-2');
+  equal(
+    harness.controller.overlayPendingRemainingWeights(
+      BEAN_ID,
+      [batch('source', { weightRemaining: 64 })]
+    )[0]?.weightRemaining,
+    64
+  );
+});
+
+await run('late physical retention cannot resurrect a reservation after settlement', () => {
+  const harness = createHarness([batch('source', { weightRemaining: 82 })]);
+  harness.controller.reservePendingRemainingWeight({
+    idempotencyKey: 'settled-dose', beanId: BEAN_ID, batchId: 'source', fieldRevision: 0
+  });
+  harness.controller.releasePendingRemainingWeight('settled-dose');
+  equal(harness.controller.retainPendingRemainingWeight({
+    idempotencyKey: 'settled-dose',
+    beanId: BEAN_ID,
+    batchId: 'source',
+    expectedRemaining: 100,
+    fieldRevision: 0
+  }), false);
+  equal(
+    harness.controller.overlayPendingRemainingWeights(
+      BEAN_ID,
+      [batch('source', { weightRemaining: 82 })]
+    )[0]?.weightRemaining,
+    82
+  );
+});
+
 await run('double-submitted split freezes share one transaction and one created portion', async () => {
   const harness = createHarness([batch('source', { weight: 100, weightRemaining: 100 })]);
   const request = {
@@ -1008,6 +1345,42 @@ await run('A-to-B-to-A field intent fences a delayed external dose settlement', 
   equal(projection, null);
   equal(harness.state.snapshot().batchesByBean[BEAN_ID]?.[0]?.weightRemaining, 82);
 });
+
+await run('demo dose reclaim computes from current local state without gateway work', async () => {
+  const harness = createHarness([batch('source', { weight: 100, weightRemaining: 120 })]);
+  const outcome = harness.controller.reclaimDemoDose({
+    beanId: BEAN_ID,
+    batchId: 'source',
+    dose: 15
+  });
+
+  equal(outcome.type, 'reclaimed');
+  if (outcome.type !== 'reclaimed') return;
+  equal(outcome.previousRemaining, 120);
+  equal(outcome.resolvedRemaining, 135);
+  equal(weight(required(outcome.projection), 'source'), 135);
+  equal(harness.commands.submissions.length, 0);
+  equal(harness.repository.calls.length, 0);
+});
+
+await run('demo dose reclaim is local-only for missing and untracked stock', () => {
+  const missing = createHarness([]).controller.reclaimDemoDose({
+    beanId: BEAN_ID,
+    batchId: 'missing',
+    dose: 10
+  });
+  equal(missing.type === 'not-applicable' ? missing.reason : null, 'missing-batch');
+
+  const untracked = createHarness([batch('source', { weightRemaining: null })]);
+  const outcome = untracked.controller.reclaimDemoDose({
+    beanId: BEAN_ID,
+    batchId: 'source',
+    dose: 10
+  });
+  equal(outcome.type === 'not-applicable' ? outcome.reason : null, 'untracked-remaining');
+  equal(untracked.commands.submissions.length, 0);
+  equal(untracked.repository.calls.length, 0);
+});
 }
 
 interface Harness {
@@ -1148,7 +1521,7 @@ class CommandHarness implements BeanInventoryCommandPort {
 type RepositoryCall =
   | { type: 'read'; id?: undefined }
   | { type: 'create'; id?: undefined; idempotencyKey: string }
-  | { type: 'update'; id: string };
+  | { type: 'update'; id: string; patch: Partial<BeanBatch> };
 
 class RepositoryHarness implements BeanInventoryRepository {
   readonly calls: RepositoryCall[] = [];
@@ -1157,6 +1530,8 @@ class RepositoryHarness implements BeanInventoryRepository {
   dropStorageOnCreate = false;
   readError: unknown;
   cacheGate: Promise<void> | null = null;
+  sparseUpdateResponses = false;
+  updateResponsePatch: Partial<BeanBatch> | null = null;
   private remote: BeanBatch[];
   private nextId = 1;
   private readCount = 0;
@@ -1208,7 +1583,7 @@ class RepositoryHarness implements BeanInventoryRepository {
   }
 
   async updateBatch(batchId: string, patch: Partial<BeanBatch>): Promise<BeanBatch> {
-    this.calls.push({ type: 'update', id: batchId });
+    this.calls.push({ type: 'update', id: batchId, patch: { ...patch } });
     const previous = required(this.remote.find((item) => item.id === batchId));
     const saved = { ...previous, ...patch, id: previous.id, beanId: previous.beanId };
     const failure = this.updateFailures.get(batchId);
@@ -1216,7 +1591,9 @@ class RepositoryHarness implements BeanInventoryRepository {
       this.remote = this.remote.map((item) => item.id === batchId ? saved : item);
     }
     if (failure) throw failure.error;
-    return cloneBatch(saved);
+    return this.sparseUpdateResponses
+      ? { id: saved.id, beanId: saved.beanId } as BeanBatch
+      : cloneBatch({ ...saved, ...(this.updateResponsePatch ?? {}) });
   }
 
   async putBeanBatches(_beanId: string, batches: BeanBatch[]): Promise<void> {

@@ -1,10 +1,10 @@
-import type { De1MachineSettings } from '../api/types';
+import type { De1MachineSettings, MachineState } from '../api/types';
 import type {
   De1AdvancedSettings,
   De1AdvancedSettingsPatch,
   De1Calibration,
   DecentAccountStatus,
-  PluginSettings,
+  RawPluginSettings,
   PluginVerifyResult,
   PresenceSettingsPatch,
   ReaSettingsPatch,
@@ -12,7 +12,11 @@ import type {
 } from '../api/settings';
 import { demoDecentAccountStatus, demoPluginSettings } from '../api/settings';
 import { demoSettingsBundle } from '../domain/settingsModel';
-import type { SettingsBundle } from '../domain/settingsModel';
+import type { SettingsBundle, SettingsGroup } from '../domain/settingsModel';
+import {
+  sanitizePluginSettings,
+  type SanitizedPluginSettings
+} from '../domain/pluginSettings';
 import {
   settingsResourceStates,
   unavailableSettingsResources,
@@ -31,7 +35,7 @@ export interface SettingsControllerGateway {
   connectDevice(id: string): Promise<void>;
   disconnectDevice(id: string): Promise<void>;
   devices(): Promise<SettingsBundle['devices']>;
-  requestState(state: string): Promise<void>;
+  requestState(state: MachineState): Promise<void>;
   addWakeSchedule(schedule: { time: string; daysOfWeek: number[]; enabled: boolean }): Promise<void>;
   updateWakeSchedule(id: string, body: Partial<WakeSchedule>): Promise<void>;
   deleteWakeSchedule(id: string): Promise<void>;
@@ -39,9 +43,11 @@ export interface SettingsControllerGateway {
   decentAccount(): Promise<DecentAccountStatus>;
   loginDecentAccount(email: string, password: string): Promise<DecentAccountStatus>;
   logoutDecentAccount(): Promise<void>;
-  pluginSettings(id: string): Promise<PluginSettings>;
-  updatePluginSettings(id: string, values: Record<string, string | number | boolean>): Promise<void>;
-  verifyPlugin(id: string, credentials: { username: string; password: string }): Promise<PluginVerifyResult>;
+  pluginSettings(id: string): Promise<RawPluginSettings>;
+  /** Persist a changes-only patch; the adapter must fresh-read/rebase before replacement APIs. */
+  savePluginSettingsChanges(id: string, values: Record<string, string | number | boolean>): Promise<void>;
+  /** Verify freshly-read saved credentials inside the plugin mutation lane. */
+  verifyStoredPluginSettings(id: string): Promise<PluginVerifyResult>;
   updateSettings(patch: ReaSettingsPatch): Promise<void>;
   updateMachineSettings(patch: Partial<De1MachineSettings>): Promise<void>;
   updateMachineAdvancedSettings(patch: De1AdvancedSettingsPatch): Promise<void>;
@@ -71,7 +77,7 @@ export interface SettingsController {
     local: boolean;
     fallbackDevices: SettingsBundle['devices'];
   }): Promise<{ devices: SettingsBundle['devices'] | null; status: string | null }>;
-  requestMachineState(input: { state: string; local: boolean }): Promise<{ status: string; sleepRequested: boolean }>;
+  requestMachineState(input: { state: MachineState; local: boolean }): Promise<{ status: string; sleepRequested: boolean }>;
   addWakeSchedule(input: {
     time: string;
     local: boolean;
@@ -92,7 +98,7 @@ export interface SettingsController {
     local: boolean;
   }): Promise<{ account: DecentAccountStatus; source: 'demo' | 'gateway'; message: AccountMessage }>;
   loadPluginSettings(input: { local: boolean; id: string }): Promise<{
-    settings: PluginSettings | null;
+    settings: SanitizedPluginSettings | null;
     source: 'gateway' | 'demo' | 'unavailable';
   }>;
   savePluginSettings(input: {
@@ -103,9 +109,9 @@ export interface SettingsController {
   verifyPluginSettings(input: {
     local: boolean;
     id: string;
-    settings: PluginSettings;
+    settings: SanitizedPluginSettings;
   }): Promise<{ tone: 'good' | 'warn'; message: string }>;
-  persistSetting(group: string, key: string, value: string | number | boolean | null): Promise<void>;
+  persistSetting(group: SettingsGroup, key: string, value: string | number | boolean | null): Promise<void>;
   resetMachineSettings(input: {
     local: boolean;
     bundle: SettingsBundle;
@@ -215,9 +221,13 @@ export function createSettingsController(gateway: SettingsControllerGateway): Se
       }
       try {
         await gateway.addWakeSchedule({ time, daysOfWeek: [], enabled: true });
-        return { schedules: await gateway.wakeSchedules(), status: 'Wake schedule added' };
       } catch {
         return { schedules: null, status: 'Could not add schedule' };
+      }
+      try {
+        return { schedules: await gateway.wakeSchedules(), status: 'Wake schedule added' };
+      } catch {
+        return { schedules: null, status: 'Wake schedule added — refresh unavailable' };
       }
     },
 
@@ -296,9 +306,17 @@ export function createSettingsController(gateway: SettingsControllerGateway): Se
     },
 
     async loadPluginSettings({ local, id }) {
-      if (local) return { settings: demoPluginSettings(id), source: 'demo' };
+      if (local) {
+        return {
+          settings: sanitizePluginSettings(id, demoPluginSettings(id)),
+          source: 'demo'
+        };
+      }
       try {
-        return { settings: await gateway.pluginSettings(id), source: 'gateway' };
+        return {
+          settings: sanitizePluginSettings(id, await gateway.pluginSettings(id)),
+          source: 'gateway'
+        };
       } catch {
         return { settings: null, source: 'unavailable' };
       }
@@ -307,7 +325,7 @@ export function createSettingsController(gateway: SettingsControllerGateway): Se
     async savePluginSettings({ local, id, payload }) {
       if (local) return { status: 'Plugin settings saved (demo)', ok: true };
       try {
-        await gateway.updatePluginSettings(id, payload);
+        await gateway.savePluginSettingsChanges(id, payload);
         return { status: 'Plugin settings saved', ok: true };
       } catch {
         return { status: 'Plugin settings save failed', ok: false };
@@ -324,10 +342,7 @@ export function createSettingsController(gateway: SettingsControllerGateway): Se
         };
       }
       try {
-        const result = await gateway.verifyPlugin(id, {
-          username: String(settings.values.Username ?? ''),
-          password: String(settings.values.Password ?? '')
-        });
+        const result = await gateway.verifyStoredPluginSettings(id);
         return { tone: result.ok ? 'good' : 'warn', message: result.message };
       } catch {
         return { tone: 'warn', message: 'Verification failed.' };
@@ -336,15 +351,23 @@ export function createSettingsController(gateway: SettingsControllerGateway): Se
 
     persistSetting(group, key, value) {
       const patch = { [key]: value };
-      if (group === 'rea') return gateway.updateSettings(patch as unknown as ReaSettingsPatch);
-      if (group === 'de1') return gateway.updateMachineSettings(patch as unknown as Partial<De1MachineSettings>);
-      if (group === 'advanced') return gateway.updateMachineAdvancedSettings(patch as unknown as De1AdvancedSettingsPatch);
-      if (group === 'calibration') return gateway.updateCalibration(Number(value));
-      if (group === 'presence') return gateway.updatePresenceSettings(patch as unknown as PresenceSettingsPatch);
-      return Promise.resolve();
+      switch (group) {
+        case 'rea':
+          return gateway.updateSettings(patch as unknown as ReaSettingsPatch);
+        case 'de1':
+          return gateway.updateMachineSettings(patch as unknown as Partial<De1MachineSettings>);
+        case 'advanced':
+          return gateway.updateMachineAdvancedSettings(patch as unknown as De1AdvancedSettingsPatch);
+        case 'calibration':
+          return gateway.updateCalibration(Number(value));
+        case 'presence':
+          return gateway.updatePresenceSettings(patch as unknown as PresenceSettingsPatch);
+      }
+      const unsupported: never = group;
+      return Promise.reject(new Error(`Unsupported settings group: ${String(unsupported)}`));
     },
 
-    async resetMachineSettings({ local }) {
+    async resetMachineSettings({ local, bundle }) {
       if (local) {
         const fallback = demoSettingsBundle();
         return {
@@ -353,12 +376,23 @@ export function createSettingsController(gateway: SettingsControllerGateway): Se
         };
       }
       await gateway.resetMachineSettings();
-      const [de1, advanced, calibration] = await Promise.all([
-        gateway.machineSettings(),
-        gateway.machineAdvancedSettings(),
-        gateway.calibration()
-      ]);
-      return { bundlePatch: { de1, advanced, calibration }, status: 'Machine settings reset' };
+      try {
+        const [de1, advanced, calibration] = await Promise.all([
+          gateway.machineSettings(),
+          gateway.machineAdvancedSettings(),
+          gateway.calibration()
+        ]);
+        return { bundlePatch: { de1, advanced, calibration }, status: 'Machine settings reset' };
+      } catch {
+        return {
+          bundlePatch: {
+            de1: bundle.de1,
+            advanced: bundle.advanced,
+            calibration: bundle.calibration
+          },
+          status: 'Machine settings reset — refresh unavailable'
+        };
+      }
     }
   };
 }

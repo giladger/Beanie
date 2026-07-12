@@ -1,6 +1,6 @@
 # Runtime ownership and consistency architecture
 
-_Decision date: 2026-07-10 · Status: implemented, with gateway idempotency noted as an external contract_
+_Decision date: 2026-07-12 · Status: implemented, with gateway idempotency noted as an external contract_
 
 This document defines Beanie's runtime architecture for long-lived browser
 resources, high-rate telemetry, asynchronous workflow ownership, and durable
@@ -28,9 +28,13 @@ Beanie adopts the following runtime rules:
    workflow primitive.
 5. Async UI results commit only through a scoped operation lease.
 6. Writes sharing a physical resource go through one keyed command lane.
-7. Physical deltas are journaled before the first network attempt and retained
-   until an explicit receipt is recorded.
-8. Dependency direction and runtime import acyclicity are checked in the test
+7. Physical inventory deltas are journaled before their first inventory request
+   and retained until an explicit receipt is recorded; foreground stock writes
+   fail closed until every recovered adjustment is reserved and overlaid.
+8. Presentation bootstrap and dose-journal hydration are independent: blocked
+   durable storage cannot hide the shell, and a visible shell cannot imply
+   inventory-write authority.
+9. Dependency direction and runtime import acyclicity are checked in the test
    suite.
 
 ## Runtime map
@@ -107,6 +111,45 @@ performs exactly one catch-up.
 This applies to refresh and synchronization. One-shot safety timers (for
 example a steam stop deadline) remain explicit because they represent a domain
 deadline rather than periodic polling.
+
+### Settings-gated startup
+
+`StartupFlow` is the single owner of boot and reconnect attempts. It admits at
+most one load at a time, rejects settlement after disposal, and keeps the
+synced-settings gate inside its `try`/`finally` so a rejected load cannot wedge
+the flow. The shell releases a rejected gate promise, while `SettingsStoreSync`
+releases a failed initial-load memo and continues polling unavailable storage.
+The flow then acquires cached/gateway startup data through repository ports and
+emits narrow projections plus one exhaustive effect plan to the shell.
+
+Every attempt captures a transport-authority revision and rechecks it after
+each await. Socket demotion increments that revision, stops refresh producers
+and automatic write timers immediately, and prevents old HTTP/settings/cache
+continuations from publishing. Disposal also revokes the runtime, startup, and
+shot-cache generations before asynchronous drains begin.
+
+The plans encode capability, not just a status label. Cached offline startup
+starts transport streams and reconnect polling without refresh or maintenance
+writes. Limited startup may refresh presentation, but selection cannot be
+remembered, cannot apply a recipe, and cannot perform cache-migration writes.
+Connected startup alone enables tracking-mode enforcement, machine-control
+loads, heartbeats, storage migration, and normal background work. When the live
+gateway replaces demo data, the app restores the pre-demo synced-cache snapshot
+(or explicit defaults) before exposing cached continuity, then awaits a
+non-demo settings recovery before selection and connected effects. Sample edits
+therefore neither appear as user data offline nor authorize a real write.
+
+Dose-journal hydration is a separate startup track, not another
+`StartupFlow` await. This matters because another browser context can block
+IndexedDB indefinitely. The shell remains usable while
+`DoseMutationReconciler.pendingAdjustments()` migrates the legacy queue and
+discovers pending, in-flight, and retry-wait records. Before inventory writes
+are enabled, the app synchronously reserves every discovered adjustment in the
+foreground inventory facade and overlays its canonical remaining-weight scalar
+on current batches. Only then does it mark the journal ready and start the
+worker. If discovery fails, inventory create/update/split and selection
+maintenance writes reject as read-only, while hydration retries independently;
+presentation bootstrap and reconnect continue.
 
 ## Telemetry and transport
 
@@ -234,11 +277,43 @@ Synced key/value writes use latest-wins per store key and compare completion
 against the current desired value. An old request may truthfully complete, but
 it cannot clear an error belonging to a newer desired value.
 
+Settings endpoint provenance is necessary but not sufficient write authority.
+Every live settings resource is projected read-only outside the connected
+startup phase, and each exact settings/device/account/plugin lane checks
+connected authority again when queued work actually dispatches. Multi-request
+plugin save/verification callbacks recheck between their raw GET and side
+effect as well.
+
+### Whole-map plugin settings
+
+Reaprime returns and replaces an entire plugin settings map. Its current GET can
+include manifest-secure values, while Beanie must treat those fields as
+write-only UI inputs. `PluginConfigState` therefore stores only a sanitized
+snapshot, the panel session, draft revision, touched fields, and explicitly
+edited-secret flags. A user may temporarily type a new secret into the active
+draft; previously stored/readable gateway secret values never enter AppState.
+
+A save plan contains local changes only. Display defaults from a sparse legacy
+map are not changes, and a blank secret does not clear a saved credential.
+Inside the exact `plugin:<id>` command lane, the adapter performs a fresh raw
+GET, rebases the local keys over every returned value, and POSTs the complete
+replacement map. That raw snapshot—including readable secret values—remains
+inside the lane callback and is never projected into `AppState`.
+
+Settlement is fenced by editor session and revision: closing/reopening the panel
+invalidates the old result, while edits made during an in-flight save remain
+dirty and are rebased over accepted values for untouched fields. Verification
+also reads the stored username/password transiently in the plugin lane and
+passes them directly to the verifier; sanitized editor state is not credential
+authority.
+
 ## Durable physical mutation outbox
 
-A dose deduction is a physical delta: beans were consumed even if the gateway
-was offline or its response was lost. It cannot be safely represented by a
-best-effort promise or a mutable localStorage array.
+A dose adjustment is a physical delta: beans were consumed by a completed shot,
+or returned after remote deletion succeeded (or an owned reclaim journal made a
+retry 404 replay-safe). The later inventory request may be offline or lose its
+response. Neither direction can be safely represented by a best-effort promise
+or a mutable localStorage array.
 
 `DurableMutationOutbox` is a command journal with these states:
 
@@ -250,57 +325,135 @@ pending -> in-flight -> acknowledged
 ```
 
 Each record contains a stable idempotency key, mutation kind, aggregate key,
-immutable payload, attempt metadata, fenced lease, last failure, and final
-receipt. Acknowledged records remain as tombstones until an explicit age-bound
-prune, preventing a duplicate enqueue from recreating completed physical work.
-The aggregate key is mutable routing metadata rather than physical-command
-identity: an idempotent re-enqueue may canonicalize that key only when the
-mutation kind and immutable payload still match.
+first-admission replay payload, optional physical identity, attempt metadata,
+fenced lease, last failure, and final receipt. Acknowledged records remain as
+tombstones until an explicit age-bound prune, preventing a duplicate enqueue
+from recreating completed physical work. The aggregate key is mutable routing
+metadata rather than physical-command identity, so an idempotent re-enqueue may
+canonicalize its route without changing the command.
+
+Duplicate equivalence is deliberately narrower for dose work. Its physical
+identity is `{beanId, batchId, dose}` under the mutation kind; `at` and
+`expectedRemaining` are replay metadata captured by the first admission and do
+not redefine the physical command. Re-enqueueing the same idempotency key and
+physical identity returns that stored canonical payload even if a later caller
+computed a different heuristic scalar. Commands without a physical identity
+still require structural payload equality. During localStorage-to-IndexedDB
+fallback promotion, operational progress may come from the newer or
+acknowledged copy, but `createdAt` and the replay payload always come from the
+earliest admission.
+
+Deductions and reclaims use distinct stable keys derived from the shot identity
+available at their own boundary plus the physical batch. A live optimistic shot
+ID may differ from the later persisted gateway shot ID, so correctness never
+depends on key-prefix or wall-clock tie ordering. On enqueue the outbox
+atomically canonicalizes older dose routes and places each new record after the
+maximum existing `createdAt` for that bean aggregate, even when the clock moved
+backwards. An identical key must still match the mutation kind and physical
+identity (or the entire payload for generic commands); otherwise it fails as an
+idempotency conflict instead of being treated as a storage outage.
 
 The dose reconciler follows this order:
 
-1. Compute the immutable deduction from the completed shot.
-2. Persist it before the first network attempt.
-3. Claim only the dose kind, one aggregate head at a time.
-4. Read current remote batch state.
-5. If the expected remaining value is already present, acknowledge
+1. Serialize admission behind legacy migration. Existing legacy records and
+   volatile promotion form one admission epoch, so a new live command cannot
+   splice ahead of older work for the bean.
+2. Compute a deduction or reclaim and synchronously reserve that batch before
+   journal admission yields. Persist it with atomic aggregate-causal ordering
+   before the first inventory network attempt.
+3. Require the caller's projection hand-off. A projection barrier prevents a
+   fast worker from reaching the gateway before the caller commits or
+   deliberately skips optimism.
+4. Claim both dose-adjustment kinds through one worker, one aggregate head at a
+   time.
+5. Read current remote batch state.
+6. If the expected remaining value is already present, acknowledge
    `already-applied`.
-6. If the bag is deleted/untracked, acknowledge `not-applicable`.
-7. Otherwise serialize the partial update on the canonical
+7. If the bag is deleted/untracked, acknowledge `not-applicable`.
+8. Otherwise resolve the signed delta against that fresh scalar, serialize the
+   partial update on the canonical
    `bean-inventory:<beanId>` lane, forwarding the idempotency key, then
    acknowledge `committed`.
-8. On failure, release into retry-wait with bounded exponential backoff.
+9. On failure, release into retry-wait with bounded exponential backoff.
+
+Admission and settlement are process-local projections over a shared durable
+journal. If volatile promotion finds an older durable record for the same key,
+the first admission's `expectedRemaining` wins; after the original projection
+barrier, the reconciler emits a canonicalization event so the local optimistic
+scalar is rebased before claim or settlement continues. If another browser
+context owns the claim and records the receipt, this context later observes the
+acknowledged tombstone, waits for its own projection barrier, and emits its
+local settlement without issuing a second remote update.
 
 Claims use lease tokens; an expired worker cannot acknowledge or reschedule a
 record reclaimed by a newer worker. The worker renews its claim after acquiring
 the aggregate command lane and again after the final read, so time spent queued
 behind another inventory command cannot authorize a stale write. The per-bean
-lane also prevents a delayed dose write from interleaving with multi-bag
-split-freeze reconciliation. Records created by older builds may still store
-`batch:<id>` as journal metadata. Before choosing an aggregate head, the outbox
-atomically rewrites those routing keys from the payload's `beanId`; therefore a
+lane prevents concurrent execution, while the synchronous batch reservation
+also prevents a later foreground weight edit or split from entering before a
+journaled adjustment whose global worker is still busy on another bean. Reads
+remain available: they overlay the latest owned pending scalar instead of
+blocking on potentially unbounded offline retry. Records created by older
+builds may still store `batch:<id>` as journal metadata. Both causal enqueue and
+claim atomically rewrite those routing keys from the payload's `beanId`, so a
 new per-bean record cannot bypass an older per-batch retry during migration.
-Per-aggregate head blocking then prevents a later deduction from overtaking an
-earlier retry for the same bean inventory.
+Per-aggregate head blocking prevents either direction from overtaking an
+earlier retry, including when deduction and reclaim used different shot IDs.
+
+For a reclaim, the journal's `expectedRemaining` is an acknowledgement
+heuristic, not an absolute write. If a fresh read already matches it, or the bag
+is already at its non-reducing cap, the worker records `already-applied`;
+otherwise it recomputes capped `current + dose` and writes only that scalar.
+This preserves intervening changes serialized through the local lane while
+keeping replay idempotent in the common lost-response case.
 
 Remote acknowledgement does not publish a whole batch object back into UI
 state. `BeanInventoryController` merges only the resolved remaining-weight
 scalar and compares the process-local field-intent revision captured when the
-dose projection was admitted. A foreground A→B→A edit therefore fences the
-older dose response even though the final numbers happen to match; durable
+adjustment projection was admitted. A foreground A→B→A edit therefore fences
+the older response even though the final numbers happen to match; durable
 records from an earlier app generation may publish only if this generation has
 not expressed a newer weight intent.
+
+Batch-list reads also enter the canonical per-bean command lane. Each read token
+captures the latest-read revision, projection revision, mutation revision, and
+the set of UI-owned fields that existed when the read began. Stale reads cannot
+publish cache or AppState. A fresh GET that won the lane before a queued edit
+may update that edit's remotely confirmed rollback baseline; a read that began
+after or overlapped the owner cannot steal the baseline merely because it
+settled later.
+
+The returned gateway list is then protected before publication. A locally
+owned or physically reserved batch omitted by the response is added back;
+UI-owned fields come from local state; and the latest unsettled physical scalar
+is overlaid unless a newer foreground weight owner wins. Cache publications
+are serialized per bean. Before persistence, every UI-owned field is replaced
+with its last remotely confirmed value. If any such field has no confirmed
+baseline, the cache write is omitted altogether. The useful in-process
+projection may therefore contain optimism, but a crash cannot convert that
+optimism into offline truth. Bean selection separately tracks selection mode
+(`null` means automatic) and effective bag provenance; if a
+finish/create/removal changes the effective bag while shots are loading,
+selection restarts so batches, shots, and recipe draft describe one bag.
 
 IndexedDB is authoritative when available. localStorage is a persistent
 fallback and memory is the last-resort fallback; the selected durability is
 observable. Fallback records are promoted to IndexedDB when it recovers.
+If an enqueue enters the bounded volatile intake during a transient persistent
+store failure, newer commands for that same bean remain in the volatile FIFO
+until every predecessor is promoted; recovery cannot append an older physical
+command after a newer durable one.
 Malformed authoritative journals fail closed instead of being overwritten.
 The former pending-dose localStorage array is migrated idempotently and cleared
-only after every record is durably enqueued. A transient IndexedDB initialization
-failure is also accepted into a bounded process-local intake: it returns an
+only after every record is durably enqueued. That migration gates discovery,
+live durable admission, and volatile promotion through the same serialized
+admission tail. If migration storage is temporarily unavailable, a live command
+may enter the bounded process-local intake, but it cannot be promoted ahead of
+legacy work. A transient IndexedDB initialization failure likewise returns an
 explicit `volatile` durability result so the projection still reserves that
-dose in order, while the worker continues trying to promote the mutation into
-the authoritative journal. No remote write is attempted before promotion.
+adjustment in order, while the worker continues trying to promote it into the
+authoritative journal. No remote write is attempted directly from the volatile
+buffer before that promotion.
 
 If neither IndexedDB nor localStorage is usable, crash-safe persistence is
 impossible. Beanie keeps and reconciles the command in the current process but
@@ -328,6 +481,31 @@ The read heuristics still cannot prove exactly-once if another device changes
 the same inventory between the lost response and reconciliation. This is an
 explicit external contract gap, not hidden client certainty.
 
+### Delete / reclaim boundary
+
+Shot deletion is a two-resource workflow. On a normal remote deletion the
+current sequence is:
+
+```text
+DELETE shot -> enqueue pending-dose-reclaim -> invalidate shot cache
+```
+
+Putting cache cleanup last avoids widening the important interval, and once the
+reclaim is journaled it receives the same retry, aggregate ordering, and
+tombstone guarantees as a deduction, subject to the selected durability mode.
+However, a process crash after DELETE succeeds and before the enqueue commits
+can still leave the deleted shot's dose deducted from inventory. A later DELETE
+then reports 404, which proves only that the shot is absent—not who deleted it or
+whether inventory was already reclaimed. Beanie therefore resumes reclaim on
+404 only when its outbox (or explicit volatile intake) already contains that
+shot/batch reclaim; it does not invent a new one from stale modal data.
+
+Closing this gap requires a combined delete/reclaim command persisted before
+DELETE and a state transition that releases the reclaim only after deletion is
+acknowledged. If the process restarts into a 404, that pre-existing command is
+the ownership evidence authorizing the inverse delta. Gateway-side idempotency
+receipts remain necessary for true cross-device exactly-once execution.
+
 ## Dependency enforcement
 
 `src/architecture/dependencyPolicy.ts` is executable architecture. The test
@@ -344,22 +522,41 @@ explicit requests, outcomes, snapshots, or events. The AST-level
 `commandArchitectureGuard.test.ts` prevents controllers from importing
 `app.ts`/`AppState`, confines physical gateway mutations to the one machine
 transport adapter, prevents a second low-level command scheduler, and requires
-raw batch writes to be injected into an inventory owner or enclosed by the
-canonical per-bean lane. Remaining inversions stay visible as exact debt
-entries rather than becoming precedent.
+raw batch writes and selection reads to use the inventory owner/canonical lane.
+It also requires shot DELETE to use `shot:<id>` and prevents feature code from
+importing inventory contract/policy internals around the facade. Remaining
+inversions stay visible as exact debt entries rather than becoming precedent.
+
+Narrow state contracts did not finish dependency injection in three flows.
+`scannerFlow.ts` still imports the gateway/cache singletons and reads
+`location`/`document`; `derekFlow.ts` still imports the gateway/cache
+singletons; and `profileEditorFlow.ts` imports those singletons and accepts an
+`HTMLElement`. These are the exact transitional singleton/DOM exceptions. New
+controller code must not extend the list; migrate them to injected ports and
+shell-owned browser adapters.
+
+Two public capability contracts also remain fail-open debt. Settings model keys
+are plain strings and `persistSetting()` relies on group-selected casts rather
+than group-indexed key types. Separately, several cache, startup/bean
+repository, settings-store, and settings-sync authority callbacks are optional
+or default to `() => true`. Current app wiring passes live fences, so this is an
+API-hardening gap rather than a known production bypass; future signatures
+should require explicit capability and fail closed when it is absent.
 
 ## Shutdown order
 
 Beanie shuts down outside-in:
 
-1. mark the app disposed and remove the store push handler;
+1. mark the app disposed, revoke startup/runtime/shot-cache generations, and
+   remove the store push handler;
 2. suspend presentation producers/consumers;
 3. stop supervised sockets;
-4. dispose scoped listeners, tasks, command queues, operation authorities, and
-   durable workers;
-5. drop telemetry subscribers;
-6. dispose render islands and shrink chart/native resources;
-7. cancel remaining one-shot domain safety timers.
+4. stop new deletion/dose admissions, release local inventory waiters, and
+   drain admitted DELETE, journal admission, durable worker, and command work;
+5. after command continuations run, drain the serialized inventory-cache tail;
+6. drop telemetry subscribers;
+7. dispose render islands and shrink chart/native resources;
+8. cancel remaining one-shot domain safety timers.
 
 Queued commands become disposed. An already-started physical command is allowed
 to report its real result; stale UI leases prevent it from mutating a dead app.

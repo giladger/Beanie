@@ -242,6 +242,17 @@ export class LiveShotCompletionFlow {
     }
   }
 
+  /**
+   * Revoke publication from the current completion without disposing the
+   * reusable flow. Physical work already admitted may finish, but it can no
+   * longer project results into a different runtime provenance/session.
+   */
+  cancelCurrent(reason: unknown = new Error('Live shot completion canceled')): void {
+    if (this.disposed) return;
+    this.latestRunGeneration = null;
+    this.authority.invalidate(reason);
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;

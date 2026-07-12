@@ -179,9 +179,19 @@ export class SettingsStoreSync {
     };
   }
 
-  loadInitial(): Promise<SettingsStoreInitialLoadResult> {
+  loadInitial(
+    externalCanCommit: () => boolean = () => true
+  ): Promise<SettingsStoreInitialLoadResult> {
     if (this.phase === 'disposed') return Promise.resolve({ type: 'disposed' });
-    if (!this.initialLoadPromise) this.initialLoadPromise = this.runInitialLoad();
+    if (!this.initialLoadPromise) {
+      const load = this.runInitialLoad(externalCanCommit);
+      this.initialLoadPromise = load;
+      void load.then((result) => {
+        if (result.type !== 'loaded' && this.initialLoadPromise === load) {
+          this.initialLoadPromise = null;
+        }
+      });
+    }
     return this.initialLoadPromise;
   }
 
@@ -209,7 +219,9 @@ export class SettingsStoreSync {
     return this.submitWrite(key, value, 'change');
   }
 
-  pollNow(): Promise<SettingsStorePollResult> {
+  pollNow(
+    externalCanCommit: () => boolean = () => true
+  ): Promise<SettingsStorePollResult> {
     const skipped = this.pollSkipReason();
     if (skipped) {
       const result = skipped === 'disposed'
@@ -219,7 +231,7 @@ export class SettingsStoreSync {
       return Promise.resolve(result);
     }
     if (this.pollPromise) return this.pollPromise;
-    const poll = this.runPoll();
+    const poll = this.runPoll(externalCanCommit);
     this.pollPromise = poll;
     void poll.finally(() => {
       if (this.pollPromise === poll) this.pollPromise = null;
@@ -245,7 +257,9 @@ export class SettingsStoreSync {
     return accepted;
   }
 
-  async discardAndReload(): Promise<SettingsStoreReloadResult> {
+  async discardAndReload(
+    externalCanCommit: () => boolean = () => true
+  ): Promise<SettingsStoreReloadResult> {
     const skipped = this.reloadSkipReason();
     if (skipped) {
       this.emit({ type: 'reload-skipped', reason: skipped, state: this.snapshot });
@@ -257,12 +271,14 @@ export class SettingsStoreSync {
     this.phase = 'reloading';
     this.mutationGeneration += 1;
     const generation = this.mutationGeneration;
-    const canCommit = () => this.reloadCanCommit(generation);
+    const canCommit = () =>
+      this.reloadCanCommit(generation) && safeCanCommit(externalCanCommit);
     this.emit({ type: 'reload-started', state: this.snapshot });
     try {
       const changed = await this.repository.poll(canCommit);
       if (this.isDisposed()) return { type: 'disposed' };
       if (changed == null || !canCommit()) {
+        if (!safeCanCommit(externalCanCommit)) this.available = false;
         this.phase = 'ready';
         this.emit({ type: 'reload-fenced', state: this.snapshot });
         return { type: 'fenced' };
@@ -278,6 +294,7 @@ export class SettingsStoreSync {
     } catch (error) {
       if (this.isDisposed()) return { type: 'disposed' };
       if (!canCommit()) {
+        if (!safeCanCommit(externalCanCommit)) this.available = false;
         this.phase = 'ready';
         this.emit({ type: 'reload-fenced', state: this.snapshot });
         return { type: 'fenced' };
@@ -302,7 +319,9 @@ export class SettingsStoreSync {
     this.listeners.clear();
   }
 
-  private async runInitialLoad(): Promise<SettingsStoreInitialLoadResult> {
+  private async runInitialLoad(
+    externalCanCommit: () => boolean
+  ): Promise<SettingsStoreInitialLoadResult> {
     if (this.local) {
       this.phase = 'ready';
       this.available = true;
@@ -311,12 +330,14 @@ export class SettingsStoreSync {
     }
     this.phase = 'loading';
     const generation = this.mutationGeneration;
-    const canCommit = () => this.initialLoadCanCommit(generation);
+    const canCommit = () =>
+      this.initialLoadCanCommit(generation) && safeCanCommit(externalCanCommit);
     this.emit({ type: 'load-started', state: this.snapshot });
     try {
       const committed = await this.repository.load(canCommit);
       if (this.isDisposed()) return { type: 'disposed' };
       if (!committed || !canCommit()) {
+        if (!safeCanCommit(externalCanCommit)) this.available = false;
         this.phase = 'ready';
         this.emit({ type: 'load-fenced', state: this.snapshot });
         return { type: 'fenced' };
@@ -328,6 +349,7 @@ export class SettingsStoreSync {
     } catch (error) {
       if (this.isDisposed()) return { type: 'disposed' };
       if (!canCommit()) {
+        if (!safeCanCommit(externalCanCommit)) this.available = false;
         this.phase = 'ready';
         this.emit({ type: 'load-fenced', state: this.snapshot });
         return { type: 'fenced' };
@@ -338,10 +360,13 @@ export class SettingsStoreSync {
     }
   }
 
-  private async runPoll(): Promise<SettingsStorePollResult> {
+  private async runPoll(
+    externalCanCommit: () => boolean
+  ): Promise<SettingsStorePollResult> {
     this.polling = true;
     const generation = this.mutationGeneration;
-    const canCommit = () => this.pollCanCommit(generation);
+    const canCommit = () =>
+      this.pollCanCommit(generation) && safeCanCommit(externalCanCommit);
     this.emit({ type: 'poll-started', state: this.snapshot });
     try {
       const changed = await this.repository.poll(canCommit);
@@ -349,6 +374,7 @@ export class SettingsStoreSync {
       const commitAllowed = canCommit();
       this.polling = false;
       if (changed == null || !commitAllowed) {
+        if (!safeCanCommit(externalCanCommit)) this.available = false;
         this.emit({ type: 'poll-fenced', state: this.snapshot });
         return { type: 'fenced' };
       }
@@ -361,6 +387,7 @@ export class SettingsStoreSync {
       const commitAllowed = canCommit();
       this.polling = false;
       if (!commitAllowed) {
+        if (!safeCanCommit(externalCanCommit)) this.available = false;
         this.emit({ type: 'poll-fenced', state: this.snapshot });
         return { type: 'fenced' };
       }
@@ -500,4 +527,12 @@ function copyWrite(write: TrackedWrite): SettingsStoreWriteSnapshot {
 function restoreMapEntry<Value>(map: Map<string, Value>, key: string, value: Value | undefined): void {
   if (value === undefined) map.delete(key);
   else map.set(key, value);
+}
+
+function safeCanCommit(canCommit: () => boolean): boolean {
+  try {
+    return canCommit();
+  } catch {
+    return false;
+  }
 }

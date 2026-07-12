@@ -5,8 +5,13 @@ import {
 } from '../api/settings';
 import {
   PLUGIN_SETTINGS_SPECS,
+  buildPluginSettingsSavePlan,
+  createPluginConfigState,
   pluginFieldDefault,
   pluginSettingsSpec,
+  rebasePluginSettingsPayload,
+  sanitizePluginSettings,
+  settlePluginSettingsSave,
   type PluginConfigState,
   type PluginSettingField
 } from '../domain/pluginSettings';
@@ -71,15 +76,299 @@ run('visualizer spec exposes credential + option fields and is verifiable', () =
   equal(pluginSettingsSpec('does-not-exist'), null);
 });
 
+run('every plugin field has an explicit type-safe sensitivity classification', () => {
+  for (const spec of Object.values(PLUGIN_SETTINGS_SPECS)) {
+    for (const field of spec.fields) {
+      equal(typeof field.secret, 'boolean');
+      equal(field.type === 'password', field.secret);
+    }
+  }
+});
+
 run('pluginFieldDefault returns type-appropriate blanks', () => {
   const spec = PLUGIN_SETTINGS_SPECS.visualizer!;
   const byKey = (key: string): PluginSettingField =>
     spec.fields.find((field) => field.key === key)!;
-  equal(pluginFieldDefault(byKey('AutoUpload')), false);
-  equal(pluginFieldDefault(byKey('LengthThreshold')), 0);
+  equal(pluginFieldDefault(byKey('AutoUpload')), true);
+  equal(pluginFieldDefault(byKey('LengthThreshold')), 5);
   equal(pluginFieldDefault(byKey('Password')), ''); // secret default stays blank
   equal(pluginFieldDefault(byKey('BackSync')), false);
   equal(pluginFieldDefault(byKey('BackSyncIntervalSeconds')), 300); // explicit default wins
+});
+
+run('plugin save planning emits only local changes and never retains secret plaintext', () => {
+  const base: PluginConfigState = {
+    id: 'visualizer.reaplugin',
+    session: 7,
+    revision: 3,
+    settings: sanitizePluginSettings('visualizer.reaplugin', {
+      values: {
+        Username: 'old@example.com',
+        AutoUpload: true,
+        LengthThreshold: 6,
+        BackSync: false,
+        BackSyncIntervalSeconds: 300
+      },
+      secretsSet: { Password: true }
+    }),
+    draft: {
+      Username: 'new@example.com',
+      Password: '',
+      AutoUpload: false,
+      LengthThreshold: 8,
+      BackSync: true,
+      BackSyncIntervalSeconds: 600
+    },
+    touched: {
+      Username: true,
+      AutoUpload: true,
+      LengthThreshold: true,
+      BackSync: true,
+      BackSyncIntervalSeconds: true
+    },
+    fieldRevisions: {
+      Username: 3,
+      AutoUpload: 3,
+      LengthThreshold: 3,
+      BackSync: 3,
+      BackSyncIntervalSeconds: 3
+    },
+    secretEdited: {},
+    dirty: true,
+    saving: false,
+    verify: null
+  };
+
+  const retained = buildPluginSettingsSavePlan(base);
+  equal(Object.prototype.hasOwnProperty.call(retained?.payload, 'Password'), false);
+  equal(retained?.payload.Username, 'new@example.com');
+  equal(Object.prototype.hasOwnProperty.call(retained?.settings.values, 'Password'), false);
+  equal(retained?.session, 7);
+  equal(retained?.revision, 3);
+
+  const edited = buildPluginSettingsSavePlan({
+    ...base,
+    draft: { ...base.draft, Password: 'replacement' },
+    secretEdited: { Password: true }
+  });
+  equal(edited?.payload.Password, 'replacement');
+  equal(Object.prototype.hasOwnProperty.call(edited?.settings.values, 'Password'), false);
+  equal(edited?.settings.secretsSet.Password, true);
+});
+
+run('plugin save planning omits unchanged non-secrets and an untouched write-only secret', () => {
+  const plan = buildPluginSettingsSavePlan({
+    id: 'visualizer',
+    session: 1,
+    revision: 1,
+    settings: sanitizePluginSettings('visualizer', {
+      values: { Username: 'user@example.com' },
+      secretsSet: { Password: true }
+    }),
+    draft: {
+      Username: 'user@example.com',
+      Password: '',
+      AutoUpload: false,
+      LengthThreshold: 6,
+      BackSync: false,
+      BackSyncIntervalSeconds: 300
+    },
+    touched: {},
+    fieldRevisions: {},
+    secretEdited: { Password: false },
+    dirty: true,
+    saving: false,
+    verify: null
+  });
+
+  equal(Object.prototype.hasOwnProperty.call(plan?.payload, 'Password'), false);
+  equal(Object.prototype.hasOwnProperty.call(plan?.payload, 'Username'), false);
+  equal(plan?.settings.secretsSet.Password, true);
+});
+
+run('a sparse legacy plugin map does not turn displayed defaults into save intent', () => {
+  const config = createPluginConfigState('visualizer', {
+    values: { Username: 'old@example.com' },
+    secretsSet: { Password: true }
+  }, 3);
+  const plan = buildPluginSettingsSavePlan({
+    ...config,
+    revision: 1,
+    draft: { ...config.draft, Username: 'new@example.com' },
+    touched: { Username: true },
+    fieldRevisions: { Username: 1 },
+    dirty: true
+  });
+
+  equal(plan?.payload.Username, 'new@example.com');
+  equal(Object.prototype.hasOwnProperty.call(plan?.payload, 'AutoUpload'), false);
+  equal(Object.prototype.hasOwnProperty.call(plan?.payload, 'LengthThreshold'), false);
+});
+
+run('plugin settings sanitize a legacy readable secret at the editor boundary', () => {
+  const safe = sanitizePluginSettings('visualizer', {
+    values: { Username: 'person@example.com', Password: 'must-not-stay-in-state' },
+    secretsSet: {}
+  });
+
+  equal(Object.prototype.hasOwnProperty.call(safe.values, 'Password'), false);
+  equal(safe.secretsSet.Password, true);
+  const config = createPluginConfigState('visualizer', safe, 11);
+  equal(config.draft.Password, '');
+  equal(config.session, 11);
+  equal(config.revision, 0);
+});
+
+run('plugin sanitation allowlists declared non-secret fields only', () => {
+  const safe = sanitizePluginSettings('visualizer', {
+    values: {
+      Username: 'person@example.com',
+      FutureApiToken: 'future-secret',
+      UnsupportedFlag: true
+    },
+    secretsSet: { FutureApiToken: true }
+  });
+  equal(safe.values.Username, 'person@example.com');
+  equal(Object.prototype.hasOwnProperty.call(safe.values, 'FutureApiToken'), false);
+  equal(Object.prototype.hasOwnProperty.call(safe.values, 'UnsupportedFlag'), false);
+  equal(Object.prototype.hasOwnProperty.call(safe.secretsSet, 'FutureApiToken'), false);
+
+  const unsupported = sanitizePluginSettings('future-plugin', {
+    values: { FutureApiToken: 'future-secret' },
+    secretsSet: { FutureApiToken: true }
+  });
+  equal(Object.keys(unsupported.values).length, 0);
+  equal(Object.keys(unsupported.secretsSet).length, 0);
+});
+
+run('plugin payload rebasing preserves fresh remote fields and applies only local changes', () => {
+  const payload = rebasePluginSettingsPayload(readPluginSettings({
+    values: {
+      Username: 'newer-on-gateway@example.com',
+      Password: 'legacy-readable-secret',
+      AutoUpload: false,
+      BackSync: true
+    },
+    secretsSet: { Password: true }
+  }), { AutoUpload: true });
+
+  equal(payload.Username, 'newer-on-gateway@example.com');
+  equal(payload.AutoUpload, true);
+  equal(payload.BackSync, true);
+  equal(payload.Password, 'legacy-readable-secret');
+});
+
+run('plugin save settlement preserves edits made while the request is in flight', () => {
+  const initial = createPluginConfigState('visualizer', {
+    values: { Username: 'old@example.com', AutoUpload: false },
+    secretsSet: { Password: true }
+  }, 4);
+  const saving: PluginConfigState = {
+    ...initial,
+    revision: 1,
+    draft: { ...initial.draft, Username: 'submitted@example.com' },
+    touched: { Username: true },
+    fieldRevisions: { Username: 1 },
+    dirty: true,
+    saving: true
+  };
+  const plan = buildPluginSettingsSavePlan(saving)!;
+  const edited: PluginConfigState = {
+    ...saving,
+    revision: 2,
+    draft: { ...saving.draft, Username: 'newer@example.com' },
+    fieldRevisions: { Username: 2 },
+    secretEdited: { Password: true },
+    saving: true
+  };
+  const settled = settlePluginSettingsSave(edited, plan, {
+    ok: true,
+    settings: {
+      values: { Username: 'submitted@example.com', AutoUpload: true },
+      secretsSet: { Password: true }
+    }
+  });
+
+  equal(settled?.draft.Username, 'newer@example.com');
+  equal(settled?.draft.AutoUpload, true);
+  equal(settled?.settings.values.Username, 'submitted@example.com');
+  equal(settled?.revision, 2);
+  equal(settled?.dirty, true);
+  equal(settled?.saving, false);
+});
+
+run('plugin save settlement clears only the accepted secret draft after later edits', () => {
+  const initial = createPluginConfigState('visualizer', {
+    values: { Username: 'person@example.com', AutoUpload: false },
+    secretsSet: {}
+  }, 5);
+  const submitted: PluginConfigState = {
+    ...initial,
+    revision: 1,
+    draft: { ...initial.draft, Password: 'accepted-secret' },
+    touched: { Password: true },
+    fieldRevisions: { Password: 1 },
+    secretEdited: { Password: true },
+    dirty: true,
+    saving: true
+  };
+  const plan = buildPluginSettingsSavePlan(submitted)!;
+  const unrelatedEdit: PluginConfigState = {
+    ...submitted,
+    revision: 2,
+    draft: { ...submitted.draft, AutoUpload: true },
+    touched: { ...submitted.touched, AutoUpload: true },
+    fieldRevisions: { ...submitted.fieldRevisions, AutoUpload: 2 }
+  };
+  const settled = settlePluginSettingsSave(unrelatedEdit, plan, {
+    ok: true,
+    settings: {
+      values: { Username: 'person@example.com', AutoUpload: false, Password: 'accepted-secret' },
+      secretsSet: {}
+    }
+  });
+  equal(settled?.draft.Password, '');
+  equal(settled?.secretEdited.Password, undefined);
+  equal(Object.prototype.hasOwnProperty.call(settled?.settings.values, 'Password'), false);
+  equal(settled?.draft.AutoUpload, true);
+
+  const newerSecret = settlePluginSettingsSave({
+    ...unrelatedEdit,
+    revision: 3,
+    draft: { ...unrelatedEdit.draft, Password: 'newer-secret' },
+    fieldRevisions: { ...unrelatedEdit.fieldRevisions, Password: 3 }
+  }, plan, { ok: true });
+  equal(newerSecret?.draft.Password, 'newer-secret');
+  equal(newerSecret?.secretEdited.Password, true);
+
+  const abaSecret = settlePluginSettingsSave({
+    ...submitted,
+    revision: 3,
+    fieldRevisions: { Password: 3 }
+  }, plan, { ok: true });
+  equal(abaSecret?.draft.Password, 'accepted-secret');
+  equal(abaSecret?.touched.Password, true);
+  equal(abaSecret?.dirty, true);
+});
+
+run('plugin save settlement never resurrects a closed or reopened panel', () => {
+  const config = createPluginConfigState('visualizer', {
+    values: { Username: 'old@example.com' },
+    secretsSet: {}
+  }, 1);
+  const plan = buildPluginSettingsSavePlan({
+    ...config,
+    revision: 1,
+    dirty: true,
+    saving: true,
+    draft: { ...config.draft, Username: 'saved@example.com' },
+    touched: { Username: true },
+    fieldRevisions: { Username: 1 }
+  })!;
+
+  equal(settlePluginSettingsSave(null, plan, { ok: true }), null);
+  const reopened = createPluginConfigState('visualizer', config.settings, 2);
+  equal(settlePluginSettingsSave(reopened, plan, { ok: false }), reopened);
 });
 
 run('demoPluginSettings provides visualizer demo values', () => {
@@ -96,16 +385,20 @@ run('visualizer password draft survives render and saves with real plugin id', (
   ];
   const config: PluginConfigState = {
     id: 'visualizer.reaplugin',
-    settings: {
+    session: 1,
+    revision: 1,
+    settings: sanitizePluginSettings('visualizer.reaplugin', {
       values: { Username: 'user@example.com', AutoUpload: true, LengthThreshold: 6 },
       secretsSet: {}
-    },
+    }),
     draft: {
       Username: 'user@example.com',
       Password: 'new-password',
       AutoUpload: true,
       LengthThreshold: 6
     },
+    touched: { Password: true },
+    fieldRevisions: { Password: 1 },
     secretEdited: { Password: true },
     dirty: true,
     saving: false,
@@ -207,8 +500,15 @@ run('account and plugin credentials reference their visible field copy', () => {
   ];
   const config: PluginConfigState = {
     id: 'visualizer.reaplugin',
-    settings: { values: {}, secretsSet: { Password: true } },
+    session: 1,
+    revision: 0,
+    settings: sanitizePluginSettings('visualizer.reaplugin', {
+      values: {},
+      secretsSet: { Password: true }
+    }),
     draft: { Password: '' },
+    touched: {},
+    fieldRevisions: {},
     secretEdited: {},
     dirty: false,
     saving: false,
@@ -225,6 +525,28 @@ run('account and plugin credentials reference their visible field copy', () => {
   );
 });
 
+run('gateway-only settings actions render disabled while live authority is absent', () => {
+  const bundle = demoSettingsBundle();
+  const accountHtml = renderSettingsShell(
+    settingsModel(), 'account', bundle, null, { ...accountPanel(), source: 'gateway' }, ['account'],
+    { gatewayActionsWritable: false, machineActionsWritable: false }
+  );
+  equal(accountHtml.includes('data-action="settings-account-field" data-key="email" value="" autocomplete="username" spellcheck="false" disabled'), true);
+  equal(accountHtml.includes('data-action="settings-account-login" disabled'), true);
+
+  const machineHtml = renderSettingsShell(
+    settingsModel(), 'machine', bundle, null, accountPanel(), ['machine'],
+    { gatewayActionsWritable: false, machineActionsWritable: false }
+  );
+  equal(machineHtml.includes('data-action="settings-machine-state" data-value="descaling" disabled'), true);
+
+  const dangerHtml = renderSettingsShell(
+    settingsModel(), 'danger', bundle, null, accountPanel(), ['danger'],
+    { gatewayActionsWritable: false }
+  );
+  equal(dangerHtml.includes('data-action="settings-firmware" disabled hidden'), true);
+});
+
 run('phone plugin number fields use native inputs instead of the number dialog', () => {
   const bundle = demoSettingsBundle();
   bundle.plugins = [
@@ -232,10 +554,12 @@ run('phone plugin number fields use native inputs instead of the number dialog',
   ];
   const config: PluginConfigState = {
     id: 'visualizer.reaplugin',
-    settings: {
+    session: 1,
+    revision: 0,
+    settings: sanitizePluginSettings('visualizer.reaplugin', {
       values: { Username: 'user@example.com', AutoUpload: true, LengthThreshold: 6, BackSyncIntervalSeconds: 300 },
       secretsSet: {}
-    },
+    }),
     draft: {
       Username: 'user@example.com',
       Password: '',
@@ -243,6 +567,8 @@ run('phone plugin number fields use native inputs instead of the number dialog',
       LengthThreshold: 6,
       BackSyncIntervalSeconds: 300
     },
+    touched: {},
+    fieldRevisions: {},
     secretEdited: {},
     dirty: false,
     saving: false,

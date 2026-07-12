@@ -23,14 +23,19 @@ The browser starts at `src/main.ts`, which constructs `BeanieApp` from
 At runtime the app loop is:
 
 1. `BeanieApp.start()` renders the initial shell and installs delegated
-   listeners.
-2. Startup repositories load gateway data and cached fallback data.
-3. `BeanieApp` keeps one `AppState` object and re-renders after `setState()`.
-4. User actions are dispatched through `data-action` attributes.
-5. App methods parse DOM/form values and delegate policy to controllers/domain
+   listeners, then starts presentation bootstrap and inventory-journal
+   hydration as independent tracks.
+2. `StartupFlow` gates presentation content on synced settings, loads gateway/cache data
+   through startup repositories, and publishes an explicit connectivity plan.
+3. `DoseMutationReconciler.pendingAdjustments()` migrates legacy dose work,
+   discovers every unsettled durable adjustment, and gives the shell the
+   reservations that must be restored before stock writes become writable.
+4. `BeanieApp` keeps one `AppState` object and re-renders after `setState()`.
+5. User actions are dispatched through `data-action` attributes.
+6. App methods parse DOM/form values and delegate policy to controllers/domain
    helpers.
-6. Controllers return explicit outcomes.
-7. `BeanieApp` applies those outcomes to state, DOM, timers, sockets, or local
+7. Controllers return explicit outcomes.
+8. `BeanieApp` applies those outcomes to state, DOM, timers, sockets, or local
    UI flow.
 
 Startup has two separate fallback concepts. Cached resources came from the
@@ -38,6 +43,33 @@ user's gateway and retain cached/offline provenance while the app retries the
 live source. `src/mock/` is explicit demo/sample data; entering demo mode must
 be visible and demo mutations must remain simulated. Do not relabel a cached
 gateway snapshot as demo or make demo defaults appear to be the user's data.
+The synced-settings gate completes before startup content is acquired. Demo
+uses an isolated process-cache generation: on exit the app restores the exact
+pre-demo synced cache (or explicit defaults) immediately, then awaits a real
+settings reload before selection or connected effects continue. If the gateway
+is still unavailable, the restored values remain visible but read-only rather
+than presenting sample edits as user data.
+The flow's effect modes are deliberately exhaustive: offline cache starts
+transport streams and the retry task but no refresh or maintenance writes;
+limited data may refresh presentation but cannot remember selection, apply a
+recipe, or write machine/cache migrations; only a fully connected startup
+enables the normal tracking, machine-control, heartbeat, and migration effects.
+
+Inventory-journal hydration is deliberately outside the `StartupFlow` gate.
+IndexedDB can be blocked by another tab, so browsing and presentation startup
+must not wait on it. In parallel, the shell asks the dose reconciler to migrate
+legacy records and list every pending, in-flight, or retry-wait adjustment. It
+synchronously reserves each result in `BeanInventoryController`, overlays the
+first-admission remaining-weight scalar on the current batch projection, and
+only then enables foreground inventory writes and starts replay. A hydration
+failure leaves startup usable but stock mutations fail closed with a read-only
+status; the shell retries hydration rather than silently allowing an
+unreserved write.
+
+One startup continuity gap remains: the cached latest-shot page informs bean
+usage and initial-bean choice, but cached-only projection does not yet hydrate
+`AppState.shots`. History can therefore remain empty until a live or
+repository-backed bean selection succeeds.
 
 The live shot path is intentionally more direct for performance:
 
@@ -71,13 +103,18 @@ is the only typed authority for physical workflow, calibration, machine-setting,
 refill, and state mutations. Compound commands receive an owned machine lane so
 their steps stay contiguous without submitting nested work to the same queue.
 
-Bean stock has a parallel aggregate rule: every edit, storage migration,
-split-freeze transaction, and delayed dose deduction for a coffee uses
-`beanInventoryMutationKey(beanId)`. A split freeze owns one per-bean lane across
-create, freezer-state repair, source-bag update, and authoritative reconciliation.
-Do not introduce `batch:<id>` lanes: two bags from one coffee can affect the same
-selection and recipe projection, and a delayed dose write must not interleave
-with a split transaction.
+Bean stock has a parallel aggregate rule: every batch read, edit, storage
+migration, split-freeze transaction, and delayed dose deduction/reclaim for a
+coffee uses `beanInventoryMutationKey(beanId)`. A split freeze owns one per-bean
+lane across create, freezer-state repair, source-bag update, and authoritative
+reconciliation. A newly journaled dose reserves its batch synchronously at
+admission; records recovered during startup are all reserved and overlaid
+before the write capability opens. Later remaining-weight edits/splits wait
+outside the gateway lane until every earlier physical delta for that batch
+settles. This closes both the worker-latency interval before a live dose worker
+submits its lane command and the restart interval before old journal work is
+known. Do not introduce `batch:<id>` lanes: two bags from one coffee can affect
+the same selection and recipe projection.
 
 ## Directory Responsibilities
 
@@ -143,6 +180,11 @@ Examples:
 - `settingsModel.ts`: declarative settings UI model.
 - `settingsBundleMutation.ts`: targeted settings-bundle operations and their
   pure reducer.
+- `pluginSettings.ts`: UI-secret sanitation, touched-field save plans,
+  lane-time whole-map payload rebasing, and revision/session-fenced save
+  settlement.
+- `doseReclaim.ts`: the shared non-reducing `+grams`/bag-cap rule used by shot
+  confirmation previews, immediate demo inventory, and durable replay.
 - `shotRecord.ts`: service-shot filtering.
 
 Prefer domain modules for deterministic calculations and reusable policy that
@@ -161,14 +203,26 @@ Controllers should:
 - return explicit result objects
 - avoid DOM reads/writes
 - avoid rendering HTML
-- avoid importing singleton gateway/cache objects unless the controller is
-  explicitly constructed with them at the boundary
+- avoid importing singleton gateway/cache objects
+
+Three extracted flows still carry exact transitional boundary debt. This list
+is an inventory of existing exceptions, not precedent for new code:
+
+- `scannerFlow.ts` imports the gateway/cache singletons and reads
+  `location`/`document` for handoff and scanner-form behavior;
+- `derekFlow.ts` imports the gateway/cache singletons for profile persistence;
+- `profileEditorFlow.ts` imports the gateway/cache singletons and accepts an
+  `HTMLElement`, so it still owns profile-editor DOM interaction.
+
+The migration is to inject narrow transport/cache ports and move browser reads
+behind shell-owned adapters. Do not add another singleton or DOM dependency to
+these or any other controller while that extraction remains unfinished.
 
 Current controller map:
 
 | Controller | Owns |
 | --- | --- |
-| [`beanInventoryController.ts`](../src/controllers/beanInventoryController.ts) | Stable inventory facade and imperative sequencer: per-bean command-lane ownership, field-intent revisions, authoritative reads, create/update/split execution, and cache publication. Existing consumers import the facade rather than its implementation modules. |
+| [`beanInventoryController.ts`](../src/controllers/beanInventoryController.ts) | Foreground/UI stock facade and imperative sequencer: per-bean command-lane ownership, field-intent revisions, physical-adjustment reservations/overlays, latest-read and selection revisions, create/update/split execution, and the single serialized inventory-cache publication lane. Existing foreground consumers import the facade rather than its implementation modules. |
 | [`beanInventoryContract.ts`](../src/controllers/beanInventoryContract.ts) | Public inventory ports, snapshots, requests, projections, and discriminated outcomes. It has type-only dependencies and no runtime behavior. |
 | [`beanInventoryPolicy.ts`](../src/controllers/beanInventoryPolicy.ts) | Deterministic inventory projection, rollback, reconciliation, split planning, status, and idempotency-key policy. It does not import the controller facade. |
 | `beanWorkflowController.ts` | Bean selection plus bean/grinder mutation policy and cache decisions. Batch mutation authority lives in `BeanInventoryController`. |
@@ -176,7 +230,7 @@ Current controller map:
 | `cleaningWorkflowController.ts` | Cleaning start blockers, cleaning workflow creation/load result, finish/count/profile-pick plans. |
 | `cleaningWizardController.ts` | Cleaning wizard step transitions and action completion. |
 | `derekController.ts` / `derekFlow.ts` | Derek question state, streaming lifecycle, suggestions, and saved-answer restoration. |
-| `doseMutationReconciler.ts` | Durable dose-deduction replay and conflict-safe reconciliation on the shared per-bean inventory lane, including dispatch-time migration of legacy queued keys. |
+| `doseMutationReconciler.ts` | Durable ordered dose adjustments: startup discovery and legacy-migration gating, first-admission replay metadata, shot deductions and deletion reclaims through one aggregate-head worker, volatile-promotion canonicalization, projection hand-off barriers, cross-context tombstone settlement, scalar-only typed outcomes, and the per-bean inventory lane. |
 | [`liveShotCompletionFlow.ts`](../src/controllers/liveShotCompletionFlow.ts) | Shot-end routing, remote polling, optimistic fallback, freshness/Derek-context persistence, dose dispatch, and stale/disposal fencing. |
 | `liveShotController.ts` | Pure shot-completion matching, polling primitives, fallback, and routing decisions used by `LiveShotCompletionFlow`. |
 | [`machineActionFlow.ts`](../src/controllers/machineActionFlow.ts) | Physical start/stop admission, repeated dispatch-time safety, and contiguous workflow/calibration/state commands. |
@@ -192,7 +246,9 @@ Current controller map:
 | `settingsController.ts` | Reaprime settings/account/device/plugin operations. |
 | [`settingsMutationFlow.ts`](../src/controllers/settingsMutationFlow.ts) | Per-resource optimistic settings identity, monotonic confirmed baselines, targeted reconcile/rollback, and stale/superseded/disposed outcomes. |
 | [`settingsStoreSync.ts`](../src/controllers/settingsStoreSync.ts) | Synced-store load/poll/reload fencing, synchronous write admission, per-key latest-wins writes, retry/discard, snapshots, and disposal. |
-| `shotMetadataController.ts` | Shot score/edit persistence, demo behavior, cache update/failure decisions. |
+| [`shotDeletionFlow.ts`](../src/controllers/shotDeletionFlow.ts) | Cross-resource shot deletion: remote/404 handling, replay-safe durable reclaim admission or owned-journal resume, optimistic inventory/provenance fencing, latest-state projections, and graceful drain ownership. |
+| `shotMetadataController.ts` | Shot score/edit persistence plus deletion primitives: preview-vs-intent separation, remote/cache/reclaim sequencing, partial-success status, and pure latest-state list projection. |
+| [`startupFlow.ts`](../src/controllers/startupFlow.ts) | Settings-gated boot/reconnect acquisition, cache/demo fallback policy, transport-revision and single-flight/disposal fencing, startup projections, and the exhaustive offline/limited/connected effect matrix. |
 
 If a new flow has more than one async step, optimistic state, demo/remote split,
 cache invalidation, rollback, or user-facing status policy, it probably belongs
@@ -220,13 +276,24 @@ beanInventoryController (stable facade and side-effect sequencing)
 beanInventoryPolicy     beanInventoryContract
 ```
 
-The facade remains the only public mutation owner. This split lets a coding
-agent inspect or change result contracts, pure reconciliation policy, or
-network sequencing independently, while the one-way dependency graph and
-facade imports keep authority from fragmenting. Safety-sensitive helpers such
-as stable intent serialization and optimistic rollback belong in policy and
-must be changed with focused policy/controller regressions, not copied into a
-new caller.
+The facade is the only public owner of **foreground/UI** stock mutations; it is
+not the only code path that can eventually change a remote batch. The adjacent
+authority paths are deliberately narrow and documented:
+
+- `DoseMutationReconciler` applies a durable physical scalar through its
+  injected exact per-bean lane adapter;
+- repository/storage maintenance and legacy repair may perform raw writes only
+  through capability-gated composition adapters and the canonical lane;
+- `ShotDeletionFlow` owns reclaim admission and projection coordination, but
+  delegates the actual inventory delta to the reconciler.
+
+Those adapters are part of the inventory boundary, not alternate foreground
+facades. This split lets a coding agent inspect or change result contracts,
+pure reconciliation policy, or network sequencing independently, while the
+one-way dependency graph keeps authority from fragmenting. Safety-sensitive
+helpers such as stable intent serialization and optimistic rollback belong in
+policy and must be changed with focused policy/controller regressions, not
+copied into a new caller.
 
 ### `src/views/`
 
@@ -275,7 +342,8 @@ The shell coordinator.
 
 `BeanieApp` owns:
 
-- startup/lifecycle/dispose
+- lifecycle/dispose and the narrow adapters that apply `StartupFlow` projections
+  and connectivity effects
 - one `AppState` object
 - delegated event listeners
 - routing between app views/modals
@@ -289,6 +357,21 @@ The shell coordinator.
 `BeanieApp` should not grow new workflow policy. It is allowed to contain glue:
 parse a field, call a controller, write a local preference through a domain
 helper, set state, and render.
+
+This is a direction, not a claim that the extraction is finished. `src/app.ts`
+is still more than 10,000 lines, so it is not yet a comfortably manageable
+composition shell for AI-agent maintenance. The next two high-value vertical
+extractions are:
+
+1. `BeanSelectionFlow`: selection mode/provenance, batch and shot acquisition,
+   effective-bag changes, recipe-draft scheduling, and stale selection fencing;
+2. `DoseDeductionAdmissionFlow`: completed-shot dose intent, synchronous
+   reservation, journal admission, optimism/canonicalization, cache projection,
+   and reservation release.
+
+Both should expose narrow requests/events and reuse the existing inventory and
+dose authorities. They must not create a second state store, scheduler, or
+journal owner.
 
 ### `src/appShell.ts`
 
@@ -383,9 +466,10 @@ Examples:
 - profile/load/save decisions
 - machine command preflight and restore
 
-The app shell should pass dependencies in. Do not import browser globals,
-singleton gateway objects, or DOM APIs into a controller unless there is no
-clean alternative.
+The app shell should pass dependencies in. Do not add browser globals,
+singleton gateway objects, or DOM APIs to a controller. The exact existing
+exceptions are listed under [`src/controllers/`](#srccontrollers) and must be
+reduced, not expanded.
 
 Controller result shapes should be explicit discriminated unions:
 
@@ -488,6 +572,47 @@ controller/domain function and keep only the adapter in `BeanieApp`.
 2. Keep cache-key normalization inside the repository/cache domain.
 3. Return plain data plus status/source metadata if needed.
 4. Do not make `BeanieApp` know the details of cache fallback.
+5. Inventory is stricter: publish every batch-list cache update through
+   `BeanInventoryController`. Its per-bean tail prevents an older write from
+   completing last. Batch GETs use the same per-bean command lane as mutations;
+   each read token captures the read, projection, and mutation revisions plus
+   the fields already owned when the read began. That boundary lets a fresh GET
+   that won the lane before a queued edit refresh the edit's confirmed rollback
+   baseline, while a read that began after/overlapped the owner cannot steal it.
+   Latest-read tokens still prevent an older result from publishing last.
+6. Treat the gateway list as an input, not the final projection. Restore a
+   locally protected batch if the response omitted it, preserve every UI-owned
+   field from local state, and overlay the latest unsettled physical scalar
+   unless a newer foreground weight owner wins.
+7. Sanitize before persistence. Replace each UI-owned field with its last
+   remotely confirmed value; if any owned field lacks a confirmed baseline,
+   omit the cache write entirely. The useful optimistic projection may remain
+   in process, but it must never become offline truth.
+
+### Add Plugin Settings Behavior
+
+Reaprime's plugin settings endpoint is a whole-map replacement API, even though
+Beanie's editor presents it as individual fields. Preserve these boundaries:
+
+1. Sanitize the gateway response when it crosses into `PluginConfigState`;
+   previously stored/readable gateway secret values must not enter `AppState`.
+   The sanitizer copies only fields in the known plugin specification, so
+   unknown gateway keys cannot become UI-owned write intent.
+   A newly typed secret may exist only in the active draft; a blank secret draft
+   means “keep the stored secret,” not “clear it.”
+2. Track panel `session`, draft `revision`, `touched` fields, and explicitly
+   edited secrets. Manifest defaults may be displayed for a sparse legacy map,
+   but an untouched default is not write intent.
+3. Submit only the local changed keys to the settings controller. Inside the
+   exact `plugin:<id>` command lane, read the fresh raw map, merge those keys,
+   and POST the complete replacement. The raw map, including any readable
+   secure value, stays inside that transient lane callback.
+4. Settle against the current session and revision. Ignore a closed/reopened
+   editor, adopt accepted remote values for untouched fields, and preserve any
+   edits made after the save began.
+5. Verify saved credentials by reading them transiently inside the same plugin
+   lane. Never try to reconstruct verification credentials from sanitized UI
+   state.
 
 ### Add Machine Settings Or Service Behavior
 
@@ -515,7 +640,26 @@ from a feature, or put machine timing math directly in `BeanieApp`.
 
 ### Add Shot Metadata Behavior
 
-Use `shotMetadataController.ts` for persistence and cache updates.
+Use `shotMetadataController.ts` for persistence and pure deletion primitives;
+use `ShotDeletionFlow` for the cross-resource delete/reclaim workflow. A delete
+dialog may retain a before/after
+preview, but the mutation boundary receives only immutable bean/batch/dose
+intent. Remote reclaims must be journaled through `DoseMutationReconciler`
+before optional cache cleanup; do not send an absolute preview weight to the
+gateway. The worker resolves `+dose`, capped by the bag's original weight,
+against a fresh remaining-weight scalar inside the canonical per-bean lane.
+The replay heuristic requires a tracked admission scalar. If current local
+stock is missing or untracked, request authoritative inventory review instead
+of journaling an unbounded `+dose` or promoting the display-only modal preview.
+
+The current remote order is DELETE shot, enqueue the durable reclaim, then
+invalidate the shot cache. This minimizes the unprotected interval but cannot
+eliminate a process crash after DELETE succeeds and before enqueue completes.
+If a retry sees 404, it may resume only a reclaim already owned by this
+reconciler; creating a new reclaim would risk returning the same dose twice
+after another client deleted it. Closing the gap requires a combined
+delete/reclaim command journaled before DELETE, as described in
+[runtime ownership](runtime-ownership-and-consistency.md#delete--reclaim-boundary).
 
 Keep shot edit form rendering in views and form parsing in `BeanieApp`. Move
 policy into the controller when it touches gateway/cache/demo behavior.
@@ -571,6 +715,12 @@ These are architectural constraints, not local implementation preferences:
    [`settingsBundleMutation.ts`](../src/domain/settingsBundleMutation.ts).
    Apply the inverse operation to the latest bundle; never restore an old whole
    bundle or collection, which would erase unrelated concurrent changes.
+7. **Inventory durability gates writes.** Presentation startup may proceed
+   without the dose journal, but foreground stock writes may not. Reserve and
+   overlay every unsettled durable adjustment first; if discovery fails, keep
+   writes read-only and retry. Legacy migration and volatile promotion share
+   the admission gate, and no dose reaches the gateway directly from volatile
+   intake before promotion into the selected authoritative journal backend.
 
 ### Resource Provenance
 
@@ -582,9 +732,12 @@ result.
 In particular, `settingsController.loadSettingsBundle()` loads each gateway
 settings endpoint independently. A failed endpoint can contribute a safe
 default so the settings shell remains navigable, but that section is marked
-unavailable and read-only. A working endpoint remains live and writable. The
-aggregate settings state is `degraded` when any section uses a default; it does
-not become demo merely because one endpoint failed.
+unavailable and read-only. A working endpoint remains writable only while the
+shell also holds current connected gateway authority; socket/startup demotion
+projects every live resource read-only and queued settings lanes recheck that
+capability at dispatch. The aggregate settings state is `degraded` when any
+section uses a default; it does not become demo merely because one endpoint
+failed.
 
 The same rule applies to future repositories: return data plus per-resource
 source metadata, preserve cached provenance when fresh data is missing, and do
@@ -618,12 +771,36 @@ Direct gateway calls should be limited to:
 - composition adapters in `BeanieApp`
 - `settingsController.ts` where it is constructed around the gateway
 
+The current transitional exceptions are the same three controller flows named
+above: scanner, Derek, and profile editor still import the gateway/cache
+singletons directly. Keep that list exact; do not treat it as permission for a
+fourth bypass.
+
 Physical mutation adapters are additionally constrained: raw workflow,
 calibration, machine-setting, refill, and machine-state gateway calls belong in
 the single `MachineWorkflowCommands` transport adapter assembled by
 `BeanieApp`. If a controller needs the gateway, inject a narrow operation or
 command port. That keeps tests small and prevents controller code from becoming
 a second app shell.
+
+### Known Settings Contract Debt
+
+The current app composition supplies transport-authority checks correctly, but
+two public contracts are still easier to misuse than they should be:
+
+- `SettingsField.key` is a plain `string`, and
+  `SettingsController.persistSetting()` builds a computed patch then casts it
+  to the selected settings group. Invalid group/key pairs are therefore a
+  runtime concern rather than a type error.
+- several cache, startup-repository, bean-repository, settings-store, and
+  settings-sync capability callbacks are optional or default to `() => true`.
+  Existing composition sites pass the required fences, but a new caller can
+  accidentally obtain fail-open write behavior by omission.
+
+Future work should introduce group-indexed settings keys and make mutation or
+cache-publication authority explicit/fail-closed at public boundaries. Until
+then, every new call site must pass the current authority callback and tests
+must cover demotion after an await.
 
 ### Rendering
 
@@ -701,8 +878,10 @@ for shell wiring.
 is an AST-level architecture test. It enforces the single scheduler owner,
 rejects legacy command coordinators, confines raw physical gateway mutations to
 the `MachineWorkflowCommands` transport adapter, rejects legacy per-batch
-inventory lanes, and prevents controllers from depending on `app.ts` or
-`AppState`. Treat a failure as an ownership violation: fix the dependency
+inventory lanes, requires selection batch reads and shot deletion to use their
+canonical exact lanes, keeps inventory contract/policy internals behind the
+facade, and prevents controllers from depending on `app.ts` or `AppState`.
+Treat a failure as an ownership violation: fix the dependency
 direction instead of weakening the guard unless an explicit, documented
 migration changes the invariant.
 
@@ -726,10 +905,11 @@ For architecture-affecting work, agents should follow this short protocol:
 2. Name the single owner of each state transition and side effect. Extend the
    existing owner through a narrow port or controller-owned contract instead of
    adding a parallel queue, authority, or shell workflow.
-3. Preserve all six command/mutation invariants above. In particular, submit a
+3. Preserve all seven command/mutation invariants above. In particular, submit a
    compound physical command once, pass immutable requests into it, and project
    explicit snapshots/events/outcomes back into the shell. Submit every bean
-   inventory write through `beanInventoryMutationKey(beanId)`.
+   inventory write through `beanInventoryMutationKey(beanId)`, and do not make
+   inventory writable until durable reservations have been restored.
 4. Add tests at the lowest boundary, including stale authority, supersession,
    partial failure, rollback against newer state, and disposal where relevant.
 5. Run `npm test` and `npm run build`. If ownership or a public contract moved,
@@ -750,6 +930,10 @@ Before considering a change done:
 - Does each controller expose a narrow controller-owned contract rather than
   `AppState`?
 - Are gateway/cache dependencies injected into controllers?
+- If inventory is writable, have all unsettled journal records already been
+  reserved and overlaid, with failure leaving the capability closed?
+- Does every new cache/startup/settings write call pass explicit live authority
+  rather than relying on a fail-open default?
 - Are views pure?
 - Are status strings tested when they encode policy?
 - Does demo mode follow the same visible state path as remote mode?
@@ -773,7 +957,10 @@ Avoid these:
 - rolling back an entire settings bundle or array after a targeted optimistic
   mutation
 - calling `gateway.*` from a view or component
-- reading DOM from a controller
+- adding another DOM read to a controller (scanner/profile editor are the exact
+  transitional exceptions)
+- adding another singleton gateway/cache import to a controller (scanner,
+  Derek, and profile editor are the exact transitional exceptions)
 - importing singleton gateway/cache objects into pure policy modules
 - making render functions mutate state
 - string-building API payloads when typed objects/guards exist
