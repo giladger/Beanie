@@ -92,7 +92,6 @@ import {
 } from './domain/beanWorkflow';
 import {
   createRecipeCandidate,
-  recipeOperationSubject,
   type RecipeCandidate
 } from './domain/recipeIdentity';
 import { batchOptionLabel, dateInputValue } from './domain/beanDisplay';
@@ -121,16 +120,7 @@ import {
   demoShotsForBean,
   demoWorkflow
 } from './mock/demo';
-import { type CapturedImage } from './domain/labelImage';
-import {
-  type LabelScan,
-  type LabelScanDraft,
-  type LabelScanDraftField
-} from './domain/labelScan';
-import {
-  renderLabelScannerModal as renderLabelScannerModalView,
-  type LabelScannerStep
-} from './views/labelScannerView';
+import { renderLabelScannerModal as renderLabelScannerModalView } from './views/labelScannerView';
 import { isHandoffArrival } from './domain/labelScanHandoff';
 import { icon } from './components/icons';
 import { captureFocus, morphRender, restoreFocus } from './render/renderer';
@@ -154,7 +144,15 @@ import {
   type WaterLevelSnapshot
 } from './telemetry/telemetryStore';
 import { ScannerFlow } from './controllers/scannerFlow';
-import { ProfileEditorFlow } from './controllers/profileEditorFlow';
+import type { LabelScannerState } from './controllers/scannerFlowContract';
+export type { LabelScannerState } from './controllers/scannerFlowContract';
+export type { ProfileEditTarget } from './controllers/profileEditorFlow';
+export type { ClickActionHandler } from './controllers/actionContract';
+import {
+  ProfileEditorFlow,
+  type ProfileEditTarget,
+  type ProfileImportState
+} from './controllers/profileEditorFlow';
 import {
   batchFieldsFromForm,
   beanFieldsFromForm,
@@ -163,12 +161,22 @@ import {
   numberOrNullInput,
   textOrNull
 } from './domain/beanForm';
-import { DerekFlow } from './controllers/derekFlow';
+import { DerekFlow, type DerekTweakChip } from './controllers/derekFlow';
+import type {
+  AppModal as Modal,
+  ClickActionContext,
+  ClickActionHandler
+} from './controllers/actionContract';
 import {
   MachineWorkflowCommands,
   type OwnedMachineLane
 } from './controllers/machineWorkflowCommands';
 import { SettingsStoreSync } from './controllers/settingsStoreSync';
+import {
+  RecipeApplyController,
+  type RecipeApplyCalibration,
+  type RecipeApplyEvent
+} from './controllers/recipeApplyController';
 import {
   backspaceInputDialogValue,
   clearInputDialogValue,
@@ -497,32 +505,7 @@ import {
   type ShotFieldSpec
 } from './domain/shotEditModel';
 
-type Modal =
-  | 'bean-picker'
-  | 'batch-storage'
-  | 'edit-number'
-  | 'edit-shot'
-  | 'machine-label'
-  | 'no-scale-shot'
-  | 'label-scanner'
-  | 'delete-shot'
-  | 'shot-stages'
-  | 'cleaning-wizard'
-  | 'import-profile'
-  | 'delete-profile'
-  | 'notes-editor'
-  | 'derek'
-  | null;
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
-interface ClickActionContext {
-  el: HTMLElement;
-  id?: string;
-  field?: string;
-  index?: string;
-  value?: string;
-}
-
-export type ClickActionHandler = (context: ClickActionContext) => void | Promise<void>;
 type ApplyState = 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
 // 'starting' = machine ramping up (substate preparingForShot), before flow;
 // 'active' = actually flowing (substate pouring); 'purging' = flow stopped but
@@ -570,14 +553,6 @@ function readWaterLevelSnapshot(value: unknown): WaterLevelSnapshot {
 }
 
 // Which editor field a tap-to-edit numpad dialog is bound to.
-export interface ProfileEditTarget {
-  target: 'step-field' | 'simple-field' | 'exit' | 'meta' | 'limiter-range';
-  key?: string;
-  index?: number;
-  type?: 'pressure' | 'flow';
-  condition?: 'over' | 'under';
-}
-
 interface MachineEditTarget {
   name: string;
   title: string;
@@ -590,16 +565,6 @@ interface MachineLabelEditTarget {
   presetId: string;
   label: string;
 }
-
-// State for the "Import profile from Visualizer" modal. `code` mirrors the
-// last-submitted share code so it survives the re-render after an error.
-interface ProfileImportState {
-  code: string;
-  busy: boolean;
-  error: string | null;
-}
-
-
 
 interface NumberEditTarget {
   target:
@@ -647,28 +612,6 @@ interface ReclaimPlan {
 interface DeleteShotTarget {
   shotId: string;
   reclaim: ReclaimPlan | null;
-}
-
-export interface LabelScannerState {
-  step: LabelScannerStep;
-  handoff: boolean;
-  qrSvg: string | null;
-  qrUrl: string | null;
-  keyDraft: string;
-  verifying: boolean;
-  verifyMessage: { tone: 'good' | 'warn'; text: string } | null;
-  images: CapturedImage[];
-  scan: LabelScan | null;
-  draft: LabelScanDraft | null;
-  lowConfidence: LabelScanDraftField[];
-  webFields: LabelScanDraftField[];
-  enriching: boolean;
-  existingBeanId: string | null;
-  existingBeanLabel: string | null;
-  /** Beans already in the library from the scanned roaster (new-bean case). */
-  roasterBeanCount: number;
-  saving: boolean;
-  error: string | null;
 }
 
 export interface AppState {
@@ -811,16 +754,6 @@ export interface AppState {
   derekTweakChip: DerekTweakChip | null;
 }
 
-interface DerekTweakChip {
-  summary: string;
-  /** Which dial-in parameter changed — drives the control highlight. */
-  parameter: string | null;
-  /** Revert = re-pick this profile (profile-level tweaks)… */
-  revertProfileId: string | null;
-  /** …or reload this shot's recipe without the tip (recipe-level tips). */
-  revertShotId: string | null;
-}
-
 // Step names from a profile's raw steps[], for the live stage chip. Mirrors the
 // historical shot graph's profileSteps naming (name -> title -> "Step N").
 function profileStepNames(profile: Profile | null): string[] {
@@ -871,6 +804,14 @@ export class BeanieApp {
     },
     { hasLiveAuthority: () => this.hasLiveMachineAuthority() }
   );
+  private readonly recipeApply = new RecipeApplyController({
+    commands: this.machineWorkflowCommands,
+    runtime: () => ({
+      demo: this.state.demo,
+      connected: this.state.startupPhase === 'connected',
+      sleeping: this.machineIsSleeping()
+    })
+  });
   private readonly settingsController = createSettingsController({
     ...gateway,
     scanDevices: () => this.runExactCommand('devices', () => gateway.scanDevices()),
@@ -1047,7 +988,6 @@ export class BeanieApp {
     derekTweakChip: null
   };
 
-  private applyTimer: number | null = null;
   // Derek's modal/ask/apply flow lives in its own vertical (src/controllers/derekFlow.ts).
   private readonly derekFlow: DerekFlow;
   // The label scanner's capture/extract/review flow (src/controllers/scannerFlow.ts).
@@ -1080,7 +1020,6 @@ export class BeanieApp {
     run: () => this.retryStartupConnection(),
     onError: (error) => console.warn('[Beanie] Startup reconnect failed', error)
   });
-  private readonly applyAuthority = new OperationAuthority();
   private readonly loadMoreAuthority = new OperationAuthority();
   private readonly doseMutationReconciler: DoseMutationReconciler;
   private readonly imageTranscoder = new BoundedImageTranscoder();
@@ -1179,7 +1118,6 @@ export class BeanieApp {
   private statusFeedbackTimer: number | null = null;
   private statusFeedbackUntilMs = 0;
   private wakeAppIdleTimer: number | null = null;
-  private applyAfterWake = false;
   private lastPresenceHeartbeatMs = 0;
   private lastScaleFrameMs: number | null = null;
   private noScaleBrewFlashStartedMs: number | null = null;
@@ -1377,7 +1315,8 @@ export class BeanieApp {
         this.setState({ storeError: event.state.storeError });
       }
     }));
-    this.appScope.own(this.applyAuthority);
+    this.appScope.own(this.recipeApply);
+    this.appScope.own(this.recipeApply.subscribe((event) => this.handleRecipeApplyEvent(event)));
     this.appScope.own(this.loadMoreAuthority);
     this.appScope.own(this.doseMutationReconciler);
     this.derekFlow = new DerekFlow({
@@ -1467,6 +1406,7 @@ export class BeanieApp {
     // drains explicitly so a replacement app can await the old physical work
     // before acquiring the same batch/machine resources.
     this.settingsStoreSync.dispose();
+    this.recipeApply.dispose();
     const doseDrain = this.doseMutationReconciler.dispose();
     const commandDrain = this.gatewayMutations.disposeAndWait();
     this.disposeDrain = Promise.all([doseDrain, commandDrain]).then(() => undefined);
@@ -1475,7 +1415,6 @@ export class BeanieApp {
     });
     this.appScope.dispose();
     this.telemetryStore.dispose();
-    if (this.applyTimer != null) window.clearTimeout(this.applyTimer);
     if (this.statusFeedbackTimer != null) window.clearTimeout(this.statusFeedbackTimer);
     this.derekFlow.dispose();
     this.scannerFlow.cancelScannerWork();
@@ -1503,7 +1442,6 @@ export class BeanieApp {
     this.shotStagesChart = null;
     this.calibratorChart = null;
     this.clearMachineStopRequest();
-    this.applyTimer = null;
     this.clockTimer = null;
     this.saverPhotoTimer = null;
     this.simTimer = null;
@@ -1741,8 +1679,8 @@ export class BeanieApp {
           remember: !limited
         });
         if (!limited && wantsStartupApply && machineSleeping) {
-          this.applyAfterWake = true;
-          this.setState({ applyState: 'stale', status: 'Machine asleep — tap Wake to load recipe' });
+          this.scheduleApply();
+          this.setState({ status: 'Machine asleep — tap Wake to load recipe' });
         }
       }
       if (prevSignature != null && workflowSignature(workflow) !== prevSignature) {
@@ -1868,9 +1806,7 @@ export class BeanieApp {
       writeLastBeanId: options.remember === false ? () => {} : writeLastBeanId
     });
     if (!selection) return;
-    if (this.applyTimer != null) window.clearTimeout(this.applyTimer);
-    this.applyTimer = null;
-    this.applyAuthority.invalidate(new Error(`Superseded by bean selection ${beanId}`));
+    this.recipeApply.cancel(new Error(`Superseded by bean selection ${beanId}`));
     // A staged Derek tweak belongs to the bean it was suggested for.
     this.setState({ ...selection.state, derekTweakChip: null });
 
@@ -2330,90 +2266,47 @@ export class BeanieApp {
   private async applyDraft(): Promise<void> {
     const candidate = this.currentRecipeCandidate();
     if (!candidate) return;
+    this.recipeApply.stage(candidate, this.recipeApplyCalibration(candidate));
+    await this.recipeApply.flush();
+  }
 
-    if (!this.state.demo && this.state.startupPhase !== 'connected') {
-      this.setState({ applyState: 'stale', status: 'Recipe changes are read-only until live data reconnects' });
-      return;
-    }
+  private recipeApplyCalibration(
+    candidate: RecipeCandidate & { draft: RecipeDraft }
+  ): RecipeApplyCalibration | null {
+    const profileTitle = candidate.draft.profileTitle ?? candidate.draft.profile?.title ?? null;
+    const resolved = this.resolveProfileFlowCalibration(profileTitle);
+    if (resolved == null || resolved === this.currentFlowCalibrationMultiplier()) return null;
+    return { target: resolved, persistToMachine: !this.settingsLocal };
+  }
 
-    if (!this.state.demo && this.machineIsSleeping()) {
-      this.applyAfterWake = true;
-      this.setState({ applyState: 'stale', status: 'Machine asleep — tap Wake to apply' });
-      return;
-    }
-
-    const { draft, workflow: update, fingerprint: signature } = candidate;
-    this.stageRecipeCandidate(candidate);
-    const appliedProfileTitle = draft.profileTitle ?? draft.profile?.title ?? null;
-    this.setState({ applyState: 'pending', status: 'Applying workflow' });
-    if (this.state.demo) {
-      // Do not write `draft` back: the user may have edited again during the
-      // (debounced) apply, and clobbering it with this snapshot would revert
-      // those taps. appliedSignature reflects what was sent; if the live draft
-      // now differs it stays dirty and the pending debounce re-applies.
-      this.setState({
-        workflow: update,
-        applyState: 'applied',
-        appliedSignature: signature,
-        status: 'Workflow applied in demo'
-      });
-      void this.applyProfileFlowCalibration(appliedProfileTitle);
-      return;
-    }
-
-    const resolvedCalibration = this.resolveProfileFlowCalibration(appliedProfileTitle);
-    const calibrationTarget = resolvedCalibration != null &&
-      resolvedCalibration !== this.currentFlowCalibrationMultiplier()
-      ? resolvedCalibration
-      : null;
-    const persistCalibration = calibrationTarget != null && !this.settingsLocal;
-    const operation = this.applyAuthority.begin(recipeOperationSubject(signature));
-    try {
-      const outcome = await this.machineWorkflowCommands.runLatest(
-        'recipe',
-        async (lane) => {
-          const workflow = await lane.updateWorkflow(update);
-          if (persistCalibration) {
-            await lane.updateCalibration(calibrationTarget);
-          }
-          return workflow;
-        }
-      );
-      if (!operation.isCurrent) return;
-      if (
-        outcome.status === 'superseded' ||
-        outcome.status === 'canceled' ||
-        outcome.status === 'disposed' ||
-        outcome.status === 'authority-blocked'
-      ) {
-        if (outcome.status === 'authority-blocked') {
-          operation.commit(() => this.setState({
-            applyState: 'stale',
-            status: 'Recipe not applied — reconnect to continue'
-          }));
-        }
+  private handleRecipeApplyEvent(event: RecipeApplyEvent): void {
+    if (this.disposed) return;
+    switch (event.type) {
+      case 'scheduled':
+      case 'in-flight':
+        if (this.state.applyState !== 'pending') this.setState({ applyState: 'pending' });
         return;
-      }
-      if (outcome.status === 'completed') {
-        const workflow = outcome.value;
-        void beanieCache.putWorkflow(workflow).catch(() => {});
-        const currentSignature = this.currentRecipeCandidate()?.fingerprint ?? null;
-        if (currentSignature !== signature) {
-          operation.commit(() => this.setState({
-            workflow,
-            ...(calibrationTarget == null ? {} : {
-              settingsBundle: calibrationBundle(
-                this.state.settingsBundle ?? demoSettingsBundle(),
-                calibrationTarget
-              )
-            }),
-            applyState: 'stale',
-            appliedSignature: signature,
-            status: 'Draft changed; applying soon'
-          }));
-          return;
-        }
-        operation.commit(() => this.setState({
+      case 'applying':
+        this.setState({ applyState: 'pending', status: 'Applying workflow' });
+        return;
+      case 'deferred':
+        this.setState({ applyState: 'stale', status: 'Machine asleep — tap Wake to apply' });
+        return;
+      case 'blocked':
+        this.setState({
+          applyState: 'stale',
+          status: event.reason === 'offline'
+            ? 'Recipe changes are read-only until live data reconnects'
+            : 'Recipe not applied — reconnect to continue'
+        });
+        return;
+      case 'applied': {
+        const { workflow } = event;
+        const signature = event.request.candidate.fingerprint;
+        const calibrationTarget = event.request.calibration?.target ?? null;
+        const draftChanged = this.currentRecipeCandidate()?.fingerprint !== signature;
+        if (event.source === 'gateway') void beanieCache.putWorkflow(workflow).catch(() => {});
+        this.setState({
           workflow,
           ...(calibrationTarget == null ? {} : {
             settingsBundle: calibrationBundle(
@@ -2421,26 +2314,28 @@ export class BeanieApp {
               calibrationTarget
             )
           }),
-          applyState: 'applied',
+          applyState: draftChanged ? 'stale' : 'applied',
           appliedSignature: signature,
-          status: 'Workflow applied'
-        }));
-      } else {
-        const error = outcome.error;
-        const currentSignature = this.currentRecipeCandidate()?.fingerprint ?? null;
-        if (currentSignature !== signature) {
-          operation.commit(() => this.setState({ applyState: 'stale', status: 'Draft changed; applying soon' }));
-          return;
-        }
-        console.error('[Beanie] Apply failed', error);
-        operation.commit(() => this.setState(
+          status: draftChanged
+            ? 'Draft changed; applying soon'
+            : event.source === 'demo' ? 'Workflow applied in demo' : 'Workflow applied'
+        });
+        return;
+      }
+      case 'failed':
+        console.error('[Beanie] Apply failed', event.error);
+        this.setState(
           this.hasLiveMachineAuthority()
             ? { applyState: 'failed', status: 'Apply failed' }
             : { applyState: 'stale', status: 'Recipe not applied — reconnect to continue' }
-        ));
-      }
-    } finally {
-      operation.finish();
+        );
+        return;
+      case 'staged':
+      case 'not-applied':
+      case 'no-candidate':
+      case 'canceled':
+      case 'disposed':
+        return;
     }
   }
 
@@ -2494,22 +2389,7 @@ export class BeanieApp {
   private scheduleApply(): void {
     const candidate = this.currentRecipeCandidate();
     if (!candidate) return;
-    this.stageRecipeCandidate(candidate);
-    if (!this.state.demo && this.state.startupPhase !== 'connected') {
-      if (this.applyTimer != null) window.clearTimeout(this.applyTimer);
-      this.applyTimer = null;
-      this.setState({ applyState: 'stale', status: 'Recipe changes are read-only until live data reconnects' });
-      return;
-    }
-    // Desired workflow changes at edit time, not 200ms later when the debounce
-    // fires. A physical Shot command can now capture and persist this exact
-    // draft even if the timer has not run yet.
-    if (this.state.applyState !== 'pending') this.setState({ applyState: 'pending' });
-    if (this.applyTimer != null) window.clearTimeout(this.applyTimer);
-    this.applyTimer = window.setTimeout(() => {
-      this.applyTimer = null;
-      void this.applyDraft();
-    }, 200);
+    this.recipeApply.stage(candidate, this.recipeApplyCalibration(candidate));
   }
 
   private currentRecipeCandidate(): (RecipeCandidate & { draft: RecipeDraft }) | null {
@@ -2524,18 +2404,6 @@ export class BeanieApp {
       this.state.workflow
     );
     return { ...createRecipeCandidate(workflow), draft };
-  }
-
-  private stageRecipeCandidate(candidate: RecipeCandidate): void {
-    const subject = recipeOperationSubject(candidate.fingerprint);
-    const activeSubject = this.applyAuthority.currentSubjectKey;
-    // Revocation happens at edit time, before the debounce. An older gateway
-    // request may still settle, but it no longer owns a UI commit and cannot
-    // temporarily publish Applied for a recipe the user has already changed.
-    if (activeSubject != null && activeSubject !== subject) {
-      this.applyAuthority.invalidate(new Error(`Superseded by staged ${subject}`));
-    }
-    this.machineWorkflowCommands.stageDesired(candidate.workflow);
   }
 
   private loadShotRecipe(shotId: string, opts: { skipDerekTip?: boolean } = {}): void {
@@ -5096,7 +4964,7 @@ export class BeanieApp {
     // stop the tablet from picking up changes made on another device. Local
     // unsynced draft edits aren't clobbered — resync only adopts when the
     // gateway *workflow* differs, which a not-yet-applied draft hasn't changed.
-    return this.state.applyState !== 'pending' && this.applyTimer == null;
+    return this.state.applyState !== 'pending' && !this.recipeApply.snapshot.scheduled;
   }
 
   /**
@@ -5413,10 +5281,7 @@ export class BeanieApp {
       },
       'wake': async () => {
         await this.machineAction('idle');
-        if (this.applyAfterWake && !this.machineIsSleeping()) {
-          this.applyAfterWake = false;
-          await this.applyDraft();
-        }
+        if (!this.machineIsSleeping()) await this.recipeApply.resumeAfterWake();
       },
       'wake-app': async () => {
         await this.wakeAppWithoutMachine();

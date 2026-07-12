@@ -260,16 +260,16 @@ await run('queued machine mutations re-check live authority at dispatch', async 
   app.dispose();
 });
 
-await run('staging an edited recipe immediately revokes the older apply lease', () => {
+await run('staging an edited recipe synchronously replaces desired recipe identity', () => {
   const root = new FakeElement();
   const app = new BeanieApp(root as unknown as HTMLElement);
   const harness = app as unknown as {
     setState(next: Record<string, unknown>): void;
     scheduleApply(): void;
-    applyAuthority: {
-      begin(subjectKey: string): { signal: AbortSignal; isCurrent: boolean };
-      currentSubjectKey: string | null;
+    recipeApply: {
+      snapshot: { stagedFingerprint: string | null; scheduled: boolean };
     };
+    machineWorkflowCommands: { snapshot: { desired: { profile?: { steps?: Array<{ pressure?: number }> } } | null } };
   };
   harness.setState({
     settingsLoaded: true,
@@ -299,14 +299,25 @@ await run('staging an edited recipe immediately revokes the older apply lease', 
       grinderSetting: '5.5'
     }
   });
-  const olderApply = harness.applyAuthority.begin('recipe:old-fingerprint');
-
+  harness.scheduleApply();
+  const firstFingerprint = harness.recipeApply.snapshot.stagedFingerprint;
+  harness.setState({
+    draft: {
+      profileTitle: 'New title',
+      profile: { title: 'New title', steps: [{ pressure: 10 }] },
+      brewTemp: 93,
+      dose: 18,
+      yield: 40,
+      grinderId: 'grinder-new',
+      grinderModel: 'DF64',
+      grinderSetting: '5.5'
+    }
+  });
   harness.scheduleApply();
 
-  // No timer tick or promise turn is needed: revocation happens while staging.
-  equal(olderApply.signal.aborted, true);
-  equal(olderApply.isCurrent, false);
-  equal(harness.applyAuthority.currentSubjectKey, null);
+  equal(harness.recipeApply.snapshot.stagedFingerprint === firstFingerprint, false);
+  equal(harness.recipeApply.snapshot.scheduled, true);
+  equal(harness.machineWorkflowCommands.snapshot.desired?.profile?.steps?.[0]?.pressure, 10);
   app.dispose();
 });
 

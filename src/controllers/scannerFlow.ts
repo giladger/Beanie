@@ -1,5 +1,10 @@
-import type { AppState, ClickActionHandler, LabelScannerState } from '../app';
+import type { ClickActionHandler } from './actionContract';
 import type { BeanWorkflowController } from './beanWorkflowController';
+import type {
+  LabelScannerStatePatch,
+  ScannerFlowState,
+  ScannerFlowStatePatch
+} from './scannerFlowContract';
 import { gateway } from '../api/gateway';
 import { beanieCache } from '../domain/cache';
 import {
@@ -42,8 +47,8 @@ const MAX_SCANNER_IMAGES = 4;
 // vertically from app.ts; ScannerFlowHost below is the full coupling surface
 // back into the app.
 export interface ScannerFlowHost {
-  state(): AppState;
-  setState(next: Partial<AppState>): void;
+  state(): ScannerFlowState;
+  setState(next: ScannerFlowStatePatch): void;
   selectBean(
     beanId: string,
     options: { apply: boolean; preferWorkflow: boolean; preferredBatchId?: string | null }
@@ -114,7 +119,7 @@ export class ScannerFlow {
     };
   }
 
-  setScanner(patch: Partial<LabelScannerState>): void {
+  setScanner(patch: LabelScannerStatePatch): void {
     const scanner = this.host.state().scanner;
     if (!scanner) return;
     this.host.setState({ scanner: { ...scanner, ...patch } });

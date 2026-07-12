@@ -1,4 +1,4 @@
-import type { AppState, ClickActionHandler } from '../app';
+import type { AppModal, ClickActionHandler } from './actionContract';
 import {
   DerekRequestError,
   DerekStallError,
@@ -49,16 +49,51 @@ import { clearPendingDerekTweak, writePendingDerekTweak } from '../domain/storag
 import { saveProfile, selectProfileForDraft } from './profileEditorController';
 import { phaseLabel, renderTweakPreview } from '../views/derekView';
 import type { DerekStreamViewModel } from '../render/derekStreamIsland';
-import type { Profile, ProfileRecord, ShotAnnotations, ShotRecord } from '../api/types';
+import type {
+  Bean,
+  BeanBatch,
+  Grinder,
+  Profile,
+  ProfileRecord,
+  RecipeDraft,
+  ShotAnnotations,
+  ShotRecord,
+  Workflow
+} from '../api/types';
 import { OperationEpoch } from './operationEpoch';
+
+export interface DerekTweakChip {
+  summary: string;
+  parameter: string | null;
+  revertProfileId: string | null;
+  revertShotId: string | null;
+}
+
+export interface DerekFlowState {
+  batchesByBean: Record<string, BeanBatch[]>;
+  beans: Bean[];
+  demo: boolean;
+  derek: DerekState | null;
+  derekTweakChip: DerekTweakChip | null;
+  detailShotId: string | null;
+  draft: RecipeDraft;
+  grinders: Grinder[];
+  modal: AppModal;
+  profiles: ProfileRecord[];
+  selectedBatchId: string | null;
+  selectedBeanId: string | null;
+  shots: ShotRecord[];
+  workflow: Workflow | null;
+  status: string;
+}
 
 // Derek, the dial-in assistant: modal lifecycle, query composition, the SSE
 // ask stream (published to a bounded presentation island), and applying/reverting the
 // suggestions. Extracted vertically from app.ts — the host interface below is
 // the full coupling surface back into the app.
 export interface DerekFlowHost {
-  state(): AppState;
-  setState(next: Partial<AppState>): void;
+  state(): DerekFlowState;
+  setState(next: Partial<DerekFlowState>): void;
   /** Assign state.derek in place without a render (per-token hot path). */
   patchStateDerek(derek: DerekState): void;
   /** Publish one complete frame to the bounded Derek presentation island. */

@@ -1,6 +1,6 @@
-import type { AppState, ClickActionHandler, ProfileEditTarget } from '../app';
+import type { AppModal, ClickActionHandler } from './actionContract';
 import { gateway } from '../api/gateway';
-import type { Profile } from '../api/types';
+import type { Grinder, Profile, ProfileRecord, RecipeDraft } from '../api/types';
 import { defaultExitValueForApp } from '../appShell';
 import { createInputDialog } from '../components/InputDialog';
 import {
@@ -34,13 +34,50 @@ import { beanieCache } from '../domain/cache';
 import type { StepFieldKey } from '../domain/profileModel';
 import { OperationEpoch } from './operationEpoch';
 
+export interface ProfileEditTarget {
+  target: 'step-field' | 'simple-field' | 'exit' | 'meta' | 'limiter-range';
+  key?: string;
+  index?: number;
+  type?: 'pressure' | 'flow';
+  condition?: 'over' | 'under';
+}
+
+export interface ProfileImportState {
+  code: string;
+  busy: boolean;
+  error: string | null;
+}
+
+export interface ProfileEditorFlowState {
+  busy: boolean;
+  demo: boolean;
+  draft: RecipeDraft;
+  editingProfileId: string | null;
+  grinders: Grinder[];
+  modal: AppModal;
+  profileEditor: ProfileEditorState | null;
+  profileFocusId: string | null;
+  profileImport: ProfileImportState | null;
+  profiles: ProfileRecord[];
+}
+
+export type ProfileEditorFlowPatch = Partial<ProfileEditorFlowState & {
+  derekTweakChip: null;
+  editDialog: ReturnType<typeof createInputDialog> | null;
+  machineEdit: null;
+  profileEdit: ProfileEditTarget | null;
+  profileSearch: string;
+  status: string;
+  view: 'workbench' | 'profile-editor';
+}>;
+
 // The profile editor's app glue: the pe-* dispatch table, open/import/submit,
 // the tap-to-edit value dialog, and the notes modal commit. The editor's
 // domain logic stays in profileEditorController / components/profileEditor;
 // ProfileEditorFlowHost below is the full coupling surface into the app.
 export interface ProfileEditorFlowHost {
-  state(): AppState;
-  setState(next: Partial<AppState>): void;
+  state(): ProfileEditorFlowState;
+  setState(next: ProfileEditorFlowPatch): void;
   scheduleApply(): void;
   /** Focus the notes textarea on the render right after the notes modal opens. */
   requestNotesFocus(): void;

@@ -71,28 +71,10 @@ export const DEPENDENCY_DEBT: readonly DependencyDebt[] = [
     migration: 'Define a label-scanner port in domain and move the Gemini adapter out of the API contract layer.'
   },
   {
-    from: 'controllers/derekFlow.ts',
-    to: 'app.ts',
-    reason: 'UI flow host types still live in the composition root.',
-    migration: 'Move AppState/ClickActionHandler ports into a controller-facing contract module.'
-  },
-  {
-    from: 'controllers/profileEditorFlow.ts',
-    to: 'app.ts',
-    reason: 'UI flow host types still live in the composition root.',
-    migration: 'Move profile-editor host/action contracts beside the flow.'
-  },
-  {
     from: 'controllers/profileEditorFlow.ts',
     to: 'appShell.ts',
     reason: 'The profile editor reaches into shell policy for its default exit value.',
     migration: 'Inject the default-exit policy or move it into a domain profile policy module.'
-  },
-  {
-    from: 'controllers/scannerFlow.ts',
-    to: 'app.ts',
-    reason: 'UI flow host types still live in the composition root.',
-    migration: 'Move scanner state and action contracts beside the flow.'
   },
   {
     from: 'controllers/derekFlow.ts',
