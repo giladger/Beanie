@@ -198,9 +198,12 @@ import {
   coerceFieldValue,
   demoSettingsBundle,
   fieldValue,
-  setBundleField,
   type SettingsBundle
 } from './domain/settingsModel';
+import {
+  applySettingsBundleMutation,
+  type SettingsBundleMutation
+} from './domain/settingsBundleMutation';
 import {
   settingsResourceStates,
   settingsResourceWritable,
@@ -8549,6 +8552,12 @@ export class BeanieApp {
     this.setState({ settingsBundle: { ...this.state.settingsBundle, ...patch } });
   }
 
+  private mutateSettingsBundle(mutation: SettingsBundleMutation): void {
+    const bundle = this.state.settingsBundle;
+    if (!bundle) return;
+    this.setState({ settingsBundle: applySettingsBundleMutation(bundle, mutation) });
+  }
+
   private get settingsLocal(): boolean {
     return this.state.demo || this.state.settingsSource === 'demo';
   }
@@ -8842,9 +8851,9 @@ export class BeanieApp {
     const brightness = Math.max(0, Math.min(100, Math.round(parsed)));
     const mutation = this.beginSettingsMutation('display');
     const current = this.state.settingsBundle?.display ?? demoSettingsBundle().display;
-    this.patchBundle({
-      display: {
-        ...current,
+    this.mutateSettingsBundle({
+      type: 'patch-display',
+      patch: {
         brightness,
         requestedBrightness: brightness,
         lowBatteryBrightnessActive: false
@@ -8860,12 +8869,12 @@ export class BeanieApp {
       const display = await this.setGatewayBrightnessLatest(brightness);
       if (!display) return;
       if (!this.isCurrentSettingsMutation('display', mutation)) return;
-      this.patchBundle({ display });
+      this.mutateSettingsBundle({ type: 'replace-display', display });
       this.setState({ status: 'Brightness saved' });
     } catch (error) {
       console.error('[Beanie] Display brightness change failed', error);
       if (!this.isCurrentSettingsMutation('display', mutation)) return;
-      this.patchBundle({ display: current });
+      this.mutateSettingsBundle({ type: 'replace-display', display: current });
       await this.refreshDisplayStateSilently();
       this.setState({ status: 'Brightness save failed — change reverted' });
     }
@@ -8929,17 +8938,15 @@ export class BeanieApp {
     const deletedIndex = previous.findIndex((schedule) => schedule.id === id);
     const mutationKey = `schedule:${id}`;
     const mutation = this.beginSettingsMutation(mutationKey);
-    const remaining = previous.filter((s) => s.id !== id);
-    this.patchBundle({ schedules: remaining });
+    this.mutateSettingsBundle({ type: 'remove-schedule', id });
     const result = await this.settingsController.deleteWakeSchedule({ id, local: this.settingsLocal });
     if (!this.isCurrentSettingsMutation(mutationKey, mutation)) return;
     if (!result.ok && deleted) {
-      const current = this.state.settingsBundle?.schedules ?? [];
-      if (!current.some((schedule) => schedule.id === id)) {
-        const restored = [...current];
-        restored.splice(Math.max(0, Math.min(deletedIndex, restored.length)), 0, deleted);
-        this.patchBundle({ schedules: restored });
-      }
+      this.mutateSettingsBundle({
+        type: 'restore-schedule',
+        schedule: deleted,
+        index: deletedIndex
+      });
     }
     if (result.status) this.setState({ status: result.status });
   }
@@ -8953,18 +8960,16 @@ export class BeanieApp {
     const previousSchedule = previous.find((schedule) => schedule.id === id) ?? null;
     const mutationKey = `schedule:${id}`;
     const mutation = this.beginSettingsMutation(mutationKey);
-    const schedules = previous.map((s) =>
-      s.id === id ? { ...s, enabled } : s
-    );
-    this.patchBundle({ schedules });
+    this.mutateSettingsBundle({ type: 'set-schedule-enabled', id, enabled });
     try {
       await this.settingsController.toggleWakeSchedule({ id, enabled, local: this.settingsLocal });
     } catch {
       if (!this.isCurrentSettingsMutation(mutationKey, mutation)) return;
       if (previousSchedule) {
-        const current = this.state.settingsBundle?.schedules ?? [];
-        this.patchBundle({
-          schedules: current.map((schedule) => schedule.id === id ? { ...schedule, enabled: previousSchedule.enabled } : schedule)
+        this.mutateSettingsBundle({
+          type: 'set-schedule-enabled',
+          id,
+          enabled: previousSchedule.enabled
         });
       }
       this.setState({ status: 'Could not update schedule — change reverted' });
@@ -9083,10 +9088,7 @@ export class BeanieApp {
     const previousPlugin = previous.find((plugin) => plugin.id === id) ?? null;
     const mutationKey = `plugin-toggle:${id}`;
     const mutation = this.beginSettingsMutation(mutationKey);
-    const plugins = previous.map((p) =>
-      p.id === id ? { ...p, loaded: enable } : p
-    );
-    this.patchBundle({ plugins });
+    this.mutateSettingsBundle({ type: 'set-plugin-loaded', id, loaded: enable });
     if (this.settingsLocal) return;
     try {
       await this.runExactCommand(`plugin:${id}`, () =>
@@ -9098,9 +9100,10 @@ export class BeanieApp {
       console.error('[Beanie] Plugin toggle failed', error);
       if (!this.isCurrentSettingsMutation(mutationKey, mutation)) return;
       if (previousPlugin) {
-        const current = this.state.settingsBundle?.plugins ?? [];
-        this.patchBundle({
-          plugins: current.map((plugin) => plugin.id === id ? { ...plugin, loaded: previousPlugin.loaded } : plugin)
+        this.mutateSettingsBundle({
+          type: 'set-plugin-loaded',
+          id,
+          loaded: previousPlugin.loaded
         });
       }
       this.setState({ status: 'Plugin change failed — change reverted' });
@@ -9246,30 +9249,30 @@ export class BeanieApp {
     const previousValue = fieldValue(bundle, field);
     const mutationKey = `field:${field.group}:${key}`;
     const mutation = this.beginSettingsMutation(mutationKey);
-    this.setState({ settingsBundle: setBundleField(bundle, field, value), status: 'Setting updated' });
+    this.mutateSettingsBundle({ type: 'set-field', field, value });
+    this.setState({ status: 'Setting updated' });
     if (this.settingsLocal) return; // local-only without a gateway
     try {
       await this.persistSetting(field.group, key, value);
     } catch (error) {
       console.error('[Beanie] Update setting failed', error);
       if (!this.isCurrentSettingsMutation(mutationKey, mutation)) return;
-      const current = this.state.settingsBundle;
-      this.setState({
-        settingsBundle: current ? setBundleField(current, field, previousValue) : current,
-        status: 'Setting update failed — change reverted'
-      });
+      this.mutateSettingsBundle({ type: 'set-field', field, value: previousValue });
+      this.setState({ status: 'Setting update failed — change reverted' });
     }
   }
 
   private async setNoScaleBlock(enabled: boolean): Promise<void> {
     const previousBundle = this.state.settingsBundle;
-    const nextBundle = previousBundle
-      ? { ...previousBundle, rea: { ...previousBundle.rea, blockOnNoScale: enabled } }
-      : previousBundle;
-    this.setState({
-      settingsBundle: nextBundle,
-      status: enabled ? 'Scale block enabled' : 'Disabling scale block...'
+    const previousValue = previousBundle?.rea.blockOnNoScale ?? false;
+    const mutationKey = 'field:rea:blockOnNoScale';
+    const mutation = this.beginSettingsMutation(mutationKey);
+    this.mutateSettingsBundle({
+      type: 'set-field',
+      field: { group: 'rea', key: 'blockOnNoScale' },
+      value: enabled
     });
+    this.setState({ status: enabled ? 'Scale block enabled' : 'Disabling scale block...' });
 
     if (this.settingsLocal) {
       if (!enabled) this.noScaleShotWarningUntilMs = 0;
@@ -9291,10 +9294,13 @@ export class BeanieApp {
       });
     } catch (error) {
       console.error('[Beanie] Update no-scale block setting failed', error);
-      this.setState({
-        settingsBundle: previousBundle,
-        status: 'Setting update failed'
+      if (!this.isCurrentSettingsMutation(mutationKey, mutation)) return;
+      this.mutateSettingsBundle({
+        type: 'set-field',
+        field: { group: 'rea', key: 'blockOnNoScale' },
+        value: previousValue
       });
+      this.setState({ status: 'Setting update failed' });
     }
   }
 
