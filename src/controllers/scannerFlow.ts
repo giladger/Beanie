@@ -1,5 +1,7 @@
 import type { ClickActionHandler } from './actionContract';
 import type { BeanWorkflowController } from './beanWorkflowController';
+import type { BeanInventoryController } from './beanInventoryController';
+import type { Bean, BeanBatch } from '../api/types';
 import type {
   LabelScannerStatePatch,
   ScannerFlowState,
@@ -53,13 +55,18 @@ export interface ScannerFlowHost {
     beanId: string,
     options: { apply: boolean; preferWorkflow: boolean; preferredBatchId?: string | null }
   ): Promise<void>;
+  markInventoryReview(beanId: string, unresolved: boolean): void;
   loadSettings(): Promise<void>;
 }
+
+type ScannerBeanWorkflowPort = Pick<BeanWorkflowController, 'saveBean'>;
+type ScannerInventoryPort = Pick<BeanInventoryController, 'createBatch'>;
 
 export class ScannerFlow {
   constructor(
     private readonly host: ScannerFlowHost,
-    private readonly beanWorkflow: BeanWorkflowController,
+    private readonly beanWorkflow: ScannerBeanWorkflowPort,
+    private readonly beanInventory: ScannerInventoryPort,
     private readonly imageTranscoder: ImageTranscoder
   ) {}
 
@@ -488,42 +495,120 @@ export class ScannerFlow {
 
     const batchInput = batchFieldsFromForm(data, beanId);
     batchInput.weightRemaining = batchInput.weight;
+    const submittedDraft = scannerDraftFromSubmission(beanFields, batchInput);
 
-    const created = await this.beanWorkflow.createBatch(
-      {
-        bean,
-        batchesByBean,
-        selectedBeanId: this.host.state().selectedBeanId,
-        selectedBatchId: this.host.state().selectedBatchId,
-        batchInput,
-        demo: this.host.state().demo,
-        nowMs: Date.now()
-      },
-      {
-        createBatch: (id, input) => gateway.createBatch(id, input),
-        putBeanBatches: (id, batches) => beanieCache.putBeanBatches(id, batches)
-      }
-    );
+    const created = await this.beanInventory.createBatch({
+      beanId,
+      batch: batchInput,
+      demo: this.host.state().demo,
+      nowMs: Date.now()
+    });
     if (!this.scannerSessionAlive(session)) return;
 
     if (created.type === 'failed') {
       console.error('[Beanie] Scanner add batch failed', created.error);
-      this.host.setState({ beans, batchesByBean });
+      const settled = this.host.state();
+      this.host.setState({
+        beans: mergeScannerBean(settled.beans, bean, existing != null),
+        batchesByBean: mergeScannerBatches(settled.batchesByBean, batchesByBean, beanId)
+      });
       this.setScanner({ saving: false, step: 'error', error: created.status });
       return;
     }
+    if (created.type === 'reconciliation-required') {
+      console.error('[Beanie] Scanner stock needs reconciliation', created.error);
+      if (created.phase === 'create') {
+        const settled = this.host.state();
+        this.host.markInventoryReview(beanId, true);
+        this.host.setState({
+          beans: mergeScannerBean(settled.beans, bean, existing != null),
+          batchesByBean: mergeScannerBatches(
+            settled.batchesByBean,
+            batchesByBean,
+            beanId,
+            created.projection.batches
+          )
+        });
+        // Restore the review form from the normalized values that were actually
+        // submitted, not the older extraction draft. Retrying this form sends
+        // the identical batch intent and therefore reuses the controller's
+        // unresolved idempotency key. A bean saved before the uncertain batch
+        // response is now an existing bean for both the UI and the retry path.
+        this.setScanner({
+          saving: false,
+          step: 'review',
+          error: created.status,
+          draft: submittedDraft,
+          existingBeanId: beanId,
+          existingBeanLabel: beanLabel(bean)
+        });
+        return;
+      }
+    }
 
+    this.host.markInventoryReview(beanId, false);
+    const selectedBatch = created.type === 'created' || created.phase === 'persist-storage'
+      ? created.batch
+      : null;
     this.cancelScannerWork();
+    const settled = this.host.state();
     this.host.setState({
-      beans,
-      batchesByBean: created.batchesByBean,
-      selectedBatchId: created.batch.id,
+      beans: mergeScannerBean(settled.beans, bean, existing != null),
+      batchesByBean: mergeScannerBatches(
+        settled.batchesByBean,
+        batchesByBean,
+        beanId,
+        created.projection.batches
+      ),
+      ...(selectedBatch ? { selectedBatchId: selectedBatch.id } : {}),
       modal: null,
       scanner: null,
-      status: existing ? 'Added a bag from the label' : 'Added a bean from the label'
+      status: created.type === 'reconciliation-required'
+        ? created.status
+        : existing ? 'Added a bag from the label' : 'Added a bean from the label'
     });
-    await this.host.selectBean(beanId, { apply: false, preferWorkflow: false });
+    if (!selectedBatch) return;
+    await this.host.selectBean(beanId, {
+      // Scanning stock updates the selected draft but, as before extraction,
+      // does not send a new recipe to the physical machine implicitly.
+      apply: false,
+      preferWorkflow: false,
+      preferredBatchId: selectedBatch.id
+    });
   }
+}
+
+function scannerDraftFromSubmission(
+  beanFields: Partial<Bean>,
+  batchFields: Partial<BeanBatch>
+): LabelScanDraft {
+  return {
+    roaster: String(beanFields.roaster ?? ''),
+    name: String(beanFields.name ?? ''),
+    country: String(beanFields.country ?? ''),
+    region: String(beanFields.region ?? ''),
+    processing: String(beanFields.processing ?? ''),
+    notes: String(beanFields.notes ?? ''),
+    roastDate: String(batchFields.roastDate ?? ''),
+    roastLevel: String(batchFields.roastLevel ?? ''),
+    weight: typeof batchFields.weight === 'number' ? String(batchFields.weight) : ''
+  };
+}
+
+function mergeScannerBean(latest: Bean[], saved: Bean, existing: boolean): Bean[] {
+  if (existing) return latest;
+  return [saved, ...latest.filter((bean) => bean.id !== saved.id)];
+}
+
+function mergeScannerBatches(
+  latest: Record<string, BeanBatch[]>,
+  scannerSnapshot: Record<string, BeanBatch[]>,
+  beanId: string,
+  settledBeanBatches?: readonly BeanBatch[]
+): Record<string, BeanBatch[]> {
+  const beanBatches = settledBeanBatches ?? latest[beanId] ?? scannerSnapshot[beanId];
+  if (beanBatches === undefined) return latest;
+  return { ...latest, [beanId]: [...beanBatches] };
 }
 
 interface ScannerRequest {

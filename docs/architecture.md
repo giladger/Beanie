@@ -71,6 +71,14 @@ is the only typed authority for physical workflow, calibration, machine-setting,
 refill, and state mutations. Compound commands receive an owned machine lane so
 their steps stay contiguous without submitting nested work to the same queue.
 
+Bean stock has a parallel aggregate rule: every edit, storage migration,
+split-freeze transaction, and delayed dose deduction for a coffee uses
+`beanInventoryMutationKey(beanId)`. A split freeze owns one per-bean lane across
+create, freezer-state repair, source-bag update, and authoritative reconciliation.
+Do not introduce `batch:<id>` lanes: two bags from one coffee can affect the same
+selection and recipe projection, and a delayed dose write must not interleave
+with a split transaction.
+
 ## Directory Responsibilities
 
 ### `src/architecture/`
@@ -160,13 +168,17 @@ Current controller map:
 
 | Controller | Owns |
 | --- | --- |
-| `beanWorkflowController.ts` | Bean selection, bean/batch/grinder mutation policy, optimistic rollback, cache invalidation decisions. |
+| [`beanInventoryController.ts`](../src/controllers/beanInventoryController.ts) | Stable inventory facade and imperative sequencer: per-bean command-lane ownership, field-intent revisions, authoritative reads, create/update/split execution, and cache publication. Existing consumers import the facade rather than its implementation modules. |
+| [`beanInventoryContract.ts`](../src/controllers/beanInventoryContract.ts) | Public inventory ports, snapshots, requests, projections, and discriminated outcomes. It has type-only dependencies and no runtime behavior. |
+| [`beanInventoryPolicy.ts`](../src/controllers/beanInventoryPolicy.ts) | Deterministic inventory projection, rollback, reconciliation, split planning, status, and idempotency-key policy. It does not import the controller facade. |
+| `beanWorkflowController.ts` | Bean selection plus bean/grinder mutation policy and cache decisions. Batch mutation authority lives in `BeanInventoryController`. |
 | [`cleaningExecutionFlow.ts`](../src/controllers/cleaningExecutionFlow.ts) | Cleaning workflow staging and the one exact machine-lane command that loads and optionally starts it, with explicit completion/authority/cancellation outcomes. |
 | `cleaningWorkflowController.ts` | Cleaning start blockers, cleaning workflow creation/load result, finish/count/profile-pick plans. |
 | `cleaningWizardController.ts` | Cleaning wizard step transitions and action completion. |
 | `derekController.ts` / `derekFlow.ts` | Derek question state, streaming lifecycle, suggestions, and saved-answer restoration. |
-| `doseMutationReconciler.ts` | Durable dose-deduction replay and conflict-safe reconciliation. |
-| `liveShotController.ts` | Shot completion matching, polling, fallback, and shot-end routing decisions. |
+| `doseMutationReconciler.ts` | Durable dose-deduction replay and conflict-safe reconciliation on the shared per-bean inventory lane, including dispatch-time migration of legacy queued keys. |
+| [`liveShotCompletionFlow.ts`](../src/controllers/liveShotCompletionFlow.ts) | Shot-end routing, remote polling, optimistic fallback, freshness/Derek-context persistence, dose dispatch, and stale/disposal fencing. |
+| `liveShotController.ts` | Pure shot-completion matching, polling primitives, fallback, and routing decisions used by `LiveShotCompletionFlow`. |
 | [`machineActionFlow.ts`](../src/controllers/machineActionFlow.ts) | Physical start/stop admission, repeated dispatch-time safety, and contiguous workflow/calibration/state commands. |
 | `machineExecutionController.ts` | Machine command preflight, hot-water weight stop orchestration, steam workflow padding/restore, command gateway sequencing. |
 | `machineServiceController.ts` | Machine service progress/timer/stop-request state transitions. |
@@ -178,6 +190,7 @@ Current controller map:
 | [`recipeApplyController.ts`](../src/controllers/recipeApplyController.ts) | Recipe staging, semantic operation authority, debounce/wake deferral, and latest-wins workflow/calibration persistence. |
 | `scannerFlow.ts` | Scanner onboarding, image conversion, Gemini request lifecycle, review, and save orchestration. |
 | `settingsController.ts` | Reaprime settings/account/device/plugin operations. |
+| [`settingsMutationFlow.ts`](../src/controllers/settingsMutationFlow.ts) | Per-resource optimistic settings identity, monotonic confirmed baselines, targeted reconcile/rollback, and stale/superseded/disposed outcomes. |
 | [`settingsStoreSync.ts`](../src/controllers/settingsStoreSync.ts) | Synced-store load/poll/reload fencing, synchronous write admission, per-key latest-wins writes, retry/discard, snapshots, and disposal. |
 | `shotMetadataController.ts` | Shot score/edit persistence, demo behavior, cache update/failure decisions. |
 
@@ -191,6 +204,29 @@ plus precise patch, event, request, and outcome types. The shell can satisfy
 these structurally, but a controller must not import `BeanieApp`, `AppState`, or
 an app-wide state mutation surface. [`scannerFlowContract.ts`](../src/controllers/scannerFlowContract.ts)
 is an example of a narrow controller-owned boundary.
+
+For a large safety-sensitive controller, separate the boundary, deterministic
+policy, and imperative sequencing without exposing multiple entry points. Bean
+inventory is the reference shape:
+
+```text
+existing consumers
+        |
+        v
+beanInventoryController (stable facade and side-effect sequencing)
+        |                    |
+        | runtime            | type-only
+        v                    v
+beanInventoryPolicy     beanInventoryContract
+```
+
+The facade remains the only public mutation owner. This split lets a coding
+agent inspect or change result contracts, pure reconciliation policy, or
+network sequencing independently, while the one-way dependency graph and
+facade imports keep authority from fragmenting. Safety-sensitive helpers such
+as stable intent serialization and optimistic rollback belong in policy and
+must be changed with focused policy/controller regressions, not copied into a
+new caller.
 
 ### `src/views/`
 
@@ -664,20 +700,22 @@ for shell wiring.
 [`commandArchitectureGuard.test.ts`](../src/test/commandArchitectureGuard.test.ts)
 is an AST-level architecture test. It enforces the single scheduler owner,
 rejects legacy command coordinators, confines raw physical gateway mutations to
-the `MachineWorkflowCommands` transport adapter, and prevents controllers from
-depending on `app.ts` or `AppState`. Treat a failure as an ownership violation:
-fix the dependency direction instead of weakening the guard unless an explicit,
-documented migration changes the invariant.
+the `MachineWorkflowCommands` transport adapter, rejects legacy per-batch
+inventory lanes, and prevents controllers from depending on `app.ts` or
+`AppState`. Treat a failure as an ownership violation: fix the dependency
+direction instead of weakening the guard unless an explicit, documented
+migration changes the invariant.
 
 `dependencyArchitecture.test.ts` separately enforces the layer graph in
 `src/architecture/dependencyPolicy.ts` and rejects stale debt entries. Passing
 one architecture guard does not substitute for the other.
 
 The scheduler, machine command authority, recipe apply, settings-store sync,
-targeted settings mutation, cleaning execution, machine action, and machine
-service flows each have focused tests beside the rest of `src/test/`. When a
-command spans several physical steps, assert order, loss of authority between
-steps, cancellation/disposal, and the absence of nested scheduling.
+settings mutation, bean inventory, live-shot completion, cleaning execution,
+machine action, and machine service flows each have focused tests beside the
+rest of `src/test/`. When a command spans several physical steps, assert order,
+loss of authority between steps, cancellation/disposal, partial-write
+reconciliation, and the absence of nested scheduling.
 
 ## AI-Agent Maintenance Protocol
 
@@ -690,7 +728,8 @@ For architecture-affecting work, agents should follow this short protocol:
    adding a parallel queue, authority, or shell workflow.
 3. Preserve all six command/mutation invariants above. In particular, submit a
    compound physical command once, pass immutable requests into it, and project
-   explicit snapshots/events/outcomes back into the shell.
+   explicit snapshots/events/outcomes back into the shell. Submit every bean
+   inventory write through `beanInventoryMutationKey(beanId)`.
 4. Add tests at the lowest boundary, including stale authority, supersession,
    partial failure, rollback against newer state, and disposal where relevant.
 5. Run `npm test` and `npm run build`. If ownership or a public contract moved,

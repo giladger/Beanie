@@ -32,6 +32,7 @@ export interface BeanPickerViewModel {
   batchesByBean: Record<string, BeanBatch[]>;
   prefillBeans: Bean[];
   draftBatchBeanId?: string | null;
+  draftBatch?: Partial<BeanBatch> | null;
   editingBeanDetailsId?: string | null;
   editingBatchId?: string | null;
   showAllBags?: boolean;
@@ -188,7 +189,9 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
             <button type="button" class="secondary-button compact" data-action="bean-picker-add-batch">${icon('plus')}<span>Bag</span></button>
           </div>
         </div>
-        ${model.draftBatchBeanId === bean.id ? renderBeanPickerBatchDraft(bean, latest, model.formNumbers ?? {}) : ''}
+        ${model.draftBatchBeanId === bean.id
+          ? renderBeanPickerBatchDraft(bean, latest, model.formNumbers ?? {}, model.draftBatch ?? null)
+          : ''}
         ${
           batches.length === 0
             ? '<p class="empty-history">No bags on hand.</p>'
@@ -498,12 +501,26 @@ function renderBeanPickerFirstStock(formNumbers: Record<string, string>): string
 function renderBeanPickerBatchDraft(
   bean: Bean,
   latest: BeanBatch | null,
-  formNumbers: Record<string, string>
+  formNumbers: Record<string, string>,
+  draft: Partial<BeanBatch> | null
 ): string {
   const weightKey = newStockFormKey(bean.id, 'weight');
   const remainingKey = newStockFormKey(bean.id, 'weightRemaining');
-  const weightValue = formNumbers[weightKey] ?? inputValue(latest?.weight ?? 250);
-  const remainingValue = formNumbers[remainingKey] ?? weightValue;
+  // An explicit null is submitted intent (the user cleared the field), while
+  // an absent property means this is a fresh draft that may use defaults.
+  // Conflating them after an uncertain POST changes the retry fingerprint.
+  const weightValue = formNumbers[weightKey] ?? (hasOwn(draft, 'weight')
+    ? inputValue(draft?.weight)
+    : inputValue(latest?.weight ?? 250));
+  const remainingValue = formNumbers[remainingKey] ?? (hasOwn(draft, 'weightRemaining')
+    ? inputValue(draft?.weightRemaining)
+    : weightValue);
+  const roastDate = hasOwn(draft, 'roastDate')
+    ? inputValue(draft?.roastDate)
+    : todayDateInputValue();
+  const roastLevel = hasOwn(draft, 'roastLevel')
+    ? inputValue(draft?.roastLevel)
+    : inputValue(latest?.roastLevel);
   return `
     <form class="bean-picker-batch stock-card stock-card-draft" data-form="bean-picker-batch" data-bean-id="${escapeAttr(bean.id)}">
       <div class="bean-picker-batch-title">
@@ -511,8 +528,8 @@ function renderBeanPickerBatchDraft(
         <small>${escapeHtml(beanLabel(bean))}</small>
       </div>
       <div class="bean-picker-batch-fields">
-        <label>Roast date<input data-action="bean-picker-batch-field-draft" type="date" name="roastDate" value="${escapeAttr(todayDateInputValue())}" /></label>
-        <label>Roast<input data-action="bean-picker-batch-field-draft" name="roastLevel" autocomplete="off" value="${escapeAttr(inputValue(latest?.roastLevel))}" /></label>
+        <label>Roast date<input data-action="bean-picker-batch-field-draft" type="date" name="roastDate" value="${escapeAttr(roastDate)}" /></label>
+        <label>Roast<input data-action="bean-picker-batch-field-draft" name="roastLevel" autocomplete="off" value="${escapeAttr(roastLevel)}" /></label>
         ${draftNumber(weightKey, 'weight', 'Bag', weightValue)}
         ${draftNumber(remainingKey, 'weightRemaining', 'Left', remainingValue, bagSizeMax(weightValue))}
       </div>
@@ -522,6 +539,10 @@ function renderBeanPickerBatchDraft(
       </div>
     </form>
   `;
+}
+
+function hasOwn<Key extends PropertyKey>(value: object | null, key: Key): boolean {
+  return value != null && Object.prototype.hasOwnProperty.call(value, key);
 }
 
 // The bag size is the ceiling for "left"; fall back to 5000 g when it's unknown.

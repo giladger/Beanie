@@ -98,6 +98,27 @@ run('persists commands per idempotency key and deduplicates identical enqueue ca
   equal((await reopened.get<DosePayload>(first.record.idempotencyKey))?.payload.shotId, 'shot-1');
 });
 
+run('idempotent re-enqueue migrates routing metadata without recreating the command', async () => {
+  const { outbox } = fakeBackedOutbox();
+  const legacy = {
+    ...doseCommand('shot-route', 'batch-1'),
+    aggregateKey: 'batch:batch-1'
+  };
+  const first = await outbox.enqueue(legacy);
+  const canonicalKey = 'bean-inventory:bean-for-batch-1';
+  const migrated = await outbox.enqueue({ ...legacy, aggregateKey: canonicalKey });
+  const repeated = await outbox.enqueue({ ...legacy, aggregateKey: canonicalKey });
+
+  equal(first.inserted, true);
+  equal(migrated.inserted, false);
+  equal(migrated.record.aggregateKey, canonicalKey);
+  equal(migrated.record.state, 'pending');
+  equal(repeated.inserted, false);
+  equal(repeated.record.aggregateKey, canonicalKey);
+  equal((await outbox.list()).length, 1);
+  equal((await outbox.get(first.record.idempotencyKey))?.aggregateKey, canonicalKey);
+});
+
 run('rejects reuse of an idempotency key for different physical command data', async () => {
   const { outbox } = fakeBackedOutbox();
   const command = doseCommand('shot-1', 'batch-1');
@@ -233,6 +254,84 @@ run('serializes each aggregate and never lets a later command bypass its head', 
   });
   equal(retriedHead.length, 1);
   equal(retriedHead[0]?.record.payload.shotId, 'shot-1');
+});
+
+run('canonical routing migration happens before aggregate heads are selected', async () => {
+  const { outbox } = fakeBackedOutbox();
+  const legacy = await outbox.enqueue({
+    ...doseCommand('shot-legacy', 'batch-1'),
+    aggregateKey: 'batch:batch-1',
+    createdAt: new Date('2026-07-10T10:00:00.000Z')
+  });
+  const [legacyClaim] = await outbox.claimDue({
+    ownerId: 'legacy-worker',
+    leaseMs: 30_000,
+    kinds: ['batch-dose-deduction'],
+    now: new Date('2026-07-10T10:00:00.000Z')
+  });
+  equal(legacyClaim?.record.idempotencyKey, legacy.record.idempotencyKey);
+  equal(
+    await outbox.markRetry({
+      idempotencyKey: legacy.record.idempotencyKey,
+      leaseToken: legacyClaim!.leaseToken,
+      retryAt: new Date('2026-07-10T10:05:00.000Z'),
+      error: 'offline',
+      now: new Date('2026-07-10T10:00:01.000Z')
+    }),
+    true
+  );
+
+  const canonicalKey = 'bean-inventory:bean-for-batch-1';
+  await outbox.enqueue({
+    ...doseCommand('shot-newer', 'batch-1'),
+    aggregateKey: canonicalKey,
+    createdAt: new Date('2026-07-10T10:01:00.000Z')
+  });
+  const canonicalAggregateKey = (record: { kind: string; aggregateKey: string; payload: unknown }) =>
+    record.kind === 'batch-dose-deduction'
+      ? `bean-inventory:${(record.payload as DosePayload).beanId}`
+      : record.aggregateKey;
+
+  const early = await outbox.claimDue({
+    ownerId: 'current-worker',
+    leaseMs: 30_000,
+    kinds: ['batch-dose-deduction'],
+    limit: 10,
+    now: new Date('2026-07-10T10:04:59.000Z'),
+    canonicalAggregateKey
+  });
+  equal(early.length, 0);
+  equal((await outbox.list()).every((record) => record.aggregateKey === canonicalKey), true);
+
+  const due = await outbox.claimDue<DosePayload>({
+    ownerId: 'current-worker',
+    leaseMs: 30_000,
+    kinds: ['batch-dose-deduction'],
+    limit: 10,
+    now: new Date('2026-07-10T10:05:00.000Z'),
+    canonicalAggregateKey
+  });
+  equal(due.length, 1);
+  equal(due[0]?.record.payload.shotId, 'shot-legacy');
+  equal(
+    await outbox.acknowledge({
+      idempotencyKey: due[0]!.record.idempotencyKey,
+      leaseToken: due[0]!.leaseToken,
+      outcome: 'committed',
+      now: new Date('2026-07-10T10:05:01.000Z')
+    }),
+    true
+  );
+
+  const next = await outbox.claimDue<DosePayload>({
+    ownerId: 'current-worker',
+    leaseMs: 30_000,
+    kinds: ['batch-dose-deduction'],
+    now: new Date('2026-07-10T10:05:01.000Z'),
+    canonicalAggregateKey
+  });
+  equal(next.length, 1);
+  equal(next[0]?.record.payload.shotId, 'shot-newer');
 });
 
 run('moves a failed claim to retry-wait and only reclaims it once due', async () => {

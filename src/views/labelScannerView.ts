@@ -172,6 +172,7 @@ function renderReview(model: LabelScannerViewModel): string {
   return `
     <form class="label-scanner-review" data-form="scanner-review">
       <p class="scan-review-head">${renderReviewHead(model, draft)}</p>
+      ${model.error ? `<p class="scan-message is-warn">${escapeHtml(model.error)}</p>` : ''}
       <div class="scan-review-grid">
         <div class="scan-review-fields">
           ${textField('roaster', 'Roaster', draft.roaster, flag('roaster'), 'required')}

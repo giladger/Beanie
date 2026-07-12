@@ -451,10 +451,15 @@ await run('createBatch nests storageEvents under extras and lifts them back from
   const events: BeanBatchStorageEvent[] = [{ type: 'frozen', at: '2026-05-30T08:00:00.000Z' }];
   const restore = installFetchStub(calls, { id: 'batch-2', beanId: 'bean-1', weightRemaining: 120, frozen: true, extras: { storageEvents: events } });
   try {
-    const saved = await gateway.createBatch('bean-1', { beanId: 'bean-1', weightRemaining: 120, frozen: true, storageEvents: events });
+    const saved = await gateway.createBatch(
+      'bean-1',
+      { beanId: 'bean-1', weightRemaining: 120, frozen: true, storageEvents: events },
+      { idempotencyKey: 'bean-batch-create:v1:bean-1:123' }
+    );
     const sent = JSON.parse(calls[0]!.init?.body as string) as { storageEvents?: unknown; extras?: { storageEvents?: BeanBatchStorageEvent[] } };
     equal(sent.storageEvents, undefined);
     equal(sent.extras?.storageEvents?.[0]?.at, '2026-05-30T08:00:00.000Z');
+    equal(headerValue(calls[0]!.init?.headers, 'Idempotency-Key'), 'bean-batch-create:v1:bean-1:123');
     equal(saved.storageEvents?.[0]?.at, '2026-05-30T08:00:00.000Z');
     equal(saved.frozen, true);
   } finally {

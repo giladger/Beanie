@@ -58,6 +58,18 @@ the items deliberately deferred, so future work can pick them up with context.
   rollback, and `commandArchitectureGuard.test.ts` protects the ownership
   boundaries. See [architecture.md](architecture.md#mutation-and-machine-command-topology)
   for the command and state invariants.
+- Architecture extraction phase two: `BeanInventoryController` now owns stock
+  creation, edits, storage, finishing, and whole/split freezes with targeted
+  rollback and authoritative partial-failure reconciliation;
+  `LiveShotCompletionFlow` owns shot-end routing, polling, fallback, freshness
+  and Derek-context persistence; and `SettingsMutationFlow` owns optimistic
+  settings revisions and monotonic confirmed rollback baselines. Delayed dose
+  deductions and every inventory write share the canonical per-bean lane, and
+  the architecture guard rejects legacy `batch:<id>` lanes. The inventory
+  facade is split into a type-only contract, deterministic policy, and one
+  imperative sequencer; ambiguous creates preserve their complete retry intent,
+  and queued partial freezes rebase from authoritative source weight while
+  fencing delayed dose/UI projections.
 
 ## Deferred — architecture debt (ordered by value)
 
@@ -65,29 +77,21 @@ Per [architecture.md](architecture.md), workflow policy should leave
 `BeanieApp`. With recipe application and the core command/service flows now
 extracted, the remaining liftable work starts here:
 
-1. **`freezeBatchPortion`** (app.ts, ~70 lines). The only batch flow bypassing
-   `BeanWorkflowController`; has a partial-failure hole (createBatch succeeds,
-   updateBatch fails → frozen batch exists remotely but never lands in state).
-2. **Shot-end pipeline** (`saveFreshnessForCompletedShot` first — a textbook
-   `shotMetadataController` job; the optimistic list-merge policy in
-   `onShotEnded`/`refreshShotsAfterLiveShot` later).
-3. **`deleteShot`** → `shotMetadataController`; **`savePluginConfig`** secret
-   merge → `domain/pluginSettings`; small optimistic one-offs
-   (`setNoScaleBlock`, `setMachineRefillLevel`, `togglePlugin`, …) → their
-   matching controllers.
-4. **Shared demo/remote save helper.** Six controller save flows repeat the
+1. **`deleteShot`** → `shotMetadataController`; **`savePluginConfig`** secret
+   merge → `domain/pluginSettings`; remaining optimistic one-offs such as
+   `setMachineRefillLevel` → their matching controllers.
+2. **Shared demo/remote save helper.** Six controller save flows repeat the
    same skeleton (demo id minting, `(demo)` status suffix, fail-soft cache
    write). A `saveWithDemoFallback` helper would collapse ~150 lines.
-5. **Profile (de)serialization out of `profileEditor.ts`** (the
+3. **Profile (de)serialization out of `profileEditor.ts`** (the
    `readStep`/`writeStep`/alias tables, ~200 lines) into `domain/profileModel`.
-6. **`hotWaterDataForNativeWorkflow`** and the thrice-duplicated
+4. **`hotWaterDataForNativeWorkflow`** and the thrice-duplicated
    `positiveNumber`/`formatNumber` helpers → `domain/waterSettings`.
 
 ## Deferred — smaller cleanups
 
-- app.ts duplication: `beginBatchUpdate`/`finishBatchUpdate` sequence ×4,
-  settings-bundle seeding ×3, numpad-dialog scaffolding ×3, gateway/cache dep
-  literals rebuilt per call site.
+- app.ts duplication: settings-bundle seeding ×3, numpad-dialog scaffolding ×3,
+  and gateway/cache dependency literals rebuilt per call site.
 - View helper duplication (~80 lines): `inputValue`/`round`, second-tap hint,
   load-more, date-label helpers across beanPickerView/phoneView/historyView/
   shotEditorView/machineView — one shared pure module.

@@ -69,6 +69,8 @@ export interface ClaimDueOptions {
   limit?: number;
   kinds?: readonly string[];
   now?: Date;
+  /** Atomically migrate routing metadata before aggregate heads are chosen. */
+  canonicalAggregateKey?(record: Readonly<DurableMutationRecord>): string;
 }
 
 export interface MarkMutationRetryOptions {
@@ -196,13 +198,20 @@ export class DurableMutationOutbox {
       return backend.mutate((records) => {
         const existing = records.get(command.idempotencyKey);
         if (existing) {
-          if (!sameCommand(existing, command)) {
+          if (!samePhysicalCommand(existing, command)) {
             throw new IdempotencyConflictError(command.idempotencyKey);
           }
+          // aggregateKey is routing metadata, not part of the physical
+          // command's identity. Re-enqueueing an otherwise identical command
+          // is therefore the safe place to persist a newer canonical route.
+          const canonical = existing.aggregateKey === command.aggregateKey
+            ? existing
+            : { ...existing, aggregateKey: command.aggregateKey };
+          if (canonical !== existing) records.set(existing.idempotencyKey, canonical);
           return {
             inserted: false,
             durability: backend.durability,
-            record: cloneValue(existing) as DurableMutationRecord<Payload>
+            record: cloneValue(canonical) as DurableMutationRecord<Payload>
           };
         }
 
@@ -268,6 +277,15 @@ export class DurableMutationOutbox {
       const nowIso = now.toISOString();
       const leaseExpiresAt = new Date(nowMs + options.leaseMs).toISOString();
       return (await this.backend()).mutate((records) => {
+        if (options.canonicalAggregateKey) {
+          for (const record of records.values()) {
+            const aggregateKey = options.canonicalAggregateKey(record);
+            requireNonEmpty(aggregateKey, 'canonicalAggregateKey');
+            if (aggregateKey !== record.aggregateKey) {
+              records.set(record.idempotencyKey, { ...record, aggregateKey });
+            }
+          }
+        }
         const due = aggregateHeads(records.values())
           .filter(
             (record) =>
@@ -771,7 +789,7 @@ async function migrateFallbackRecords(
         records.set(incoming.idempotencyKey, incoming);
         continue;
       }
-      if (!sameCommand(existing, incoming)) {
+      if (!samePhysicalCommand(existing, incoming)) {
         throw new IdempotencyConflictError(incoming.idempotencyKey);
       }
       records.set(incoming.idempotencyKey, preferredRecord(existing, incoming));
@@ -804,13 +822,12 @@ function validateCommand(command: MutationCommand): void {
   if (command.createdAt) requireValidDate(command.createdAt, 'createdAt');
 }
 
-function sameCommand(
+function samePhysicalCommand(
   record: DurableMutationRecord,
-  command: Pick<MutationCommand, 'idempotencyKey' | 'kind' | 'aggregateKey' | 'payload'>
+  command: Pick<MutationCommand, 'kind' | 'payload'>
 ): boolean {
   return (
     record.kind === command.kind &&
-    record.aggregateKey === command.aggregateKey &&
     structurallyEqual(record.payload, command.payload)
   );
 }

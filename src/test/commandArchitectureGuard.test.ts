@@ -63,6 +63,48 @@ run('application feature code does not revive the legacy workflowCommands schedu
   );
 });
 
+run('bean inventory mutations do not split back into legacy per-batch lanes', () => {
+  const offenders: string[] = [];
+  for (const parsed of parsedFiles) {
+    visit(parsed.source, (node) => {
+      const text = ts.isStringLiteralLike(node)
+        ? node.text
+        : ts.isTemplateExpression(node)
+          ? node.head.text
+          : null;
+      if (text?.startsWith('batch:')) offenders.push(locationOf(parsed, node));
+    });
+  }
+
+  ok(
+    offenders.length === 0,
+    'batch edits, split freezes, migrations, and dose deductions must share ' +
+      `beanInventoryMutationKey(beanId):\n${offenders.join('\n')}`
+  );
+});
+
+run('app batch writes are injected into inventory owners or use the canonical bean lane', () => {
+  const app = requiredParsedFile('app.ts');
+  const gatewayNames = namedImportLocalNames(app, 'api/gateway.ts', 'gateway');
+  const batchMethods = new Set(['createBatch', 'updateBatch']);
+  const ownerConstructors = new Set(['BeanInventoryController', 'DoseMutationReconciler']);
+  const offenders: string[] = [];
+
+  visit(app.source, (node) => {
+    const method = directGatewayMember(node, gatewayNames);
+    if (!method || !batchMethods.has(method)) return;
+    if (hasOwningConstructor(node, ownerConstructors) || hasCanonicalInventoryLane(node)) return;
+    offenders.push(`${locationOf(app, node)} gateway.${method}`);
+  });
+
+  ok(
+    offenders.length === 0,
+    'raw batch writes must be ports injected into BeanInventoryController/' +
+      'DoseMutationReconciler or callbacks owned by ' +
+      `runExactCommand(beanInventoryMutationKey(beanId), ...):\n${offenders.join('\n')}`
+  );
+});
+
 run('app raw physical gateway mutations stay inside the machine transport adapter', () => {
   const app = requiredParsedFile('app.ts');
   const gatewayNames = namedImportLocalNames(app, 'api/gateway.ts', 'gateway');
@@ -215,6 +257,31 @@ function directGatewayMember(node: ts.Node, gatewayNames: ReadonlySet<string>): 
     ts.isStringLiteral(node.argumentExpression)
   ) return node.argumentExpression.text;
   return null;
+}
+
+function hasOwningConstructor(node: ts.Node, names: ReadonlySet<string>): boolean {
+  for (let current = node.parent; current; current = current.parent) {
+    if (
+      ts.isNewExpression(current) &&
+      ts.isIdentifier(current.expression) &&
+      names.has(current.expression.text)
+    ) return true;
+  }
+  return false;
+}
+
+function hasCanonicalInventoryLane(node: ts.Node): boolean {
+  for (let current = node.parent; current; current = current.parent) {
+    if (!ts.isCallExpression(current) || current.arguments.length < 2) continue;
+    const method = current.expression;
+    if (!ts.isPropertyAccessExpression(method) || method.name.text !== 'runExactCommand') continue;
+    const key = current.arguments[0];
+    return key != null &&
+      ts.isCallExpression(key) &&
+      ts.isIdentifier(key.expression) &&
+      key.expression.text === 'beanInventoryMutationKey';
+  }
+  return false;
 }
 
 function namedImportLocalNames(

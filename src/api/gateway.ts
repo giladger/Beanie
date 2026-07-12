@@ -362,14 +362,21 @@ export const gateway = {
     fetchJson<BeanBatch>('batches', `/api/v1/bean-batches/${encodeURIComponent(id)}`, readBatch).then(
       fromGatewayBatch
     ),
-  createBatch: (beanId: string, batch: Partial<BeanBatch>) =>
+  createBatch: (
+    beanId: string,
+    batch: Partial<BeanBatch>,
+    options: GatewayMutationRequestOptions = {}
+  ) =>
     fetchJson<BeanBatch>(
       'batches',
       `/api/v1/beans/${encodeURIComponent(beanId)}/batches`,
       readBatch,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(options.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : {})
+        },
         body: JSON.stringify(toGatewayBatchBody(batch))
       }
     ).then(fromGatewayBatch),

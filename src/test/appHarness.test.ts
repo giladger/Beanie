@@ -60,6 +60,32 @@ class FakeElement {
   focus(): void {}
 }
 
+class FakeFormElement extends FakeElement {
+  readonly formValues: Readonly<Record<string, string>>;
+
+  constructor(dataset: Record<string, string>, formValues: Readonly<Record<string, string>>) {
+    super();
+    this.dataset = dataset;
+    this.formValues = formValues;
+  }
+}
+
+class FakeFormData {
+  private readonly values: Readonly<Record<string, string>>;
+
+  constructor(form?: HTMLFormElement) {
+    this.values = (form as unknown as FakeFormElement | undefined)?.formValues ?? {};
+  }
+
+  get(name: string): FormDataEntryValue | null {
+    return Object.prototype.hasOwnProperty.call(this.values, name) ? this.values[name]! : null;
+  }
+
+  has(name: string): boolean {
+    return Object.prototype.hasOwnProperty.call(this.values, name);
+  }
+}
+
 class FakeStorage {
   private readonly values = new Map<string, string>();
 
@@ -135,6 +161,7 @@ function installBrowserFakes(): void {
 installBrowserFakes();
 
 const { BeanieApp } = await import('../app');
+const { demoSettingsBundle } = await import('../domain/settingsModel');
 
 await run('BeanieApp starts by rendering the workbench shell and delegated listeners', async () => {
   const root = new FakeElement();
@@ -350,6 +377,256 @@ await run('an offline Wake rejection keeps the sleeping presentation intact', as
   app.dispose();
 });
 
+await run('BeanieApp projects settings mutation outcomes through the extracted flow', async () => {
+  const root = new FakeElement();
+  const app = new BeanieApp(root as unknown as HTMLElement);
+  const harness = app as unknown as {
+    state: { settingsBundle: ReturnType<typeof demoSettingsBundle>; modal: string | null };
+    setState(next: Record<string, unknown>): void;
+    setNoScaleBlock(enabled: boolean): Promise<void>;
+  };
+  const bundle = demoSettingsBundle();
+  harness.setState({
+    demo: true,
+    settingsSource: 'demo',
+    settingsBundle: {
+      ...bundle,
+      rea: { ...bundle.rea, blockOnNoScale: true }
+    },
+    modal: 'no-scale-shot'
+  });
+
+  await harness.setNoScaleBlock(false);
+
+  equal(harness.state.settingsBundle.rea.blockOnNoScale, false);
+  equal(harness.state.modal, null);
+  app.dispose();
+});
+
+await run('BeanieApp applies the no-scale escape hatch before the settings bundle loads', async () => {
+  const root = new FakeElement();
+  const app = new BeanieApp(root as unknown as HTMLElement);
+  const harness = app as unknown as {
+    state: {
+      settingsBundle: ReturnType<typeof demoSettingsBundle> | null;
+      modal: string | null;
+    };
+    setState(next: Record<string, unknown>): void;
+    setNoScaleBlock(enabled: boolean): Promise<void>;
+  };
+  harness.setState({
+    settingsLoaded: true,
+    demo: true,
+    settingsSource: 'demo',
+    settingsBundle: null,
+    modal: 'no-scale-shot'
+  });
+  includes(root.innerHTML, 'data-action="no-scale-block-toggle" checked');
+
+  await harness.setNoScaleBlock(false);
+
+  equal(harness.state.settingsBundle, null);
+  equal(harness.state.modal, null);
+  app.dispose();
+});
+
+await run('BeanieApp projects local shot completion and dose inventory together', async () => {
+  const root = new FakeElement();
+  const app = new BeanieApp(root as unknown as HTMLElement);
+  const bean = { id: 'bean-1', roaster: 'Test', name: 'Coffee' };
+  const batch = { id: 'batch-1', beanId: bean.id, weight: 100, weightRemaining: 100 };
+  const optimisticShot = {
+    id: 'pending-live-1',
+    timestamp: '2026-07-12T10:00:00.000Z',
+    workflow: null,
+    annotations: { actualDoseWeight: 18, actualYield: 36 },
+    metadata: null,
+    measurements: []
+  };
+  const harness = app as unknown as {
+    state: {
+      shots: Array<{ id: string }>;
+      batchesByBean: Record<string, Array<{ id: string; weightRemaining?: number | null }>>;
+      liveActive: boolean;
+      liveFinalizing: boolean;
+    };
+    setState(next: Record<string, unknown>): void;
+    liveShotCompletion: {
+      complete(request: Record<string, unknown>): Promise<{ type: string }>;
+    };
+  };
+  harness.setState({
+    demo: true,
+    selectedBeanId: bean.id,
+    selectedBatchId: batch.id,
+    beans: [bean],
+    batchesByBean: { [bean.id]: [batch] },
+    shots: [],
+    shotsTotal: 0,
+    detailShotId: null,
+    liveActive: true,
+    liveFinalizing: false
+  });
+
+  const outcome = await harness.liveShotCompletion.complete({
+    cleaningInProgress: false,
+    noScaleBlockedAbort: false,
+    selection: { bean, batch },
+    demo: true,
+    currentShots: [],
+    currentShotsTotal: 0,
+    currentDetailShotId: null,
+    shotWindow: { startMs: Date.parse(optimisticShot.timestamp), lastActiveMs: null },
+    optimisticShot,
+    completionReason: 'target weight',
+    nowMs: Date.parse(optimisticShot.timestamp) + 30_000,
+    pageLimit: 12
+  });
+  await flushAsync();
+
+  equal(outcome.type, 'local-complete');
+  equal(harness.state.shots[0]?.id, optimisticShot.id);
+  equal(harness.state.batchesByBean[bean.id]?.[0]?.weightRemaining, 82);
+  equal(harness.state.liveActive, false);
+  equal(harness.state.liveFinalizing, false);
+  app.dispose();
+});
+
+await run('a delayed dose settlement merges only remaining weight into newer batch edits', () => {
+  const root = new FakeElement();
+  const app = new BeanieApp(root as unknown as HTMLElement);
+  const harness = app as unknown as {
+    state: {
+      batchesByBean: Record<string, Array<{ id: string; roastLevel?: string | null; weightRemaining?: number | null }>>;
+    };
+    setState(next: Record<string, unknown>): void;
+    adoptFlushedBatch(
+      saved: { id: string; beanId: string; roastLevel?: string | null; weightRemaining?: number | null },
+      expectedRemaining: number,
+      resolvedRemaining: number,
+      projectionRevision: number | null
+    ): void;
+  };
+  harness.setState({
+    batchesByBean: {
+      'bean-1': [{ id: 'batch-1', roastLevel: 'dark', weightRemaining: 82 }]
+    }
+  });
+
+  harness.adoptFlushedBatch({
+    id: 'batch-1',
+    beanId: 'bean-1',
+    roastLevel: 'light'
+  }, 82, 102, 0);
+
+  equal(harness.state.batchesByBean['bean-1']?.[0]?.roastLevel, 'dark');
+  equal(harness.state.batchesByBean['bean-1']?.[0]?.weightRemaining, 102);
+  app.dispose();
+});
+
+await run('an ambiguous picker create retries the exact full submitted bag draft', async () => {
+  const root = new FakeElement();
+  const app = new BeanieApp(root as unknown as HTMLElement);
+  const bean = { id: 'bean-retry', roaster: 'Test', name: 'Retry Coffee' };
+  const submissions = [
+    {
+      beanId: bean.id,
+      roastDate: '2026-01-02',
+      roastLevel: 'Ultra light',
+      weight: 333,
+      weightRemaining: 321
+    },
+    {
+      beanId: bean.id,
+      roastDate: null,
+      roastLevel: null,
+      weight: null,
+      weightRemaining: null
+    }
+  ];
+  const calls: Array<{ batch: Record<string, unknown> }> = [];
+  const harness = app as unknown as {
+    state: { beanPickerDraftBatch: Record<string, unknown> | null };
+    beanInventory: {
+      createBatch(request: { beanId: string; batch: Record<string, unknown> }): Promise<unknown>;
+    };
+    setState(next: Record<string, unknown>): void;
+    submitBeanPickerBatch(form: HTMLFormElement): Promise<void>;
+  };
+  harness.beanInventory.createBatch = async (request) => {
+    calls.push({ batch: { ...request.batch } });
+    if (calls.length % 2 === 1) {
+      return {
+        type: 'reconciliation-required',
+        phase: 'create',
+        candidates: [],
+        projection: { beanId: bean.id, batches: [], shouldScheduleApply: false },
+        status: 'Stock may have been added - review stock',
+        error: new Error('response lost')
+      };
+    }
+    const batch = { id: `batch-recovered-${calls.length}`, ...request.batch, beanId: bean.id };
+    return {
+      type: 'created',
+      batch,
+      projection: { beanId: bean.id, batches: [batch], shouldScheduleApply: false },
+      recovered: true,
+      status: 'Batch added (response recovered)'
+    };
+  };
+  const nativeFormData = globalThis.FormData;
+  globalThis.FormData = FakeFormData as unknown as typeof FormData;
+  try {
+    for (const submitted of submissions) {
+      const callOffset = calls.length;
+      harness.setState({
+        settingsLoaded: true,
+        loading: false,
+        demo: false,
+        startupPhase: 'connected',
+        modal: 'bean-picker',
+        beanPickerBeanId: bean.id,
+        beanPickerMode: 'inspect',
+        beanPickerDraftBatchBeanId: bean.id,
+        beanPickerDraftBatch: null,
+        busy: false,
+        beans: [bean],
+        batchesByBean: { [bean.id]: [] }
+      });
+      const firstForm = new FakeFormElement(
+        { beanId: bean.id },
+        {
+          roastDate: submitted.roastDate ?? '',
+          roastLevel: submitted.roastLevel ?? '',
+          weight: submitted.weight == null ? '' : String(submitted.weight),
+          weightRemaining: submitted.weightRemaining == null ? '' : String(submitted.weightRemaining)
+        }
+      );
+      await harness.submitBeanPickerBatch(firstForm as unknown as HTMLFormElement);
+
+      equal(calls.length, callOffset + 1);
+      equal(JSON.stringify(calls[callOffset]?.batch), JSON.stringify(submitted));
+      equal(JSON.stringify(harness.state.beanPickerDraftBatch), JSON.stringify(submitted));
+
+      const restoredValues = {
+        roastDate: renderedInputValue(root.innerHTML, 'roastDate'),
+        roastLevel: renderedInputValue(root.innerHTML, 'roastLevel'),
+        weight: renderedInputValue(root.innerHTML, 'weight'),
+        weightRemaining: renderedInputValue(root.innerHTML, 'weightRemaining')
+      };
+      const retryForm = new FakeFormElement({ beanId: bean.id }, restoredValues);
+      await harness.submitBeanPickerBatch(retryForm as unknown as HTMLFormElement);
+
+      equal(calls.length, callOffset + 2);
+      equal(JSON.stringify(calls[callOffset + 1]?.batch), JSON.stringify(submitted));
+      equal(harness.state.beanPickerDraftBatch, null);
+    }
+  } finally {
+    globalThis.FormData = nativeFormData;
+    app.dispose();
+  }
+});
+
 async function run(name: string, fn: () => void | Promise<void>): Promise<void> {
   try {
     await fn();
@@ -370,6 +647,12 @@ function includes(text: string, expected: string): void {
   if (!text.includes(expected)) {
     throw new Error(`Expected ${JSON.stringify(text.slice(0, 200))} to include ${expected}`);
   }
+}
+
+function renderedInputValue(html: string, name: string): string {
+  const match = html.match(new RegExp(`<input[^>]*name="${name}"[^>]*value="([^"]*)"`));
+  if (!match) throw new Error(`Expected rendered input ${name}`);
+  return match[1]!;
 }
 
 function flushAsync(): Promise<void> {

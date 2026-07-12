@@ -8,6 +8,7 @@ import {
 } from '../controllers/doseMutationReconciler';
 import {
   DurableMutationOutbox,
+  IdempotencyConflictError,
   MUTATION_OUTBOX_STORAGE_KEY,
   pendingDoseIdempotencyKey,
   type DurableMutationOutboxOptions,
@@ -80,7 +81,12 @@ function createHarness(options: {
     batches: Map<string, BeanBatch>
   ) => Promise<BeanBatch>;
   beforeExact?: () => void;
-  onBatchSaved?: (batch: BeanBatch, entry: PendingDose) => void;
+  onBatchSaved?: (
+    batch: BeanBatch,
+    entry: PendingDose,
+    resolvedRemaining: number,
+    projectionRevision: number | null
+  ) => void;
   outbox?: Omit<DurableMutationOutboxOptions, 'now'>;
 } = {}): Harness {
   const storage = options.storage ?? new FakeStorage();
@@ -117,9 +123,9 @@ function createHarness(options: {
       legacy = [];
     },
     now: () => new Date(now),
-    onBatchSaved: (batch, entry) => {
+    onBatchSaved: (batch, entry, resolvedRemaining, projectionRevision) => {
       saved.push(batch);
-      options.onBatchSaved?.(batch, entry);
+      options.onBatchSaved?.(batch, entry, resolvedRemaining, projectionRevision);
     },
     onRetryScheduled: (retry) => retries.push(retry),
     onWorkerError: (error) => workerErrors.push(error)
@@ -150,6 +156,8 @@ function createHarness(options: {
 
 await run('journals before applying, serializes the aggregate, and forwards the idempotency key', async () => {
   const events: string[] = [];
+  let observedProjectionRevision: number | null = null;
+  let observedResolvedRemaining: number | null = null;
   const storage = new FakeStorage();
   const originalSet = storage.setItem.bind(storage);
   storage.setItem = (key, value) => {
@@ -162,32 +170,68 @@ await run('journals before applying, serializes the aggregate, and forwards the 
       events.push('update');
       const saved = { ...batches.get(id)!, ...patch };
       batches.set(id, saved);
-      return saved;
+      // Some gateway versions return a sparse acknowledgement. The worker
+      // must still pass its freshly resolved scalar to the projection owner.
+      return { id: saved.id, beanId: saved.beanId };
+    },
+    onBatchSaved: (_batch, _entry, resolvedRemaining, projectionRevision) => {
+      observedResolvedRemaining = resolvedRemaining;
+      observedProjectionRevision = projectionRevision;
     }
   });
   harness.batches.set('batch-1', batch('batch-1', 100));
 
-  const queued = await harness.reconciler.enqueue(input('shot-1', 'batch-1', 18, 82));
+  const queued = await harness.reconciler.enqueue({
+    ...input('shot-1', 'batch-1', 18, 82),
+    projectionRevision: 7
+  });
   equal(queued.inserted, true);
   await waitFor(() => harness.saved.length === 1);
 
   equal(events.indexOf('journal') < events.indexOf('update'), true);
-  deepEqual(harness.exactKeys, ['batch:batch-1']);
+  deepEqual(harness.exactKeys, ['bean-inventory:bean-1']);
   deepEqual(harness.updates[0], {
     id: 'batch-1',
     patch: { beanId: 'bean-1', weightRemaining: 82 },
     idempotencyKey: pendingDoseIdempotencyKey('shot-1', 'batch-1')
   });
   equal(harness.batches.get('batch-1')?.weightRemaining, 82);
+  equal(observedResolvedRemaining, 82);
+  equal(observedProjectionRevision, 7);
 
-  const duplicate = await harness.reconciler.enqueue(input('shot-1', 'batch-1', 18, 82));
+  const duplicate = await harness.reconciler.enqueue({
+    ...input('shot-1', 'batch-1', 18, 82),
+    projectionRevision: 99
+  });
   equal(duplicate.inserted, false);
   await settle();
   equal(harness.updates.length, 1);
+  equal(projectionRevisionCount(harness.reconciler), 0);
   await harness.reconciler.dispose();
 });
 
-await run('migrates every legacy entry before clearing and preserves per-batch FIFO', async () => {
+await run('an idempotency payload conflict fails closed instead of entering volatile intake', async () => {
+  const updateGate = deferred<BeanBatch>();
+  const harness = createHarness({ update: () => updateGate.promise });
+  harness.batches.set('batch-1', batch('batch-1', 100));
+  await harness.reconciler.enqueue(input('shot-conflict', 'batch-1', 18, 82));
+  await waitFor(() => harness.updates.length === 1);
+
+  let conflict: unknown = null;
+  try {
+    await harness.reconciler.enqueue(input('shot-conflict', 'batch-1', 17, 83));
+  } catch (error) {
+    conflict = error;
+  }
+
+  equal(conflict instanceof IdempotencyConflictError, true);
+  equal(volatileEnqueueCount(harness.reconciler), 0);
+  updateGate.resolve({ ...batch('batch-1', 82), beanId: 'bean-1' });
+  await waitFor(() => harness.saved.length === 1);
+  await harness.reconciler.dispose();
+});
+
+await run('migrates every legacy entry before clearing and preserves the per-bean inventory lane', async () => {
   const legacy = [
     legacyDose('batch-1', 10, 90, '2026-07-10T09:00:00.000Z'),
     legacyDose('batch-1', 10, 80, '2026-07-10T09:01:00.000Z')
@@ -206,7 +250,87 @@ await run('migrates every legacy entry before clearing and preserves per-batch F
 
   equal(durableCountAtClear, 2);
   deepEqual(harness.updates.map((update) => update.patch.weightRemaining), [90, 80]);
-  deepEqual(harness.exactKeys, ['batch:batch-1', 'batch:batch-1']);
+  deepEqual(harness.exactKeys, ['bean-inventory:bean-1', 'bean-inventory:bean-1']);
+  await harness.reconciler.dispose();
+});
+
+await run('dispatches previously journaled batch-key doses on the current inventory lane', async () => {
+  const storage = new FakeStorage();
+  const seed = new DurableMutationOutbox({ indexedDB: null, storage });
+  await seed.enqueue({
+    idempotencyKey: 'legacy-batch-lane',
+    kind: PENDING_DOSE_MUTATION_KIND,
+    aggregateKey: 'batch:batch-1',
+    payload: legacyDose('batch-1', 18, 82, '2026-07-10T09:00:00.000Z'),
+    createdAt: new Date('2026-07-10T09:00:00.000Z')
+  });
+  await seed.dispose();
+  const harness = createHarness({ storage });
+  harness.batches.set('batch-1', batch('batch-1', 100));
+
+  await harness.reconciler.start();
+  await waitFor(() => harness.saved.length === 1);
+
+  deepEqual(harness.exactKeys, ['bean-inventory:bean-1']);
+  equal(harness.batches.get('batch-1')?.weightRemaining, 82);
+  equal(storage.records()[0]?.aggregateKey, 'bean-inventory:bean-1');
+  await harness.reconciler.dispose();
+});
+
+await run('a legacy retry head blocks a newer canonical dose until it is due', async () => {
+  const storage = new FakeStorage();
+  const seed = new DurableMutationOutbox({ indexedDB: null, storage });
+  const legacy = await seed.enqueue({
+    idempotencyKey: 'legacy-retry-head',
+    kind: PENDING_DOSE_MUTATION_KIND,
+    aggregateKey: 'batch:batch-1',
+    payload: legacyDose('batch-1', 18, 82, '2026-07-10T09:00:00.000Z'),
+    createdAt: new Date('2026-07-10T09:00:00.000Z')
+  });
+  const [legacyClaim] = await seed.claimDue({
+    ownerId: 'old-worker',
+    leaseMs: 60_000,
+    kinds: [PENDING_DOSE_MUTATION_KIND],
+    now: new Date('2026-07-10T10:00:00.000Z')
+  });
+  equal(
+    await seed.markRetry({
+      idempotencyKey: legacy.record.idempotencyKey,
+      leaseToken: legacyClaim!.leaseToken,
+      retryAt: new Date('2026-07-10T10:05:00.000Z'),
+      error: new Error('offline'),
+      now: new Date('2026-07-10T10:00:01.000Z')
+    }),
+    true
+  );
+  await seed.enqueue({
+    idempotencyKey: pendingDoseIdempotencyKey('shot-newer', 'batch-1'),
+    kind: PENDING_DOSE_MUTATION_KIND,
+    aggregateKey: 'bean-inventory:bean-1',
+    payload: legacyDose('batch-1', 18, 64, '2026-07-10T10:01:00.000Z'),
+    createdAt: new Date('2026-07-10T10:01:00.000Z')
+  });
+  await seed.dispose();
+
+  const harness = createHarness({ storage });
+  harness.batches.set('batch-1', batch('batch-1', 100));
+  await harness.reconciler.start();
+
+  equal(harness.updates.length, 0);
+  equal(
+    storage.records()
+      .filter((record) => record.kind === PENDING_DOSE_MUTATION_KIND)
+      .every((record) => record.aggregateKey === 'bean-inventory:bean-1'),
+    true
+  );
+
+  harness.setNow('2026-07-10T10:05:00.000Z');
+  await harness.reconciler.trigger();
+  await waitFor(() => harness.saved.length === 2);
+
+  deepEqual(harness.updates.map((update) => update.patch.weightRemaining), [82, 64]);
+  deepEqual(harness.exactKeys, ['bean-inventory:bean-1', 'bean-inventory:bean-1']);
+  equal(harness.batches.get('batch-1')?.weightRemaining, 64);
   await harness.reconciler.dispose();
 });
 
@@ -371,11 +495,11 @@ await run('volatile intake preserves projection order while IDB recovers', async
   let projectedRemaining = 100;
   const harness = createHarness({
     outbox: { indexedDB: recoveringFactory, storage: null },
-    onBatchSaved: (saved, entry) => {
+    onBatchSaved: (_saved, entry, resolvedRemaining) => {
       // Mirrors the app's stale-response fence: only the command whose desired
       // projection is still current may publish its absolute response.
       if (projectedRemaining === entry.expectedRemaining) {
-        projectedRemaining = saved.weightRemaining ?? projectedRemaining;
+        projectedRemaining = resolvedRemaining;
       }
     }
   });
@@ -445,6 +569,16 @@ function input(
 
 function legacyDose(batchId: string, dose: number, expectedRemaining: number, at: string): PendingDose {
   return { batchId, beanId: 'bean-1', dose, expectedRemaining, at };
+}
+
+function projectionRevisionCount(reconciler: DoseMutationReconciler): number {
+  return (reconciler as unknown as { projectionRevisions: Map<string, number> })
+    .projectionRevisions.size;
+}
+
+function volatileEnqueueCount(reconciler: DoseMutationReconciler): number {
+  return (reconciler as unknown as { volatileEnqueues: Map<string, EnqueueDoseMutationInput> })
+    .volatileEnqueues.size;
 }
 
 interface Deferred<Value> {

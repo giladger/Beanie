@@ -225,7 +225,7 @@ was submitted against A. In-flight work is never described as canceled;
 disposal can remove only queued work.
 
 Current resource keys include machine/workflow, display, the shared device
-transport, setting-store keys, shot IDs, and batch IDs. Compound
+transport, setting-store keys, shot IDs, and per-bean inventory IDs. Compound
 prepare-workflow + machine-state
 sequences are submitted as one command and call the raw gateway adapter inside
 that ownership boundary, avoiding nested-lane deadlock.
@@ -253,6 +253,9 @@ Each record contains a stable idempotency key, mutation kind, aggregate key,
 immutable payload, attempt metadata, fenced lease, last failure, and final
 receipt. Acknowledged records remain as tombstones until an explicit age-bound
 prune, preventing a duplicate enqueue from recreating completed physical work.
+The aggregate key is mutable routing metadata rather than physical-command
+identity: an idempotent re-enqueue may canonicalize that key only when the
+mutation kind and immutable payload still match.
 
 The dose reconciler follows this order:
 
@@ -263,16 +266,30 @@ The dose reconciler follows this order:
 5. If the expected remaining value is already present, acknowledge
    `already-applied`.
 6. If the bag is deleted/untracked, acknowledge `not-applicable`.
-7. Otherwise serialize the partial update on `batch:<id>`, forwarding the
-   idempotency key, then acknowledge `committed`.
+7. Otherwise serialize the partial update on the canonical
+   `bean-inventory:<beanId>` lane, forwarding the idempotency key, then
+   acknowledge `committed`.
 8. On failure, release into retry-wait with bounded exponential backoff.
 
 Claims use lease tokens; an expired worker cannot acknowledge or reschedule a
 record reclaimed by a newer worker. The worker renews its claim after acquiring
 the aggregate command lane and again after the final read, so time spent queued
-behind another batch command cannot authorize a stale write. Per-aggregate head
-blocking prevents a later deduction from overtaking an earlier retry for the
-same bag.
+behind another inventory command cannot authorize a stale write. The per-bean
+lane also prevents a delayed dose write from interleaving with multi-bag
+split-freeze reconciliation. Records created by older builds may still store
+`batch:<id>` as journal metadata. Before choosing an aggregate head, the outbox
+atomically rewrites those routing keys from the payload's `beanId`; therefore a
+new per-bean record cannot bypass an older per-batch retry during migration.
+Per-aggregate head blocking then prevents a later deduction from overtaking an
+earlier retry for the same bean inventory.
+
+Remote acknowledgement does not publish a whole batch object back into UI
+state. `BeanInventoryController` merges only the resolved remaining-weight
+scalar and compares the process-local field-intent revision captured when the
+dose projection was admitted. A foreground A→B→A edit therefore fences the
+older dose response even though the final numbers happen to match; durable
+records from an earlier app generation may publish only if this generation has
+not expressed a newer weight intent.
 
 IndexedDB is authoritative when available. localStorage is a persistent
 fallback and memory is the last-resort fallback; the selected durability is
@@ -292,12 +309,23 @@ an explicit degraded mode; the release tablet is required to provide IndexedDB.
 
 ### Exactly-once boundary
 
-The client forwards `Idempotency-Key` on batch updates. True cross-device
-exactly-once behavior requires Reaprime to store and replay a receipt for that
-key. Until the server honors it, Beanie additionally re-reads the batch and
-recognizes the expected remaining weight, covering the common “write landed,
-response was lost” case. That heuristic cannot prove exactly-once if another
-device changes the same bag between the lost response and replay. This is an
+The client forwards `Idempotency-Key` on batch creates and updates. True
+cross-device exactly-once behavior requires Reaprime to store and replay a
+receipt for that key. Until the server honors it, Beanie additionally re-reads
+inventory after an apparently failed write. Updates recognize the expected
+remaining weight. Creates first capture an authoritative ID baseline, but a
+failed POST is never promoted from a matching candidate alone: it produces an
+explicit “review stock” outcome, retains the operation's idempotency key, and a
+split transaction does not advance. An identical retry reuses that key, so a
+server replay receipt can resolve the operation without creating a new command.
+A partial freeze claims the source bag's remaining-weight intent before it
+queues. Once its per-bean lane begins, it reads the authoritative source and
+rebuilds the split amounts before the first POST; a failed or insufficient
+preflight aborts without creating a portion. This lets an older dose command run
+first without losing grams, while the intent revision prevents its later UI
+settlement—or a newer foreground edit—from overwriting the split projection.
+The read heuristics still cannot prove exactly-once if another device changes
+the same inventory between the lost response and reconciliation. This is an
 explicit external contract gap, not hidden client certainty.
 
 ## Dependency enforcement
@@ -315,8 +343,10 @@ cleaning, active-service, and settings-store concurrency likewise publish
 explicit requests, outcomes, snapshots, or events. The AST-level
 `commandArchitectureGuard.test.ts` prevents controllers from importing
 `app.ts`/`AppState`, confines physical gateway mutations to the one machine
-transport adapter, and prevents a second low-level command scheduler. Remaining
-inversions stay visible as exact debt entries rather than becoming precedent.
+transport adapter, prevents a second low-level command scheduler, and requires
+raw batch writes to be injected into an inventory owner or enclosed by the
+canonical per-bean lane. Remaining inversions stay visible as exact debt
+entries rather than becoming precedent.
 
 ## Shutdown order
 

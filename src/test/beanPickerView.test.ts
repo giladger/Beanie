@@ -237,6 +237,52 @@ run('bean picker hides nearly empty bags until show all is toggled', () => {
   includes(shownHtml, 'stock-row  finished');
 });
 
+run('bean picker restores the exact submitted bag draft after ambiguous creation', () => {
+  const html = renderBeanPickerModal(
+    model({
+      draftBatchBeanId: 'bean-1',
+      draftBatch: {
+        beanId: 'bean-1',
+        roastDate: '2026-01-02',
+        roastLevel: 'Ultra light',
+        weight: 333,
+        weightRemaining: 321
+      },
+      // A recovered draft must not depend on the form-number namespace used
+      // before the create form changed into the existing-bean bag form.
+      formNumbers: {}
+    })
+  );
+
+  includes(html, 'data-form="bean-picker-batch"');
+  includes(html, 'name="roastDate" value="2026-01-02"');
+  includes(html, 'name="roastLevel" autocomplete="off" value="Ultra light"');
+  includes(html, 'name="weight" value="333"');
+  includes(html, 'name="weightRemaining" value="321"');
+});
+
+run('bean picker preserves explicitly cleared bag fields after ambiguous creation', () => {
+  const html = renderBeanPickerModal(
+    model({
+      draftBatchBeanId: 'bean-1',
+      draftBatch: {
+        beanId: 'bean-1',
+        roastDate: null,
+        roastLevel: null,
+        weight: null,
+        weightRemaining: null
+      },
+      formNumbers: {}
+    })
+  );
+
+  includes(html, 'name="roastDate" value=""');
+  includes(html, 'name="roastLevel" autocomplete="off" value=""');
+  includes(html, 'name="weight" value=""');
+  includes(html, 'name="weightRemaining" value=""');
+  notIncludes(html, 'name="weight" value="250"');
+});
+
 run('bean picker focused row hides brew and freeze for finished bags', () => {
   const finished: BeanBatch = {
     id: 'batch-finished',
