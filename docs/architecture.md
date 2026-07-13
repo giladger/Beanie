@@ -269,6 +269,7 @@ Current controller map:
 | `machineExecutionController.ts` | Machine command preflight, hot-water weight stop orchestration, steam workflow padding/restore, command gateway sequencing. |
 | `machineServiceController.ts` | Machine service progress/timer/stop-request state transitions. |
 | [`machineServiceFlow.ts`](../src/controllers/machineServiceFlow.ts) | Ongoing service lifecycle after start: progress, timed/manual stop, duration extension, restoration, stop feedback, timers, events, and disposal. |
+| [`machineSettingsFlow.ts`](../src/controllers/machineSettingsFlow.ts) | Machine-settings session ownership above the endpoint primitives: provenance/load fencing, typed control intents, preference/device/schedule/firmware actions, mutation projection, and revisioned machine-refill confirmation/rollback through injected exact command ports. |
 | `machineSettingsWorkflowController.ts` | Steam/water/flush workflow persistence, preset/value planning, steam purge readback, settings patch planning. |
 | [`machineWorkflowCommands.ts`](../src/controllers/machineWorkflowCommands.ts) | Typed physical-mutation authority, desired/confirmed workflow tracking, live-authority checks, and non-nestable owned lanes. |
 | `profileEditorController.ts` | Profile save persistence, favorite profile policy, profile picker/editor input decisions. |
@@ -350,6 +351,7 @@ Examples:
 - `profilePickerView.ts`
 - `shotEditorView.ts`
 - `flowCalibratorView.ts`
+- `settingsView.ts`
 - `formsView.ts`
 - `alertsView.ts`
 
@@ -367,6 +369,8 @@ Examples:
   rendering. Persistent profile decoding and encoding live in
   `domain/profileModel.ts` and are shared by non-UI flows.
 - `shotEditorForm.ts`: browser form reader for the shot editor's three owned forms.
+- `machineSettingsForm.ts`: browser control reader that translates settings
+  changes into DOM-free machine-settings intents.
 - `shotGraphModel.ts`, `profileChartModel.ts`, `liveChartModel.ts`: chart data
   shaping.
 - `html.ts`: escaping helpers.
@@ -400,15 +404,16 @@ parse a field, call a controller, write a local preference through a domain
 helper, set state, and render.
 
 This is a direction, not a claim that the extraction is finished. `src/app.ts`
-is still roughly 8,750 lines, so it is not yet a comfortably manageable
-composition shell for AI-agent maintenance. Two high-value verticals have now
-been extracted:
+is now roughly 8,300 lines, so it is materially smaller but not yet a small
+composition shell. These high-value verticals have now been extracted:
 
 1. `BeanSelectionFlow`: selection mode/provenance, batch and shot acquisition,
    effective-bag changes, recipe-draft scheduling, and stale selection fencing;
 2. `DoseDeductionAdmissionFlow`: completed-shot dose intent, synchronous
    reservation, journal admission, optimism/canonicalization, cache projection,
-   and reservation release.
+   and reservation release;
+3. `MachineSettingsFlow`: settings acquisition/provenance, typed settings
+   actions, device/schedule/firmware operations, and revisioned refill updates.
 
 Both expose narrow requests/events and reuse the existing inventory and dose
 authorities. Neither creates a second state store, scheduler, journal, or

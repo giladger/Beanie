@@ -878,7 +878,7 @@ await run('BeanieApp projects settings mutation outcomes through the extracted f
   const harness = app as unknown as {
     state: { settingsBundle: ReturnType<typeof demoSettingsBundle>; modal: string | null };
     setState(next: Record<string, unknown>): void;
-    setNoScaleBlock(enabled: boolean): Promise<void>;
+    machineSettings: { setNoScaleBlock(enabled: boolean): Promise<void> };
   };
   const bundle = demoSettingsBundle();
   harness.setState({
@@ -891,7 +891,7 @@ await run('BeanieApp projects settings mutation outcomes through the extracted f
     modal: 'no-scale-shot'
   });
 
-  await harness.setNoScaleBlock(false);
+  await harness.machineSettings.setNoScaleBlock(false);
 
   equal(harness.state.settingsBundle.rea.blockOnNoScale, false);
   equal(harness.state.modal, null);
@@ -907,7 +907,7 @@ await run('BeanieApp applies the no-scale escape hatch before the settings bundl
       modal: string | null;
     };
     setState(next: Record<string, unknown>): void;
-    setNoScaleBlock(enabled: boolean): Promise<void>;
+    machineSettings: { setNoScaleBlock(enabled: boolean): Promise<void> };
   };
   harness.setState({
     settingsLoaded: true,
@@ -918,7 +918,7 @@ await run('BeanieApp applies the no-scale escape hatch before the settings bundl
   });
   includes(root.innerHTML, 'data-action="no-scale-block-toggle" checked');
 
-  await harness.setNoScaleBlock(false);
+  await harness.machineSettings.setNoScaleBlock(false);
 
   equal(harness.state.settingsBundle, null);
   equal(harness.state.modal, null);
@@ -2754,13 +2754,13 @@ await run('offline demo replacement restores the pre-demo settings cache generat
     setState(next: Record<string, unknown>): void;
     applyLoadedSettings(available: boolean): void;
     loadDemo(): void;
-    updateSettingsPreferences(next: Record<string, unknown>): void;
+    machineSettings: { updatePreferences(next: Record<string, unknown>): void };
     commitStartupProjection(projection: Record<string, unknown>): void;
   };
   try {
     harness.applyLoadedSettings(false);
     harness.loadDemo();
-    harness.updateSettingsPreferences({ uiScale: 'large' });
+    harness.machineSettings.updatePreferences({ uiScale: 'large' });
     setSyncedItem(favoriteBeansKey, JSON.stringify(['demo-favorite']));
     harness.setState({ favoriteBeans: ['demo-favorite'] });
 
@@ -2861,14 +2861,14 @@ await run('a stale demo settings bundle cannot settle after live recovery', asyn
   const harness = app as unknown as {
     state: { settingsBundle: unknown; settingsSource: unknown };
     setState(next: Record<string, unknown>): void;
-    loadReaSettings(): Promise<void>;
+    machineSettings: { loadBundle(): Promise<void> };
     commitStartupProjection(projection: Record<string, unknown>): void;
     settingsController: { loadSettingsBundle(): Promise<unknown> };
   };
   harness.settingsController.loadSettingsBundle = async () => loadGate;
   harness.setState({ demo: true, settingsBundle: null, settingsSource: null });
 
-  const loading = harness.loadReaSettings();
+  const loading = harness.machineSettings.loadBundle();
   await flushAsync();
   harness.commitStartupProjection({
     type: 'gateway',
@@ -3022,8 +3022,10 @@ await run('settings resources and queued writes lose capability on gateway demot
   const nativeFetch = globalThis.fetch;
   const harness = app as unknown as {
     setState(next: Record<string, unknown>): void;
-    settingsResourceWritable(resource: string): boolean;
-    effectiveSettingsResourceStates(): Record<string, { writable: boolean }>;
+    machineSettings: {
+      resourceWritable(resource: string): boolean;
+      effectiveResourceStates(): Record<string, { writable: boolean }>;
+    };
     gatewayMutations: {
       exact<T>(key: string, run: () => Promise<T>): Promise<unknown>;
     };
@@ -3049,7 +3051,7 @@ await run('settings resources and queued writes lose capability on gateway demot
         plugins: { source: 'gateway', writable: true, message: null }
       }
     });
-    equal(harness.settingsResourceWritable('plugins'), true);
+    equal(harness.machineSettings.resourceWritable('plugins'), true);
 
     const blocker = harness.gatewayMutations.exact('plugin:test.reaplugin', async () => {
       await laneGate;
@@ -3065,8 +3067,8 @@ await run('settings resources and queued writes lose capability on gateway demot
       startupPhase: 'offline-cache',
       gatewayLinkDown: true
     });
-    equal(harness.settingsResourceWritable('plugins'), false);
-    equal(harness.effectiveSettingsResourceStates().plugins?.writable, false);
+    equal(harness.machineSettings.resourceWritable('plugins'), false);
+    equal(harness.machineSettings.effectiveResourceStates().plugins?.writable, false);
 
     releaseLane();
     await blocker;

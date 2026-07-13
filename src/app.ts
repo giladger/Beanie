@@ -193,31 +193,14 @@ import {
   type InputDialogState,
   typeInputDialogKey
 } from './components/InputDialog';
-import { renderSettingsShell, type DecentAccountPanelState } from './components/SettingsShell';
-import {
-  SETTINGS_SPEC,
-  coerceFieldValue,
-  demoSettingsBundle,
-  type SettingsBundle
-} from './domain/settingsModel';
-import {
-  applySettingsBundleMutation
-} from './domain/settingsBundleMutation';
-import {
-  settingsResourceStates,
-  settingsResourceWritable,
-  type SettingsResourceKey,
-  type SettingsResourceStates
-} from './domain/resourceState';
+import { demoSettingsBundle, type SettingsBundle } from './domain/settingsModel';
+import type { SettingsResourceStates } from './domain/resourceState';
 import type { DecentAccountStatus, DisplayState } from './api/settings';
 import { readDisplayState } from './api/settings';
 import { createSettingsController } from './controllers/settingsController';
-import {
-  SettingsMutationFlow,
-  applySettingsMutationOutcome,
-  type SettingsMutationOutcome,
-  type SettingsMutationStart
-} from './controllers/settingsMutationFlow';
+import { SettingsMutationFlow } from './controllers/settingsMutationFlow';
+import { MachineSettingsFlow } from './controllers/machineSettingsFlow';
+import { readMachineSettingsChange } from './components/machineSettingsForm';
 import {
   BeanWorkflowController,
   beanUsageFromShots,
@@ -413,11 +396,11 @@ import {
 import { renderPhoneShell, type PhoneTab } from './views/phoneView';
 import { readShotEditorSubmission } from './components/shotEditorForm';
 import { renderFlowCalibratorPage } from './views/flowCalibratorView';
+import { renderSettingsView } from './views/settingsView';
 import { scoreValueFromTap } from './components/shotScore';
 import { isServiceShot } from './domain/shotRecord';
 import {
   applySettingsPreferences,
-  buildSettingsShellModel,
   isClockFormat,
   isWakeAppZonePosition,
   readSettingsPreferences,
@@ -809,9 +792,9 @@ export class BeanieApp {
     {
       runtime: () => ({
         demo: this.state.demo,
-        settingsLocal: this.settingsLocal,
+        settingsLocal: this.machineSettings.local,
         settingsStoreAvailable: this.state.settingsStoreAvailable,
-        calibrationWritable: this.settingsResourceWritable('calibration'),
+        calibrationWritable: this.machineSettings.resourceWritable('calibration'),
         busy: this.state.busy,
         currentCalibration: this.state.settingsBundle?.calibration.flowMultiplier ?? null,
         activeProfileTitle:
@@ -829,7 +812,7 @@ export class BeanieApp {
           status: `Flow calibration ${value.toFixed(2)}×`
         });
       },
-      loadSettings: () => this.loadReaSettings(),
+      loadSettings: () => this.machineSettings.loadBundle(),
       loadLatestShots: (limit) => this.loadLatestShotCandidates(limit)
     },
     this.machineWorkflowCommands
@@ -1087,6 +1070,81 @@ export class BeanieApp {
     derekTweakChip: null
   };
 
+  private readonly machineSettings = new MachineSettingsFlow(
+    this.settingsController,
+    this.settingsMutations,
+    {
+      snapshot: () => ({
+        demo: this.state.demo,
+        bundle: this.state.settingsBundle,
+        source: this.state.settingsSource,
+        resources: this.state.settingsResources,
+        settingsStoreAvailable: this.state.settingsStoreAvailable,
+        preferences: this.state.settingsPreferences,
+        scaleConnected: scaleConnected(this.state.scale),
+        machineRefillLevel: this.state.machineRefillLevel
+      }),
+      commit: (patch) => this.setState({
+        ...(patch.bundle !== undefined ? { settingsBundle: patch.bundle } : {}),
+        ...(patch.source !== undefined ? { settingsSource: patch.source } : {}),
+        ...(patch.resources !== undefined ? { settingsResources: patch.resources } : {}),
+        ...(patch.preferences !== undefined ? { settingsPreferences: patch.preferences } : {}),
+        ...(patch.machineRefillLevel !== undefined
+          ? { machineRefillLevel: patch.machineRefillLevel }
+          : {}),
+        ...(patch.status !== undefined ? { status: patch.status } : {}),
+        ...(patch.busy !== undefined ? { busy: patch.busy } : {})
+      }),
+      authorityRevision: () => this.startupAuthorityRevision,
+      hasConnectedGatewayAuthority: () => this.hasConnectedGatewayAuthority(),
+      hasLiveMachineAuthority: () => this.hasLiveMachineAuthority(),
+      reloadSyncedSettings: () => {
+        this.settingsLoadPromise = null;
+        return this.loadSettings();
+      },
+      groundGlobalFlowCalibration: (value) => this.flowCalibrator.groundGlobalDefault(value),
+      noteUserBrightness: (brightness) => this.screensaverIsland.noteUserBrightness(brightness),
+      refreshDisplayState: () => this.refreshDisplayStateSilently(),
+      clearNoScaleBlockWarning: () => {
+        this.noScaleShotWarningUntilMs = 0;
+        this.setState({ modal: null });
+      },
+      machineSleepRequested: () => {
+        if (this.state.appAwake) this.setState({ appAwake: false });
+        this.screensaverIsland.scheduleSleepDim(1000);
+      },
+      machineWakeRequested: () => this.screensaverIsland.observeSleepState(false),
+      applyPreferencePresentation: (preferences, invalidation) => {
+        applySettingsPreferences(preferences);
+        if (invalidation === 'none') return;
+        for (const chart of this.managedCharts()) chart?.invalidate(invalidation);
+        this.flowCalibratorChart.invalidate(invalidation);
+      },
+      isPhoneLayout: () => this.isPhoneLayout(),
+      openSettingsSurface: (phone, section) => this.setState(phone
+        ? {
+            phoneTab: 'settings',
+            view: 'workbench',
+            ...(section ? { settingsSection: section } : {})
+          }
+        : {
+            view: 'settings',
+            ...(section ? { settingsSection: section } : {})
+          }),
+      loadAccount: () => {
+        void this.settingsAccountPlugins.loadAccount();
+      }
+    },
+    {
+      tareScale: () => this.runExactConnectedCommand('scale', () => gateway.tareScale()),
+      uploadFirmware: (body) => this.runExactConnectedCommand(
+        'firmware',
+        () => gateway.uploadFirmware(body)
+      ),
+      setRefillLevel: (mm) => this.runExactMachineCommand((lane) => lane.setRefillLevel(mm))
+    }
+  );
+
   private readonly settingsAccountPlugins = new SettingsAccountPluginFlow(
     this.settingsController,
     this.settingsMutations,
@@ -1102,8 +1160,8 @@ export class BeanieApp {
         decentAccountPassword: this.state.decentAccountPassword
       }),
       commit: (patch) => this.setState(patch),
-      pluginsWritable: () => this.settingsResourceWritable('plugins'),
-      applyMutation: (start) => this.applySettingsMutation(start),
+      pluginsWritable: () => this.machineSettings.resourceWritable('plugins'),
+      applyMutation: (start) => this.machineSettings.applyMutation(start),
       accountLoginErrorMessage
     }
   );
@@ -1155,12 +1213,12 @@ export class BeanieApp {
           { requiresConnectedAuthority: true }
         );
         if (!display) return false;
-        this.patchBundle({ display });
+        this.machineSettings.patchBundle({ display });
         return true;
       },
       readRequestedBrightness: async () => {
         const display = await this.readConnectedSetting(() => gateway.displayState());
-        this.patchBundle({ display });
+        this.machineSettings.patchBundle({ display });
         return display.requestedBrightness;
       },
       refreshDisplayState: () => this.refreshDisplayStateSilently()
@@ -1243,8 +1301,6 @@ export class BeanieApp {
   private disposeDrain: Promise<void> | null = null;
   // Memoised so the boot settings load runs once; the scanner awaits it too.
   private settingsLoadPromise: Promise<void> | null = null;
-  private settingsBundleLoadPromise: Promise<void> | null = null;
-  private settingsBundleLoadGeneration = 0;
   private settingsRecoveryRequired = false;
   private demoSettingsSnapshot: {
     readonly cache: SyncedSettingsCacheSnapshot;
@@ -1930,6 +1986,7 @@ export class BeanieApp {
     // drains explicitly so a replacement app can await the old physical work
     // before acquiring the same batch/machine resources.
     this.settingsStoreSync.dispose();
+    this.machineSettings.dispose();
     this.recipeApply.dispose();
     this.machineService.dispose();
     const deletionDrain = this.shotDeletionFlow.disposeAndWait();
@@ -2119,8 +2176,7 @@ export class BeanieApp {
       if (projection.resetDemoSettings) {
         this.settingsRecoveryRequired = true;
         this.settingsLoadPromise = null;
-        this.settingsBundleLoadGeneration += 1;
-        this.settingsBundleLoadPromise = null;
+        this.machineSettings.invalidateSession();
         this.settingsAccountPlugins.invalidate();
         this.scannerFlow.cancelScannerWork();
         this.recipeApply.cancel(new Error('Demo authority replaced by gateway data'));
@@ -3134,7 +3190,7 @@ export class BeanieApp {
       twoTapSteamStop: this.usesTwoTapSteamStop(),
       calibration: preparedCalibration == null
         ? null
-        : { flowMultiplier: preparedCalibration, persist: !this.settingsLocal }
+        : { flowMultiplier: preparedCalibration, persist: !this.machineSettings.local }
     });
     if (started.type !== 'queued') return this.finishMachineActionOutcome(started);
     this.setState({ busy: true, status: started.status });
@@ -3532,7 +3588,9 @@ export class BeanieApp {
   private async refreshDisplayStateSilently(): Promise<void> {
     if (!this.hasConnectedGatewayAuthority()) return;
     try {
-      this.patchBundle({ display: await this.readConnectedSetting(() => gateway.displayState()) });
+      this.machineSettings.patchBundle({
+        display: await this.readConnectedSetting(() => gateway.displayState())
+      });
     } catch {
       // Display state is best-effort; machine controls should stay quiet.
     }
@@ -3668,11 +3726,7 @@ export class BeanieApp {
   // the bounded topbar owner.
   private handleWaterTelemetry(snapshot: WaterLevelSnapshot): void {
     if (this.disposed) return;
-    const refill = snapshot.refillLevelMm;
-    if (refill !== this.state.machineRefillLevel) {
-      this.state.machineRefillLevel = refill;
-      if (this.state.view === 'settings') this.setState({});
-    }
+    this.machineSettings.observeRefillLevel(snapshot.refillLevelMm);
     const level = snapshot.currentLevelMm;
     if (level == null || level === this.state.waterLevel) return;
     this.state.waterLevel = level;
@@ -3699,7 +3753,7 @@ export class BeanieApp {
     ) {
       return;
     }
-    this.patchBundle({ display });
+    this.machineSettings.patchBundle({ display });
   }
 
   // The gateway sequencer's shot-state channel is the authority on why stages
@@ -4003,24 +4057,6 @@ export class BeanieApp {
     this.lastWaterAlert = next;
     if (next !== 'hard') this.state.waterAlertDismissed = false;
     return true;
-  }
-
-  // Push a new refill threshold (mm) to the machine; the DE1 then raises
-  // `needsWater` (and the blocking popup) once the tank reaches it.
-  private async setMachineRefillLevel(mm: number): Promise<void> {
-    const previous = this.state.machineRefillLevel;
-    this.setState({ machineRefillLevel: mm, status: 'Updating machine refill level…' });
-    if (this.state.demo) {
-      this.setState({ status: 'Machine refill level set (demo)' });
-      return;
-    }
-    try {
-      await this.runExactMachineCommand((lane) => lane.setRefillLevel(mm));
-      this.setState({ status: 'Machine refill level set' });
-    } catch (error) {
-      console.error('[Beanie] Set refill level failed', error);
-      this.setState({ machineRefillLevel: previous, status: 'Set refill level failed' });
-    }
   }
 
   // Publish the latest complete live model. LiveChart is the sole frame
@@ -4504,7 +4540,7 @@ export class BeanieApp {
         if (!isPhoneTab(value)) return;
         this.setState({ phoneTab: value, view: 'workbench' });
         if (value === 'settings') {
-          this.openSettingsForPhone();
+          this.machineSettings.open();
         }
         if (value === 'beans') {
           void this.refreshBeans({ force: true });
@@ -4768,7 +4804,7 @@ export class BeanieApp {
     this.demoSettingsSnapshot = null;
     this.settingsLoadPromise = Promise.resolve();
     if (this.state.view === 'settings' || this.state.phoneTab === 'settings') {
-      await this.loadReaSettings();
+      await this.machineSettings.loadBundle();
     }
   }
 
@@ -5160,11 +5196,11 @@ export class BeanieApp {
         this.setState({ waterAlertDismissed: true });
       },
       'scale-stat': async () => {
-        await this.handleScaleStatTap();
+        await this.machineSettings.handleScaleStatTap();
       },
       // Tapping the water level jumps to its alert/refill settings (Settings → Machine).
       'water-stat': () => {
-        this.openSettingsPage('machine');
+        this.machineSettings.open('machine');
       },
       'live-ghost-toggle': () => {
         this.setState({ liveGhost: !this.state.liveGhost });
@@ -5208,7 +5244,7 @@ export class BeanieApp {
         await this.dismissStoreError();
       },
       'open-settings': () => {
-        this.openSettingsPage();
+        this.machineSettings.open();
       },
       'settings-section': ({ value }) => {
         if (!value) return;
@@ -5220,13 +5256,10 @@ export class BeanieApp {
         if (detail) detail.scrollTop = 0;
       },
       'settings-reset-machine': async () => {
-        await this.resetMachineSettings();
+        await this.machineSettings.resetMachineSettings();
       },
       'settings-reload-resources': async () => {
-        this.setState({ settingsSource: 'loading', status: 'Reloading settings…' });
-        this.settingsLoadPromise = null;
-        await this.loadSettings();
-        await this.loadReaSettings();
+        await this.machineSettings.reloadResources();
       },
       'settings-plugin-config': async ({ id }) => {
         if (id) await this.settingsAccountPlugins.togglePluginConfig(id);
@@ -5260,51 +5293,51 @@ export class BeanieApp {
         await this.settingsAccountPlugins.refreshAccount();
       },
       'settings-scan-devices': async () => {
-        await this.scanDevices();
+        await this.machineSettings.scanDevices();
       },
       'settings-connect-preferred-devices': async () => {
-        await this.connectPreferredDevices();
+        await this.machineSettings.connectPreferredDevices();
       },
       'settings-connect-device': async ({ id }) => {
-        if (id) await this.connectDevice(id, true);
+        if (id) await this.machineSettings.connectDevice(id, true);
       },
       'settings-disconnect-device': async ({ id }) => {
-        if (id) await this.connectDevice(id, false);
+        if (id) await this.machineSettings.connectDevice(id, false);
       },
       'settings-machine-state': async ({ value }) => {
-        if (isSettingsMachineState(value)) await this.requestMachineState(value);
+        if (isSettingsMachineState(value)) await this.machineSettings.requestMachineState(value);
       },
       'settings-schedule-add': async () => {
         const timeInput = this.root.querySelector<HTMLInputElement>('[data-action="settings-schedule-time"]');
-        await this.addWakeSchedule(timeInput?.value ?? '');
+        await this.machineSettings.addWakeSchedule(timeInput?.value ?? '');
       },
       'settings-schedule-delete': async ({ id }) => {
-        if (id) await this.deleteWakeSchedule(id);
+        if (id) await this.machineSettings.deleteWakeSchedule(id);
       },
       'settings-theme': ({ el }) => {
         if (isThemePreference(el.dataset.value)) {
-          this.updateSettingsPreferences({ theme: el.dataset.value });
+          this.machineSettings.updatePreferences({ theme: el.dataset.value });
         }
       },
       'settings-ui-scale': ({ el }) => {
         if (isUIScalePreference(el.dataset.value)) {
-          this.updateSettingsPreferences({ uiScale: el.dataset.value });
+          this.machineSettings.updatePreferences({ uiScale: el.dataset.value });
         }
       },
       'settings-wake-app-zone-position': ({ el }) => {
         if (isWakeAppZonePosition(el.dataset.value)) {
-          this.updateSettingsPreferences({ wakeAppZonePosition: el.dataset.value });
+          this.machineSettings.updatePreferences({ wakeAppZonePosition: el.dataset.value });
           this.screensaverIsland.previewWakeZone(el.dataset.value);
         }
       },
       'settings-clock-format': ({ el }) => {
         if (isClockFormat(el.dataset.value)) {
-          this.updateSettingsPreferences({ clockFormat: el.dataset.value });
+          this.machineSettings.updatePreferences({ clockFormat: el.dataset.value });
         }
       },
       'settings-screensaver-mode': ({ el }) => {
         if (isScreensaverMode(el.dataset.value)) {
-          this.updateSettingsPreferences({ screensaverMode: el.dataset.value });
+          this.machineSettings.updatePreferences({ screensaverMode: el.dataset.value });
         }
       },
       'screensaver-preview': () => {
@@ -5326,47 +5359,6 @@ export class BeanieApp {
         await this.resetLocalCache();
       },
     };
-  }
-
-  private openSettingsPage(section?: string): void {
-    if (this.isPhoneLayout()) {
-      this.setState({
-        phoneTab: 'settings',
-        view: 'workbench',
-        ...(section ? { settingsSection: section } : {})
-      });
-      this.openSettingsForPhone();
-      return;
-    }
-    this.setState({
-      view: 'settings',
-      ...(section ? { settingsSection: section } : {}),
-      settingsBundle: this.state.settingsBundle ?? demoSettingsBundle(),
-      settingsSource: this.state.settingsBundle
-        ? this.state.settingsSource
-        : this.state.demo
-          ? 'demo'
-          : 'loading',
-      settingsResources: this.state.settingsResources
-        ?? (this.state.demo ? settingsResourceStates('demo') : null)
-    });
-    void this.loadReaSettings();
-    void this.settingsAccountPlugins.loadAccount();
-  }
-
-  private openSettingsForPhone(): void {
-    this.setState({
-      settingsBundle: this.state.settingsBundle ?? demoSettingsBundle(),
-      settingsSource: this.state.settingsBundle
-        ? this.state.settingsSource
-        : this.state.demo
-          ? 'demo'
-          : 'loading',
-      settingsResources: this.state.settingsResources
-        ?? (this.state.demo ? settingsResourceStates('demo') : null)
-    });
-    void this.loadReaSettings();
-    void this.settingsAccountPlugins.loadAccount();
   }
 
   private navigationClickActions(): Record<string, ClickActionHandler> {
@@ -5786,23 +5778,14 @@ export class BeanieApp {
       this.applyEditorEvent(target);
       return;
     }
-    if (target.dataset.action === 'settings-field') {
-      const raw = target instanceof HTMLInputElement && target.type === 'checkbox' ? target.checked : target.value;
-      void this.onSettingsField(target.dataset.group ?? '', target.dataset.key ?? '', raw);
-      return;
-    }
-    if (target.dataset.action === 'settings-display-brightness') {
-      await this.setDisplayBrightness(target.value);
-      return;
-    }
-    if (target.dataset.action === 'settings-water-soft') {
-      const ml = Number(target.value);
-      if (Number.isFinite(ml)) this.updateSettingsPreferences({ waterSoftLimitMl: Math.max(0, ml) });
+    const machineSettingsChange = readMachineSettingsChange(target);
+    if (machineSettingsChange) {
+      await this.machineSettings.handleChange(machineSettingsChange);
       return;
     }
     if (target.dataset.action === 'settings-wake-app-zone') {
       const enabled = (target as HTMLInputElement).checked;
-      this.updateSettingsPreferences({ wakeAppZoneEnabled: enabled });
+      this.machineSettings.updatePreferences({ wakeAppZoneEnabled: enabled });
       if (enabled) {
         this.screensaverIsland.previewWakeZone(
           this.state.settingsPreferences.wakeAppZonePosition
@@ -5810,24 +5793,11 @@ export class BeanieApp {
       }
       return;
     }
-    if (target.dataset.action === 'settings-topbar-clock') {
-      this.updateSettingsPreferences({ topbarClock: (target as HTMLInputElement).checked });
-      return;
-    }
     if (target.dataset.action === 'settings-screensaver-add-photos') {
       const input = target as HTMLInputElement;
       const files = Array.from(input.files ?? []);
       input.value = '';
       if (files.length > 0) await this.screensaverIsland.addPhotos(files);
-      return;
-    }
-    if (target.dataset.action === 'settings-machine-refill') {
-      const mm = Number(target.value);
-      if (Number.isFinite(mm)) await this.setMachineRefillLevel(Math.max(0, mm));
-      return;
-    }
-    if (target.dataset.action === 'no-scale-block-toggle') {
-      void this.setNoScaleBlock((target as HTMLInputElement).checked);
       return;
     }
     if (target.dataset.action === 'settings-plugin-toggle') {
@@ -5840,15 +5810,6 @@ export class BeanieApp {
     if (target.dataset.action === 'settings-plugin-field') {
       const raw = target instanceof HTMLInputElement && target.type === 'checkbox' ? target.checked : target.value;
       this.settingsAccountPlugins.updatePluginField(target.dataset.key ?? '', raw);
-      return;
-    }
-    if (target.dataset.action === 'settings-schedule-toggle') {
-      void this.toggleWakeSchedule(target.dataset.id ?? '', (target as HTMLInputElement).checked);
-      return;
-    }
-    if (target.dataset.action === 'settings-firmware') {
-      const file = (target as HTMLInputElement).files?.[0];
-      if (file) void this.uploadFirmware(file);
       return;
     }
     if (target.dataset.action === 'scanner-add-photos') {
@@ -6867,7 +6828,7 @@ export class BeanieApp {
       busy: true,
       status: plan.savingStatus
     });
-    if (this.settingsLocal) {
+    if (this.machineSettings.local) {
       this.setState({ busy: false, status: plan.demoStatus });
       return;
     }
@@ -7067,7 +7028,7 @@ export class BeanieApp {
 
   private async applyNumberEdit(edit: NumberEditTarget, value: string): Promise<void> {
     if (edit.target === 'settings-field' && edit.group && edit.key) {
-      await this.onSettingsField(edit.group, edit.key, value);
+      await this.machineSettings.setField(edit.group, edit.key, value);
       return;
     }
     if (edit.target === 'settings-plugin-field' && edit.key) {
@@ -7075,7 +7036,7 @@ export class BeanieApp {
       return;
     }
     if (edit.target === 'display-brightness') {
-      await this.setDisplayBrightness(value);
+      await this.machineSettings.setDisplayBrightness(value);
       return;
     }
     if (edit.target === 'flow-calibration') {
@@ -7084,19 +7045,19 @@ export class BeanieApp {
     }
     if (edit.target === 'water-soft') {
       const ml = Number(value);
-      if (Number.isFinite(ml)) this.updateSettingsPreferences({ waterSoftLimitMl: Math.max(0, ml) });
+      if (Number.isFinite(ml)) this.machineSettings.updatePreferences({ waterSoftLimitMl: Math.max(0, ml) });
       return;
     }
     if (edit.target === 'screensaver-brightness') {
       const percent = Number(value);
       if (Number.isFinite(percent)) {
-        this.updateSettingsPreferences({ screensaverBrightness: Math.max(0, Math.min(100, Math.round(percent))) });
+        this.machineSettings.updatePreferences({ screensaverBrightness: Math.max(0, Math.min(100, Math.round(percent))) });
       }
       return;
     }
     if (edit.target === 'machine-refill') {
       const mm = Number(value);
-      if (Number.isFinite(mm)) await this.setMachineRefillLevel(Math.max(0, mm));
+      if (Number.isFinite(mm)) await this.machineSettings.setMachineRefillLevel(Math.max(0, mm));
       return;
     }
     if (edit.target === 'bean-picker-batch' && edit.beanId && edit.batchId && edit.name) {
@@ -7268,25 +7229,7 @@ export class BeanieApp {
         : shotEditDraftFromShot(selectedShot)
       : null;
     const settingsHtml = this.state.phoneTab === 'settings'
-      ? renderSettingsShell(
-          this.settingsShellModel(),
-          this.state.settingsSection,
-          this.state.settingsBundle,
-          this.state.pluginConfig,
-          this.decentAccountPanelState(),
-          ['app', 'brew', 'machine', 'power', 'account', 'plugins', 'connection', 'danger'],
-          {
-            phone: true,
-            flowCalibration: this.flowCalibrator.settingsDisplay(),
-            resourceStates: this.effectiveSettingsResourceStates(),
-            syncedPreferencesWritable: this.state.demo || (
-              this.state.settingsStoreAvailable && this.hasConnectedGatewayAuthority()
-            ),
-            gatewayActionsWritable: this.hasConnectedGatewayAuthority(),
-            machineActionsWritable: this.hasLiveMachineAuthority(),
-            scannerKeySet: readGeminiApiKey() != null
-          }
-        )
+      ? this.renderSettingsSurface(true)
       : '';
     return renderPhoneShell({
       activeTab: this.state.phoneTab,
@@ -7822,24 +7765,7 @@ export class BeanieApp {
   private renderSettingsPage(): string {
     return `
       ${this.pageHeader('Settings', 'workbench')}
-      ${renderSettingsShell(
-        this.settingsShellModel(),
-        this.state.settingsSection,
-        this.state.settingsBundle,
-        this.state.pluginConfig,
-        this.decentAccountPanelState(),
-        undefined,
-        {
-          flowCalibration: this.flowCalibrator.settingsDisplay(),
-          resourceStates: this.effectiveSettingsResourceStates(),
-          syncedPreferencesWritable: this.state.demo || (
-            this.state.settingsStoreAvailable && this.hasConnectedGatewayAuthority()
-          ),
-          gatewayActionsWritable: this.hasConnectedGatewayAuthority(),
-          machineActionsWritable: this.hasLiveMachineAuthority(),
-          scannerKeySet: readGeminiApiKey() != null
-        }
-      )}
+      ${this.renderSettingsSurface()}
     `;
   }
 
@@ -8058,8 +7984,8 @@ export class BeanieApp {
     });
   }
 
-  private settingsShellModel() {
-    return buildSettingsShellModel({
+  private renderSettingsSurface(phone = false): string {
+    return renderSettingsView({
       query: this.state.settingsSearch,
       preferences: this.state.settingsPreferences,
       demo: this.state.demo,
@@ -8070,19 +7996,28 @@ export class BeanieApp {
       machine: this.state.machine,
       scale: this.state.scale,
       machineRefillLevelMm: this.state.machineRefillLevel,
-      screensaverPhotoCount: this.state.screensaverPhotos.length
+      screensaverPhotoCount: this.state.screensaverPhotos.length,
+      activeSection: this.state.settingsSection,
+      bundle: this.state.settingsBundle,
+      pluginConfig: this.state.pluginConfig,
+      account: {
+        status: this.state.decentAccount,
+        source: this.state.decentAccountSource,
+        emailDraft: this.state.decentAccountEmail,
+        passwordDraft: this.state.decentAccountPassword,
+        saving: this.state.decentAccountSaving,
+        message: this.state.decentAccountMessage
+      },
+      flowCalibration: this.flowCalibrator.settingsDisplay(),
+      resourceStates: this.machineSettings.effectiveResourceStates(),
+      syncedPreferencesWritable: this.state.demo || (
+        this.state.settingsStoreAvailable && this.hasConnectedGatewayAuthority()
+      ),
+      gatewayActionsWritable: this.hasConnectedGatewayAuthority(),
+      machineActionsWritable: this.hasLiveMachineAuthority(),
+      scannerKeySet: readGeminiApiKey() != null,
+      phone
     });
-  }
-
-  private decentAccountPanelState(): DecentAccountPanelState {
-    return {
-      status: this.state.decentAccount,
-      source: this.state.decentAccountSource,
-      emailDraft: this.state.decentAccountEmail,
-      passwordDraft: this.state.decentAccountPassword,
-      saving: this.state.decentAccountSaving,
-      message: this.state.decentAccountMessage
-    };
   }
 
   private selectedBean(): Bean | null {
@@ -8163,399 +8098,6 @@ export class BeanieApp {
   private grinderBigStep(): number {
     const grinder = this.state.grinders.find((item) => item.id === this.grinderIdForDraft());
     return grinder?.settingBigStep ?? 1;
-  }
-
-  // Load the reaprime-backed settings bundle when Settings or a workbench
-  // device action first needs it. Concurrent callers share the same request so
-  // a top-bar Connect tap cannot race the Settings view's provenance load.
-  private loadReaSettings(): Promise<void> {
-    if (
-      this.state.settingsBundle &&
-      (this.state.settingsSource === 'gateway' || this.state.settingsSource === 'demo')
-    ) return Promise.resolve();
-    if (this.settingsBundleLoadPromise) return this.settingsBundleLoadPromise;
-    const generation = this.settingsBundleLoadGeneration;
-    const demo = this.state.demo;
-    const load = this.runLoadReaSettings(generation, demo);
-    this.settingsBundleLoadPromise = load;
-    const clearLoad = () => {
-      if (this.settingsBundleLoadPromise === load) this.settingsBundleLoadPromise = null;
-    };
-    void load.then(clearLoad, clearLoad);
-    return load;
-  }
-
-  private async runLoadReaSettings(generation: number, demo: boolean): Promise<void> {
-    const authorityRevision = this.startupAuthorityRevision;
-    if (!demo && !this.hasConnectedGatewayAuthority()) return;
-    let result: Awaited<ReturnType<typeof this.settingsController.loadSettingsBundle>>;
-    result = await this.settingsController.loadSettingsBundle(demo);
-    if (
-      this.disposed ||
-      generation !== this.settingsBundleLoadGeneration ||
-      (!demo && (
-        authorityRevision !== this.startupAuthorityRevision ||
-        !this.hasConnectedGatewayAuthority()
-      ))
-    ) return;
-    this.setState({
-      settingsBundle: result.bundle,
-      settingsSource: result.source,
-      settingsResources: result.resources,
-      status: result.status ?? this.state.status
-    });
-    if (result.source === 'gateway' && this.state.settingsStoreAvailable) {
-      this.flowCalibrator.groundGlobalDefault(result.bundle.calibration.flowMultiplier);
-    }
-  }
-
-  private patchBundle(patch: Partial<SettingsBundle>): void {
-    if (!this.state.settingsBundle) return;
-    this.setState({ settingsBundle: { ...this.state.settingsBundle, ...patch } });
-  }
-
-  private async applySettingsMutation(
-    start: SettingsMutationStart
-  ): Promise<SettingsMutationOutcome | null> {
-    if (start.type === 'rejected') {
-      this.setState({ status: start.status });
-      return null;
-    }
-    if (start.type !== 'started') return null;
-
-    const bundle = this.state.settingsBundle;
-    if (bundle || start.optimisticStatus) {
-      this.setState({
-        ...(bundle
-          ? { settingsBundle: applySettingsBundleMutation(bundle, start.optimistic) }
-          : {}),
-        ...(start.optimisticStatus ? { status: start.optimisticStatus } : {})
-      });
-    }
-    const outcome = await start.completion;
-    if (outcome.type === 'discarded' || this.disposed) return outcome;
-
-    const current = this.state.settingsBundle;
-    const nextState: Partial<AppState> = {};
-    if (current) nextState.settingsBundle = applySettingsMutationOutcome(current, outcome);
-    if (outcome.status) nextState.status = outcome.status;
-    if (outcome.type === 'failed') {
-      console.error(`[Beanie] ${outcome.key} mutation failed`, outcome.error);
-    }
-    if (outcome.type === 'saved' && outcome.effect?.noScaleBlock === 'disabled') {
-      this.noScaleShotWarningUntilMs = 0;
-      nextState.modal = null;
-    }
-    if (Object.keys(nextState).length > 0) this.setState(nextState);
-    return outcome;
-  }
-
-  private get settingsLocal(): boolean {
-    return this.state.demo || this.state.settingsSource === 'demo';
-  }
-
-  private settingsResourceWritable(resource: SettingsResourceKey): boolean {
-    return this.settingsLocal || (
-      this.hasConnectedGatewayAuthority() &&
-      settingsResourceWritable(this.state.settingsResources, resource)
-    );
-  }
-
-  private effectiveSettingsResourceStates(): SettingsResourceStates | null {
-    const resources = this.state.settingsResources;
-    if (!resources || this.settingsLocal || this.hasConnectedGatewayAuthority()) return resources;
-    return Object.fromEntries(
-      Object.entries(resources).map(([key, state]) => [
-        key,
-        {
-          ...state,
-          writable: false,
-          message: state.message ?? 'Live gateway authority is unavailable'
-        }
-      ])
-    ) as SettingsResourceStates;
-  }
-
-  private async scanDevices(): Promise<void> {
-    if (!this.settingsResourceWritable('devices')) {
-      this.setState({ status: 'Device list is unavailable — reconnect and reload Settings' });
-      return;
-    }
-    this.setState({ status: 'Scanning for devices…' });
-    const result = await this.settingsController.scanDevices(this.settingsLocal);
-    if (result.devices) this.patchBundle({ devices: result.devices });
-    this.setState({ status: result.status });
-  }
-
-  private async connectPreferredDevices(): Promise<void> {
-    // The workbench exposes this action before Settings has necessarily opened.
-    // Load endpoint provenance on demand so a live gateway is not rejected just
-    // because the settings bundle has not yet been inspected this session.
-    if (!this.settingsLocal && this.state.settingsResources == null) {
-      this.setState({ status: 'Loading device settings…' });
-      await this.loadReaSettings();
-    }
-    if (!this.settingsResourceWritable('devices') || !this.settingsResourceWritable('rea')) {
-      this.setState({ status: 'Preferred devices are unavailable — reconnect and reload Settings' });
-      return;
-    }
-    this.setState({ status: 'Searching for preferred devices…' });
-    const result = await this.settingsController.connectPreferredDevices({
-      local: this.settingsLocal,
-      preferredScaleId: this.state.settingsBundle?.rea.preferredScaleId ?? null
-    });
-    if (result.devices) this.patchBundle({ devices: result.devices });
-    this.setState({ status: result.status });
-  }
-
-  private async handleScaleStatTap(): Promise<void> {
-    if (scaleConnected(this.state.scale)) {
-      await this.tareScale();
-      return;
-    }
-    await this.connectPreferredDevices();
-  }
-
-  private async tareScale(): Promise<void> {
-    if (this.state.demo) {
-      this.setState({ status: 'Tare unavailable in demo mode' });
-      return;
-    }
-    if (!scaleConnected(this.state.scale)) {
-      this.setState({ status: 'Scale disconnected' });
-      return;
-    }
-    if (!this.hasConnectedGatewayAuthority()) {
-      this.setState({ status: 'Scale controls are read-only until live data reconnects' });
-      return;
-    }
-    const authorityRevision = this.startupAuthorityRevision;
-    const authorityCurrent = () =>
-      !this.disposed &&
-      authorityRevision === this.startupAuthorityRevision &&
-      this.hasConnectedGatewayAuthority();
-    this.setState({ status: 'Taring scale…' });
-    try {
-      await this.runExactConnectedCommand('scale', () => gateway.tareScale());
-      if (authorityCurrent()) this.setState({ status: 'Scale tared' });
-    } catch (error) {
-      console.error('[Beanie] Scale tare failed', error);
-      if (authorityCurrent()) this.setState({ status: 'Tare failed' });
-    }
-  }
-
-  private async connectDevice(id: string, connect: boolean): Promise<void> {
-    if (!id) return;
-    if (!this.settingsResourceWritable('devices')) {
-      this.setState({ status: 'Device list is unavailable — no change was sent' });
-      return;
-    }
-    this.setState({ status: connect ? 'Connecting…' : 'Disconnecting…' });
-    const result = await this.settingsController.connectDevice({
-      id,
-      connect,
-      local: this.settingsLocal,
-      fallbackDevices: this.state.settingsBundle?.devices ?? []
-    });
-    if (result.devices) this.patchBundle({ devices: result.devices });
-    if (result.status) this.setState({ status: result.status });
-  }
-
-  private async setDisplayBrightness(raw: string): Promise<void> {
-    const parsed = parseNumberInput(raw);
-    if (parsed == null) return;
-    const bundle = this.state.settingsBundle;
-    if (!bundle) return;
-    if (!this.settingsResourceWritable('display')) {
-      this.setState({ status: 'Display settings are unavailable — no change was sent' });
-      return;
-    }
-    const brightness = Math.max(0, Math.min(100, Math.round(parsed)));
-    const start = this.settingsMutations.setDisplayBrightness({
-      bundle,
-      brightness,
-      local: this.settingsLocal,
-      writable: this.settingsResourceWritable('display')
-    });
-    if (start.type === 'started') this.screensaverIsland.noteUserBrightness(brightness);
-    const outcome = await this.applySettingsMutation(start);
-    if (outcome?.type === 'failed') await this.refreshDisplayStateSilently();
-  }
-
-  private async requestMachineState(state: MachineState): Promise<void> {
-    if (!this.hasLiveMachineAuthority()) {
-      this.setState({ status: 'Machine controls are read-only until live data reconnects' });
-      return;
-    }
-    const result = await this.settingsController.requestMachineState({ state, local: this.settingsLocal });
-    if (this.disposed) return;
-    this.setState({ status: result.status });
-    if (result.sleepRequested) {
-      // An explicit sleep ends a wake-app override so the screen can re-dim and
-      // the screensaver returns — even when the machine was already asleep (no
-      // telemetry transition to clear it for us).
-      if (this.state.appAwake) this.setState({ appAwake: false });
-      this.screensaverIsland.scheduleSleepDim(1000);
-    } else if (result.status !== 'Machine command failed') {
-      this.screensaverIsland.observeSleepState(false);
-    }
-  }
-
-  private async uploadFirmware(file: File): Promise<void> {
-    if (this.settingsLocal || !this.hasConnectedGatewayAuthority()) {
-      this.setState({ status: 'Firmware upload needs a connected gateway' });
-      return;
-    }
-    const authorityRevision = this.startupAuthorityRevision;
-    const authorityCurrent = () =>
-      !this.disposed &&
-      authorityRevision === this.startupAuthorityRevision &&
-      this.hasConnectedGatewayAuthority();
-    this.setState({ status: `Uploading ${file.name}…`, busy: true });
-    try {
-      const body = await file.arrayBuffer();
-      await this.runExactConnectedCommand('firmware', () => gateway.uploadFirmware(body));
-      if (authorityCurrent()) {
-        this.setState({ status: 'Firmware uploaded — restart the machine', busy: false });
-      } else if (!this.disposed) {
-        this.setState({ busy: false });
-      }
-    } catch (error) {
-      console.error('[Beanie] Firmware upload failed', error);
-      if (authorityCurrent()) {
-        this.setState({ status: 'Firmware upload failed', busy: false });
-      } else if (!this.disposed) {
-        this.setState({ busy: false });
-      }
-    }
-  }
-
-  private async addWakeSchedule(time: string): Promise<void> {
-    if (!this.settingsResourceWritable('schedules')) {
-      this.setState({ status: 'Wake schedules are unavailable — reconnect and reload Settings' });
-      return;
-    }
-    const result = await this.settingsController.addWakeSchedule({
-      time,
-      local: this.settingsLocal,
-      current: this.state.settingsBundle?.schedules ?? []
-    });
-    if (result.schedules) this.patchBundle({ schedules: result.schedules });
-    if (result.status) this.setState({ status: result.status });
-  }
-
-  private async deleteWakeSchedule(id: string): Promise<void> {
-    const bundle = this.state.settingsBundle;
-    if (!bundle) return;
-    if (!this.settingsResourceWritable('schedules')) {
-      this.setState({ status: 'Wake schedules are unavailable — no change was sent' });
-      return;
-    }
-    await this.applySettingsMutation(this.settingsMutations.deleteSchedule({
-      bundle,
-      id,
-      local: this.settingsLocal,
-      writable: this.settingsResourceWritable('schedules')
-    }));
-  }
-
-  private async toggleWakeSchedule(id: string, enabled: boolean): Promise<void> {
-    const bundle = this.state.settingsBundle;
-    if (!bundle) return;
-    if (!this.settingsResourceWritable('schedules')) {
-      this.setState({ status: 'Wake schedules are unavailable — no change was sent' });
-      return;
-    }
-    await this.applySettingsMutation(this.settingsMutations.toggleSchedule({
-      bundle,
-      id,
-      enabled,
-      local: this.settingsLocal,
-      writable: this.settingsResourceWritable('schedules')
-    }));
-  }
-
-  private async onSettingsField(group: string, key: string, raw: string | boolean): Promise<void> {
-    const bundle = this.state.settingsBundle;
-    if (!bundle) return;
-    const field = SETTINGS_SPEC.flatMap((section) => section.fields).find(
-      (candidate) => candidate.group === group && candidate.key === key
-    );
-    if (!field) return;
-    if (!this.settingsResourceWritable(field.group)) {
-      this.setState({ status: `${field.label} is unavailable — reconnect and reload Settings` });
-      return;
-    }
-    const value = coerceFieldValue(field, raw);
-    await this.applySettingsMutation(this.settingsMutations.setField({
-      bundle,
-      field,
-      value,
-      local: this.settingsLocal,
-      writable: this.settingsResourceWritable(field.group)
-    }));
-  }
-
-  private async setNoScaleBlock(enabled: boolean): Promise<void> {
-    const observedBundle = this.state.settingsBundle;
-    const bundle = observedBundle ?? demoSettingsBundle();
-    await this.applySettingsMutation(this.settingsMutations.setNoScaleBlock({
-      bundle,
-      enabled,
-      previousKnown: observedBundle != null,
-      local: this.settingsLocal,
-      // This toggle is the escape hatch in the blocking no-scale alert. Preserve
-      // the prior behavior of attempting it even before Settings provenance loads.
-      writable: true
-    }));
-  }
-
-  private async resetMachineSettings(): Promise<void> {
-    const bundle = this.state.settingsBundle;
-    if (!bundle) return;
-    if (!(['de1', 'advanced', 'calibration'] as const).every((key) => this.settingsResourceWritable(key))) {
-      this.setState({ status: 'Machine settings are unavailable — reset was not sent' });
-      return;
-    }
-    try {
-      const result = await this.settingsController.resetMachineSettings({
-        local: this.state.demo || this.state.settingsSource === 'demo',
-        bundle
-      });
-      this.setState({ settingsBundle: { ...bundle, ...result.bundlePatch }, status: result.status });
-    } catch {
-      this.setState({ status: 'Reset failed' });
-    }
-  }
-
-  private updateSettingsPreferences(next: Partial<SettingsPreferences>): void {
-    const changesSyncedPreference = Object.keys(next).some((key) => key !== 'theme');
-    if (changesSyncedPreference && !this.state.demo && !this.state.settingsStoreAvailable) {
-      this.setState({ status: 'Synced preferences are unavailable — no change was saved' });
-      return;
-    }
-    const themeChanged = next.theme != null && next.theme !== this.state.settingsPreferences.theme;
-    const scaleChanged = next.uiScale != null && next.uiScale !== this.state.settingsPreferences.uiScale;
-    const settingsPreferences = { ...this.state.settingsPreferences, ...next };
-    writeSettingsPreferencePatch(next);
-    applySettingsPreferences(settingsPreferences);
-    this.setState({
-      settingsPreferences,
-      status: 'Settings changed'
-    });
-    const charts = [
-      this.liveChart,
-      this.detailChart,
-      this.shotStagesChart
-    ];
-    if (themeChanged) {
-      charts.forEach((chart) => chart?.invalidate('theme'));
-      this.flowCalibratorChart.invalidate('theme');
-    }
-    if (scaleChanged) {
-      charts.forEach((chart) => chart?.invalidate('layout'));
-      this.flowCalibratorChart.invalidate('layout');
-    }
   }
 
   private async resetLocalCache(): Promise<void> {

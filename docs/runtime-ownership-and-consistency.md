@@ -293,6 +293,17 @@ connected authority again when queued work actually dispatches. Multi-request
 plugin save/verification callbacks recheck between their raw GET and side
 effect as well.
 
+`MachineSettingsFlow` owns the aggregate machine-settings session above those
+endpoint and mutation primitives. Bundle loads are single-flight and fenced by
+both session generation and connected-authority revision; device, schedule,
+firmware, and field actions reuse the existing exact lanes rather than adding a
+settings scheduler. Machine refill is a dedicated revisioned optimistic scalar:
+older failures cannot roll back newer intent, stale successes may advance only
+an older confirmed baseline, authoritative water telemetry becomes the latest
+rollback truth without erasing a pending value, and disposal/session reset
+invalidates late settlement. The physical write still runs only through the
+single injected `MachineWorkflowCommands` owner.
+
 ### Whole-map plugin settings
 
 Reaprime returns and replaces an entire plugin settings map. Its current GET can
