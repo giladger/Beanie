@@ -33,7 +33,6 @@ export interface PhoneShellModel {
   shotSearch: string;
   favoriteBeanIds: readonly string[];
   averageDoseIn: number | null;
-  applyState: 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
   shots: ShotRecord[];
   selectedShot: ShotRecord | null;
   selectedShotDraft: ShotEditDraft | null;

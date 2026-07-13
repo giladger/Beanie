@@ -35,8 +35,6 @@ export interface WorkbenchRecipeViewModel {
   grinderStep: number;
   ratioLabel: string;
   brewTempLabel: string;
-  /** Visible acknowledgement for the debounced recipe -> machine workflow write. */
-  applyState?: 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
   /** A Derek change is staged for the next shot; offers one-tap revert and
    * highlights the control carrying the changed value. */
   derekTweak?: { summary: string; parameter: string | null } | null;

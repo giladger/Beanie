@@ -89,15 +89,12 @@ run('workbench hides the topbar clock when the preference turns it off', () => {
 });
 
 run('workbench never decorates the profile name with recipe apply state', () => {
-  const base = model();
-  for (const applyState of ['stale', 'pending', 'applied', 'failed'] as const) {
-    const html = renderWorkbench(model({ recipe: { ...base.recipe, applyState } }));
-    excludes(html, 'recipe-apply-chip');
-    excludes(html, 'Not applied');
-    excludes(html, '>Applied<');
-    excludes(html, 'Applying…');
-    excludes(html, 'Apply failed');
-  }
+  const html = renderWorkbench(model());
+  excludes(html, 'recipe-apply-chip');
+  excludes(html, 'Not applied');
+  excludes(html, '>Applied<');
+  excludes(html, 'Applying…');
+  excludes(html, 'Apply failed');
 });
 
 run('page header escapes the title and back value while preserving action html', () => {
@@ -224,8 +221,7 @@ function model(overrides: Partial<WorkbenchViewModel> = {}): WorkbenchViewModel 
       },
       grinderStep: 0.25,
       ratioLabel: '1:2.3',
-      brewTempLabel: '93.0',
-      applyState: 'idle'
+      brewTempLabel: '93.0'
     },
     historyHtml: '&lt;history&gt;'
   };

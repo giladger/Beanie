@@ -108,45 +108,48 @@ AI-agent work does not infer completion from extracted filenames alone.
   canonical encoding now live in `domain/profileModel.ts`. The editor owns
   only UI session state and rendering, while Derek profile tweaks use the same
   domain codec without importing the component layer.
+- Corrective shell extraction: account/plugin settings sessions, shot editing,
+  the screensaver runtime, flow calibration, bean selection, dose admission,
+  machine settings/refill, and the bean-inventory browser now have focused
+  owners. `src/app.ts` fell from 10,572 to 7,428 lines (−3,144, about 30%) while
+  retaining one `AppState`, one gateway scheduler, one inventory facade, and
+  one durable dose journal. The shell now wires typed feature events and DOM
+  adapters instead of carrying those workflows inline.
+- Real-machine recovery: cached startup restores the selected coffee's bounded
+  shot history; recipe apply-state chips are absent on phone and tablet;
+  and browser batch writes no longer send Reaprime's unsupported
+  `Idempotency-Key` header. Dose/reclaim retry safety instead uses the locally
+  journaled original bag weight plus absolute target and fails closed when the
+  remote bag diverges.
 
 ## Deferred — architecture debt (ordered by value)
 
 Per [architecture.md](architecture.md), workflow policy should leave
-`BeanieApp`. At 10,000+ lines, `src/app.ts` is safer than before but is not yet
-a manageable small shell for a repository maintained primarily by AI agents.
-The remaining work starts here:
+`BeanieApp`. At 7,428 lines, `src/app.ts` is materially smaller and its largest
+inventory/settings/editing sessions are independently testable, but it is still
+not a small composition shell. The remaining work starts here:
 
-1. **Extract `BeanSelectionFlow`.** Move selection mode/provenance, batch and
-   shot acquisition, effective-bag restarts, recipe scheduling, and stale-result
-   fencing behind one narrow controller-owned contract.
-2. **Extract `DoseDeductionAdmissionFlow`.** Move completed-shot dose intent,
-   reservation, durable admission, optimism/canonicalization, cache projection,
-   and release out of `BeanieApp` while retaining the existing reconciler and
-   inventory authorities.
-3. **Harden settings contracts.** Replace plain-string field keys and cast-built
+1. **Harden settings contracts.** Replace plain-string field keys and cast-built
    patches with group-indexed keys. Make public cache/repository/settings
    capability parameters required and fail closed instead of defaulting true.
-4. **Expose inventory-journal readiness in the stock UI.** Runtime adapters and
+2. **Expose inventory-journal readiness in the stock UI.** Runtime adapters and
    submit handlers fail closed, but bag mutation controls still look enabled
    until the user clicks and receives the read-only status. Pass an explicit
    capability into the bean-picker/storage views and disable only mutation
    controls while preserving inventory browsing.
-5. **Finish controller boundary injection.** Remove gateway/cache singleton
+3. **Finish controller boundary injection.** Remove gateway/cache singleton
    imports from scanner, Derek, and profile-editor flows; move scanner
    `location`/`document` and profile-editor `HTMLElement` access behind shell
    adapters.
-6. **Remaining optimistic one-offs.** Move `setMachineRefillLevel` to its
-   matching controller with revisioned confirmed rollback and stale-result
-   fencing.
-7. **Shared demo/remote save helper.** Six controller save flows repeat the
+4. **Shared demo/remote save helper.** Six controller save flows repeat the
    same skeleton (demo id minting, `(demo)` status suffix, fail-soft cache
    write). A `saveWithDemoFallback` helper would collapse ~150 lines.
-8. **`hotWaterDataForNativeWorkflow`** and the thrice-duplicated
+5. **`hotWaterDataForNativeWorkflow`** and the thrice-duplicated
    `positiveNumber`/`formatNumber` helpers → `domain/waterSettings`.
 
 ## Deferred — smaller cleanups
 
-- app.ts duplication: settings-bundle seeding ×3, numpad-dialog scaffolding ×3,
+- app.ts duplication: settings-bundle seeding ×2, numpad-dialog scaffolding ×3,
   and gateway/cache dependency literals rebuilt per call site.
 - View helper duplication (~80 lines): `inputValue`/`round`, second-tap hint,
   load-more, date-label helpers across beanPickerView/phoneView/historyView/
@@ -170,7 +173,7 @@ The remaining work starts here:
   cleanup marker would close that presentation-only gap.
 - `cache.ts` writes `schemaVersion` per entry but never reads it — check on
   read or clear stores on version bump.
-- The production JavaScript bundle is about 839 KB minified and still trips
+- The production JavaScript bundle is about 878 KB minified and still trips
   Vite's 500 KB warning — split infrequently used settings/editor/scanner
   surfaces behind dynamic imports without fragmenting runtime ownership.
 - Demo fidelity gaps: scanner extraction skips the empty-photos validation,

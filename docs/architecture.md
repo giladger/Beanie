@@ -370,6 +370,8 @@ Examples:
 - `profileEditor.ts`: profile editor UI session state, field reducers, and
   rendering. Persistent profile decoding and encoding live in
   `domain/profileModel.ts` and are shared by non-UI flows.
+- `beanInventoryForm.ts`: browser form reader for typed coffee, bag, and storage
+  submissions.
 - `shotEditorForm.ts`: browser form reader for the shot editor's three owned forms.
 - `machineSettingsForm.ts`: browser control reader that translates settings
   changes into DOM-free machine-settings intents.
@@ -406,8 +408,8 @@ parse a field, call a controller, write a local preference through a domain
 helper, set state, and render.
 
 This is a direction, not a claim that the extraction is finished. `src/app.ts`
-is now roughly 8,300 lines, so it is materially smaller but not yet a small
-composition shell. These high-value verticals have now been extracted:
+is now 7,428 lines, down from 10,572 on `main`. It is materially smaller but not
+yet a small composition shell. These high-value verticals have now been extracted:
 
 1. `BeanSelectionFlow`: selection mode/provenance, batch and shot acquisition,
    effective-bag changes, recipe-draft scheduling, and stale selection fencing;
@@ -415,11 +417,19 @@ composition shell. These high-value verticals have now been extracted:
    reservation, journal admission, optimism/canonicalization, cache projection,
    and reservation release;
 3. `MachineSettingsFlow`: settings acquisition/provenance, typed settings
-   actions, device/schedule/firmware operations, and revisioned refill updates.
+   actions, device/schedule/firmware operations, and revisioned refill updates;
+4. `BeanInventoryBrowserFlow`: bean-picker session/presentation, typed form
+   orchestration, and stock workflows through the existing inventory facade.
 
-Both expose narrow requests/events and reuse the existing inventory and dose
-authorities. Neither creates a second state store, scheduler, journal, or
-selection-token owner.
+These flows expose narrow requests/events and reuse the existing machine,
+inventory, dose, and selection authorities. They create no second state store,
+scheduler, journal, inventory facade, or selection-token owner.
+
+The remaining large shell regions are primarily live telemetry/completion,
+navigation and delegated-event routing, and machine/cleaning composition.
+Future work should remove one coherent owner at a time; moving declarations or
+adding wrapper layers without deleting the corresponding shell policy does not
+count as extraction.
 
 ### `src/appShell.ts`
 

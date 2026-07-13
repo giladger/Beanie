@@ -325,19 +325,9 @@ import {
   DoseMutationReconciler
 } from './controllers/doseMutationReconciler';
 import { DoseDeductionAdmissionFlow } from './controllers/doseDeductionAdmissionFlow';
-import {
-
-  type DerekState
-} from './controllers/derekController';
-import {
-
-  readShotDerek,
-  type AppliedDerekTip
-} from './domain/derekShot';
-import {
-
-  renderDerekModal as renderDerekModalView
-} from './views/derekView';
+import type { DerekState } from './controllers/derekController';
+import { readShotDerek, type AppliedDerekTip } from './domain/derekShot';
+import { renderDerekModal as renderDerekModalView } from './views/derekView';
 import {
   profileShortTitle,
   renderPhoneProfilesPage as renderPhoneProfilePickerPage,
@@ -6471,7 +6461,6 @@ export class BeanieApp {
       shotSearch: this.state.shotSearch,
       favoriteBeanIds: this.state.favoriteBeans,
       averageDoseIn: this.averageDoseIn(),
-      applyState: this.state.applyState,
       shots: this.state.shots,
       selectedShot,
       selectedShotDraft,
@@ -6512,7 +6501,6 @@ export class BeanieApp {
         grinderStep: this.grinderStep(),
         ratioLabel: formatRatio(ratioFor(draft.dose, draft.yield)),
         brewTempLabel: brewTemp == null ? '--' : `${brewTemp.toFixed(1)}`,
-        applyState: this.state.applyState,
         derekTweak: this.state.derekTweakChip
           ? {
               summary: this.state.derekTweakChip.summary,
