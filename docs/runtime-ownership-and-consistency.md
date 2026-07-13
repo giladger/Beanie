@@ -342,15 +342,15 @@ metadata rather than physical-command identity, so an idempotent re-enqueue may
 canonicalize its route without changing the command.
 
 Duplicate equivalence is deliberately narrower for dose work. Its physical
-identity is `{beanId, batchId, dose}` under the mutation kind; `at` and
-`expectedRemaining` are replay metadata captured by the first admission and do
-not redefine the physical command. Re-enqueueing the same idempotency key and
-physical identity returns that stored canonical payload even if a later caller
-computed a different heuristic scalar. Commands without a physical identity
-still require structural payload equality. During localStorage-to-IndexedDB
-fallback promotion, operational progress may come from the newer or
-acknowledged copy, but `createdAt` and the replay payload always come from the
-earliest admission.
+identity is `{beanId, batchId, dose}` under the mutation kind; `at`,
+`baseRemaining`, and the absolute `expectedRemaining` target are replay metadata
+captured by the first admission and do not redefine the physical command.
+Re-enqueueing the same idempotency key and physical identity returns that stored
+canonical payload even if a later caller computed a different base or target.
+Commands without a physical identity still require structural payload
+equality. During localStorage-to-IndexedDB fallback promotion, operational
+progress may come from the newer or acknowledged copy, but `createdAt` and the
+replay payload always come from the earliest admission.
 
 Deductions and reclaims use distinct stable keys derived from the shot identity
 available at their own boundary plus the physical batch. For a live pull with
@@ -382,23 +382,30 @@ The dose reconciler follows this order:
 4. Claim both dose-adjustment kinds through one worker, one aggregate head at a
    time.
 5. Read current remote batch state.
-6. If the expected remaining value is already present, acknowledge
-   `already-applied`.
-7. If the bag is deleted/untracked, acknowledge `not-applicable`.
-8. Otherwise resolve the signed delta against that fresh scalar, serialize the
-   partial update on the canonical
-   `bean-inventory:<beanId>` lane, forwarding the idempotency key, then
-   acknowledge `committed`.
-9. On failure, release into retry-wait with bounded exponential backoff.
+6. If the bag is deleted or no longer tracks remaining weight, acknowledge
+   `not-applicable`.
+7. For a current record with durable base/target evidence, acknowledge
+   `already-applied` when the fresh scalar equals `expectedRemaining`; when it
+   still equals `baseRemaining`, write the exact stored target; when it equals
+   neither, fail closed as `not-applicable` and require inventory review.
+8. For a legacy record without `baseRemaining`, allow the old fresh-scalar
+   delta calculation on its first attempt only. After an ambiguous first
+   attempt, a retry may acknowledge a visible target but may not calculate or
+   write another delta; otherwise it terminates for review.
+9. Serialize an admitted scalar update on the canonical
+   `bean-inventory:<beanId>` lane, then acknowledge `committed`. The stable
+   operation key remains in the local journal and is not sent as an HTTP
+   header.
+10. On failure, release into retry-wait with bounded exponential backoff.
 
 Admission and settlement are process-local projections over a shared durable
 journal. If volatile promotion finds an older durable record for the same key,
-the first admission's `expectedRemaining` wins; after the original projection
-barrier, the reconciler emits a canonicalization event so the local optimistic
-scalar is rebased before claim or settlement continues. If another browser
-context owns the claim and records the receipt, this context later observes the
-acknowledged tombstone, waits for its own projection barrier, and emits its
-local settlement without issuing a second remote update.
+the first admission's replay payload, including its base and target, wins; after
+the original projection barrier, the reconciler emits a canonicalization event
+so the local optimistic target is rebased before claim or settlement continues.
+If another browser context owns the claim and records the local receipt, this
+context later observes the acknowledged tombstone, waits for its own projection
+barrier, and emits its local settlement without issuing a second remote update.
 
 Claims use lease tokens; an expired worker cannot acknowledge or reschedule a
 record reclaimed by a newer worker. The worker renews its claim after acquiring
@@ -415,12 +422,19 @@ new per-bean record cannot bypass an older per-batch retry during migration.
 Per-aggregate head blocking prevents either direction from overtaking an
 earlier retry, including when deduction and reclaim used different shot IDs.
 
-For a reclaim, the journal's `expectedRemaining` is an acknowledgement
-heuristic, not an absolute write. If a fresh read already matches it, or the bag
-is already at its non-reducing cap, the worker records `already-applied`;
-otherwise it recomputes capped `current + dose` and writes only that scalar.
-This preserves intervening changes serialized through the local lane while
-keeping replay idempotent in the common lost-response case.
+New deductions and reclaims persist `baseRemaining` plus an absolute
+`expectedRemaining` target before their first remote attempt. Every retry uses
+that same evidence: target means acknowledged, base means write the exact
+target, and any other tracked scalar means the bag diverged and automatic work
+must stop for manual review. It never rebases a current record by recomputing a
+fresh `current - dose` or capped `current + dose` delta.
+
+Legacy journal rows may lack `baseRemaining`. They can resolve a delta against a
+fresh scalar on their first attempt for compatibility, but an ambiguous failure
+does not authorize a second write. A later claim acknowledges only when the
+stored target is visible; otherwise it records `not-applicable` and leaves the
+bag for review. Thus legacy ambiguous work is attempted at most once rather
+than repeatedly applying a delta without server replay evidence.
 
 Remote acknowledgement does not publish a whole batch object back into UI
 state. `BeanInventoryController` merges only the resolved remaining-weight
@@ -477,24 +491,32 @@ an explicit degraded mode; the release tablet is required to provide IndexedDB.
 
 ### Exactly-once boundary
 
-The client forwards `Idempotency-Key` on batch creates and updates. True
-cross-device exactly-once behavior requires Reaprime to store and replay a
-receipt for that key. Until the server honors it, Beanie additionally re-reads
-inventory after an apparently failed write. Updates recognize the expected
-remaining weight. Creates first capture an authoritative ID baseline, but a
-failed POST is never promoted from a matching candidate alone: it produces an
-explicit “review stock” outcome, retains the operation's idempotency key, and a
-split transaction does not advance. An identical retry reuses that key, so a
-server replay receipt can resolve the operation without creating a new command.
+Installed Reaprime does not provide a remote idempotency contract for batch
+mutations. Its installed-skin CORS allowlist omits `Idempotency-Key`, so the
+browser deliberately sends no such header, and the server exposes no replay
+receipt that could prove whether a lost request committed. Beanie's stable
+operation keys are local identities: the journal, tombstones, conflict checks,
+and same-operation retries use them, but Reaprime never sees them.
+
+Beanie therefore re-reads inventory after an apparently failed write and uses
+only evidence it can observe. Durable dose updates follow the stored
+`baseRemaining`/absolute-target rules above. Creates first capture an
+authoritative ID baseline, but a failed POST is never promoted from a matching
+candidate alone: it produces an explicit “review stock” outcome, retains the
+local operation identity, and a split transaction does not advance. Repeating
+the same local intent does not manufacture a server receipt or prove that a
+lost POST was deduplicated.
 A partial freeze claims the source bag's remaining-weight intent before it
 queues. Once its per-bean lane begins, it reads the authoritative source and
 rebuilds the split amounts before the first POST; a failed or insufficient
 preflight aborts without creating a portion. This lets an older dose command run
 first without losing grams, while the intent revision prevents its later UI
 settlement—or a newer foreground edit—from overwriting the split projection.
-The read heuristics still cannot prove exactly-once if another device changes
-the same inventory between the lost response and reconciliation. This is an
-explicit external contract gap, not hidden client certainty.
+The local journal and read heuristics still cannot prove exactly-once if
+another device changes the same inventory between the lost response and
+reconciliation. Without a server-side key and replay receipt, devices cannot
+share acknowledgement evidence. This cross-device exactly-once gap is an
+explicit installed-Reaprime constraint, not hidden client certainty.
 
 ### Delete / reclaim boundary
 
@@ -513,9 +535,9 @@ persist pending-shot-delete-reclaim on bean aggregate
 The source key is shot-only
 (`shot-delete-reclaim:v1:<shotId>`), so retrying the same shot with changed
 bean, batch, or dose identity is an idempotency conflict. Its payload keeps the
-first admission's `expectedRemaining` heuristic and occupies the
-`bean-inventory:<beanId>` causal position before DELETE. The exact by-id claim
-deliberately ignores aggregate-head eligibility: DELETE is physically
+first admission's `baseRemaining` and absolute `expectedRemaining` target and
+occupies the `bean-inventory:<beanId>` causal position before DELETE. The exact
+by-id claim deliberately ignores aggregate-head eligibility: DELETE is physically
 serialized by the shot lane while the source record reserves the future
 inventory slot. The claim happens only after acquiring that lane, immediately
 before HTTP dispatch, so it cannot expire while waiting behind another delete.
@@ -537,13 +559,14 @@ This closes the local hard-crash gap:
 - after a successful DELETE or lost response but before handoff, the lease
   eventually expires and the owned retry receives 404, which authorizes the
   atomic handoff;
-- after handoff, the existing dose worker owns the inverse delta and its normal
-  retry/tombstone rules apply.
+- after handoff, the existing dose worker owns the reclaim mutation and its
+  normal base/target retry and tombstone rules apply.
 
 Persistent evidence is mandatory. IndexedDB is preferred and localStorage is
 accepted only under its documented single-context limitation; memory and
 volatile intake fail before DELETE. Missing/untracked bag weight also fails
-before DELETE because the flow cannot create a replay heuristic safely.
+before DELETE because the flow cannot capture base/target replay evidence
+safely.
 Startup reserves every unsettled delete transaction so foreground stock writes
 cannot overtake it, but does **not** overlay `expectedRemaining` until the
 reclaim child exists. One `pendingWork()` snapshot classifies sources and
@@ -555,7 +578,8 @@ synchronously to the child before source waiters are released.
 The first durable shot intent wins. If DELETE is queued and the visible shot is
 submitted again without reclaim, the flow resumes/queues the existing source
 instead of issuing a bare DELETE. It cannot safely cancel after a lost response
-because the shot may already be absent while the inverse delta is still owed.
+because the shot may already be absent while the reclaim mutation is still
+owed.
 A physically conflicting reclaim child is a deterministic invariant failure,
 not a network retry: the source is acknowledged `not-applicable`, the shot
 deletion remains truthful, and the bean is flagged for manual inventory review
