@@ -11,6 +11,7 @@ export interface ClickActionContext {
   field?: string;
   index?: string;
   value?: string;
+  delta?: string;
 }
 
 export type ClickActionHandler = (context: ClickActionContext) => void | Promise<void>;

@@ -1,10 +1,23 @@
 import type { ShotRecord } from '../api/types';
 import { escapeAttr, escapeHtml } from './html';
 import { icon } from './icons';
-
-export const FLOW_CALIBRATION_MIN = 0.13;
-export const FLOW_CALIBRATION_MAX = 2;
-export const FLOW_CALIBRATION_STEP = 0.01;
+import {
+  FLOW_CALIBRATION_MAX,
+  FLOW_CALIBRATION_MIN,
+  FLOW_CALIBRATION_STEP,
+  recordedFlowMultiplier,
+  roundCalibration
+} from '../domain/flowCalibration';
+export {
+  FLOW_CALIBRATION_MAX,
+  FLOW_CALIBRATION_MIN,
+  FLOW_CALIBRATION_STEP,
+  calibrationPreviewFactor,
+  clampCalibration,
+  recordedFlowMultiplier,
+  roundCalibration,
+  shotProfileTitle
+} from '../domain/flowCalibration';
 
 // The flow calibration is a fully manual tool, modelled on the DE1 app's
 // Graphical Flow Calibrator (GFC): pick a past shot pulled on a scale, then use
@@ -13,15 +26,6 @@ export const FLOW_CALIBRATION_STEP = 0.01;
 // other"). There is no automatic suggestion — the machine's estimated volume
 // can't be compared against the cup weight, since some water stays in the puck.
 // Only the flow *rates* are comparable, which is what the chart shows.
-
-// Factor the displayed machine-flow trace is multiplied by. The recorded flow
-// already embeds the multiplier the shot was pulled under (base), so previewing
-// at `draft` means drawing recorded * (draft / base).
-export function calibrationPreviewFactor(baseMultiplier: number, draftMultiplier: number): number {
-  const base = Number.isFinite(baseMultiplier) && baseMultiplier > 0 ? baseMultiplier : 1;
-  const draft = Number.isFinite(draftMultiplier) && draftMultiplier > 0 ? draftMultiplier : base;
-  return draft / base;
-}
 
 export interface FlowCalibratorModel {
   /** The previewed multiplier currently driving the chart. */
@@ -38,7 +42,7 @@ export interface FlowCalibratorModel {
 }
 
 export function renderFlowCalibrator(
-  shots: ShotRecord[],
+  shots: readonly ShotRecord[],
   model: FlowCalibratorModel,
   busy: boolean,
   writable = true
@@ -150,35 +154,6 @@ function renderShotDetail(shot: ShotRecord, model: FlowCalibratorModel, busy: bo
       <small class="flow-cal-control-note">${writable ? `${escapeHtml(formatMultiplier(active))} active on the machine` : 'Read-only until machine calibration and synced preferences are available'}</small>
     </div>
   `;
-}
-
-// The profile title used to key a per-profile override — strictly the recorded
-// profile title (no "No profile" / workflow-name fallback), so an override is
-// only offered when there is a real title to key on and apply against later.
-export function shotProfileTitle(shot: ShotRecord): string | null {
-  const title = shot.workflow?.profile?.title;
-  return typeof title === 'string' && title.trim() !== '' ? title.trim() : null;
-}
-
-export function clampCalibration(value: number): number {
-  return Math.max(FLOW_CALIBRATION_MIN, Math.min(FLOW_CALIBRATION_MAX, value));
-}
-
-export function roundCalibration(value: number): number {
-  return Number(clampCalibration(value).toFixed(2));
-}
-
-// The flow calibration the machine was running when this shot was pulled, if it
-// was recorded. Reaprime snapshots it onto `workflow.machine.flowCalibration`.
-// Returns null for shots without it — callers fall back to an estimate.
-export function recordedFlowMultiplier(shot: ShotRecord): number | null {
-  return coerceMultiplier(shot.workflow?.machine?.flowCalibration);
-}
-
-function coerceMultiplier(value: unknown): number | null {
-  const parsed =
-    typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function hasScaleFlow(shot: ShotRecord): boolean {

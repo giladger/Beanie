@@ -22,6 +22,11 @@ import {
   getSyncedItem,
   setSyncedItem
 } from './settingsStore';
+import type { ShotRecord } from '../api/types';
+
+export const FLOW_CALIBRATION_MIN = 0.13;
+export const FLOW_CALIBRATION_MAX = 2;
+export const FLOW_CALIBRATION_STEP = 0.01;
 
 // Calibration keys that must survive a Beanie cache reset (re-export so the
 // reset-preservation list stays in sync with the storage layer).
@@ -115,4 +120,45 @@ export function setProfileOverride(
     next[title] = sanitized;
   }
   return next;
+}
+
+/** Keep a value inside the DE1 calibration range exposed by the UI. */
+export function clampCalibration(value: number): number {
+  return Math.max(FLOW_CALIBRATION_MIN, Math.min(FLOW_CALIBRATION_MAX, value));
+}
+
+export function roundCalibration(value: number): number {
+  return Number(clampCalibration(value).toFixed(2));
+}
+
+/**
+ * The recorded flow already embeds the multiplier active for the shot. A
+ * preview therefore scales the trace by the ratio between the draft and that
+ * recorded base.
+ */
+export function calibrationPreviewFactor(baseMultiplier: number, draftMultiplier: number): number {
+  const base = Number.isFinite(baseMultiplier) && baseMultiplier > 0 ? baseMultiplier : 1;
+  const draft = Number.isFinite(draftMultiplier) && draftMultiplier > 0 ? draftMultiplier : base;
+  return draft / base;
+}
+
+/** Strict profile identity used by the per-profile override store. */
+export function shotProfileTitle(shot: ShotRecord): string | null {
+  const title = shot.workflow?.profile?.title;
+  return typeof title === 'string' && title.trim() !== '' ? title.trim() : null;
+}
+
+/** Flow multiplier captured by Reaprime on the workflow at shot time. */
+export function recordedFlowMultiplier(shot: ShotRecord): number | null {
+  return coerceMultiplier(shot.workflow?.machine?.flowCalibration);
+}
+
+function coerceMultiplier(value: unknown): number | null {
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim() !== ''
+        ? Number(value)
+        : Number.NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }

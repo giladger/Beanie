@@ -125,6 +125,7 @@ import { TopbarIsland } from './render/topbarIsland';
 import { TopbarProjector, type TopbarViewModel } from './render/topbarPresentation';
 import { ScreensaverIsland } from './render/screensaverIsland';
 import { DerekStreamIsland } from './render/derekStreamIsland';
+import { FlowCalibratorChartSurface } from './components/flowCalibratorChartSurface';
 import { patchProfileRangeValue } from './render/profileEditorIsland';
 import {
   PresentationActivityCoordinator,
@@ -174,9 +175,9 @@ import {
 import { SettingsStoreSync } from './controllers/settingsStoreSync';
 import {
   RecipeApplyController,
-  type RecipeApplyCalibration,
   type RecipeApplyEvent
 } from './controllers/recipeApplyController';
+import { FlowCalibratorFlow } from './controllers/flowCalibratorFlow';
 import {
   backspaceInputDialogValue,
   clearInputDialogValue,
@@ -192,7 +193,7 @@ import {
   type InputDialogState,
   typeInputDialogKey
 } from './components/InputDialog';
-import { renderSettingsShell, type DecentAccountPanelState, type FlowCalibrationDisplay } from './components/SettingsShell';
+import { renderSettingsShell, type DecentAccountPanelState } from './components/SettingsShell';
 import {
   SETTINGS_SPEC,
   coerceFieldValue,
@@ -314,22 +315,6 @@ import { LiveChart } from './components/LiveChart';
 import { chartModelFromShot, overlayComparisonModel } from './components/liveChartModel';
 import type { LiveChartModel } from './domain/liveChartModel';
 import {
-  calibrationPreviewFactor,
-  clampCalibration,
-  recordedFlowMultiplier,
-  renderFlowCalibrator,
-  roundCalibration,
-  shotProfileTitle
-} from './components/flowCalibrator';
-import {
-  readFlowCalibrationGlobal,
-  readFlowCalibrationOverrides,
-  resolveFlowCalibration,
-  setProfileOverride,
-  writeFlowCalibrationGlobal,
-  writeFlowCalibrationOverrides
-} from './domain/flowCalibration';
-import {
   LiveShotSession,
   lastReachedFrame,
   liveShotDurationMs,
@@ -428,6 +413,7 @@ import {
 } from './views/workbenchView';
 import { renderPhoneShell, type PhoneTab } from './views/phoneView';
 import { readShotEditorSubmission } from './components/shotEditorForm';
+import { renderFlowCalibratorPage } from './views/flowCalibratorView';
 import { scoreValueFromTap } from './components/shotScore';
 import { isServiceShot } from './domain/shotRecord';
 import {
@@ -739,10 +725,6 @@ export interface AppState {
   screensaverPhotos: string[];
   applyState: ApplyState;
   appliedSignature: string | null;
-  flowCalDraft: number | null;
-  flowCalBase: number | null;
-  flowCalShotId: string | null;
-  flowCalShots: ShotRecord[];
   cleaning: CleaningState;
   cleaningProfileOverride: string | null;
   cleaningThreshold: number;
@@ -823,6 +805,35 @@ export class BeanieApp {
       setRefillLevel: (level) => gateway.setRefillLevel(level)
     },
     { hasLiveAuthority: () => this.hasLiveMachineAuthority() }
+  );
+  private readonly flowCalibrator = new FlowCalibratorFlow(
+    {
+      runtime: () => ({
+        demo: this.state.demo,
+        settingsLocal: this.settingsLocal,
+        settingsStoreAvailable: this.state.settingsStoreAvailable,
+        calibrationWritable: this.settingsResourceWritable('calibration'),
+        busy: this.state.busy,
+        currentCalibration: this.state.settingsBundle?.calibration.flowMultiplier ?? null,
+        activeProfileTitle:
+          this.state.draft.profileTitle ?? this.state.draft.profile?.title ?? null,
+        currentShots: this.state.shots
+      }),
+      isPageOpen: () => this.state.view === 'flow-calibrator',
+      showPage: () => this.setState({ view: 'flow-calibrator' }),
+      showStatus: (status) => this.setState({ status }),
+      requestRender: () => this.render(),
+      projectMachineCalibration: (value) => {
+        const bundle = this.state.settingsBundle ?? demoSettingsBundle();
+        this.setState({
+          settingsBundle: calibrationBundle(bundle, value),
+          status: `Flow calibration ${value.toFixed(2)}×`
+        });
+      },
+      loadSettings: () => this.loadReaSettings(),
+      loadLatestShots: (limit) => this.loadLatestShotCandidates(limit)
+    },
+    this.machineWorkflowCommands
   );
   private readonly recipeApply = new RecipeApplyController({
     commands: this.machineWorkflowCommands,
@@ -1064,10 +1075,6 @@ export class BeanieApp {
     screensaverPhotos: [],
     applyState: 'idle',
     appliedSignature: null,
-    flowCalDraft: null,
-    flowCalBase: null,
-    flowCalShotId: null,
-    flowCalShots: [],
     cleaning: readCleaningState(),
     cleaningProfileOverride: readCleaningProfileOverride(),
     cleaningThreshold: readCleaningThreshold(),
@@ -1161,6 +1168,7 @@ export class BeanieApp {
     }
   );
   private readonly derekStreamIsland = new DerekStreamIsland();
+  private readonly flowCalibratorChart = new FlowCalibratorChartSurface();
   private readonly presentationActivity = new PresentationActivityCoordinator();
   private readonly appScope = new DisposableScope();
   private readonly shotRefreshTask = new BackgroundTask({
@@ -1329,7 +1337,7 @@ export class BeanieApp {
   // Memoised parse of the active profile's steps for live stage-reason lookups.
   private cachedStepsProfile: Profile | null = null;
   private cachedSteps: EditorStep[] = [];
-  // Cached chart model for the selected history/calibrator shot. Building the
+  // Cached chart model for the selected history shot. Building the
   // model walks the shot's full measurement array, which is too expensive to
   // repeat on every setState re-render. Measurements are immutable once saved,
   // so the cache is keyed by shot id plus the measurements array reference (the
@@ -1348,12 +1356,6 @@ export class BeanieApp {
   private shotStagesChartShotId: string | null = null;
   private shotStagesChartMeasurements: readonly ShotMeasurement[] | null = null;
   private shotStagesChartProfile: Profile | null = null;
-  private calibratorChartCanvas: HTMLCanvasElement | null = null;
-  private calibratorChart: LiveChart | null = null;
-  private calibratorChartShotId: string | null = null;
-  private calibratorChartMeasurements: readonly ShotMeasurement[] | null = null;
-  private calibratorChartProfile: Profile | null = null;
-  private calibratorChartFactor: number | null = null;
   // One-shot: focus the notes textarea on the render right after the modal opens.
   private pendingNotesFocus = false;
   private detailChartShotId: string | null = null;
@@ -1436,6 +1438,7 @@ export class BeanieApp {
     this.presentationActivity.add(this.topbarIsland);
     this.presentationActivity.add(this.liveReadouts);
     this.presentationActivity.add(this.derekStreamIsland);
+    this.presentationActivity.add(this.flowCalibratorChart);
     this.presentationActivity.add(this.chartActivityTarget);
     // Producers are registered after surfaces. Suspension runs in reverse so
     // background work stops before its consumers; resume restores consumers
@@ -1918,6 +1921,8 @@ export class BeanieApp {
     this.scannerFlow.cancelScannerWork();
     this.imageTranscoder.dispose();
     this.profileEditorFlow.dispose();
+    this.flowCalibrator.dispose();
+    this.flowCalibratorChart.dispose();
     this.topbarIsland.dispose();
     this.screensaverIsland.dispose();
     this.derekStreamIsland.dispose();
@@ -1926,11 +1931,9 @@ export class BeanieApp {
     this.liveChart?.dispose();
     this.detailChart?.dispose();
     this.shotStagesChart?.dispose();
-    this.calibratorChart?.dispose();
     this.liveChart = null;
     this.detailChart = null;
     this.shotStagesChart = null;
-    this.calibratorChart = null;
     this.simTimer = null;
   }
 
@@ -2073,6 +2076,7 @@ export class BeanieApp {
         this.settingsAccountPlugins.invalidate();
         this.scannerFlow.cancelScannerWork();
         this.recipeApply.cancel(new Error('Demo authority replaced by gateway data'));
+        this.flowCalibrator.reset();
         this.resetDemoRuntimeForGateway();
       }
       if (projection.resetDemoSettings || projection.settingsRecoveryPending) {
@@ -2826,17 +2830,8 @@ export class BeanieApp {
   private async applyDraft(): Promise<void> {
     const candidate = this.currentRecipeCandidate();
     if (!candidate) return;
-    this.recipeApply.stage(candidate, this.recipeApplyCalibration(candidate));
+    this.recipeApply.stage(candidate, this.flowCalibrator.recipeCalibration(candidate.draft));
     await this.recipeApply.flush();
-  }
-
-  private recipeApplyCalibration(
-    candidate: RecipeCandidate & { draft: RecipeDraft }
-  ): RecipeApplyCalibration | null {
-    const profileTitle = candidate.draft.profileTitle ?? candidate.draft.profile?.title ?? null;
-    const resolved = this.resolveProfileFlowCalibration(profileTitle);
-    if (resolved == null || resolved === this.currentFlowCalibrationMultiplier()) return null;
-    return { target: resolved, persistToMachine: !this.settingsLocal };
   }
 
   private handleRecipeApplyEvent(event: RecipeApplyEvent): void {
@@ -2966,7 +2961,7 @@ export class BeanieApp {
   private scheduleApply(): void {
     const candidate = this.currentRecipeCandidate();
     if (!candidate) return;
-    this.recipeApply.stage(candidate, this.recipeApplyCalibration(candidate));
+    this.recipeApply.stage(candidate, this.flowCalibrator.recipeCalibration(candidate.draft));
   }
 
   private currentRecipeCandidate(): (RecipeCandidate & { draft: RecipeDraft }) | null {
@@ -3245,7 +3240,7 @@ export class BeanieApp {
     }
     const workflow = this.machineWorkflowCommands.desiredOr(this.state.workflow);
     const preparedCalibration = state === 'espresso'
-      ? this.resolveProfileFlowCalibration(workflow?.profile?.title ?? null)
+      ? this.flowCalibrator.resolvedForProfile(workflow?.profile?.title ?? null)
       : null;
     const started = this.machineActions.start({
       state,
@@ -4763,7 +4758,8 @@ export class BeanieApp {
       id: el.dataset.id,
       field: el.dataset.field,
       index: el.dataset.index,
-      value: el.dataset.value
+      value: el.dataset.value,
+      delta: el.dataset.delta
     };
 
     await this.commitActiveBeanPickerFormBeforeAction(el);
@@ -4787,6 +4783,7 @@ export class BeanieApp {
       this.recipeClickActions(),
       this.shotClickActions(),
       this.machineClickActions(),
+      this.flowCalibrator.clickActions(),
       this.settingsClickActions(),
       this.navigationClickActions(),
       this.profileEditorFlow.profileEditorClickActions(),
@@ -5284,8 +5281,7 @@ export class BeanieApp {
     return [
       this.liveChart,
       this.detailChart,
-      this.shotStagesChart,
-      this.calibratorChart
+      this.shotStagesChart
     ];
   }
 
@@ -5515,21 +5511,6 @@ export class BeanieApp {
       },
       'open-settings': () => {
         this.openSettingsPage();
-      },
-      'open-flow-calibrator': () => {
-        this.openFlowCalibrator();
-      },
-      'flow-cal-adjust': ({ el }) => {
-        this.adjustFlowCalibrationDraft(Number(el.dataset.delta ?? '0'));
-      },
-      'flow-cal-save-global': async ({ value }) => {
-        await this.saveFlowCalibrationGlobal(Number(value));
-      },
-      'flow-cal-save-profile': async ({ value }) => {
-        await this.saveFlowCalibrationProfile(Number(value));
-      },
-      'flow-cal-shot': ({ id }) => {
-        if (id) this.selectFlowCalibrationShot(id);
       },
       'settings-section': ({ value }) => {
         if (!value) return;
@@ -7400,7 +7381,7 @@ export class BeanieApp {
       return;
     }
     if (edit.target === 'flow-calibration') {
-      this.setFlowCalibrationDraft(Number(value));
+      this.flowCalibrator.setDraft(Number(value));
       return;
     }
     if (edit.target === 'water-soft') {
@@ -7552,7 +7533,7 @@ export class BeanieApp {
     this.bindLiveElements();
     this.bindDetailChart();
     this.bindShotStagesChart();
-    this.bindCalibratorChart();
+    this.flowCalibratorChart.bind(this.root, this.flowCalibrator.chartProjection());
     this.syncPresentationActivity();
     restoreFocus(this.root, focus);
     this.focusNotesEditor();
@@ -7598,7 +7579,7 @@ export class BeanieApp {
           ['app', 'brew', 'machine', 'power', 'account', 'plugins', 'connection', 'danger'],
           {
             phone: true,
-            flowCalibration: this.flowCalibrationDisplay(),
+            flowCalibration: this.flowCalibrator.settingsDisplay(),
             resourceStates: this.effectiveSettingsResourceStates(),
             syncedPreferencesWritable: this.state.demo || (
               this.state.settingsStoreAvailable && this.hasConnectedGatewayAuthority()
@@ -7711,7 +7692,7 @@ export class BeanieApp {
   private renderPage(): string {
     switch (this.state.view) {
       case 'flow-calibrator':
-        return this.renderFlowCalibratorPage();
+        return renderFlowCalibratorPage(this.flowCalibrator.pageProjection());
       case 'settings':
         return this.renderSettingsPage();
       case 'machine':
@@ -7863,88 +7844,6 @@ export class BeanieApp {
     const model = chartModelFromShot(shot);
     this.compareChartModelCache = { shotId: shot.id, measurements: shot.measurements, profile, model };
     return model;
-  }
-
-  private bindCalibratorChart(): void {
-    if (this.state.view !== 'flow-calibrator') {
-      this.calibratorChart?.dispose();
-      this.calibratorChart = null;
-      this.calibratorChartCanvas = null;
-      this.calibratorChartShotId = null;
-      this.calibratorChartMeasurements = null;
-      this.calibratorChartProfile = null;
-      this.calibratorChartFactor = null;
-      return;
-    }
-    const canvas = this.root.querySelector<HTMLCanvasElement>('#flow-cal-canvas');
-    if (!canvas) {
-      this.calibratorChart?.dispose();
-      this.calibratorChart = null;
-      this.calibratorChartCanvas = null;
-      this.calibratorChartShotId = null;
-      this.calibratorChartMeasurements = null;
-      this.calibratorChartProfile = null;
-      this.calibratorChartFactor = null;
-      return;
-    }
-    const shot = this.flowCalibrationSelectedShot();
-    if (!shot) {
-      this.calibratorChart?.dispose();
-      this.calibratorChart = null;
-      this.calibratorChartCanvas = null;
-      this.calibratorChartShotId = null;
-      this.calibratorChartMeasurements = null;
-      this.calibratorChartProfile = null;
-      this.calibratorChartFactor = null;
-      return;
-    }
-    // Show the two calibration lines — machine flow and scale (weight) flow —
-    // plus pressure for context. Only the machine-flow line is scaled by the
-    // preview multiplier, so −/+ visibly moves it onto the scale line. Scale
-    // from the multiplier the shot was actually pulled under when reaprime
-    // recorded it; otherwise fall back to the open-time estimate.
-    const shotBase = recordedFlowMultiplier(shot) ?? this.flowCalibrationBase();
-    const factor = calibrationPreviewFactor(shotBase, this.flowCalibrationDraft());
-    const profile = shot.workflow?.profile ?? null;
-    const reuse = canvas === this.calibratorChartCanvas && this.calibratorChart != null;
-    if (
-      reuse &&
-      this.calibratorChartShotId === shot.id &&
-      this.calibratorChartMeasurements === shot.measurements &&
-      this.calibratorChartProfile === profile &&
-      this.calibratorChartFactor === factor
-    ) return;
-    const model = this.shotChartModel(shot);
-    const series = model.series
-      .filter((item) => item.key === 'flow' || item.key === 'weightFlow' || item.key === 'pressure')
-      .map((item) => {
-        if (item.key === 'flow') {
-          return {
-            ...item,
-            label: 'Machine flow',
-            shortLabel: 'Machine flow',
-            points: item.points.map((point) => ({ t: point.t, value: point.value * factor }))
-          };
-        }
-        if (item.key === 'weightFlow') {
-          return { ...item, label: 'Scale flow', shortLabel: 'Scale flow' };
-        }
-        return item;
-      });
-    // Reuse the instance while the canvas survives (see bindDetailChart); the
-    // model is re-set every time because the preview factor tracks the draft.
-    if (!reuse) this.calibratorChart?.dispose();
-    const chart = reuse
-      ? this.calibratorChart!
-      : new LiveChart(canvas, { detailed: true, pixelScale: 3, hover: true });
-    this.calibratorChart = chart;
-    this.calibratorChartCanvas = canvas;
-    this.calibratorChartShotId = shot.id;
-    this.calibratorChartMeasurements = shot.measurements;
-    this.calibratorChartProfile = profile;
-    this.calibratorChartFactor = factor;
-    chart.setModel({ ...model, series });
-    chart.invalidate(reuse ? 'model' : 'layout');
   }
 
   private renderStoreErrorOverlay(): string {
@@ -8233,7 +8132,7 @@ export class BeanieApp {
         this.decentAccountPanelState(),
         undefined,
         {
-          flowCalibration: this.flowCalibrationDisplay(),
+          flowCalibration: this.flowCalibrator.settingsDisplay(),
           resourceStates: this.effectiveSettingsResourceStates(),
           syncedPreferencesWritable: this.state.demo || (
             this.state.settingsStoreAvailable && this.hasConnectedGatewayAuthority()
@@ -8242,30 +8141,6 @@ export class BeanieApp {
           machineActionsWritable: this.hasLiveMachineAuthority(),
           scannerKeySet: readGeminiApiKey() != null
         }
-      )}
-    `;
-  }
-
-  private renderFlowCalibratorPage(): string {
-    const shots = this.flowCalibrationShots();
-    const selected = this.flowCalibrationSelectedShot();
-    const profileTitle = selected ? shotProfileTitle(selected) : null;
-    const overrides = readFlowCalibrationOverrides();
-    const override = profileTitle != null && overrides[profileTitle] != null ? roundCalibration(overrides[profileTitle]) : null;
-    return `
-      ${this.pageHeader('Flow Calibrator', 'workbench')}
-      ${renderFlowCalibrator(
-        shots,
-        {
-          draft: this.flowCalibrationDraft(),
-          global: this.globalFlowCalibrationDefault(),
-          active: this.currentFlowCalibrationMultiplier(),
-          profileTitle,
-          profileOverride: override,
-          selectedShotId: selected?.id ?? null
-        },
-        this.state.busy,
-        this.state.demo || (this.state.settingsStoreAvailable && this.settingsResourceWritable('calibration'))
       )}
     `;
   }
@@ -8631,14 +8506,8 @@ export class BeanieApp {
       settingsResources: result.resources,
       status: result.status ?? this.state.status
     });
-    // Ground the per-profile global default from the machine's real calibration
-    // the first time we see it, so profiles without an override keep the user's
-    // existing calibration instead of being reset to 1.0.
-    if (result.source === 'gateway' && this.state.settingsStoreAvailable && readFlowCalibrationGlobal() == null) {
-      const seed = result.bundle.calibration.flowMultiplier;
-      if (typeof seed === 'number' && Number.isFinite(seed) && seed > 0) {
-        writeFlowCalibrationGlobal(roundCalibration(seed));
-      }
+    if (result.source === 'gateway' && this.state.settingsStoreAvailable) {
+      this.flowCalibrator.groundGlobalDefault(result.bundle.calibration.flowMultiplier);
     }
   }
 
@@ -8707,205 +8576,6 @@ export class BeanieApp {
         }
       ])
     ) as SettingsResourceStates;
-  }
-
-  private openFlowCalibrator(): void {
-    this.setState({
-      view: 'flow-calibrator',
-      settingsBundle: this.state.settingsBundle ?? demoSettingsBundle(),
-      settingsSource: this.state.settingsBundle
-        ? this.state.settingsSource
-        : this.state.demo
-          ? 'demo'
-          : 'loading',
-      settingsResources: this.state.settingsResources
-        ?? (this.state.demo ? settingsResourceStates('demo') : null),
-      flowCalDraft: null,
-      flowCalBase: null,
-      flowCalShotId: null,
-      // Seed with the current bean's shots for an instant list, then widen to
-      // every bean's shots — calibration is machine-global, so any shot works.
-      flowCalShots: this.state.shots
-    });
-    void this.loadReaSettings();
-    void this.loadAllCalibrationShots();
-  }
-
-  // Flow calibration spans all beans, not just the selected one. Demo gathers
-  // every demo bean's shots; live reuses the no-bean-filter shot loader.
-  private async loadAllCalibrationShots(): Promise<void> {
-    if (this.state.demo) {
-      const all = demoBeans
-        .flatMap((bean) => demoShotsForBean(bean))
-        .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
-      this.setState({ flowCalShots: all });
-      return;
-    }
-    const shots = await this.loadLatestShotCandidates(40);
-    if (this.state.view !== 'flow-calibrator' || shots.length === 0) return;
-    this.setState({ flowCalShots: shots });
-  }
-
-  private currentFlowCalibrationMultiplier(): number {
-    const value = this.state.settingsBundle?.calibration.flowMultiplier ?? demoSettingsBundle().calibration.flowMultiplier;
-    return roundCalibration(typeof value === 'number' && Number.isFinite(value) ? value : 1);
-  }
-
-  // The global default profiles without an override follow. Persisted locally;
-  // before it has ever been grounded (seeded from the machine in loadReaSettings)
-  // it falls back to the machine's current value.
-  private globalFlowCalibrationDefault(): number {
-    return roundCalibration(readFlowCalibrationGlobal() ?? this.currentFlowCalibrationMultiplier());
-  }
-
-  private flowCalibrationDraft(): number {
-    return this.state.flowCalDraft ?? this.currentFlowCalibrationMultiplier();
-  }
-
-  // The multiplier the displayed shots were pulled under — the saved value as it
-  // was before any change this visit. Frozen on the first edit so applying one
-  // shot doesn't re-scale every other shot's suggestion.
-  private flowCalibrationBase(): number {
-    return roundCalibration(this.state.flowCalBase ?? this.currentFlowCalibrationMultiplier());
-  }
-
-  private setFlowCalibrationDraft(raw: number): void {
-    if (!Number.isFinite(raw)) return;
-    this.setState({
-      flowCalBase: this.state.flowCalBase ?? this.currentFlowCalibrationMultiplier(),
-      flowCalDraft: roundCalibration(raw),
-      status: 'Flow calibration preview'
-    });
-  }
-
-  private adjustFlowCalibrationDraft(delta: number): void {
-    if (!Number.isFinite(delta) || delta === 0) return;
-    this.setFlowCalibrationDraft(this.flowCalibrationDraft() + delta);
-  }
-
-  // All real (non flush/steam/water) shots across every bean, newest first.
-  private flowCalibrationShots(): ShotRecord[] {
-    const all = this.state.flowCalShots.length ? this.state.flowCalShots : this.state.shots;
-    return all.filter((shot) => !isServiceShot(shot));
-  }
-
-  private flowCalibrationSelectedShot(): ShotRecord | null {
-    const shots = this.flowCalibrationShots();
-    return shots.find((shot) => shot.id === this.state.flowCalShotId) ?? shots[0] ?? null;
-  }
-
-  private selectFlowCalibrationShot(id: string): void {
-    if (!this.flowCalibrationShots().some((shot) => shot.id === id)) return;
-    this.setState({ flowCalShotId: id, status: 'Shot selected' });
-  }
-
-  // Save the tuned value as the overridable DEFAULT. Profiles with their own
-  // override are untouched (they still win when used) — only profiles that
-  // follow the default move. The machine re-syncs to the active profile, so a
-  // profile with its own value is never changed by editing the default.
-  private async saveFlowCalibrationGlobal(raw: number): Promise<void> {
-    if (!Number.isFinite(raw)) return;
-    if (!this.state.demo && (!this.state.settingsStoreAvailable || !this.settingsResourceWritable('calibration'))) {
-      this.setState({ status: 'Flow calibration is read-only until live settings are available' });
-      return;
-    }
-    const value = roundCalibration(clampCalibration(raw));
-    writeFlowCalibrationGlobal(value);
-    await this.commitCalibrationConfig(value, 'Default flow calibration saved');
-  }
-
-  // Save the tuned value as an OVERRIDE for the selected shot's profile. A value
-  // equal to the default clears the override (the profile reverts to following
-  // the default). The machine re-syncs to the active profile afterwards.
-  private async saveFlowCalibrationProfile(raw: number): Promise<void> {
-    if (!Number.isFinite(raw)) return;
-    if (!this.state.demo && (!this.state.settingsStoreAvailable || !this.settingsResourceWritable('calibration'))) {
-      this.setState({ status: 'Flow calibration is read-only until live settings are available' });
-      return;
-    }
-    const selected = this.flowCalibrationSelectedShot();
-    const profileTitle = selected ? shotProfileTitle(selected) : null;
-    if (!profileTitle) return;
-    const value = roundCalibration(clampCalibration(raw));
-    const overrides = setProfileOverride(
-      readFlowCalibrationOverrides(),
-      profileTitle,
-      value,
-      this.globalFlowCalibrationDefault()
-    );
-    writeFlowCalibrationOverrides(overrides);
-    const cleared = overrides[profileTitle] == null;
-    await this.commitCalibrationConfig(
-      value,
-      cleared ? `${profileTitle} now follows the default` : `Flow calibration saved for ${profileTitle}`
-    );
-  }
-
-  private activeProfileTitle(): string | null {
-    return this.state.draft?.profileTitle ?? this.state.draft?.profile?.title ?? null;
-  }
-
-  // Resolved flow calibration for the active profile, for the read-only Settings
-  // → Brew readout. Computed fresh from the override store so it stays current
-  // when the profile changes.
-  private flowCalibrationDisplay(): FlowCalibrationDisplay {
-    const profileTitle = this.activeProfileTitle();
-    const { value, source } = resolveFlowCalibration({
-      profileTitle,
-      overrides: readFlowCalibrationOverrides(),
-      globalDefault: this.globalFlowCalibrationDefault()
-    });
-    return { value: roundCalibration(value), origin: source === 'profile' ? 'profile' : 'default', profileTitle };
-  }
-
-  // After changing stored calibration config (the default or an override), sync
-  // the machine to the ACTIVE profile's resolved value. This is what keeps a
-  // profile with its own override from being disturbed by a default change, and
-  // keeps the machine on the loaded profile when saving an override for another.
-  private async commitCalibrationConfig(savedValue: number, status: string): Promise<void> {
-    this.setState({
-      flowCalBase: this.state.flowCalBase ?? this.currentFlowCalibrationMultiplier(),
-      // Keep the view on the value just saved — don't snap the stepper/chart back
-      // to the machine's current (pulled-at) value.
-      flowCalDraft: savedValue
-    });
-    await this.applyProfileFlowCalibration(this.activeProfileTitle());
-    this.setState({ status });
-  }
-
-  // The multiplier a profile should run at: its override else the global default.
-  // Returns null when the global default has never been grounded AND the profile
-  // has no override — so we never reset a machine calibration the user hasn't
-  // opted into managing.
-  private resolveProfileFlowCalibration(profileTitle: string | null): number | null {
-    const overrides = readFlowCalibrationOverrides();
-    const globalDefault = readFlowCalibrationGlobal();
-    if (globalDefault == null) {
-      const title = profileTitle?.trim();
-      const override = title ? overrides[title] : undefined;
-      return override != null ? roundCalibration(override) : null;
-    }
-    return roundCalibration(resolveFlowCalibration({ profileTitle, overrides, globalDefault }).value);
-  }
-
-  // Push the active profile's resolved calibration to the machine when it differs
-  // from what's live — the "changes when that profile is used" behaviour. Called
-  // from applyDraft once the workflow (and thus the profile) has been applied.
-  private async applyProfileFlowCalibration(profileTitle: string | null): Promise<void> {
-    if (!this.settingsResourceWritable('calibration')) return;
-    const resolved = this.resolveProfileFlowCalibration(profileTitle);
-    if (resolved == null || resolved === this.currentFlowCalibrationMultiplier()) return;
-    const bundle = this.state.settingsBundle ?? demoSettingsBundle();
-    this.setState({
-      settingsBundle: { ...bundle, calibration: { ...bundle.calibration, flowMultiplier: resolved } },
-      status: `Flow calibration ${resolved.toFixed(2)}×`
-    });
-    if (this.settingsLocal) return;
-    try {
-      await this.runExactMachineCommand((lane) => lane.updateCalibration(resolved));
-    } catch (error) {
-      console.error('[Beanie] Per-profile flow calibration apply failed', error);
-    }
   }
 
   private async scanDevices(): Promise<void> {
@@ -9178,11 +8848,16 @@ export class BeanieApp {
     const charts = [
       this.liveChart,
       this.detailChart,
-      this.shotStagesChart,
-      this.calibratorChart
+      this.shotStagesChart
     ];
-    if (themeChanged) charts.forEach((chart) => chart?.invalidate('theme'));
-    if (scaleChanged) charts.forEach((chart) => chart?.invalidate('layout'));
+    if (themeChanged) {
+      charts.forEach((chart) => chart?.invalidate('theme'));
+      this.flowCalibratorChart.invalidate('theme');
+    }
+    if (scaleChanged) {
+      charts.forEach((chart) => chart?.invalidate('layout'));
+      this.flowCalibratorChart.invalidate('layout');
+    }
   }
 
   private async resetLocalCache(): Promise<void> {
@@ -9253,10 +8928,6 @@ function demoRecoveryTransientReset(): Partial<AppState> {
     profileDeleteTarget: null,
     formNumbers: {},
     comparePicking: false,
-    flowCalDraft: null,
-    flowCalBase: null,
-    flowCalShotId: null,
-    flowCalShots: [],
     scale: null,
     waterLevel: null,
     liveActive: false,

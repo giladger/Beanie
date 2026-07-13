@@ -260,6 +260,7 @@ Current controller map:
 | `cleaningWizardController.ts` | Cleaning wizard step transitions and action completion. |
 | `derekController.ts` / `derekFlow.ts` | Derek question state, streaming lifecycle, suggestions, and saved-answer restoration. |
 | `doseMutationReconciler.ts` | The single durable inventory outbox owner: startup discovery and legacy-migration gating, pre-DELETE transaction admission/claim/retry/atomic reclaim handoff, shot deductions and released deletion reclaims through one aggregate-head worker, first-admission replay metadata, projection barriers, cross-context tombstone settlement, scalar-only outcomes, and the per-bean inventory lane. |
+| [`flowCalibratorFlow.ts`](../src/controllers/flowCalibratorFlow.ts) | Flow-calibrator session state, saved-shot acquisition, default/profile override actions, recipe/start calibration projections, and calibration writes through the injected `MachineWorkflowCommands` owner. |
 | [`liveShotCompletionFlow.ts`](../src/controllers/liveShotCompletionFlow.ts) | Shot-end routing, remote polling, optimistic fallback, freshness/Derek-context persistence, dose dispatch, and stale/disposal fencing. |
 | `liveShotController.ts` | Pure shot-completion matching, polling primitives, fallback, and routing decisions used by `LiveShotCompletionFlow`. |
 | [`machineActionFlow.ts`](../src/controllers/machineActionFlow.ts) | Physical start/stop admission, repeated dispatch-time safety, and contiguous workflow/calibration/state commands. |
@@ -346,6 +347,7 @@ Examples:
 - `beanPickerView.ts`
 - `profilePickerView.ts`
 - `shotEditorView.ts`
+- `flowCalibratorView.ts`
 - `formsView.ts`
 - `alertsView.ts`
 
@@ -357,6 +359,8 @@ Examples:
 
 - `InputDialog.ts`: reusable numeric/text dialog model/render helpers.
 - `LiveChart.ts`: canvas drawing class.
+- `flowCalibratorChartSurface.ts`: calibrator canvas identity, chart-model
+  caching, suspension, and native chart cleanup.
 - `profileEditor.ts`: profile editor UI session state, field reducers, and
   rendering. Persistent profile decoding and encoding live in
   `domain/profileModel.ts` and are shared by non-UI flows.
@@ -727,6 +731,8 @@ Do not mix profile serialization policy into `BeanieApp`.
 `AppState` lives in `src/app.ts`. New top-level state should be added only when
 it is truly UI/application state. Stateful controllers expose immutable narrow
 snapshots and events; `BeanieApp` projects those into `AppState` and rendering.
+Feature-local sessions such as the flow calibrator keep their draft, selection,
+and loaded-shot state inside their controller instead of expanding `AppState`.
 Controllers that need to read or patch shell-owned state declare their own
 minimal structural interfaces rather than accepting `AppState` or a generic
 `setState` function. This keeps ownership explicit and prevents a controller
