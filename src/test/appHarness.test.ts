@@ -1060,7 +1060,7 @@ await run('a delayed dose settlement merges only remaining weight into newer bat
       batchesByBean: Record<string, Array<{ id: string; roastLevel?: string | null; weightRemaining?: number | null }>>;
     };
     setState(next: Record<string, unknown>): void;
-    adoptSettledDoseAdjustment(settlement: Record<string, unknown>): void;
+    doseDeduction: { adoptSettlement(settlement: Record<string, unknown>): void };
   };
   harness.setState({
     batchesByBean: {
@@ -1068,7 +1068,7 @@ await run('a delayed dose settlement merges only remaining weight into newer bat
     }
   });
 
-  harness.adoptSettledDoseAdjustment({
+  harness.doseDeduction.adoptSettlement({
     entry: {
       adjustment: 'deduction',
       batchId: 'batch-1',
@@ -1101,7 +1101,7 @@ await run('volatile dose promotion rebases the optimistic scalar to first-admiss
       batchesByBean: Record<string, Array<{ id: string; beanId: string; weightRemaining?: number | null }>>;
     };
     setState(next: Record<string, unknown>): void;
-    adoptCanonicalDoseAdjustment(canonicalization: Record<string, unknown>): void;
+    doseDeduction: { adoptCanonicalization(canonicalization: Record<string, unknown>): void };
     beanInventory: {
       reservePendingRemainingWeight(input: Record<string, unknown>): boolean;
       retainPendingRemainingWeight(input: Record<string, unknown>): boolean;
@@ -1121,7 +1121,7 @@ await run('volatile dose promotion rebases the optimistic scalar to first-admiss
     fieldRevision: 0
   });
 
-  harness.adoptCanonicalDoseAdjustment({
+  harness.doseDeduction.adoptCanonicalization({
     idempotencyKey: 'dose-canonical',
     entry: {
       adjustment: 'deduction',
@@ -1160,13 +1160,9 @@ await run('dose journal latency cannot overwrite a newer remaining-weight intent
     };
     inventoryReviewBeanIds: Set<string>;
     setState(next: Record<string, unknown>): void;
-    consumeBatchDoseForShot(
-      bean: { id: string; roaster: string; name: string },
-      batchId: string,
-      dose: number,
-      shotId: string,
-      demo: boolean
-    ): Promise<void>;
+    doseDeduction: {
+      admit(request: Record<string, unknown>): Promise<boolean>;
+    };
     beanInventory: { remainingWeightRevision(): number };
     doseMutationReconciler: { enqueue(): Promise<Awaited<typeof enqueueGate>> };
   };
@@ -1174,7 +1170,9 @@ await run('dose journal latency cannot overwrite a newer remaining-weight intent
   harness.doseMutationReconciler.enqueue = async () => enqueueGate;
   harness.setState({ batchesByBean: { [bean.id]: [batch] } });
 
-  const consuming = harness.consumeBatchDoseForShot(bean, batch.id, 18, 'shot-1', false);
+  const consuming = harness.doseDeduction.admit({
+    bean, batchId: batch.id, doseWeight: 18, shotId: 'shot-1', demo: false
+  });
   await flushAsync();
   revision = 1;
   harness.setState({
@@ -1212,13 +1210,9 @@ await run('graceful disposal drains a dose admission without publishing stale ca
   let disposed = false;
   const harness = app as unknown as {
     setState(next: Record<string, unknown>): void;
-    consumeBatchDoseForShot(
-      bean: { id: string; roaster: string; name: string },
-      batchId: string,
-      dose: number,
-      shotId: string,
-      demo: boolean
-    ): Promise<void>;
+    doseDeduction: {
+      admit(request: Record<string, unknown>): Promise<boolean>;
+    };
     beanInventory: {
       cacheProjection(): Promise<void>;
     };
@@ -1228,7 +1222,9 @@ await run('graceful disposal drains a dose admission without publishing stale ca
   harness.beanInventory.cacheProjection = async () => { cacheWrites += 1; };
   harness.setState({ batchesByBean: { [bean.id]: [batch] } });
 
-  const consuming = harness.consumeBatchDoseForShot(bean, batch.id, 18, 'shot-1', false);
+  const consuming = harness.doseDeduction.admit({
+    bean, batchId: batch.id, doseWeight: 18, shotId: 'shot-1', demo: false
+  });
   await flushAsync();
   const disposing = app.disposeAsync().then(() => { disposed = true; });
   await flushAsync();
@@ -1472,14 +1468,14 @@ await run('terminal not-applicable reclaim corrects optimistic inventory and req
     };
     inventoryReviewBeanIds: Set<string>;
     setState(next: Record<string, unknown>): void;
-    adoptSettledDoseAdjustment(settlement: Record<string, unknown>): void;
+    doseDeduction: { adoptSettlement(settlement: Record<string, unknown>): void };
   };
   harness.setState({
     settingsLoaded: true,
     batchesByBean: { 'bean-1': [batch] }
   });
 
-  harness.adoptSettledDoseAdjustment({
+  harness.doseDeduction.adoptSettlement({
     entry: {
       adjustment: 'reclaim',
       shotId: 'shot-1',
@@ -2564,7 +2560,7 @@ await run('an earlier capped settlement cannot overwrite a later pending scalar'
   const harness = app as unknown as {
     state: { batchesByBean: Record<string, Array<{ weightRemaining: number }>> };
     setState(next: Record<string, unknown>): void;
-    adoptSettledDoseAdjustment(settlement: Record<string, unknown>): void;
+    doseDeduction: { adoptSettlement(settlement: Record<string, unknown>): void };
     beanInventory: {
       reservePendingRemainingWeight(reservation: Record<string, unknown>): void;
       retainPendingRemainingWeight(adjustment: Record<string, unknown>): void;
@@ -2595,7 +2591,7 @@ await run('an earlier capped settlement cannot overwrite a later pending scalar'
     at: '2026-07-12T10:00:00.000Z'
   };
 
-  harness.adoptSettledDoseAdjustment({
+  harness.doseDeduction.adoptSettlement({
     idempotencyKey: 'dose-1',
     entry,
     outcome: 'committed',
@@ -2603,7 +2599,7 @@ await run('an earlier capped settlement cannot overwrite a later pending scalar'
     projectionRevision: 0
   });
   equal(harness.state.batchesByBean['bean-1']?.[0]?.weightRemaining, 100);
-  harness.adoptSettledDoseAdjustment({
+  harness.doseDeduction.adoptSettlement({
     idempotencyKey: 'dose-2',
     entry,
     outcome: 'committed',

@@ -254,12 +254,14 @@ Current controller map:
 | [`beanInventoryController.ts`](../src/controllers/beanInventoryController.ts) | Foreground/UI stock facade and imperative sequencer: per-bean command-lane ownership, field-intent revisions, physical-adjustment reservations/overlays, latest-read and selection revisions, create/update/split execution, and the single serialized inventory-cache publication lane. Existing foreground consumers import the facade rather than its implementation modules. |
 | [`beanInventoryContract.ts`](../src/controllers/beanInventoryContract.ts) | Public inventory ports, snapshots, requests, projections, and discriminated outcomes. It has type-only dependencies and no runtime behavior. |
 | [`beanInventoryPolicy.ts`](../src/controllers/beanInventoryPolicy.ts) | Deterministic inventory projection, rollback, reconciliation, split planning, status, and idempotency-key policy. It does not import the controller facade. |
+| [`beanSelectionFlow.ts`](../src/controllers/beanSelectionFlow.ts) | Bean-selection acquisition, connectivity/provenance fencing, effective-bag reconciliation, recipe-draft scheduling, and explicit shell projections. It delegates token ownership to `BeanWorkflowController` rather than creating another selection state machine. |
 | `beanWorkflowController.ts` | Bean selection plus bean/grinder mutation policy and cache decisions. Batch mutation authority lives in `BeanInventoryController`. |
 | [`cleaningExecutionFlow.ts`](../src/controllers/cleaningExecutionFlow.ts) | Cleaning workflow staging and the one exact machine-lane command that loads and optionally starts it, with explicit completion/authority/cancellation outcomes. |
 | `cleaningWorkflowController.ts` | Cleaning start blockers, cleaning workflow creation/load result, finish/count/profile-pick plans. |
 | `cleaningWizardController.ts` | Cleaning wizard step transitions and action completion. |
 | `derekController.ts` / `derekFlow.ts` | Derek question state, streaming lifecycle, suggestions, and saved-answer restoration. |
 | `doseMutationReconciler.ts` | The single durable inventory outbox owner: startup discovery and legacy-migration gating, pre-DELETE transaction admission/claim/retry/atomic reclaim handoff, shot deductions and released deletion reclaims through one aggregate-head worker, first-admission replay metadata, projection barriers, cross-context tombstone settlement, scalar-only outcomes, and the per-bean inventory lane. |
+| [`doseDeductionAdmissionFlow.ts`](../src/controllers/doseDeductionAdmissionFlow.ts) | Completed-shot dose admission, synchronous stock reservation, absolute base/target journaling, optimistic projection, canonicalization/settlement adoption, and admission drain ownership. It reuses the inventory controller and dose reconciler authorities. |
 | [`flowCalibratorFlow.ts`](../src/controllers/flowCalibratorFlow.ts) | Flow-calibrator session state, saved-shot acquisition, default/profile override actions, recipe/start calibration projections, and calibration writes through the injected `MachineWorkflowCommands` owner. |
 | [`liveShotCompletionFlow.ts`](../src/controllers/liveShotCompletionFlow.ts) | Shot-end routing, remote polling, optimistic fallback, freshness/Derek-context persistence, dose dispatch, and stale/disposal fencing. |
 | `liveShotController.ts` | Pure shot-completion matching, polling primitives, fallback, and routing decisions used by `LiveShotCompletionFlow`. |
@@ -398,9 +400,9 @@ parse a field, call a controller, write a local preference through a domain
 helper, set state, and render.
 
 This is a direction, not a claim that the extraction is finished. `src/app.ts`
-is still roughly 10,000 lines, so it is not yet a comfortably manageable
-composition shell for AI-agent maintenance. The next two high-value vertical
-extractions are:
+is still roughly 8,750 lines, so it is not yet a comfortably manageable
+composition shell for AI-agent maintenance. Two high-value verticals have now
+been extracted:
 
 1. `BeanSelectionFlow`: selection mode/provenance, batch and shot acquisition,
    effective-bag changes, recipe-draft scheduling, and stale selection fencing;
@@ -408,9 +410,9 @@ extractions are:
    reservation, journal admission, optimism/canonicalization, cache projection,
    and reservation release.
 
-Both should expose narrow requests/events and reuse the existing inventory and
-dose authorities. They must not create a second state store, scheduler, or
-journal owner.
+Both expose narrow requests/events and reuse the existing inventory and dose
+authorities. Neither creates a second state store, scheduler, journal, or
+selection-token owner.
 
 ### `src/appShell.ts`
 

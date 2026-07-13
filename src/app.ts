@@ -223,6 +223,7 @@ import {
   beanUsageFromShots,
   beanUsageForBean
 } from './controllers/beanWorkflowController';
+import { BeanSelectionFlow, type BeanSelectionOptions } from './controllers/beanSelectionFlow';
 import {
   BeanInventoryController,
   beanInventoryMutationKey,
@@ -342,11 +343,9 @@ import {
   writePendingDoses
 } from './domain/pendingDoses';
 import {
-  DoseMutationReconciler,
-  type DoseMutationCanonicalization,
-  type DoseMutationSettlement
+  DoseMutationReconciler
 } from './controllers/doseMutationReconciler';
-import { pendingDoseIdempotencyKey } from './domain/mutationOutbox';
+import { DoseDeductionAdmissionFlow } from './controllers/doseDeductionAdmissionFlow';
 import {
 
   type DerekState
@@ -1263,8 +1262,6 @@ export class BeanieApp {
   private selectionRevision = 0;
   /** Forces gateway refreshes after an ambiguous create until a later receipt. */
   private readonly inventoryReviewBeanIds = new Set<string>();
-  /** Caller-side outbox admissions fired from live-shot completion. */
-  private readonly activeDoseAdmissions = new Set<Promise<boolean>>();
   /**
    * Foreground inventory writes stay fail-closed until durable dose work has
    * been discovered and reserved in this process. Reads/bootstrap must not
@@ -1296,6 +1293,57 @@ export class BeanieApp {
       putBeanBatches: (beanId, batches) => beanieCache.putBeanBatches(beanId, batches)
     }
   );
+  private readonly beanSelection = new BeanSelectionFlow(
+    {
+      workflow: this.beanWorkflow, inventory: this.beanInventory,
+      writeLastBeanId,
+      cancelRecipeApply: (reason) => this.recipeApply.cancel(reason),
+      loadBatches: (bean, allowWrites, resolveRevision) => this.loadBatches(bean, allowWrites, resolveRevision),
+      loadFirstShots: (bean, batch) => this.loadFirstShots(bean, batch),
+      workflowMatchesBean: (bean, batches) => this.workflowMatchesBean(bean, batches),
+      applyDraft: () => this.applyDraft()
+    },
+    {
+      snapshot: () => ({
+        beans: this.state.beans, workflow: this.state.workflow, profiles: this.state.profiles,
+        grinders: this.state.grinders, draft: this.state.draft,
+        selectedBeanId: this.state.selectedBeanId, busy: this.state.busy,
+        demo: this.state.demo, connected: this.state.startupPhase === 'connected',
+        inventoryJournalReady: this.inventoryJournalReady, disposed: this.disposed,
+        authorityRevision: this.startupAuthorityRevision, provenanceRevision: this.runtimeProvenanceRevision
+      }),
+      commit: (event) => {
+        if (event.type === 'started') this.setState({ ...event.state, derekTweakChip: null });
+        else if (event.type === 'released') this.setState({ busy: false });
+        else this.setState({
+          ...event.state,
+          appliedSignature: workflowSignature(this.state.workflow),
+          batchesByBean: { ...this.state.batchesByBean, [event.beanId]: [...event.batches] },
+          beanUsageAt: { ...this.state.beanUsageAt, ...event.beanUsageAt }
+        });
+      }
+    }
+  );
+  private readonly doseDeduction = new DoseDeductionAdmissionFlow(
+    {
+      inventory: this.beanInventory, now: () => new Date(),
+      enqueue: (input) => this.doseMutationReconciler.enqueue(input),
+      applyDemoDeduction: ({ bean, batchId, weightRemaining, status }) => this.saveBatchStoragePatch(
+        bean, batchId, { beanId: bean.id, weightRemaining }, status)
+    },
+    {
+      snapshot: () => ({ batchesByBean: this.state.batchesByBean, disposed: this.disposed }),
+      commit: (event) => {
+        if (event.type === 'projection')
+          this.adoptInventoryProjection(event.projection, event.status ? { status: event.status } : {});
+        else if (event.type === 'review-required') this.inventoryReviewBeanIds.add(event.beanId);
+        else {
+          console.error('[Beanie] Could not journal dose deduction', event.error);
+          this.setState({ status: event.status });
+        }
+      }
+    }
+  );
   private readonly liveShotCompletion = new LiveShotCompletionFlow({
     delay,
     invalidateShotPages: async () => {
@@ -1313,7 +1361,7 @@ export class BeanieApp {
       batchesByBean: this.state.batchesByBean
     }),
     consumeDose: ({ bean, batch, doseWeight, shotId, demo }) =>
-      this.consumeBatchDoseForShot(bean, batch.id, doseWeight, shotId, demo),
+      this.doseDeduction.admit({ bean, batchId: batch.id, doseWeight, shotId, demo }),
     readPendingTweak: () => readPendingDerekTweak(),
     clearPendingTweak: () => clearPendingDerekTweak(),
     serializeShotMutation: (shotId, run) => this.runExactCommand(`shot:${shotId}`, run),
@@ -1550,8 +1598,8 @@ export class BeanieApp {
       clearLegacy: () => writePendingDoses([]),
       now: () => new Date(),
       onAdjustmentCanonicalized: (canonicalization) =>
-        this.adoptCanonicalDoseAdjustment(canonicalization),
-      onAdjustmentSettled: (settlement) => this.adoptSettledDoseAdjustment(settlement),
+        this.doseDeduction.adoptCanonicalization(canonicalization),
+      onAdjustmentSettled: (settlement) => this.doseDeduction.adoptSettlement(settlement),
       onRetryScheduled: () => {
         if (!this.disposed) this.setState({ status: 'Bag update failed — will retry' });
       },
@@ -1885,7 +1933,7 @@ export class BeanieApp {
     this.recipeApply.dispose();
     this.machineService.dispose();
     const deletionDrain = this.shotDeletionFlow.disposeAndWait();
-    const doseAdmissionDrain = Promise.allSettled([...this.activeDoseAdmissions]);
+    const doseAdmissionDrain = this.doseDeduction.disposeAndWait();
     // The shared journal and exact gateway lanes remain live until an admitted
     // DELETE can atomically release its reclaim and every dose admission/claim
     // has drained. Disposing the command coordinator earlier would strand a
@@ -2255,176 +2303,9 @@ export class BeanieApp {
     if (Object.keys(next).length > 0) this.setState(next);
   }
 
-  private async selectBean(
-    beanId: string,
-    options: {
-      apply: boolean;
-      preferWorkflow: boolean;
-      preferredBatchId?: string | null;
-      /** Internal selection mode to preserve while reloading a changed effective bag. */
-      selectedBatchIdOverride?: string | null;
-      remember?: boolean;
-      allowMaintenanceWrites?: boolean;
-    }
-  ): Promise<void> {
-    const authorityRevision = this.startupAuthorityRevision;
-    const provenanceRevision = this.runtimeProvenanceRevision;
-    const selectionProjectionRevisionAtStart =
-      this.beanInventory.latestProjection(beanId)?.selectionRevision ?? 0;
-    let loadedProjectionRevision = this.beanInventory.cacheRevision(beanId);
-    const startedInDemo = this.state.demo;
-    const canApply = options.apply && (this.state.demo || this.state.startupPhase === 'connected');
-    const canPersistSelection = options.remember ?? this.state.startupPhase === 'connected';
-    const allowMaintenanceWrites = (options.allowMaintenanceWrites ??
-      this.state.startupPhase === 'connected') && this.inventoryJournalReady;
-    const selection = this.beanWorkflow.beginBeanSelection(beanId, this.state.beans, {
-      writeLastBeanId: canPersistSelection ? writeLastBeanId : () => {}
-    });
-    if (!selection) return;
-    this.recipeApply.cancel(new Error(`Superseded by bean selection ${beanId}`));
-    // A staged Derek tweak belongs to the bean it was suggested for.
-    this.setState({ ...selection.state, derekTweakChip: null });
-
-    const result = await this.beanWorkflow.completeBeanSelection({
-      selection,
-      options: {
-        preferWorkflow: options.preferWorkflow,
-        ...(Object.prototype.hasOwnProperty.call(options, 'preferredBatchId')
-          ? { preferredBatchId: options.preferredBatchId }
-          : {})
-      },
-      beans: this.state.beans,
-      workflow: this.state.workflow,
-      profiles: this.state.profiles,
-      grinders: this.state.grinders,
-      fallbackDraft: this.state.draft,
-      loadBatches: async (selected) => {
-        return this.loadBatches(
-          selected,
-          allowMaintenanceWrites,
-          (revision) => { loadedProjectionRevision = revision; }
-        );
-      },
-      loadFirstShots: (selected, selectedBatch) => this.loadFirstShots(selected, selectedBatch),
-      isCurrent: (current) =>
-        this.beanWorkflow.isCurrentBeanSelection(current) &&
-        this.state.selectedBeanId === current.bean.id,
-      workflowMatchesBean: (selected, batches) => this.workflowMatchesBean(selected, batches)
-    });
-    if (result.type === 'stale') return;
-    if (
-      this.disposed ||
-      provenanceRevision !== this.runtimeProvenanceRevision ||
-      (!startedInDemo && authorityRevision !== this.startupAuthorityRevision)
-    ) {
-      if (
-        this.beanWorkflow.isCurrentBeanSelection(selection) &&
-        this.state.selectedBeanId === selection.bean.id &&
-        this.state.busy
-      ) {
-        this.setState({ busy: false });
-      }
-      return;
-    }
-    const latestProjection = this.beanInventory.latestProjection(result.bean.id);
-    const latestSelectedBatchId = latestProjection &&
-      Object.prototype.hasOwnProperty.call(latestProjection.projection, 'selectedBatchId')
-      ? latestProjection.projection.selectedBatchId ?? null
-      : undefined;
-    const latestBatchesWon = Boolean(
-      latestProjection && latestProjection.revision > loadedProjectionRevision
-    );
-    const committedBatches = latestBatchesWon
-      ? [...latestProjection!.projection.batches]
-      : [...result.batches];
-    let winningSelectedBatchId = result.selectedBatch?.id ?? null;
-    let winningSelectionMode: string | null | undefined;
-    if (
-      latestProjection?.selectionRevision != null &&
-      latestProjection.selectionRevision > selectionProjectionRevisionAtStart &&
-      latestSelectedBatchId !== undefined
-    ) {
-      winningSelectionMode = latestSelectedBatchId;
-      const explicitlySelected = latestSelectedBatchId
-        ? committedBatches.find((batch) => batch.id === latestSelectedBatchId) ?? null
-        : null;
-      winningSelectedBatchId = explicitlySelected && !isFinishedBatch(explicitlySelected)
-        ? explicitlySelected.id
-        : latestBatch(committedBatches.filter(isUsableBatch))?.id ??
-          latestBatch(committedBatches)?.id ??
-          null;
-    } else if (latestBatchesWon) {
-      const resultBatch = result.selectedBatch
-        ? committedBatches.find((batch) => batch.id === result.selectedBatch?.id) ?? null
-        : null;
-      const selectionWasExplicit = Object.prototype.hasOwnProperty.call(
-        options,
-        'preferredBatchId'
-      );
-      if (
-        (resultBatch && isFinishedBatch(resultBatch)) ||
-        (result.selectedBatch && !resultBatch) ||
-        (!result.selectedBatch && !selectionWasExplicit && committedBatches.length > 0)
-      ) {
-        winningSelectedBatchId =
-          latestBatch(committedBatches.filter(isUsableBatch))?.id ??
-          latestBatch(committedBatches)?.id ??
-          null;
-      }
-    }
-    if (winningSelectedBatchId !== (result.selectedBatch?.id ?? null)) {
-      // A finish/create projection changed the effective bag while shots for
-      // the prior bag were loading. Restart the selection so shots and draft
-      // provenance match the winning bag instead of only swapping its id.
-      await this.selectBean(result.bean.id, {
-        ...options,
-        preferredBatchId: winningSelectedBatchId,
-        ...(winningSelectionMode === undefined
-          ? {}
-          : { selectedBatchIdOverride: winningSelectionMode }),
-        remember: false,
-        allowMaintenanceWrites
-      });
-      return;
-    }
-    const committedSelectedBatchId = winningSelectionMode !== undefined
-      ? winningSelectionMode
-      : Object.prototype.hasOwnProperty.call(options, 'selectedBatchIdOverride')
-        ? options.selectedBatchIdOverride ?? null
-      : result.selectedBatch &&
-          committedBatches.some((candidate) => candidate.id === result.selectedBatch?.id)
-        ? result.selectedBatch.id
-        : null;
-
-    this.setState({
-      batchesByBean: { ...this.state.batchesByBean, [result.bean.id]: committedBatches },
-      selectedBatchId: committedSelectedBatchId,
-      shots: result.shots,
-      shotsTotal: result.shotsTotal,
-      shotsLoadingMore: false,
-      compareShotId: null,
-      comparePicking: false,
-      beanUsageAt: {
-        ...this.state.beanUsageAt,
-        ...result.beanUsageAt
-      },
-      draft: result.draft,
-      busy: false,
-      applyState: 'idle',
-      appliedSignature: workflowSignature(this.state.workflow),
-      status: options.apply && !canApply ? 'Coffee selected; recipe is read-only until live data reconnects' : result.status
-    });
-    this.beanInventory.rememberSelectionProjection(
-      result.bean.id,
-      committedBatches,
-      committedSelectedBatchId
-    );
-
-    if (canApply) {
-      await this.applyDraft();
-    }
+  private selectBean(beanId: string, options: BeanSelectionOptions): Promise<void> {
+    return this.beanSelection.select(beanId, options).then(() => {});
   }
-
   private async loadBatches(
     bean: Bean,
     allowMaintenanceWrites = this.state.startupPhase === 'connected',
@@ -4503,134 +4384,6 @@ export class BeanieApp {
     }
   }
 
-  // A pulled shot consumes its dose from the bag it was brewed from, so the
-  // remaining weight tracks itself; bags without a tracked weight are left alone.
-  private consumeBatchDoseForShot(
-    bean: Bean,
-    batchId: string,
-    doseWeight: number | null | undefined,
-    shotId: string | null,
-    demo: boolean
-  ): Promise<boolean> {
-    const execution = this.runBatchDoseForShot(bean, batchId, doseWeight, shotId, demo);
-    let tracked: Promise<boolean>;
-    tracked = execution.finally(() => this.activeDoseAdmissions.delete(tracked));
-    this.activeDoseAdmissions.add(tracked);
-    return tracked;
-  }
-
-  private async runBatchDoseForShot(
-    bean: Bean,
-    batchId: string,
-    doseWeight: number | null | undefined,
-    shotId: string | null,
-    demo: boolean
-  ): Promise<boolean> {
-    const dose = positiveNumber(doseWeight);
-    if (dose == null || !shotId) return false;
-    const batch = (this.state.batchesByBean[bean.id] ?? []).find((item) => item.id === batchId);
-    const remaining = positiveNumber(batch?.weightRemaining);
-    if (!batch || remaining == null) return false;
-    const next = Math.max(0, round(remaining - dose, 1));
-    if (demo) {
-      await this.saveBatchStoragePatch(
-        bean,
-        batch.id,
-        { beanId: bean.id, weightRemaining: next },
-        `Bag: ${formatGrams(next)} left`
-      );
-      return true;
-    }
-
-    const at = new Date().toISOString();
-    const projectionRevision = this.beanInventory.remainingWeightRevision(batch.id);
-    const idempotencyKey = pendingDoseIdempotencyKey(shotId, batch.id);
-    const reservationCreated = this.beanInventory.reservePendingRemainingWeight({
-      idempotencyKey,
-      beanId: bean.id,
-      batchId: batch.id,
-      fieldRevision: projectionRevision
-    });
-    let settlementPending = false;
-    try {
-      // Journal before the first network attempt. A process death anywhere
-      // after this await leaves a reclaimable command rather than lost beans.
-      const queued = await this.doseMutationReconciler.enqueue({
-        shotId,
-        batchId: batch.id,
-        beanId: bean.id,
-        dose,
-        baseRemaining: remaining,
-        expectedRemaining: next,
-        projectionRevision,
-        at
-      });
-      settlementPending = queued.settlementPending;
-      if (!queued.settlementPending) {
-        this.beanInventory.releasePendingRemainingWeight(idempotencyKey);
-        // An acknowledged tombstone will never emit settlement again. Force a
-        // fresh inventory hydration instead of trusting a possibly older cache.
-        this.inventoryReviewBeanIds.add(bean.id);
-      }
-      const admittedRemaining = queued.expectedRemaining;
-      if (!queued.inserted && queued.settlementPending) {
-        this.inventoryReviewBeanIds.add(bean.id);
-        if (remaining === admittedRemaining) {
-          this.beanInventory.retainPendingRemainingWeight({
-            idempotencyKey: queued.idempotencyKey,
-            beanId: bean.id,
-            batchId: batch.id,
-            expectedRemaining: admittedRemaining,
-            fieldRevision: projectionRevision
-          });
-        }
-      }
-      try {
-        const currentBatches = this.state.batchesByBean[bean.id] ?? [];
-        const currentBatch = currentBatches.find((item) => item.id === batch.id);
-        const stillOwnsProjection =
-          !this.disposed &&
-          this.beanInventory.remainingWeightRevision(batch.id) === projectionRevision &&
-          currentBatch?.weightRemaining === remaining;
-        if (queued.inserted && stillOwnsProjection) {
-          const batches = currentBatches.map((item) =>
-            item.id === batch.id ? { ...item, weightRemaining: admittedRemaining } : item
-          );
-          this.beanInventory.retainPendingRemainingWeight({
-            idempotencyKey: queued.idempotencyKey,
-            beanId: bean.id,
-            batchId: batch.id,
-            expectedRemaining: admittedRemaining,
-            fieldRevision: projectionRevision
-          });
-          this.setState({
-            batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
-            status: queued.durability === 'indexeddb' || queued.durability === 'local-storage'
-              ? `Bag: ${formatGrams(admittedRemaining)} left`
-              : `Bag: ${formatGrams(admittedRemaining)} left — device storage unavailable`
-          });
-          void this.beanInventory.cacheProjection({
-            beanId: bean.id,
-            batches,
-            shouldScheduleApply: false
-          });
-        } else if (queued.inserted && !stillOwnsProjection && !this.disposed) {
-          this.inventoryReviewBeanIds.add(bean.id);
-        }
-      } finally {
-        queued.releaseProjection();
-      }
-      return true;
-    } catch (error) {
-      if (reservationCreated && !settlementPending) {
-        this.beanInventory.releasePendingRemainingWeight(idempotencyKey);
-      }
-      console.error('[Beanie] Could not journal dose deduction', error);
-      this.setState({ status: 'Bag update could not be queued' });
-      return false;
-    }
-  }
-
   // A deleted bag resolves to null (the deduction is moot); anything else —
   // network down, gateway error — throws so the caller keeps the entry queued.
   private async batchForPendingDose(batchId: string): Promise<BeanBatch | null> {
@@ -4640,61 +4393,6 @@ export class BeanieApp {
       if (error instanceof GatewayRequestError && error.issue.statusCode === 404) return null;
       throw error;
     }
-  }
-
-  private adoptSettledDoseAdjustment(settlement: DoseMutationSettlement): void {
-    if (this.disposed) {
-      this.beanInventory.releasePendingRemainingWeight(settlement.idempotencyKey);
-      return;
-    }
-    const hasLaterPendingAdjustment = this.beanInventory.hasPendingRemainingWeightAfter(
-      settlement.idempotencyKey,
-      settlement.entry.beanId,
-      settlement.entry.batchId
-    );
-    const projection = hasLaterPendingAdjustment || settlement.entry.expectedRemaining == null
-      ? null
-      : this.beanInventory.reconcileRemainingWeight({
-          beanId: settlement.entry.beanId,
-          batchId: settlement.entry.batchId,
-          expectedCurrent: settlement.entry.expectedRemaining,
-          resolvedRemaining: settlement.resolvedRemaining,
-          fieldRevision: settlement.projectionRevision
-        });
-    this.beanInventory.releasePendingRemainingWeight(settlement.idempotencyKey);
-    if (projection) this.adoptInventoryProjection(projection);
-    if (
-      settlement.outcome === 'not-applicable' ||
-      (!projection && !hasLaterPendingAdjustment)
-    ) {
-      // A skipped/stale optimistic scalar cannot safely absorb the durable
-      // worker's absolute result. Retain a refresh obligation so the next bag
-      // inspection reconciles fresh authority rather than hiding divergence.
-      this.inventoryReviewBeanIds.add(settlement.entry.beanId);
-    }
-  }
-
-  private adoptCanonicalDoseAdjustment(
-    canonicalization: DoseMutationCanonicalization
-  ): void {
-    if (this.disposed) return;
-    const projection = this.beanInventory.reconcileRemainingWeight({
-      beanId: canonicalization.entry.beanId,
-      batchId: canonicalization.entry.batchId,
-      expectedCurrent: canonicalization.projectedExpectedRemaining,
-      resolvedRemaining: canonicalization.entry.expectedRemaining,
-      fieldRevision: canonicalization.projectionRevision
-    });
-    this.beanInventory.retainPendingRemainingWeight({
-      idempotencyKey: canonicalization.idempotencyKey,
-      beanId: canonicalization.entry.beanId,
-      batchId: canonicalization.entry.batchId,
-      expectedRemaining: canonicalization.entry.expectedRemaining,
-      fieldRevision: canonicalization.projectionRevision ??
-        this.beanInventory.remainingWeightRevision(canonicalization.entry.batchId)
-    });
-    if (projection) this.adoptInventoryProjection(projection);
-    else this.inventoryReviewBeanIds.add(canonicalization.entry.beanId);
   }
 
   // Demo affordance: replay a deterministic simulated shot at real-time pacing so
