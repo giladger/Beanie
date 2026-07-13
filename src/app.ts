@@ -287,15 +287,10 @@ import {
   updateSteamPurgeModeAndReadBack
 } from './controllers/machineSettingsWorkflowController';
 import {
-  buildPluginSettingsSavePlan,
-  createPluginConfigState,
-  normalizePluginId,
-  pluginSettingsSpec,
   rebasePluginSettingsPayload,
-  settlePluginSettingsSave,
-  type PluginConfigState,
-  type SanitizedPluginSettings
+  type PluginConfigState
 } from './domain/pluginSettings';
+import { SettingsAccountPluginFlow } from './controllers/settingsAccountPluginFlow';
 import {
   createProfileEditorState,
   renderEditorModeBar,
@@ -797,14 +792,15 @@ function profileStepNames(profile: Profile | null): string[] {
   });
 }
 
-
-function accountLoginErrorMessage(error: GatewayRequestError): string {
+function accountLoginErrorMessage(error: unknown): string {
+  if (!(error instanceof GatewayRequestError)) return 'Could not link Decent account.';
   if (error.issue.statusCode === 401) return 'Invalid Decent account email or password.';
   if (error.issue.statusCode === 404) return 'This Reaprime build does not expose account linking to Beanie.';
   if (error.issue.kind === 'network') return 'Could not reach the gateway.';
   const detail = error.issue.message.match(/returned \d+:\s*(.+)$/)?.[1]?.trim();
   return detail || 'Could not link Decent account.';
 }
+
 
 function isPhoneTab(value: string | undefined): value is PhoneTab {
   return value === 'home' || value === 'scan' || value === 'beans' || value === 'shots' || value === 'settings';
@@ -1099,6 +1095,27 @@ export class BeanieApp {
     derekTweakChip: null
   };
 
+  private readonly settingsAccountPlugins = new SettingsAccountPluginFlow(
+    this.settingsController,
+    this.settingsMutations,
+    {
+      snapshot: () => ({
+        demo: this.state.demo,
+        settingsSource: this.state.settingsSource,
+        settingsBundle: this.state.settingsBundle,
+        pluginConfig: this.state.pluginConfig,
+        decentAccount: this.state.decentAccount,
+        decentAccountSource: this.state.decentAccountSource,
+        decentAccountEmail: this.state.decentAccountEmail,
+        decentAccountPassword: this.state.decentAccountPassword
+      }),
+      commit: (patch) => this.setState(patch),
+      pluginsWritable: () => this.settingsResourceWritable('plugins'),
+      applyMutation: (start) => this.applySettingsMutation(start),
+      accountLoginErrorMessage
+    }
+  );
+
   // Derek's modal/ask/apply flow lives in its own vertical (src/controllers/derekFlow.ts).
   private readonly derekFlow: DerekFlow;
   // The label scanner's capture/extract/review flow (src/controllers/scannerFlow.ts).
@@ -1208,7 +1225,6 @@ export class BeanieApp {
   private beanRefreshInFlight = false;
   private beanUsageRefreshRequestId = 0;
   private shotCacheGeneration = 0;
-  private pluginConfigSession = 0;
   /** Fences async inventory projections across selection ABA/user intent. */
   private selectionRevision = 0;
   /** Forces gateway refreshes after an ambiguous create until a later receipt. */
@@ -2027,7 +2043,7 @@ export class BeanieApp {
         this.settingsLoadPromise = null;
         this.settingsBundleLoadGeneration += 1;
         this.settingsBundleLoadPromise = null;
-        this.pluginConfigSession += 1;
+        this.settingsAccountPlugins.invalidate();
         this.scannerFlow.cancelScannerWork();
         this.recipeApply.cancel(new Error('Demo authority replaced by gateway data'));
         this.resetDemoRuntimeForGateway();
@@ -6185,13 +6201,13 @@ export class BeanieApp {
         await this.loadReaSettings();
       },
       'settings-plugin-config': async ({ id }) => {
-        if (id) await this.togglePluginConfig(id);
+        if (id) await this.settingsAccountPlugins.togglePluginConfig(id);
       },
       'settings-plugin-save': async ({ id }) => {
-        if (id) await this.savePluginConfig(id);
+        if (id) await this.settingsAccountPlugins.savePluginConfig(id);
       },
       'settings-plugin-verify': async ({ id }) => {
-        if (id) await this.verifyPluginConfig(id);
+        if (id) await this.settingsAccountPlugins.verifyPluginConfig(id);
       },
       'settings-change-scanner-key': async () => {
         await this.scannerFlow.openLabelScanner();
@@ -6207,13 +6223,13 @@ export class BeanieApp {
         this.setState({ status: 'Gemini key removed from this device' });
       },
       'settings-account-login': async () => {
-        await this.loginDecentAccount();
+        await this.settingsAccountPlugins.loginAccount();
       },
       'settings-account-logout': async () => {
-        await this.logoutDecentAccount();
+        await this.settingsAccountPlugins.logoutAccount();
       },
       'settings-account-refresh': async () => {
-        await this.refreshDecentAccount();
+        await this.settingsAccountPlugins.refreshAccount();
       },
       'settings-scan-devices': async () => {
         await this.scanDevices();
@@ -6307,7 +6323,7 @@ export class BeanieApp {
         ?? (this.state.demo ? settingsResourceStates('demo') : null)
     });
     void this.loadReaSettings();
-    void this.loadDecentAccount();
+    void this.settingsAccountPlugins.loadAccount();
   }
 
   private openSettingsForPhone(): void {
@@ -6322,7 +6338,7 @@ export class BeanieApp {
         ?? (this.state.demo ? settingsResourceStates('demo') : null)
     });
     void this.loadReaSettings();
-    void this.loadDecentAccount();
+    void this.settingsAccountPlugins.loadAccount();
   }
 
   private navigationClickActions(): Record<string, ClickActionHandler> {
@@ -6489,7 +6505,7 @@ export class BeanieApp {
       this.setState({ derek: { ...this.state.derek, question: target.value } });
     }
     if (target.dataset.action === 'settings-account-field') {
-      this.updateDecentAccountField(target.dataset.key ?? '', target.value);
+      this.settingsAccountPlugins.updateAccountField(target.dataset.key ?? '', target.value);
     }
     if (target.dataset.action === 'bean-picker-batch-field-draft') {
       const beanId = target.closest<HTMLFormElement>('form')?.dataset.beanId;
@@ -6781,12 +6797,15 @@ export class BeanieApp {
       return;
     }
     if (target.dataset.action === 'settings-plugin-toggle') {
-      void this.togglePlugin(target.dataset.id ?? '', (target as HTMLInputElement).checked);
+      void this.settingsAccountPlugins.togglePlugin(
+        target.dataset.id ?? '',
+        (target as HTMLInputElement).checked
+      );
       return;
     }
     if (target.dataset.action === 'settings-plugin-field') {
       const raw = target instanceof HTMLInputElement && target.type === 'checkbox' ? target.checked : target.value;
-      this.updatePluginField(target.dataset.key ?? '', raw);
+      this.settingsAccountPlugins.updatePluginField(target.dataset.key ?? '', raw);
       return;
     }
     if (target.dataset.action === 'settings-schedule-toggle') {
@@ -8018,7 +8037,7 @@ export class BeanieApp {
       return;
     }
     if (edit.target === 'settings-plugin-field' && edit.key) {
-      this.updatePluginField(edit.key, value);
+      this.settingsAccountPlugins.updatePluginField(edit.key, value);
       return;
     }
     if (edit.target === 'display-brightness') {
@@ -9822,251 +9841,6 @@ export class BeanieApp {
       local: this.settingsLocal,
       writable: this.settingsResourceWritable('schedules')
     }));
-  }
-
-  private async loadDecentAccount(): Promise<void> {
-    if (this.state.decentAccountSource === 'gateway' || this.state.decentAccountSource === 'demo') return;
-    if (!this.state.demo && !this.settingsLocal) this.setState({ decentAccountSource: 'loading' });
-    const result = await this.settingsController.loadDecentAccount({
-      local: this.state.demo || this.settingsLocal,
-      currentEmail: this.state.decentAccountEmail
-    });
-    this.setState({
-      decentAccount: result.account,
-      decentAccountSource: result.source,
-      decentAccountEmail: result.email,
-      decentAccountPassword: '',
-      decentAccountSaving: false,
-      decentAccountMessage: result.message
-    });
-  }
-
-  private async refreshDecentAccount(): Promise<void> {
-    this.setState({
-      decentAccountSaving: true,
-      decentAccountSource: this.state.decentAccountSource === 'gateway' || this.state.decentAccountSource === 'demo'
-        ? null
-        : this.state.decentAccountSource,
-      decentAccountMessage: { tone: 'muted', text: 'Refreshing Decent account status...' }
-    });
-    await this.loadDecentAccount();
-  }
-
-  private updateDecentAccountField(key: string, value: string): void {
-    if (key === 'email') {
-      this.setState({ decentAccountEmail: value, decentAccountMessage: null });
-      return;
-    }
-    if (key === 'password') {
-      this.setState({ decentAccountPassword: value, decentAccountMessage: null });
-    }
-  }
-
-  private async loginDecentAccount(): Promise<void> {
-    const email = this.state.decentAccountEmail.trim();
-    const password = this.state.decentAccountPassword;
-    if (!email || !password) {
-      this.setState({
-        decentAccountMessage: { tone: 'warn', text: 'Enter both email and password.' }
-      });
-      return;
-    }
-    this.setState({
-      decentAccountSaving: true,
-      decentAccountMessage: { tone: 'muted', text: 'Linking Decent account...' }
-    });
-    try {
-      const result = await this.settingsController.loginDecentAccount({
-        local: this.state.demo || this.settingsLocal,
-        email,
-        password
-      });
-      this.setState({
-        decentAccount: result.account,
-        decentAccountSource: result.source,
-        decentAccountEmail: result.email,
-        decentAccountPassword: '',
-        decentAccountSaving: false,
-        decentAccountMessage: result.message
-      });
-    } catch (error) {
-      console.error('[Beanie] Decent account login failed', error);
-      const message = error instanceof GatewayRequestError
-        ? accountLoginErrorMessage(error)
-        : 'Could not link Decent account.';
-      this.setState({
-        decentAccountSaving: false,
-        decentAccountSource: this.state.decentAccountSource === 'loading' ? 'unavailable' : this.state.decentAccountSource,
-        decentAccountMessage: { tone: 'warn', text: message }
-      });
-    }
-  }
-
-  private async logoutDecentAccount(): Promise<void> {
-    this.setState({
-      decentAccountSaving: true,
-      decentAccountMessage: { tone: 'muted', text: 'Unlinking Decent account...' }
-    });
-    try {
-      const result = await this.settingsController.logoutDecentAccount({
-        local: this.state.demo || this.settingsLocal
-      });
-      this.setState({
-        decentAccount: result.account,
-        decentAccountSource: result.source,
-        decentAccountPassword: '',
-        decentAccountSaving: false,
-        decentAccountMessage: result.message
-      });
-    } catch (error) {
-      console.error('[Beanie] Decent account unlink failed', error);
-      this.setState({
-        decentAccountSaving: false,
-        decentAccountMessage: { tone: 'warn', text: 'Could not unlink Decent account.' }
-      });
-    }
-  }
-
-  private async togglePlugin(id: string, enable: boolean): Promise<void> {
-    const bundle = this.state.settingsBundle;
-    if (!bundle) return;
-    if (!this.settingsResourceWritable('plugins')) {
-      this.setState({ status: 'Plugin status is unavailable — no change was sent' });
-      return;
-    }
-    await this.applySettingsMutation(this.settingsMutations.togglePlugin({
-      bundle,
-      id,
-      loaded: enable,
-      local: this.settingsLocal,
-      writable: this.settingsResourceWritable('plugins')
-    }));
-  }
-
-  private async togglePluginConfig(id: string): Promise<void> {
-    if (
-      this.state.pluginConfig &&
-      normalizePluginId(this.state.pluginConfig.id) === normalizePluginId(id)
-    ) {
-      this.pluginConfigSession += 1;
-      this.setState({ pluginConfig: null });
-      return;
-    }
-    if (!pluginSettingsSpec(id)) return;
-    if (!this.settingsResourceWritable('plugins')) {
-      this.setState({ status: 'Plugin settings are unavailable — reconnect and try again' });
-      return;
-    }
-    const session = ++this.pluginConfigSession;
-    const result = await this.settingsController.loadPluginSettings({ local: this.settingsLocal, id });
-    if (session !== this.pluginConfigSession) return;
-    if (!result.settings) {
-      this.setState({ pluginConfig: null, status: 'Plugin settings could not be loaded — nothing was changed' });
-      return;
-    }
-    this.setState({ pluginConfig: this.makePluginConfig(id, result.settings, session) });
-  }
-
-  private makePluginConfig(
-    id: string,
-    settings: SanitizedPluginSettings,
-    session = ++this.pluginConfigSession
-  ): PluginConfigState {
-    return createPluginConfigState(id, settings, session);
-  }
-
-  private updatePluginField(key: string, raw: string | boolean): void {
-    const config = this.state.pluginConfig;
-    if (!config) return;
-    if (!this.settingsResourceWritable('plugins')) {
-      this.setState({ status: 'Plugin settings are unavailable — no change was made' });
-      return;
-    }
-    const field = pluginSettingsSpec(config.id)?.fields.find((candidate) => candidate.key === key);
-    if (!field) return;
-    let value: string | number | boolean;
-    if (field.type === 'toggle') {
-      value = raw === true;
-    } else if (field.type === 'number') {
-      const parsed = Number(raw);
-      value = Number.isFinite(parsed) ? parsed : field.min ?? 0;
-    } else {
-      value = String(raw);
-    }
-    const draft = { ...config.draft, [key]: value };
-    const secretEdited = field.secret ? { ...config.secretEdited, [key]: String(value) !== '' } : config.secretEdited;
-    const revision = config.revision + 1;
-    this.setState({
-      pluginConfig: {
-        ...config,
-        revision,
-        draft,
-        touched: { ...config.touched, [key]: true },
-        fieldRevisions: { ...config.fieldRevisions, [key]: revision },
-        secretEdited,
-        dirty: true,
-        verify: null
-      }
-    });
-  }
-
-  private async savePluginConfig(id: string): Promise<void> {
-    const config = this.state.pluginConfig;
-    if (!config || config.saving || normalizePluginId(config.id) !== normalizePluginId(id)) return;
-    if (!this.settingsResourceWritable('plugins')) {
-      this.setState({ status: 'Plugin settings are unavailable — nothing was saved' });
-      return;
-    }
-    const pluginId = config.id;
-    const savePlan = buildPluginSettingsSavePlan(config);
-    if (!savePlan) return;
-    const local = this.settingsLocal;
-    this.setState({ pluginConfig: { ...config, saving: true } });
-    const result = await this.settingsController.savePluginSettings({
-      local,
-      id: pluginId,
-      payload: savePlan.payload
-    });
-    let acceptedSettings: SanitizedPluginSettings | null = savePlan.settings;
-    if (result.ok && !local) {
-      const refreshed = await this.settingsController.loadPluginSettings({ local: false, id: pluginId });
-      acceptedSettings = refreshed.settings ?? acceptedSettings;
-    }
-    this.setState({
-      pluginConfig: settlePluginSettingsSave(this.state.pluginConfig, savePlan, {
-        ok: result.ok,
-        settings: acceptedSettings
-      }),
-      status: result.status
-    });
-  }
-
-  private async verifyPluginConfig(id: string): Promise<void> {
-    const config = this.state.pluginConfig;
-    if (!config || normalizePluginId(config.id) !== normalizePluginId(id)) return;
-    if (!this.settingsResourceWritable('plugins')) {
-      this.setState({ status: 'Plugin settings are unavailable — verification was not sent' });
-      return;
-    }
-    const pluginId = config.id;
-    if (config.dirty) {
-      this.setState({ pluginConfig: { ...config, verify: { tone: 'warn', message: 'Save your changes before verifying.' } } });
-      return;
-    }
-    this.setState({ pluginConfig: { ...config, verify: { tone: 'muted', message: 'Verifying…' } } });
-    const result = await this.settingsController.verifyPluginSettings({
-      local: this.settingsLocal,
-      id: pluginId,
-      settings: config.settings
-    });
-    const current = this.state.pluginConfig;
-    if (
-      !current ||
-      normalizePluginId(current.id) !== normalizePluginId(pluginId) ||
-      current.session !== config.session ||
-      current.revision !== config.revision
-    ) return;
-    this.setState({ pluginConfig: { ...current, verify: result } });
   }
 
   private async onSettingsField(group: string, key: string, raw: string | boolean): Promise<void> {

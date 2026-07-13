@@ -164,6 +164,7 @@ installBrowserFakes();
 
 const { BeanieApp } = await import('../app');
 const { demoSettingsBundle } = await import('../domain/settingsModel');
+const { createPluginConfigState } = await import('../domain/pluginSettings');
 const { beanieCache } = await import('../domain/cache');
 const {
   captureSyncedCache,
@@ -2909,12 +2910,10 @@ await run('BeanieApp plugin save adapter preserves draft intent created while sa
       } | null;
     };
     setState(next: Record<string, unknown>): void;
-    makePluginConfig(id: string, settings: {
-      values: Record<string, string | number | boolean>;
-      secretsSet: Record<string, boolean>;
-    }): unknown;
-    updatePluginField(key: string, value: string | boolean): void;
-    savePluginConfig(id: string): Promise<void>;
+    settingsAccountPlugins: {
+      updatePluginField(key: string, value: string | boolean): void;
+      savePluginConfig(id: string): Promise<void>;
+    };
     settingsController: {
       savePluginSettings(input: unknown): Promise<{ status: string; ok: boolean }>;
     };
@@ -2923,17 +2922,17 @@ await run('BeanieApp plugin save adapter preserves draft intent created while sa
   harness.setState({
     demo: true,
     settingsSource: 'demo',
-    pluginConfig: harness.makePluginConfig('visualizer', {
+    pluginConfig: createPluginConfigState('visualizer', {
       values: { Username: 'old@example.com', AutoUpload: false },
       secretsSet: { Password: true }
-    })
+    }, 1)
   });
-  harness.updatePluginField('Username', 'submitted@example.com');
+  harness.settingsAccountPlugins.updatePluginField('Username', 'submitted@example.com');
 
-  const saving = harness.savePluginConfig('visualizer');
+  const saving = harness.settingsAccountPlugins.savePluginConfig('visualizer');
   await flushAsync();
   equal(harness.state.pluginConfig?.saving, true);
-  harness.updatePluginField('Username', 'newer@example.com');
+  harness.settingsAccountPlugins.updatePluginField('Username', 'newer@example.com');
   finishSave({ status: 'Plugin settings saved (demo)', ok: true });
   await saving;
 
@@ -2954,7 +2953,7 @@ await run('plugin config loading is latest-session-wins', async () => {
   const harness = app as unknown as {
     state: { pluginConfig: { settings: { values: Record<string, unknown> } } | null };
     setState(next: Record<string, unknown>): void;
-    togglePluginConfig(id: string): Promise<void>;
+    settingsAccountPlugins: { togglePluginConfig(id: string): Promise<void> };
     settingsController: {
       loadPluginSettings(): Promise<{
         settings: { values: Record<string, string | number | boolean>; secretsSet: Record<string, boolean> };
@@ -2967,8 +2966,8 @@ await run('plugin config loading is latest-session-wins', async () => {
   });
   harness.setState({ demo: true, settingsSource: 'demo' });
 
-  const first = harness.togglePluginConfig('visualizer.reaplugin');
-  const second = harness.togglePluginConfig('visualizer.reaplugin');
+  const first = harness.settingsAccountPlugins.togglePluginConfig('visualizer.reaplugin');
+  const second = harness.settingsAccountPlugins.togglePluginConfig('visualizer.reaplugin');
   resolvers[1]!({
     settings: { values: { Username: 'second@example.com' }, secretsSet: {} },
     source: 'demo'
@@ -2991,7 +2990,7 @@ await run('remote plugin config reads share the exact save lane', async () => {
   const harness = app as unknown as {
     state: { pluginConfig: unknown };
     setState(next: Record<string, unknown>): void;
-    togglePluginConfig(id: string): Promise<void>;
+    settingsAccountPlugins: { togglePluginConfig(id: string): Promise<void> };
     runExactCommand<T>(key: string, run: () => T | PromiseLike<T>): Promise<T>;
   };
   harness.runExactCommand = async <T>(key: string) => {
@@ -3011,7 +3010,7 @@ await run('remote plugin config reads share the exact save lane', async () => {
     }
   });
 
-  await harness.togglePluginConfig('visualizer.reaplugin');
+  await harness.settingsAccountPlugins.togglePluginConfig('visualizer.reaplugin');
 
   equal(JSON.stringify(laneKeys), JSON.stringify(['plugin:visualizer.reaplugin']));
   equal(harness.state.pluginConfig == null, false);
@@ -3098,12 +3097,10 @@ await run('plugin verification cannot settle over a newer draft revision', async
       } | null;
     };
     setState(next: Record<string, unknown>): void;
-    makePluginConfig(id: string, settings: {
-      values: Record<string, string | number | boolean>;
-      secretsSet: Record<string, boolean>;
-    }): unknown;
-    updatePluginField(key: string, value: string | boolean): void;
-    verifyPluginConfig(id: string): Promise<void>;
+    settingsAccountPlugins: {
+      updatePluginField(key: string, value: string | boolean): void;
+      verifyPluginConfig(id: string): Promise<void>;
+    };
     settingsController: {
       verifyPluginSettings(): Promise<{ tone: 'good'; message: string }>;
     };
@@ -3112,15 +3109,15 @@ await run('plugin verification cannot settle over a newer draft revision', async
   harness.setState({
     demo: true,
     settingsSource: 'demo',
-    pluginConfig: harness.makePluginConfig('visualizer', {
+    pluginConfig: createPluginConfigState('visualizer', {
       values: { Username: 'old@example.com' },
       secretsSet: { Password: true }
-    })
+    }, 1)
   });
 
-  const verifying = harness.verifyPluginConfig('visualizer');
+  const verifying = harness.settingsAccountPlugins.verifyPluginConfig('visualizer');
   await flushAsync();
-  harness.updatePluginField('Username', 'new@example.com');
+  harness.settingsAccountPlugins.updatePluginField('Username', 'new@example.com');
   finishVerify({ tone: 'good', message: 'Verified.' });
   await verifying;
 
