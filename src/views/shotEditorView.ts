@@ -1,12 +1,17 @@
-import type { Bean, Grinder } from '../api/types';
+import type { Bean, BeanBatch, Grinder, ShotRecord } from '../api/types';
+import { batchOptionLabel } from '../domain/beanDisplay';
 import { beanLabel } from '../domain/beanWorkflow';
 import {
+  batchAndBeanForId,
   type ShotBeanEditState,
   type ShotEditDraft,
   type ShotEditField,
   type ShotFieldSpec,
   type ShotNumberField,
   calculatedEy,
+  shotDraftBean,
+  shotEditDraftFromShot,
+  shotFieldSpec,
   shotNumberFieldStep
 } from '../domain/shotEditModel';
 import { icon } from '../components/icons';
@@ -31,6 +36,61 @@ export interface ShotEditModalViewModel {
     beans: Bean[];
     prefillBeans: Bean[];
   } | null;
+}
+
+export interface ShotEditorViewInput {
+  shot: ShotRecord;
+  draft: ShotEditDraft | null;
+  field: ShotEditField | null;
+  beanDialog: ShotBeanEditState | null;
+  grinders: Grinder[];
+  beans: Bean[];
+  batchesByBean: Record<string, BeanBatch[]>;
+  shots: ShotRecord[];
+}
+
+/** Builds the complete editor presentation without exposing AppState to the view. */
+export function renderShotEditor(input: ShotEditorViewInput): string {
+  const draft = input.draft?.shotId === input.shot.id
+    ? input.draft
+    : shotEditDraftFromShot(input.shot);
+  const shotDate = new Date(input.shot.timestamp);
+  const shotLabel = Number.isNaN(shotDate.valueOf())
+    ? input.shot.timestamp
+    : shotDate.toLocaleString([], {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+  const batch = batchAndBeanForId(
+    draft.beanBatchId,
+    input.beans,
+    input.batchesByBean
+  )?.batch ?? null;
+  return renderShotEditModal({
+    shotId: input.shot.id,
+    shotLabel,
+    draft,
+    grinders: input.grinders,
+    beanSummary: {
+      batchLabel: batch ? batchOptionLabel(batch) : draft.beanBatchId ? 'Saved batch' : null
+    },
+    fieldDialog: input.field
+      ? {
+          field: input.field,
+          spec: shotFieldSpec(input.field, draft, input.grinders, input.shots)
+        }
+      : null,
+    beanDialog: input.beanDialog
+      ? {
+          state: input.beanDialog,
+          selectedBeanId: shotDraftBean(draft, input.beans, input.batchesByBean)?.id ?? null,
+          beans: input.beans,
+          prefillBeans: input.beans
+        }
+      : null
+  });
 }
 
 export function renderShotEditModal(model: ShotEditModalViewModel): string {

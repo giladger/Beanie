@@ -276,6 +276,7 @@ Current controller map:
 | [`settingsMutationFlow.ts`](../src/controllers/settingsMutationFlow.ts) | Per-resource optimistic settings identity, monotonic confirmed baselines, targeted reconcile/rollback, and stale/superseded/disposed outcomes. |
 | [`settingsStoreSync.ts`](../src/controllers/settingsStoreSync.ts) | Synced-store load/poll/reload fencing, synchronous write admission, per-key latest-wins writes, retry/discard, snapshots, and disposal. |
 | [`shotDeletionFlow.ts`](../src/controllers/shotDeletionFlow.ts) | Cross-resource shot deletion: fail-closed durable prepare, exact shot-lane claim/DELETE, owned-404 recovery, atomic reclaim handoff, startup replay, reservation transfer, optimistic inventory/provenance fencing, latest-state projections, and graceful drain ownership. |
+| [`shotEditorFlow.ts`](../src/controllers/shotEditorFlow.ts) | Shot editor session transitions, metadata persistence/rebasing, inline bean selection/creation, and explicit shell projections behind injected shot/cache/bean capabilities. |
 | `shotMetadataController.ts` | Shot score/edit persistence plus deletion primitives: preview-vs-intent separation, remote/cache/reclaim sequencing, partial-success status, and pure latest-state list projection. |
 | [`startupFlow.ts`](../src/controllers/startupFlow.ts) | Settings-gated boot/reconnect acquisition, cache/demo fallback policy, transport-revision and single-flight/disposal fencing, startup projections, and the exhaustive offline/limited/connected effect matrix. |
 
@@ -359,6 +360,7 @@ Examples:
 - `profileEditor.ts`: profile editor UI session state, field reducers, and
   rendering. Persistent profile decoding and encoding live in
   `domain/profileModel.ts` and are shared by non-UI flows.
+- `shotEditorForm.ts`: browser form reader for the shot editor's three owned forms.
 - `shotGraphModel.ts`, `profileChartModel.ts`, `liveChartModel.ts`: chart data
   shaping.
 - `html.ts`: escaping helpers.
@@ -390,7 +392,7 @@ parse a field, call a controller, write a local preference through a domain
 helper, set state, and render.
 
 This is a direction, not a claim that the extraction is finished. `src/app.ts`
-is still more than 10,000 lines, so it is not yet a comfortably manageable
+is still roughly 10,000 lines, so it is not yet a comfortably manageable
 composition shell for AI-agent maintenance. The next two high-value vertical
 extractions are:
 
@@ -698,8 +700,11 @@ later mutation for the bean. See
 [runtime ownership](runtime-ownership-and-consistency.md#delete--reclaim-boundary)
 for crash and cross-device limits.
 
-Keep shot edit form rendering in views and form parsing in `BeanieApp`. Move
-policy into the controller when it touches gateway/cache/demo behavior.
+Keep shot edit form rendering in `views/shotEditorView.ts`, deterministic draft
+and field rules in `domain/shotEditModel.ts`, and the owned browser form reader
+in `components/shotEditorForm.ts`. `BeanieApp` routes the parsed submission to
+`ShotEditorFlow`; metadata persistence, cache sequencing, demo behavior, and
+inline bean workflow belong to that flow. Deletion stays in `ShotDeletionFlow`.
 
 ### Add Profile Editor Behavior
 

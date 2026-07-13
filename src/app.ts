@@ -13,11 +13,9 @@ import type {
   RecipeDraft,
   RinseData,
   ScaleSnapshot,
-  ShotAnnotations,
   ShotMeasurement,
   ShotRecord,
   ShotStateEvent,
-  ShotUpdate,
   SteamSettings,
   Workflow,
   WorkflowContext
@@ -92,7 +90,7 @@ import {
   createRecipeCandidate,
   type RecipeCandidate
 } from './domain/recipeIdentity';
-import { batchOptionLabel, dateInputValue } from './domain/beanDisplay';
+import { dateInputValue } from './domain/beanDisplay';
 import {
   markStorageEventsMigrated,
   readFavoriteBeans,
@@ -250,11 +248,14 @@ import {
   type StartupProjection
 } from './controllers/startupFlow';
 import {
-  saveShotUpdate,
   shotDoseReclaimPlan,
-  type ShotDoseReclaimPlan,
-  shotEnjoymentUpdate
+  type ShotDoseReclaimPlan
 } from './controllers/shotMetadataController';
+import {
+  projectShotEditorEvent,
+  ShotEditorFlow,
+  type ShotEditorEvent
+} from './controllers/shotEditorFlow';
 import {
   ShotDeletionFlow,
   type CompletedShotDeletionFlowResult
@@ -361,7 +362,6 @@ import {
   type DoseMutationSettlement
 } from './controllers/doseMutationReconciler';
 import { pendingDoseIdempotencyKey } from './domain/mutationOutbox';
-import { rebaseChangedFields } from './domain/rebaseMutation';
 import {
 
   type DerekState
@@ -402,7 +402,7 @@ import {
   selectedHistoryShot as selectHistoryShot
 } from './views/historyView';
 import { historicShotStages } from './domain/historicShotStages';
-import { renderShotEditModal as renderShotEditModalView } from './views/shotEditorView';
+import { renderShotEditor } from './views/shotEditorView';
 import {
   hotWaterTargetSpec,
   machineHotWaterStopModeTile,
@@ -427,6 +427,7 @@ import {
   type WorkbenchHeroViewModel
 } from './views/workbenchView';
 import { renderPhoneShell, type PhoneTab } from './views/phoneView';
+import { readShotEditorSubmission } from './components/shotEditorForm';
 import { scoreValueFromTap } from './components/shotScore';
 import { isServiceShot } from './domain/shotRecord';
 import {
@@ -476,7 +477,7 @@ import {
   type CleaningState
 } from './domain/cleaning';
 import { reconnectDelayMs } from './domain/connectionHealth';
-import { optimisticShotFromLive, shotMetadataWithFreshness } from './domain/liveShotRecord';
+import { optimisticShotFromLive } from './domain/liveShotRecord';
 import type { WaterAlertLevel } from './domain/waterAlert';
 import { WaterAlertProjector } from './render/waterAlertPresentation';
 import {
@@ -532,13 +533,12 @@ import {
   type SecondTapHintKind
 } from './domain/interactionHints';
 import {
+  isShotEditField,
   isShotNumberField,
-  shotNumberFieldStep,
+  shotEditDraftFromShot,
   type ShotBeanEditState,
   type ShotEditDraft,
-  type ShotEditField,
-  type ShotFieldOption,
-  type ShotFieldSpec
+  type ShotEditField
 } from './domain/shotEditModel';
 
 type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
@@ -1188,6 +1188,7 @@ export class BeanieApp {
   private readonly loadMoreAuthority = new OperationAuthority();
   private readonly doseMutationReconciler: DoseMutationReconciler;
   private readonly shotDeletionFlow: ShotDeletionFlow;
+  private readonly shotEditor: ShotEditorFlow;
   private readonly imageTranscoder = new BoundedImageTranscoder();
   private readonly telemetryStore = new TelemetryStore();
   private readonly machineStream: SocketSupervisor<MachineSnapshot>;
@@ -1617,6 +1618,36 @@ export class BeanieApp {
       },
       now: () => new Date()
     });
+    this.shotEditor = new ShotEditorFlow({
+      snapshot: () => ({
+        shots: this.state.shots,
+        selectedShotId: this.state.detailShotId,
+        draft: this.state.shotEdit,
+        beanDialog: this.state.shotBeanEdit,
+        beans: this.state.beans,
+        batchesByBean: this.state.batchesByBean,
+        grinders: this.state.grinders,
+        demo: this.state.demo,
+        busy: this.state.busy
+      }),
+      emit: (event) => this.applyShotEditorEvent(event),
+      beginRemoteShotMutation: () => {
+        this.shotCacheGeneration += 1;
+      },
+      runExactShotMutation: (id, run) => this.runExactCommand(`shot:${id}`, run),
+      readShot: (id) => gateway.shot(id),
+      updateShot: (id, update) => gateway.updateShot(id, update),
+      invalidateShotMutation: (id) => beanieCache.invalidateShotMutation(id),
+      putShotRecord: (shot) => beanieCache.putShotRecord(shot),
+      ensureBatchesLoaded: (beanId) => this.ensureBatchesLoaded(beanId),
+      saveBean: (input) => this.beanWorkflow.saveBean(input, {
+        createBean: (fields) => gateway.createBean(fields),
+        updateBean: (id, fields) => gateway.updateBean(id, fields),
+        putBeans: (beans) => beanieCache.putBeans(beans)
+      }),
+      putBeans: (beans) => beanieCache.putBeans(beans),
+      scoreValueFromTap
+    });
     this.appScope.own(this.telemetryStore.subscribeChannel('machine', (frame) => {
       this.handleMachineTelemetry(frame.value, frame.previous, frame.observedAtMs);
     }));
@@ -1667,7 +1698,7 @@ export class BeanieApp {
       disposed: () => this.disposed,
       brewTempValue: () => this.brewTempValue(),
       scheduleApply: () => this.scheduleApply(),
-      updateShotAnnotations: (shotId, merge) => this.updateShotAnnotationsExact(shotId, merge),
+      updateShotAnnotations: (shotId, merge) => this.shotEditor.updateAnnotationsExact(shotId, merge),
       loadShotRecipe: (shotId, opts) => this.loadShotRecipe(shotId, opts),
       findProfileByTitle: (title) => this.findProfileByTitle(title)
     });
@@ -3197,105 +3228,11 @@ export class BeanieApp {
     markSecondTapHintUsed(kind);
   }
 
-  private openShotEditor(): void {
-    const shot = this.selectedHistoryShot();
-    if (!shot) return;
-    this.setState({
-      modal: 'edit-shot',
-      editDialog: null,
-      shotEdit: shotEditDraftFromShot(shot),
-      shotEditField: null,
-      shotBeanEdit: null,
-      profileEdit: null
-    });
-  }
-
-  private async submitShotDyeEditor(form: HTMLFormElement): Promise<void> {
-    const shotId = form.dataset.id ?? this.selectedHistoryShot()?.id;
-    const shot = shotId ? this.state.shots.find((item) => item.id === shotId) : null;
-    if (!shot) return;
-
-    const update = this.shotUpdateFromForm(form, shot);
-    await this.persistShotUpdate(shot, update, {
-      busyStatus: 'Saving shot',
-      successStatus: 'Shot saved',
-      demoStatus: 'Shot saved (demo)',
-      failureStatus: 'Save shot failed'
-    });
-  }
-
-  // Shared persistence path for shot metadata edits: set the busy status, bump
-  // the cache generation before the write (so an in-flight shot page fetch from
-  // before the edit cannot re-cache pre-edit data after the invalidation), save
-  // through the controller, then apply the saved record or the failure status.
-  private async persistShotUpdate(
-    shot: ShotRecord,
-    update: ShotUpdate,
-    opts: { busyStatus: string; successStatus: string; demoStatus: string; failureStatus: string }
-  ): Promise<void> {
-    this.setState({ busy: true, status: opts.busyStatus });
-    if (!this.state.demo) this.shotCacheGeneration += 1;
-    const result = await saveShotUpdate({
-      shot,
-      update,
-      demo: this.state.demo,
-      successStatus: opts.successStatus,
-      demoStatus: opts.demoStatus,
-      failureStatus: opts.failureStatus
-    }, {
-      updateShot: (id, nextUpdate) => this.runExactCommand(`shot:${id}`, async () => {
-        if (!nextUpdate.annotations) return gateway.updateShot(id, nextUpdate);
-        const latest = await gateway.shot(id);
-        return gateway.updateShot(id, {
-          ...nextUpdate,
-          annotations: rebaseChangedFields(
-            shot.annotations,
-            nextUpdate.annotations,
-            latest.annotations
-          )
-        });
-      }),
-      invalidateShotMutation: (id) => beanieCache.invalidateShotMutation(id),
-      putShotRecord: (saved) => beanieCache.putShotRecord(saved)
-    });
-
-    if (result.type === 'saved') {
-      this.replaceShotRecord(result.shot, result.status);
-    } else {
-      console.error(`[Beanie] ${opts.failureStatus}`, result.error);
-      this.setState({ busy: false, status: result.status });
+  private applyShotEditorEvent(event: ShotEditorEvent): void {
+    if (event.type === 'save-failed') {
+      console.error(`[Beanie] ${event.operation}`, event.error);
     }
-  }
-
-  private async updateShotAnnotationsExact(
-    shotId: string,
-    merge: (annotations: ShotAnnotations | null | undefined) => ShotAnnotations
-  ): Promise<ShotRecord> {
-    this.shotCacheGeneration += 1;
-    const saved = await this.runExactCommand(`shot:${shotId}`, async () => {
-      // Merge at lane execution time so a Derek background save cannot replace
-      // an interactive annotation edit that landed while it was queued.
-      const latest = await gateway.shot(shotId);
-      return gateway.updateShot(shotId, { annotations: merge(latest.annotations) });
-    });
-    await beanieCache.invalidateShotMutation(saved.id).catch(() => {});
-    await beanieCache.putShotRecord(saved).catch(() => {});
-    return saved;
-  }
-
-  private replaceShotRecord(shot: ShotRecord, status: string): void {
-    const shots = this.state.shots.map((item) => (item.id === shot.id ? shot : item));
-    this.setState({
-      shots,
-      detailShotId: shot.id,
-      modal: null,
-      editDialog: null,
-      shotEdit: null,
-      shotEditField: null,
-      shotBeanEdit: null,
-      busy: false,
-      status
-    });
+    this.setState(projectShotEditorEvent(this.state.shots, event));
   }
 
   // The dialog owns only a preview. Execution sends the immutable dose delta to
@@ -3377,195 +3314,6 @@ export class BeanieApp {
     if (result.deleteAlreadyAbsent) this.shotRefreshTask.trigger();
   }
 
-  private shotUpdateFromDraft(shot: ShotRecord, draft: ShotEditDraft): ShotUpdate {
-    const grinderId = draft.grinderId;
-    const selectedGrinder = grinderId ? this.state.grinders.find((grinder) => grinder.id === grinderId) : null;
-    const beanBatchId = draft.beanBatchId;
-    const selectedBatch = this.batchAndBeanForId(beanBatchId);
-    const beanId = draft.beanId ?? selectedBatch?.bean.id ?? null;
-
-    const context: WorkflowContext = {
-      ...(shot.workflow?.context ?? {}),
-      targetDoseWeight: draft.targetDoseWeight,
-      targetYield: draft.targetYield,
-      grinderId,
-      grinderModel: draft.grinderModel ?? selectedGrinder?.model ?? null,
-      grinderSetting: draft.grinderSetting,
-      beanId,
-      beanBatchId,
-      coffeeName: draft.coffeeName ?? selectedBatch?.bean.name ?? null,
-      coffeeRoaster: draft.coffeeRoaster ?? selectedBatch?.bean.roaster ?? null,
-      finalBeverageType: draft.finalBeverageType,
-      baristaName: draft.baristaName,
-      drinkerName: draft.drinkerName,
-      extras: draft.contextExtras
-    };
-    const annotations: ShotAnnotations = {
-      ...(shot.annotations ?? {}),
-      actualDoseWeight: draft.actualDoseWeight,
-      actualYield: draft.actualYield,
-      drinkTds: draft.drinkTds,
-      drinkEy: draft.drinkEy,
-      enjoyment: draft.enjoyment,
-      espressoNotes: draft.espressoNotes,
-      extras: draft.annotationExtras
-    };
-
-    return {
-      workflow: { context },
-      annotations,
-      shotNotes: annotations.espressoNotes ?? null,
-      metadata: shotMetadataWithFreshness(shot.metadata, annotations.extras, selectedBatch?.batch ?? null, shot.timestamp)
-    };
-  }
-
-  private shotUpdateFromForm(form: HTMLFormElement, shot: ShotRecord): ShotUpdate {
-    const draft = shotEditDraftWithFormNumbers(
-      this.state.shotEdit?.shotId === shot.id ? this.state.shotEdit : shotEditDraftFromShot(shot),
-      form
-    );
-    return this.shotUpdateFromDraft(shot, draft);
-  }
-
-  private commitShotFieldDialog(form: HTMLFormElement): void {
-    const field = form.dataset.field;
-    if (!isShotEditField(field)) return;
-    const data = new FormData(form);
-    this.applyShotEditField(field, String(data.get('value') ?? ''));
-  }
-
-  private applyShotEditField(field: ShotEditField, value: string): void {
-    const draft = this.state.shotEdit;
-    if (!draft) return;
-    const next = updateShotEditDraftField(draft, field, value, this.state.grinders);
-    this.setState({ shotEdit: next, shotEditField: null, status: 'Shot draft changed' });
-  }
-
-  private applyPhoneShotField(shotId: string, field: ShotEditField, value: string): void {
-    const shot = this.state.shots.find((item) => item.id === shotId);
-    if (!shot) return;
-    const draft = this.state.shotEdit?.shotId === shotId ? this.state.shotEdit : shotEditDraftFromShot(shot);
-    const next = updateShotEditDraftField(draft, field, value, this.state.grinders);
-    this.setState({ shotEdit: next, status: 'Shot draft changed' });
-  }
-
-  private applyPhoneShotScore(shotId: string, value: number | null): void {
-    const shot = this.state.shots.find((item) => item.id === shotId);
-    if (!shot) return;
-    const draft = this.state.shotEdit?.shotId === shotId ? this.state.shotEdit : shotEditDraftFromShot(shot);
-    this.setState({ shotEdit: { ...draft, enjoyment: value }, status: 'Shot draft changed' });
-  }
-
-  private async savePhoneShotDraft(shotId: string): Promise<void> {
-    const shot = this.state.shots.find((item) => item.id === shotId);
-    const draft = this.state.shotEdit?.shotId === shotId ? this.state.shotEdit : null;
-    if (!shot || !draft) return;
-    const update = this.shotUpdateFromDraft(shot, draft);
-    await this.persistShotUpdate(shot, update, {
-      busyStatus: 'Saving shot',
-      successStatus: 'Shot saved',
-      demoStatus: 'Shot saved (demo)',
-      failureStatus: 'Save shot failed'
-    });
-  }
-
-  private setShotEditEnjoyment(value: number | null): void {
-    const draft = this.state.shotEdit;
-    if (!draft) return;
-    this.setState({
-      shotEdit: { ...draft, enjoyment: value },
-      status: 'Shot draft changed'
-    });
-  }
-
-  // Find the library bag a shot draft currently points at. Roaster + name are
-  // historical display snapshots; identity comes from beanId or beanBatchId.
-  private shotDraftBean(draft: ShotEditDraft): Bean | null {
-    if (draft.beanId) {
-      const byBeanId = this.state.beans.find((bean) => bean.id === draft.beanId);
-      if (byBeanId) return byBeanId;
-    }
-    const fromBatch = this.batchAndBeanForId(draft.beanBatchId)?.bean;
-    return fromBatch ?? null;
-  }
-
-  private openShotBeanDialog(): void {
-    if (!this.state.shotEdit) return;
-    this.setState({ shotBeanEdit: { creating: false }, shotEditField: null });
-  }
-
-  // Pick a bag and close the dialog: adopt its roaster + name and tag the shot
-  // with its latest batch. An empty id clears the bean entirely.
-  private async pickShotBean(beanId: string): Promise<void> {
-    const draft = this.state.shotEdit;
-    if (!draft) return;
-    if (!beanId) {
-      this.setState({
-        shotEdit: { ...draft, coffeeRoaster: null, coffeeName: null, beanId: null, beanBatchId: null },
-        shotBeanEdit: null,
-        status: 'Shot draft changed'
-      });
-      return;
-    }
-    const bean = this.state.beans.find((item) => item.id === beanId);
-    if (!bean) return;
-    await this.ensureBatchesLoaded(beanId);
-    const current = this.state.shotEdit;
-    if (!current) return;
-    const latest = latestBatch(this.state.batchesByBean[beanId] ?? []);
-    this.setState({
-      shotEdit: { ...current, coffeeRoaster: bean.roaster, coffeeName: bean.name, beanId: bean.id, beanBatchId: latest?.id ?? null },
-      shotBeanEdit: null,
-      status: 'Shot draft changed'
-    });
-  }
-
-  // Create a bag inline from the shot editor and tag the shot with it. A brand
-  // new bag has no batches yet, so the batch is left empty.
-  private async createShotBean(form: HTMLFormElement): Promise<void> {
-    if (this.state.busy) return;
-    const draft = this.state.shotEdit;
-    if (!draft) return;
-    const fields = beanFieldsFromForm(new FormData(form));
-    if (!fields.roaster || !fields.name) return;
-
-    this.setState({ busy: true, status: 'Adding bean' });
-    const result = await this.beanWorkflow.saveBean({
-      beans: this.state.beans,
-      batchesByBean: this.state.batchesByBean,
-      editingId: null,
-      fields,
-      demo: this.state.demo,
-      nowMs: Date.now()
-    }, {
-      createBean: (input) => gateway.createBean(input),
-      updateBean: (id, input) => gateway.updateBean(id, input),
-      putBeans: (beans) => beanieCache.putBeans(beans)
-    });
-
-    if (result.type === 'failed') {
-      console.error('[Beanie] Add bean failed', result.error);
-      this.setState({ busy: false, status: result.status });
-      return;
-    }
-
-    // A brand new bag has no batches yet, so the shot's batch is left empty.
-    const current = this.state.shotEdit;
-    const beans = mergeSavedBean(this.state.beans, result.bean, false);
-    const batchesByBean = ensureBeanBatchOwner(this.state.batchesByBean, result.bean.id);
-    void beanieCache.putBeans(beans).catch(() => {});
-    this.setState({
-      beans,
-      batchesByBean,
-      shotEdit: current
-        ? { ...current, coffeeRoaster: result.bean.roaster, coffeeName: result.bean.name, beanId: result.bean.id, beanBatchId: null }
-        : current,
-      shotBeanEdit: null,
-      busy: false,
-      status: result.status
-    });
-  }
-
   // Fill a new-bean form's inputs from an existing bag, directly (no re-render)
   // so the user's later edits to the prefilled values aren't clobbered. Only
   // fields the given form actually contains are touched.
@@ -3583,27 +3331,6 @@ export class BeanieApp {
     set('region', inputValue(bean.region));
     set('processing', inputValue(bean.processing));
     set('notes', inputValue(bean.notes));
-  }
-
-  private async updateShotEnjoyment(shotId: string, value: number | null): Promise<void> {
-    const shot = this.state.shots.find((item) => item.id === shotId);
-    if (!shot) return;
-    const update = shotEnjoymentUpdate(shot, value);
-    await this.persistShotUpdate(shot, update, {
-      busyStatus: 'Saving score',
-      successStatus: 'Score saved',
-      demoStatus: 'Score saved (demo)',
-      failureStatus: 'Save score failed'
-    });
-  }
-
-  private batchAndBeanForId(batchId: string | null): { batch: BeanBatch; bean: Bean } | null {
-    if (!batchId) return null;
-    for (const bean of this.state.beans) {
-      const batch = (this.state.batchesByBean[bean.id] ?? []).find((item) => item.id === batchId);
-      if (batch) return { batch, bean };
-    }
-    return null;
   }
 
   // Resolves true when the machine command actually went through (or demo
@@ -5401,6 +5128,7 @@ export class BeanieApp {
 
   private phoneClickActions(): Record<string, ClickActionHandler> {
     return {
+      ...this.shotEditor.phoneClickActions(),
       'phone-tab': ({ value }) => {
         if (!isPhoneTab(value)) return;
         this.setState({ phoneTab: value, view: 'workbench' });
@@ -5430,20 +5158,6 @@ export class BeanieApp {
             status: closing ? 'Shot closed' : 'Shot selected'
           });
         }
-      },
-      'phone-edit-shot': ({ id }) => {
-        if (id) this.setState({ detailShotId: id, secondTapHint: null });
-        this.openShotEditor();
-      },
-      'phone-shot-score': ({ id, value }) => {
-        if (id) {
-          const shot = this.state.shots.find((item) => item.id === id);
-          const draft = this.state.shotEdit?.shotId === id ? this.state.shotEdit : shot ? shotEditDraftFromShot(shot) : null;
-          this.applyPhoneShotScore(id, scoreValueFromTap(value, draft?.enjoyment ?? null));
-        }
-      },
-      'phone-save-shot': async ({ id }) => {
-        if (id) await this.savePhoneShotDraft(id);
       },
     };
   }
@@ -5991,11 +5705,9 @@ export class BeanieApp {
 
   private shotClickActions(): Record<string, ClickActionHandler> {
     return {
+      ...this.shotEditor.editorClickActions(),
       'select-history-shot': ({ id }) => {
         if (id) this.selectHistoryShot(id);
-      },
-      'edit-shot': () => {
-        this.openShotEditor();
       },
       'delete-shot': ({ id }) => {
         if (id) this.deleteShot(id);
@@ -6009,45 +5721,6 @@ export class BeanieApp {
       },
       'confirm-delete-shot-reclaim': () => {
         void this.performDeleteShot(true);
-      },
-      'open-shot-field': ({ field }) => {
-        if (isShotEditField(field)) this.setState({ shotEditField: field, shotBeanEdit: null });
-      },
-      'close-shot-field': () => {
-        this.setState({ shotEditField: null });
-      },
-      'shot-field-option': ({ field, value }) => {
-        if (isShotEditField(field)) this.applyShotEditField(field, value ?? '');
-      },
-      'open-shot-bean': async () => {
-        await this.openShotBeanDialog();
-      },
-      'close-shot-bean': () => {
-        this.setState({ shotBeanEdit: null });
-      },
-      'shot-bean-pick': async ({ id }) => {
-        await this.pickShotBean(id ?? '');
-      },
-      'shot-bean-new': () => {
-        if (this.state.shotBeanEdit) this.setState({ shotBeanEdit: { creating: true } });
-      },
-      'shot-bean-cancel-new': () => {
-        if (this.state.shotBeanEdit) this.setState({ shotBeanEdit: { creating: false } });
-      },
-      'shot-edit-ey-calc': ({ value }) => {
-        const ey = Number(value);
-        if (this.state.shotEdit && Number.isFinite(ey)) {
-          this.setState({ shotEdit: { ...this.state.shotEdit, drinkEy: ey } });
-        }
-      },
-      'shot-edit-score': ({ value }) => {
-        this.setShotEditEnjoyment(scoreValueFromTap(value, this.state.shotEdit?.enjoyment ?? null));
-      },
-      'set-shot-score': async ({ id, value }) => {
-        if (id) {
-          const shot = this.state.shots.find((item) => item.id === id);
-          await this.updateShotEnjoyment(id, scoreValueFromTap(value, shot?.annotations?.enjoyment ?? null));
-        }
       },
       'load-more-shots': async () => {
         await this.loadMoreShots();
@@ -6482,7 +6155,7 @@ export class BeanieApp {
     }
     if (target.dataset.action === 'phone-shot-field') {
       if (target.dataset.id && isShotEditField(target.dataset.field)) {
-        this.applyPhoneShotField(target.dataset.id, target.dataset.field, target.value);
+        this.shotEditor.applyPhoneField(target.dataset.id, target.dataset.field, target.value);
       }
       return;
     }
@@ -6743,13 +6416,15 @@ export class BeanieApp {
     }
     if (target.dataset.action === 'phone-shot-field') {
       if (target.dataset.id && isShotEditField(target.dataset.field)) {
-        this.applyPhoneShotField(target.dataset.id, target.dataset.field, target.value);
+        this.shotEditor.applyPhoneField(target.dataset.id, target.dataset.field, target.value);
       }
       return;
     }
     if (target.dataset.action === 'shot-edit-number') {
       const field = target.dataset.field;
-      if (isShotEditField(field) && isShotNumberField(field)) this.applyShotEditField(field, target.value);
+      if (isShotEditField(field) && isShotNumberField(field)) {
+        this.shotEditor.commitField(field, target.value);
+      }
       return;
     }
     if (target.dataset.action?.startsWith('pe-')) {
@@ -6883,19 +6558,19 @@ export class BeanieApp {
 
   private async onSubmit(event: Event): Promise<void> {
     const form = event.target as HTMLFormElement;
-    if (form.dataset.form === 'shot-field-dialog') {
+    const shotEditorSubmission = readShotEditorSubmission(form);
+    if (shotEditorSubmission) {
       event.preventDefault();
-      this.commitShotFieldDialog(form);
-      return;
-    }
-    if (form.dataset.form === 'shot-dye-editor') {
-      event.preventDefault();
-      await this.submitShotDyeEditor(form);
-      return;
-    }
-    if (form.dataset.form === 'shot-bean-create') {
-      event.preventDefault();
-      await this.createShotBean(form);
+      if (shotEditorSubmission.type === 'field') {
+        this.shotEditor.commitField(shotEditorSubmission.field, shotEditorSubmission.value);
+      } else if (shotEditorSubmission.type === 'save') {
+        await this.shotEditor.submitEditor(
+          shotEditorSubmission.shotId,
+          shotEditorSubmission.numbers
+        );
+      } else {
+        await this.shotEditor.createBean(shotEditorSubmission.fields);
+      }
       return;
     }
     if (form.dataset.form === 'bean-picker-bean') {
@@ -8110,14 +7785,11 @@ export class BeanieApp {
     if (numberEdit) {
       const returnModal = numberEdit.returnModal ?? null;
       if (numberEdit.target === 'shot-edit' && numberEdit.field) {
-        const shotEdit = this.state.shotEdit
-          ? updateShotEditDraftField(this.state.shotEdit, numberEdit.field, value, this.state.grinders)
-          : null;
         this.setState({
           modal: returnModal,
           editDialog: null,
           numberEdit: null,
-          shotEdit,
+          shotEdit: this.shotEditor.draftWithField(numberEdit.field, value),
           status: 'Shot changed'
         });
         return;
@@ -9185,39 +8857,15 @@ export class BeanieApp {
   private renderShotEditModal(): string {
     const shot = this.selectedHistoryShot();
     if (!shot) return '';
-    const draft =
-      this.state.shotEdit?.shotId === shot.id ? this.state.shotEdit : shotEditDraftFromShot(shot);
-    const shotDate = new Date(shot.timestamp);
-    const shotLabel = Number.isNaN(shotDate.valueOf())
-      ? shot.timestamp
-      : shotDate.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    const batch = this.batchAndBeanForId(draft.beanBatchId)?.batch ?? null;
-    const batchText = batch ? batchOptionLabel(batch) : draft.beanBatchId ? 'Saved batch' : null;
-    const beans = this.sortedBeansForPicker();
-    const field = this.state.shotEditField;
-
-    return renderShotEditModalView({
-      shotId: shot.id,
-      shotLabel,
-      draft,
+    return renderShotEditor({
+      shot,
+      draft: this.state.shotEdit,
+      field: this.state.shotEditField,
+      beanDialog: this.state.shotBeanEdit,
       grinders: this.state.grinders,
-      beanSummary: {
-        batchLabel: batchText
-      },
-      fieldDialog: field
-        ? {
-            field,
-            spec: shotFieldSpec(field, draft, this.state.grinders, this.state.shots)
-          }
-        : null,
-      beanDialog: this.state.shotBeanEdit
-        ? {
-            state: this.state.shotBeanEdit,
-            selectedBeanId: this.shotDraftBean(draft)?.id ?? null,
-            beans,
-            prefillBeans: beans
-          }
-        : null
+      beans: this.sortedBeansForPicker(),
+      batchesByBean: this.state.batchesByBean,
+      shots: this.state.shots
     });
   }
 
@@ -10070,215 +9718,9 @@ function beansChanged(current: Bean[], next: Bean[]): boolean {
   return false;
 }
 
-function shotEditDraftFromShot(shot: ShotRecord): ShotEditDraft {
-  const ctx = shot.workflow?.context ?? {};
-  const ann = shot.annotations ?? {};
-  return {
-    shotId: shot.id,
-    coffeeRoaster: ctx.coffeeRoaster ?? null,
-    coffeeName: ctx.coffeeName ?? null,
-    beanId: ctx.beanId ?? null,
-    beanBatchId: ctx.beanBatchId ?? null,
-    finalBeverageType: ctx.finalBeverageType ?? null,
-    baristaName: ctx.baristaName ?? null,
-    drinkerName: ctx.drinkerName ?? null,
-    targetDoseWeight: ctx.targetDoseWeight ?? null,
-    targetYield: ctx.targetYield ?? null,
-    actualDoseWeight: ann.actualDoseWeight ?? null,
-    actualYield: ann.actualYield ?? null,
-    grinderId: ctx.grinderId ?? null,
-    grinderModel: ctx.grinderModel ?? null,
-    grinderSetting: textOrNull(inputValue(ctx.grinderSetting)),
-    drinkTds: ann.drinkTds ?? null,
-    drinkEy: ann.drinkEy ?? null,
-    enjoyment: ann.enjoyment ?? null,
-    espressoNotes: ann.espressoNotes ?? shot.shotNotes ?? null,
-    contextExtras: ctx.extras ?? null,
-    annotationExtras: ann.extras ?? shot.metadata ?? null
-  };
-}
-
-function shotEditDraftWithFormNumbers(draft: ShotEditDraft, form: HTMLFormElement): ShotEditDraft {
-  let next = draft;
-  const fields: Array<Extract<ShotEditField, 'targetDoseWeight' | 'targetYield' | 'actualDoseWeight' | 'actualYield' | 'drinkTds' | 'drinkEy'>> = [
-    'targetDoseWeight',
-    'targetYield',
-    'actualDoseWeight',
-    'actualYield',
-    'drinkTds',
-    'drinkEy'
-  ];
-  for (const field of fields) {
-    const control = form.elements.namedItem(field);
-    if (control instanceof HTMLInputElement) {
-      next = { ...next, [field]: numberOrNullInput(control.value) };
-    }
-  }
-  return next;
-}
-
-function updateShotEditDraftField(
-  draft: ShotEditDraft,
-  field: ShotEditField,
-  value: string,
-  grinders: Grinder[]
-): ShotEditDraft {
-  const text = textOrNull(value);
-  const number = numberOrNullInput(value);
-  if (isShotNumberField(field)) return { ...draft, [field]: number };
-  if (field === 'grinderId') {
-    const grinder = text ? grinders.find((item) => item.id === text) : null;
-    return {
-      ...draft,
-      grinderId: grinder?.id ?? null,
-      grinderModel: grinder?.model ?? draft.grinderModel
-    };
-  }
-  return { ...draft, [field]: text };
-}
-
-function shotFieldSpec(
-  field: ShotEditField,
-  draft: ShotEditDraft,
-  grinders: Grinder[],
-  shots: ShotRecord[]
-): ShotFieldSpec {
-  const label = shotFieldLabel(field);
-  if (field === 'grinderId') {
-    return {
-      label,
-      kind: 'text',
-      value: draft.grinderId ?? '',
-      options: [
-        { label: 'No grinder', value: '' },
-        ...grinders.map((grinder) => ({
-          label: grinder.model,
-          value: grinder.id,
-          detail: grinder.burrs ?? undefined
-        }))
-      ]
-    };
-  }
-  if (field === 'espressoNotes') {
-    return {
-      label,
-      kind: 'textarea',
-      value: draft.espressoNotes ?? '',
-      options: [
-        { label: 'Clear', value: '' },
-        { label: 'Sweet', value: 'Sweet, balanced, clean.' },
-        { label: 'Sour', value: 'Sour, fast, needs finer grind or more yield.' },
-        { label: 'Bitter', value: 'Bitter, dry, needs coarser grind or less yield.' }
-      ]
-    };
-  }
-  const value = draft[field];
-  if (isShotNumberField(field)) {
-    return {
-      label,
-      kind: 'number',
-      value: inputValue(value),
-      step: shotNumberFieldStep(field),
-      options: numericShotFieldOptions(field)
-    };
-  }
-  return { label, kind: 'text', value: inputValue(value), options: textShotFieldOptions(field, shots) };
-}
-
-function numericShotFieldOptions(field: ShotEditField): ShotFieldOption[] {
-  const values =
-    field === 'drinkTds'
-      ? [7, 8, 9, 10, 11, 12]
-      : field === 'drinkEy'
-        ? [16, 18, 20, 22, 24]
-        : field === 'targetYield' || field === 'actualYield'
-          ? [34, 36, 38, 40, 42, 45]
-          : [17, 17.5, 18, 18.5, 20];
-  return [{ label: 'Clear', value: '' }, ...values.map((item) => ({ label: inputValue(item), value: String(item) }))];
-}
-
-function textShotFieldOptions(
-  field: ShotEditField,
-  shots: ShotRecord[]
-): ShotFieldOption[] {
-  if (field === 'finalBeverageType') {
-    return uniqueTextOptions([
-      { label: 'Espresso', value: 'espresso' },
-      { label: 'Americano', value: 'americano' },
-      { label: 'Cortado', value: 'cortado' },
-      { label: 'Cappuccino', value: 'cappuccino' },
-      { label: 'Iced', value: 'iced' },
-      ...shots.map((shot) => ({
-        label: shot.workflow?.context?.finalBeverageType ?? '',
-        value: shot.workflow?.context?.finalBeverageType ?? ''
-      }))
-    ]);
-  }
-  if (field === 'baristaName' || field === 'drinkerName') {
-    return uniqueTextOptions(
-      shots.map((shot) => {
-        const value = shot.workflow?.context?.[field] ?? '';
-        return { label: value, value };
-      })
-    );
-  }
-  if (field === 'grinderSetting') {
-    return uniqueTextOptions([
-      ...shots.map((shot) => {
-        const value = inputValue(shot.workflow?.context?.grinderSetting);
-        return { label: value, value, detail: shot.workflow?.context?.grinderModel ?? '' };
-      }),
-      { label: '5.0', value: '5.0' },
-      { label: '5.5', value: '5.5' },
-      { label: '6.0', value: '6.0' },
-      { label: '6.5', value: '6.5' }
-    ]);
-  }
-  return [{ label: 'Clear', value: '' }];
-}
-
-function uniqueTextOptions(items: ShotFieldOption[]): ShotFieldOption[] {
-  const options: ShotFieldOption[] = [{ label: 'Clear', value: '' }];
-  const seen = new Set<string>();
-  for (const item of items) {
-    const value = item.value.trim();
-    const label = item.label.trim();
-    if (!value || !label) continue;
-    const key = optionKey(value);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    options.push({ label, value, detail: item.detail?.trim() || undefined });
-  }
-  return options;
-}
-
-function optionKey(value: string): string {
-  return value.trim().toLocaleLowerCase();
-}
-
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
-
-function shotFieldLabel(field: ShotEditField): string {
-  const labels: Record<ShotEditField, string> = {
-    finalBeverageType: 'Drink',
-    baristaName: 'Barista',
-    drinkerName: 'Drinker',
-    targetDoseWeight: 'Target in',
-    targetYield: 'Target out',
-    actualDoseWeight: 'Actual in',
-    actualYield: 'Actual out',
-    grinderId: 'Grinder',
-    grinderSetting: 'Grind',
-    drinkTds: 'TDS',
-    drinkEy: 'EY',
-    espressoNotes: 'Notes'
-  };
-  return labels[field];
-}
-
-
 
 function decimalPlaces(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -10326,22 +9768,5 @@ function isEditField(value: string | undefined): value is EditField {
     value === 'ratio' ||
     value === 'grinderSetting' ||
     value === 'temperature'
-  );
-}
-
-function isShotEditField(value: string | undefined): value is ShotEditField {
-  return (
-    value === 'finalBeverageType' ||
-    value === 'baristaName' ||
-    value === 'drinkerName' ||
-    value === 'targetDoseWeight' ||
-    value === 'targetYield' ||
-    value === 'actualDoseWeight' ||
-    value === 'actualYield' ||
-    value === 'grinderId' ||
-    value === 'grinderSetting' ||
-    value === 'drinkTds' ||
-    value === 'drinkEy' ||
-    value === 'espressoNotes'
   );
 }
