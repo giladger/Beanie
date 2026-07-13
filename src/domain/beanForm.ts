@@ -1,5 +1,37 @@
 import type { Bean, BeanBatch } from '../api/types';
 
+export interface BeanBatchFormFields {
+  readonly roastDate: string | null;
+  readonly roastLevel: string | null;
+  readonly weight: { readonly present: boolean; readonly value: number | null };
+  readonly weightRemaining: { readonly present: boolean; readonly value: number | null };
+}
+
+export interface BeanFormSubmission {
+  readonly type: 'bean';
+  readonly editingId: string | null;
+  readonly fields: Partial<Bean>;
+  readonly prefillBeanId: string | null;
+  readonly firstStock: BeanBatchFormFields;
+}
+
+export interface BeanBatchFormSubmission {
+  readonly type: 'batch';
+  readonly beanId: string;
+  readonly batchId: string | null;
+  readonly fields: BeanBatchFormFields;
+}
+
+export interface BatchStorageDatesSubmission {
+  readonly type: 'storage-dates';
+  readonly values: Readonly<Record<string, string>>;
+}
+
+export type BeanInventoryFormSubmission =
+  | BeanFormSubmission
+  | BeanBatchFormSubmission
+  | BatchStorageDatesSubmission;
+
 // Reading the bean and batch edit forms into gateway-ready partials. Shared by
 // the bean picker forms (app.ts) and the label-scanner review form.
 
@@ -35,6 +67,47 @@ export function beanFieldsUnchanged(fields: Partial<Bean>, bean: Bean): boolean 
     normalizeBeanField(fields.processing) === normalizeBeanField(bean.processing) &&
     normalizeBeanField(fields.notes) === normalizeBeanField(bean.notes)
   );
+}
+
+export function beanSubmissionIsComplete(
+  submission: BeanFormSubmission
+): boolean {
+  return Boolean(submission.fields.roaster && submission.fields.name);
+}
+
+export function batchInputFromSubmission(
+  submission: BeanBatchFormFields,
+  beanId: string,
+  fallback?: BeanBatch
+): Partial<BeanBatch> {
+  const weight = submission.weight.present
+    ? submission.weight.value
+    : fallback?.weight ?? null;
+  const weightRemaining = submission.weightRemaining.present
+    ? submission.weightRemaining.value
+    : fallback?.weightRemaining ?? null;
+  return {
+    beanId,
+    roastDate: submission.roastDate,
+    roastLevel: submission.roastLevel,
+    weight,
+    weightRemaining: clampRemainingToWeight(weightRemaining, weight)
+  };
+}
+
+export function newStockFormKey(
+  beanId: string,
+  name: 'weight' | 'weightRemaining'
+): string {
+  return `bean-picker-new:${beanId}:${name}`;
+}
+
+export function createStockFormKey(name: 'weight' | 'weightRemaining'): string {
+  return `bean-picker-create:${name}`;
+}
+
+export function freezeAmountFormKey(batchId: string): string {
+  return `freeze-amount:${batchId}`;
 }
 
 export function normalizeBeanField(value: unknown): string {

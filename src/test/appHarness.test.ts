@@ -163,6 +163,7 @@ function installBrowserFakes(): void {
 installBrowserFakes();
 
 const { BeanieApp } = await import('../app');
+const { readBeanInventoryForm } = await import('../components/beanInventoryForm');
 const { demoSettingsBundle } = await import('../domain/settingsModel');
 const { createPluginConfigState } = await import('../domain/pluginSettings');
 const { beanieCache } = await import('../domain/cache');
@@ -322,6 +323,7 @@ await run('foreground inventory writes fail closed until journal hydration succe
   const app = new BeanieApp(root as unknown as HTMLElement);
   const harness = app as unknown as {
     state: {
+      status: string;
       batchesByBean: Record<string, Array<{ id: string; weightRemaining?: number | null }>>;
     };
     setState(next: Record<string, unknown>): void;
@@ -330,30 +332,26 @@ await run('foreground inventory writes fail closed until journal hydration succe
         completion: Promise<{ type: string }> | null;
       };
     };
-    updateInventoryBatch(request: {
-      beanId: string;
-      batchId: string;
-      patch: { beanId: string; weightRemaining: number };
-      purpose: 'edit';
-      demo: false;
-    }): Promise<'saved' | 'failed' | 'skipped'>;
+    beanInventoryBrowser: {
+      saveBatchValue(beanId: string, batchId: string, name: string, value: string): Promise<void>;
+    };
   };
   harness.setState({
+    beans: [{ id: 'bean-1', roaster: 'Test', name: 'Coffee' }],
     batchesByBean: {
-      'bean-1': [{ id: 'batch-1', weightRemaining: 100 }]
+      'bean-1': [{ id: 'batch-1', beanId: 'bean-1', weightRemaining: 100 }]
     }
   });
 
-  const outcome = await harness.updateInventoryBatch({
-    beanId: 'bean-1',
-    batchId: 'batch-1',
-    patch: { beanId: 'bean-1', weightRemaining: 90 },
-    purpose: 'edit',
-    demo: false
-  });
+  await harness.beanInventoryBrowser.saveBatchValue(
+    'bean-1',
+    'batch-1',
+    'weightRemaining',
+    '90'
+  );
 
-  equal(outcome, 'failed');
   equal(harness.state.batchesByBean['bean-1']?.[0]?.weightRemaining, 100);
+  equal(harness.state.status, 'Bag changes are read-only — local journal unavailable');
   const directControllerAttempt = harness.beanInventory.startBatchUpdate({
     beanId: 'bean-1',
     batchId: 'batch-1',
@@ -1908,13 +1906,16 @@ await run('an ambiguous picker create retries the exact full submitted bag draft
   ];
   const calls: Array<{ batch: Record<string, unknown> }> = [];
   const harness = app as unknown as {
-    state: { beanPickerDraftBatch: Record<string, unknown> | null };
     inventoryJournalReady: boolean;
     beanInventory: {
       createBatch(request: { beanId: string; batch: Record<string, unknown> }): Promise<unknown>;
     };
     setState(next: Record<string, unknown>): void;
-    submitBeanPickerBatch(form: HTMLFormElement): Promise<void>;
+    beanInventoryBrowser: {
+      clickActions(): Record<string, (context: { el: HTMLElement }) => void | Promise<void>>;
+      submit(submission: ReturnType<typeof readBeanInventoryForm>): Promise<void>;
+      presentation(): { draftBatch: Record<string, unknown> | null };
+    };
   };
   harness.inventoryJournalReady = true;
   harness.beanInventory.createBatch = async (request) => {
@@ -1949,16 +1950,24 @@ await run('an ambiguous picker create retries the exact full submitted bag draft
         demo: false,
         startupPhase: 'connected',
         modal: 'bean-picker',
-        beanPickerBeanId: bean.id,
-        beanPickerMode: 'inspect',
-        beanPickerDraftBatchBeanId: bean.id,
-        beanPickerDraftBatch: null,
         busy: false,
         beans: [bean],
-        batchesByBean: { [bean.id]: [] }
+        selectedBeanId: bean.id,
+        batchesByBean: { [bean.id]: [] },
+        formNumbers: {
+          [`bean-picker-new:${bean.id}:weight`]: submitted.weight == null
+            ? ''
+            : String(submitted.weight),
+          [`bean-picker-new:${bean.id}:weightRemaining`]: submitted.weightRemaining == null
+            ? ''
+            : String(submitted.weightRemaining)
+        }
+      });
+      await harness.beanInventoryBrowser.clickActions()['bean-picker-add-batch']!({
+        el: new FakeElement() as unknown as HTMLElement
       });
       const firstForm = new FakeFormElement(
-        { beanId: bean.id },
+        { form: 'bean-picker-batch', beanId: bean.id },
         {
           roastDate: submitted.roastDate ?? '',
           roastLevel: submitted.roastLevel ?? '',
@@ -1966,11 +1975,16 @@ await run('an ambiguous picker create retries the exact full submitted bag draft
           weightRemaining: submitted.weightRemaining == null ? '' : String(submitted.weightRemaining)
         }
       );
-      await harness.submitBeanPickerBatch(firstForm as unknown as HTMLFormElement);
+      const firstSubmission = readBeanInventoryForm(firstForm as unknown as HTMLFormElement);
+      if (!firstSubmission) throw new Error('Expected batch submission');
+      await harness.beanInventoryBrowser.submit(firstSubmission);
 
       equal(calls.length, callOffset + 1);
       equal(JSON.stringify(calls[callOffset]?.batch), JSON.stringify(submitted));
-      equal(JSON.stringify(harness.state.beanPickerDraftBatch), JSON.stringify(submitted));
+      equal(
+        JSON.stringify(harness.beanInventoryBrowser.presentation().draftBatch),
+        JSON.stringify(submitted)
+      );
 
       const restoredValues = {
         roastDate: renderedInputValue(root.innerHTML, 'roastDate'),
@@ -1978,12 +1992,17 @@ await run('an ambiguous picker create retries the exact full submitted bag draft
         weight: renderedInputValue(root.innerHTML, 'weight'),
         weightRemaining: renderedInputValue(root.innerHTML, 'weightRemaining')
       };
-      const retryForm = new FakeFormElement({ beanId: bean.id }, restoredValues);
-      await harness.submitBeanPickerBatch(retryForm as unknown as HTMLFormElement);
+      const retryForm = new FakeFormElement(
+        { form: 'bean-picker-batch', beanId: bean.id },
+        restoredValues
+      );
+      const retrySubmission = readBeanInventoryForm(retryForm as unknown as HTMLFormElement);
+      if (!retrySubmission) throw new Error('Expected retry submission');
+      await harness.beanInventoryBrowser.submit(retrySubmission);
 
       equal(calls.length, callOffset + 2);
       equal(JSON.stringify(calls[callOffset + 1]?.batch), JSON.stringify(submitted));
-      equal(harness.state.beanPickerDraftBatch, null);
+      equal(harness.beanInventoryBrowser.presentation().draftBatch, null);
     }
   } finally {
     globalThis.FormData = nativeFormData;

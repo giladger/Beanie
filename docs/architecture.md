@@ -251,6 +251,8 @@ Current controller map:
 
 | Controller | Owns |
 | --- | --- |
+| [`beanInventoryBrowserFlow.ts`](../src/controllers/beanInventoryBrowserFlow.ts) | Bean-picker and bag-browser session, presentation model, action table, typed form orchestration, and foreground stock workflows through the injected `BeanInventoryController` facade. It does not own a gateway lane, cache, journal, DOM, or shell state. |
+| [`beanInventoryBrowserProjection.ts`](../src/controllers/beanInventoryBrowserProjection.ts) | Explicit browser events and latest-shell projection for modal, form-number, bean-list, and inventory presentation state. |
 | [`beanInventoryController.ts`](../src/controllers/beanInventoryController.ts) | Foreground/UI stock facade and imperative sequencer: per-bean command-lane ownership, field-intent revisions, physical-adjustment reservations/overlays, latest-read and selection revisions, create/update/split execution, and the single serialized inventory-cache publication lane. Existing foreground consumers import the facade rather than its implementation modules. |
 | [`beanInventoryContract.ts`](../src/controllers/beanInventoryContract.ts) | Public inventory ports, snapshots, requests, projections, and discriminated outcomes. It has type-only dependencies and no runtime behavior. |
 | [`beanInventoryPolicy.ts`](../src/controllers/beanInventoryPolicy.ts) | Deterministic inventory projection, rollback, reconciliation, split planning, status, and idempotency-key policy. It does not import the controller facade. |

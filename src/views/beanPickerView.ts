@@ -15,6 +15,11 @@ import {
   stockLocationLabel,
   stockOptionLabel
 } from '../domain/beanDisplay';
+import {
+  createStockFormKey,
+  freezeAmountFormKey,
+  newStockFormKey
+} from '../domain/beanForm';
 import { icon } from '../components/icons';
 import { escapeAttr, escapeHtml } from '../components/html';
 
@@ -618,18 +623,6 @@ export function renderBatchStorageModal(bean: Bean, batch: BeanBatch): string {
       </section>
     </div>
   `;
-}
-
-export function newStockFormKey(beanId: string, name: 'weight' | 'weightRemaining'): string {
-  return `bean-picker-new:${beanId}:${name}`;
-}
-
-export function createStockFormKey(name: 'weight' | 'weightRemaining'): string {
-  return `bean-picker-create:${name}`;
-}
-
-export function freezeAmountFormKey(batchId: string): string {
-  return `freeze-amount:${batchId}`;
 }
 
 // One form covering every date on the batch — roast plus each freeze/thaw event

@@ -65,13 +65,9 @@ import {
   type MachineStatusView
 } from './appShell';
 import {
-  appendBatchStorageEvent,
-  batchStorageEvents,
   beanLabel,
   buildWorkflowUpdate,
-  compareBeansForPicker,
   emptyRecipe,
-  setBatchStorageEventDates,
   formatGrams,
   formatRatio,
   latestBatch,
@@ -90,7 +86,6 @@ import {
   createRecipeCandidate,
   type RecipeCandidate
 } from './domain/recipeIdentity';
-import { dateInputValue } from './domain/beanDisplay';
 import {
   markStorageEventsMigrated,
   readFavoriteBeans,
@@ -151,10 +146,7 @@ import {
   type ProfileImportState
 } from './controllers/profileEditorFlow';
 import {
-  batchFieldsFromForm,
-  beanFieldsFromForm,
-  beanFieldsUnchanged,
-  clampRemainingToWeight,
+  beanSubmissionIsComplete,
   numberOrNullInput,
   textOrNull
 } from './domain/beanForm';
@@ -210,9 +202,13 @@ import { BeanSelectionFlow, type BeanSelectionOptions } from './controllers/bean
 import {
   BeanInventoryController,
   beanInventoryMutationKey,
-  type BatchUpdateRequest,
   type BeanInventoryProjection
 } from './controllers/beanInventoryController';
+import { BeanInventoryBrowserFlow } from './controllers/beanInventoryBrowserFlow';
+import {
+  projectBeanInventoryBrowserEvent,
+  type BeanInventoryBrowserEvent
+} from './controllers/beanInventoryBrowserProjection';
 import {
   selectProfileForDraft,
   toggleFavoriteProfile
@@ -348,9 +344,6 @@ import {
   renderProfilesPage as renderProfilePickerPage
 } from './views/profilePickerView';
 import {
-  createStockFormKey,
-  freezeAmountFormKey,
-  newStockFormKey,
   renderBatchStorageModal as renderBatchStorageModalView,
   renderBeanPickerModal as renderBeanPickerModalView
 } from './views/beanPickerView';
@@ -395,6 +388,10 @@ import {
 } from './views/workbenchView';
 import { renderPhoneShell, type PhoneTab } from './views/phoneView';
 import { readShotEditorSubmission } from './components/shotEditorForm';
+import {
+  prefillBeanInventoryForm,
+  readBeanInventoryForm
+} from './components/beanInventoryForm';
 import { renderFlowCalibratorPage } from './views/flowCalibratorView';
 import { renderSettingsView } from './views/settingsView';
 import { scoreValueFromTap } from './components/shotScore';
@@ -503,7 +500,6 @@ type ApplyState = 'idle' | 'pending' | 'applied' | 'failed' | 'stale';
 // 'starting' = machine ramping up (substate preparingForShot), before flow;
 // 'active' = actually flowing (substate pouring); 'purging' = flow stopped but
 // still in the service state (the DE1 steam puff / purge).
-type BeanPickerMode = 'inspect' | 'create';
 type View =
   | 'workbench'
   | 'flow-calibrator'
@@ -583,11 +579,6 @@ interface SecondTapHintState {
   id: string;
 }
 
-interface BatchStorageTarget {
-  beanId: string;
-  batchId: string;
-}
-
 interface DeleteShotTarget {
   shotId: string;
   reclaim: ShotDoseReclaimPlan | null;
@@ -644,17 +635,6 @@ export interface AppState {
   decentAccountMessage: { tone: 'good' | 'warn' | 'muted'; text: string } | null;
   modal: Modal;
   scanner: LabelScannerState | null;
-  beanPickerBeanId: string | null;
-  beanPickerMode: BeanPickerMode;
-  beanPickerAutofocusSearch: boolean;
-  beanPickerDraftBatchBeanId: string | null;
-  beanPickerDraftBatch: Partial<BeanBatch> | null;
-  beanPickerEditingBeanId: string | null;
-  beanPickerEditingBatchId: string | null;
-  beanPickerShowAllBags: boolean;
-  beanPickerFocusedBatchId: string | null;
-  beanPickerFreezeBatchId: string | null;
-  batchStorageTarget: BatchStorageTarget | null;
   deleteShotTarget: DeleteShotTarget | null;
   editingGrinderId: string | null;
   profileEditor: ProfileEditorState | null;
@@ -1006,17 +986,6 @@ export class BeanieApp {
     decentAccountMessage: null,
     modal: null,
     scanner: null,
-    beanPickerBeanId: null,
-    beanPickerMode: 'inspect',
-    beanPickerAutofocusSearch: false,
-    beanPickerDraftBatchBeanId: null,
-    beanPickerDraftBatch: null,
-    beanPickerEditingBeanId: null,
-    beanPickerEditingBatchId: null,
-    beanPickerShowAllBags: false,
-    beanPickerFocusedBatchId: null,
-    beanPickerFreezeBatchId: null,
-    batchStorageTarget: null,
     deleteShotTarget: null,
     editingGrinderId: null,
     profileEditor: null,
@@ -1380,20 +1349,79 @@ export class BeanieApp {
       }
     }
   );
+  private readonly beanInventoryBrowser = new BeanInventoryBrowserFlow(
+    {
+      snapshot: () => ({
+        beans: this.state.beans,
+        batchesByBean: this.state.batchesByBean,
+        selectedBeanId: this.state.selectedBeanId,
+        selectedBatchId: this.state.selectedBatchId,
+        favoriteBeans: this.state.favoriteBeans,
+        beanUsageAt: this.state.beanUsageAt,
+        formNumbers: this.state.formNumbers,
+        search: this.state.search,
+        secondTapHint: this.state.secondTapHint,
+        busy: this.state.busy,
+        demo: this.state.demo,
+        modal: this.state.modal,
+        inventoryJournalReady: this.inventoryJournalReady
+      }),
+      emit: (event) => this.applyBeanInventoryBrowserEvent(event),
+      requestRender: () => this.render(),
+      scheduleApply: () => this.scheduleApply(),
+      refreshBeans: () => {
+        void this.refreshBeans({ force: true, allowModal: true });
+      },
+      refreshBeanUsage: () => {
+        void this.refreshBeanUsage();
+      },
+      loadBatches: (bean) => this.loadBatches(
+        bean,
+        this.state.startupPhase === 'connected'
+      ),
+      inventoryNeedsReview: (beanId) => this.inventoryReviewBeanIds.has(beanId),
+      markInventoryReview: (beanId, unresolved) => this.markInventoryReview(beanId, unresolved),
+      selectBean: (beanId, options) => this.selectBean(beanId, options),
+      nextBeanHint: (beanId) => this.nextSecondTapHint('bean', beanId),
+      completeBeanHint: () => this.completeSecondTapHint('bean'),
+      toggleFavoriteBean: (beanId) => this.toggleFavoriteBean(beanId),
+      confirmArchiveBean: () => window.confirm(
+        'Delete this coffee? It will be hidden from the bean list.'
+      )
+    },
+    this.beanWorkflow,
+    this.beanInventory,
+    {
+      createBean: (fields) => gateway.createBean(fields),
+      updateBean: (id, fields) => gateway.updateBean(id, fields),
+      invalidateBeanMutation: (beanId) => beanieCache.invalidateBeanMutation(beanId),
+      putBeans: (beans) => beanieCache.putBeans(beans)
+    }
+  );
   private readonly doseDeduction = new DoseDeductionAdmissionFlow(
     {
-      inventory: this.beanInventory, now: () => new Date(),
+      inventory: this.beanInventory,
+      now: () => new Date(),
       enqueue: (input) => this.doseMutationReconciler.enqueue(input),
-      applyDemoDeduction: ({ bean, batchId, weightRemaining, status }) => this.saveBatchStoragePatch(
-        bean, batchId, { beanId: bean.id, weightRemaining }, status)
+      applyDemoDeduction: ({ bean, batchId, weightRemaining, status }) =>
+        this.beanInventoryBrowser.saveStoragePatch(
+          bean,
+          batchId,
+          { beanId: bean.id, weightRemaining },
+          status
+        )
     },
     {
       snapshot: () => ({ batchesByBean: this.state.batchesByBean, disposed: this.disposed }),
       commit: (event) => {
-        if (event.type === 'projection')
-          this.adoptInventoryProjection(event.projection, event.status ? { status: event.status } : {});
-        else if (event.type === 'review-required') this.inventoryReviewBeanIds.add(event.beanId);
-        else {
+        if (event.type === 'projection') {
+          this.adoptInventoryProjection(
+            event.projection,
+            event.status ? { status: event.status } : {}
+          );
+        } else if (event.type === 'review-required') {
+          this.inventoryReviewBeanIds.add(event.beanId);
+        } else {
           console.error('[Beanie] Could not journal dose deduction', event.error);
           this.setState({ status: event.status });
         }
@@ -1758,7 +1786,7 @@ export class BeanieApp {
       updateShot: (id, update) => gateway.updateShot(id, update),
       invalidateShotMutation: (id) => beanieCache.invalidateShotMutation(id),
       putShotRecord: (shot) => beanieCache.putShotRecord(shot),
-      ensureBatchesLoaded: (beanId) => this.ensureBatchesLoaded(beanId),
+      ensureBatchesLoaded: (beanId) => this.beanInventoryBrowser.ensureBatchesLoaded(beanId),
       saveBean: (input) => this.beanWorkflow.saveBean(input, {
         createBean: (fields) => gateway.createBean(fields),
         updateBean: (id, fields) => gateway.updateBean(id, fields),
@@ -2181,6 +2209,7 @@ export class BeanieApp {
         this.scannerFlow.cancelScannerWork();
         this.recipeApply.cancel(new Error('Demo authority replaced by gateway data'));
         this.flowCalibrator.reset();
+        this.beanInventoryBrowser.reset();
         this.resetDemoRuntimeForGateway();
       }
       if (projection.resetDemoSettings || projection.settingsRecoveryPending) {
@@ -2491,64 +2520,6 @@ export class BeanieApp {
     }
   }
 
-  private async openBeanPicker(
-    beanId: string | null,
-    options: { create?: boolean; autofocusSearch?: boolean } = {}
-  ): Promise<void> {
-    const id = beanId ?? this.state.selectedBeanId;
-    this.setState({
-      modal: 'bean-picker',
-      search: '',
-      beanPickerBeanId: options.create ? null : id,
-      beanPickerMode: options.create ? 'create' : 'inspect',
-      beanPickerAutofocusSearch: options.autofocusSearch ?? false,
-      beanPickerDraftBatchBeanId: null,
-      beanPickerDraftBatch: null,
-      beanPickerEditingBeanId: null,
-      beanPickerEditingBatchId: null,
-      beanPickerShowAllBags: false,
-      beanPickerFocusedBatchId: null,
-      beanPickerFreezeBatchId: null
-    });
-    if (!options.create) {
-      void this.refreshBeans({ force: true, allowModal: true });
-      void this.refreshBeanUsage();
-    }
-    if (id && !options.create) await this.ensureBatchesLoaded(id);
-  }
-
-  private async inspectBeanInPicker(beanId: string): Promise<void> {
-    this.setState({
-      beanPickerBeanId: beanId,
-      beanPickerMode: 'inspect',
-      beanPickerDraftBatchBeanId: null,
-      beanPickerDraftBatch: null,
-      beanPickerEditingBeanId: null,
-      beanPickerEditingBatchId: null,
-      beanPickerShowAllBags: false,
-      beanPickerFocusedBatchId: null,
-      beanPickerFreezeBatchId: null,
-      secondTapHint: this.nextSecondTapHint('bean', beanId)
-    });
-    await this.ensureBatchesLoaded(beanId);
-  }
-
-  private async ensureBatchesLoaded(beanId: string): Promise<void> {
-    if (this.state.batchesByBean[beanId] && !this.inventoryReviewBeanIds.has(beanId)) return;
-    const bean = this.state.beans.find((item) => item.id === beanId);
-    if (!bean) return;
-    this.setState({ status: 'Loading batches' });
-    const batches = await this.loadBatches(
-      bean,
-      this.state.startupPhase === 'connected'
-    );
-    if (this.disposed) return;
-    this.setState({
-      batchesByBean: { ...this.state.batchesByBean, [bean.id]: batches },
-      status: 'Batches loaded'
-    });
-  }
-
   private markInventoryReview(beanId: string, unresolved: boolean): void {
     if (unresolved) this.inventoryReviewBeanIds.add(beanId);
     else this.inventoryReviewBeanIds.delete(beanId);
@@ -2649,18 +2620,11 @@ export class BeanieApp {
       const selectedBeanId = this.state.selectedBeanId && beanIds.has(this.state.selectedBeanId)
         ? this.state.selectedBeanId
         : null;
-      const beanPickerBeanId = this.state.beanPickerBeanId && beanIds.has(this.state.beanPickerBeanId)
-        ? this.state.beanPickerBeanId
-        : selectedBeanId;
-      const beanPickerEditingBeanId = this.state.beanPickerEditingBeanId && beanIds.has(this.state.beanPickerEditingBeanId)
-        ? this.state.beanPickerEditingBeanId
-        : null;
+      this.beanInventoryBrowser.reconcileBeans(beans, selectedBeanId);
       this.setState({
         beans,
         selectedBeanId,
         selectedBatchId: selectedBeanId ? this.state.selectedBatchId : null,
-        beanPickerBeanId,
-        beanPickerEditingBeanId,
         batchesByBean: keepKeys(this.state.batchesByBean, beanIds),
         beanUsageAt: keepKeys(this.state.beanUsageAt, beanIds)
       });
@@ -2700,7 +2664,7 @@ export class BeanieApp {
   }
 
   private canRefreshBeansInsideModal(): boolean {
-    if (this.state.modal !== 'bean-picker' || this.state.beanPickerMode === 'create') return false;
+    if (this.state.modal !== 'bean-picker' || this.beanInventoryBrowser.isCreateMode()) return false;
     return this.root.querySelector('.bean-picker-fields input:focus, .bean-picker-fields textarea:focus, .bean-picker-batch input:focus') == null;
   }
 
@@ -3104,25 +3068,6 @@ export class BeanieApp {
       })
     });
     if (result.deleteAlreadyAbsent) this.shotRefreshTask.trigger();
-  }
-
-  // Fill a new-bean form's inputs from an existing bag, directly (no re-render)
-  // so the user's later edits to the prefilled values aren't clobbered. Only
-  // fields the given form actually contains are touched.
-  private prefillBeanForm(form: HTMLFormElement | null, beanId: string): void {
-    const bean = beanId ? this.state.beans.find((item) => item.id === beanId) : null;
-    if (!form || !bean) return;
-    const set = (name: string, value: string) => {
-      const el = form.elements.namedItem(name);
-      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.value = value;
-    };
-    set('prefillBeanId', bean.id);
-    set('roaster', bean.roaster);
-    set('name', bean.name);
-    set('country', inputValue(bean.country));
-    set('region', inputValue(bean.region));
-    set('processing', inputValue(bean.processing));
-    set('notes', inputValue(bean.notes));
   }
 
   // Resolves true when the machine command actually went through (or demo
@@ -4512,7 +4457,7 @@ export class BeanieApp {
     const table = new Map<string, ClickActionHandler>();
     const groups = [
       this.phoneClickActions(),
-      this.beanClickActions(),
+      this.beanInventoryBrowser.clickActions(),
       this.scannerFlow.scannerClickActions(),
       this.recipeClickActions(),
       this.shotClickActions(),
@@ -4568,131 +4513,6 @@ export class BeanieApp {
       },
     };
   }
-
-  private beanClickActions(): Record<string, ClickActionHandler> {
-    return {
-      'select-bean': async ({ id }) => {
-        if (id) {
-          this.completeSecondTapHint('bean');
-          this.setState({ modal: null, secondTapHint: null });
-          await this.selectBean(id, { apply: true, preferWorkflow: false });
-        }
-      },
-      'inspect-bean': async ({ id }) => {
-        if (id) {
-          const focusedId = this.state.beanPickerBeanId ?? this.state.selectedBeanId;
-          if (id === focusedId) {
-            this.completeSecondTapHint('bean');
-            this.setState({ modal: null, secondTapHint: null });
-            if (id !== this.state.selectedBeanId) {
-              await this.selectBean(id, { apply: true, preferWorkflow: false });
-            }
-          } else {
-            await this.inspectBeanInPicker(id);
-          }
-        }
-      },
-      'open-add-bean': async () => {
-        if (this.state.modal === 'bean-picker') {
-          this.setState({
-            beanPickerBeanId: null,
-            beanPickerMode: 'create',
-            beanPickerDraftBatchBeanId: null,
-            beanPickerDraftBatch: null,
-            beanPickerEditingBeanId: null,
-            beanPickerEditingBatchId: null,
-            beanPickerShowAllBags: false,
-            status: 'Adding bean'
-          });
-        } else {
-          await this.openBeanPicker(null, { create: true });
-        }
-      },
-      'open-edit-bean': async ({ id }) => {
-        await this.openBeanPicker(id ?? this.state.selectedBeanId, { autofocusSearch: false });
-      },
-      'archive-bean': async ({ id }) => {
-        if (id) await this.archiveBean(id);
-      },
-      'toggle-bean-details': ({ id }) => {
-        if (id) {
-          this.setState({
-            beanPickerEditingBeanId: this.state.beanPickerEditingBeanId === id ? null : id,
-            beanPickerEditingBatchId: null,
-            beanPickerBeanId: id,
-            beanPickerMode: 'inspect'
-          });
-        }
-      },
-      'toggle-batch-details': ({ id }) => {
-        if (id) {
-          this.setState({
-            beanPickerEditingBatchId: this.state.beanPickerEditingBatchId === id ? null : id,
-            beanPickerEditingBeanId: null,
-            beanPickerFreezeBatchId: null
-          });
-        }
-      },
-      'focus-batch': async ({ el, id }) => {
-        if (id) {
-          const changed = this.state.beanPickerFocusedBatchId !== id;
-          this.setState({
-            beanPickerFocusedBatchId: id,
-            beanPickerFreezeBatchId: changed ? null : this.state.beanPickerFreezeBatchId,
-            beanPickerEditingBatchId: changed ? null : this.state.beanPickerEditingBatchId
-          });
-          // Selecting a bag also sets it as the bean's in-use bag (no separate Brew button).
-          if (changed && el.dataset.beanId) await this.selectBatchFromPicker(el.dataset.beanId, id);
-        }
-      },
-      'toggle-freeze-stepper': ({ id }) => {
-        if (id) {
-          this.setState({
-            beanPickerFreezeBatchId: this.state.beanPickerFreezeBatchId === id ? null : id,
-            beanPickerEditingBatchId: null
-          });
-        }
-      },
-      'confirm-freeze-stock': async ({ el, id }) => {
-        if (id && el.dataset.beanId) await this.freezeStock(el.dataset.beanId, id);
-      },
-      'toggle-bean-picker-show-all': () => {
-        this.setState({ beanPickerShowAllBags: !this.state.beanPickerShowAllBags });
-      },
-      'toggle-favorite-bean': ({ id }) => {
-        if (id) this.toggleFavoriteBean(id);
-      },
-      'open-add-batch': async () => {
-        await this.openBeanPicker(this.state.selectedBeanId);
-        this.startBatchDraftInPicker(this.state.selectedBeanId);
-      },
-      'bean-picker-add-batch': () => {
-        this.startBatchDraftInPicker(this.state.beanPickerBeanId ?? this.state.selectedBeanId);
-      },
-      'cancel-batch-draft': () => {
-        this.cancelBatchDraft();
-      },
-      'open-batch-storage': ({ el, id }) => {
-        if (id && el.dataset.beanId) {
-          this.setState({
-            modal: 'batch-storage',
-            batchStorageTarget: { beanId: el.dataset.beanId, batchId: id },
-            status: 'Dates and history'
-          });
-        }
-      },
-      'batch-storage-event': async ({ el, id }) => {
-        if (el.dataset.type === 'frozen' || el.dataset.type === 'thawed') {
-          const target = id && el.dataset.beanId ? { beanId: el.dataset.beanId, batchId: id } : null;
-          await this.saveBatchStorageEvent(el.dataset.type, target);
-        }
-      },
-      'finish-batch': async ({ el, id }) => {
-        if (id) await this.finishBatchFromPicker(el.dataset.beanId ?? null, id);
-      },
-    };
-  }
-
 
   /**
    * Accept and push a synced setting's next value. The domain writer updates
@@ -5390,9 +5210,6 @@ export class BeanieApp {
           profileFocusId: resolveCleaningProfile(this.state.profiles, this.state.cleaningProfileOverride)?.id ?? null
         });
       },
-      'open-bean-picker': async () => {
-        await this.openBeanPicker(this.state.selectedBeanId);
-      },
       'profiles-page': ({ value }) => {
         if (value) this.setState({ profilePage: Number(value) });
       },
@@ -5440,7 +5257,7 @@ export class BeanieApp {
       'close-modal': () => {
         if (this.state.modal === 'cleaning-wizard') this.teardownUntrackedCleaningAction();
         if (this.state.modal === 'batch-storage') {
-          this.setState({ modal: 'bean-picker', batchStorageTarget: null });
+          this.beanInventoryBrowser.closeStorage();
           return;
         }
         // Notes editor layers over the profile-editor page — closing it must keep
@@ -5465,16 +5282,11 @@ export class BeanieApp {
           return;
         }
         if (this.state.scanner) this.scannerFlow.cancelScannerWork();
+        if (this.state.modal === 'bean-picker') this.beanInventoryBrowser.close();
         this.setState({
           modal: null,
           scanner: null,
-          batchStorageTarget: null,
           deleteShotTarget: null,
-          beanPickerDraftBatchBeanId: null,
-          beanPickerDraftBatch: null,
-          beanPickerEditingBeanId: null,
-          beanPickerEditingBatchId: null,
-          beanPickerFreezeBatchId: null,
           profileEditor: null,
           editingProfileId: null,
           editDialog: null,
@@ -5507,7 +5319,7 @@ export class BeanieApp {
       return;
     }
     if (target.dataset.action === 'search') {
-      this.setState({ search: target.value });
+      this.beanInventoryBrowser.setSearch(target.value);
     }
     if (target.dataset.action === 'shot-search') {
       this.setState({ shotSearch: target.value });
@@ -5531,14 +5343,7 @@ export class BeanieApp {
       const beanId = target.closest<HTMLFormElement>('form')?.dataset.beanId;
       const name = target.name;
       if (beanId && (name === 'roastDate' || name === 'roastLevel')) {
-        // Capture uncontrolled text/date edits without forcing a rerender on
-        // every keystroke. Any later render (including submit busy state) can
-        // reconstruct the exact physical create intent.
-        this.state.beanPickerDraftBatch = {
-          ...(this.state.beanPickerDraftBatch ?? { beanId }),
-          beanId,
-          [name]: target.value.trim() || null
-        };
+        this.beanInventoryBrowser.captureDraftBatchField(beanId, name, target.value);
       }
     }
     if (target.dataset.action?.startsWith('pe-')) {
@@ -5821,12 +5626,14 @@ export class BeanieApp {
     }
     if (target.dataset.action === 'bean-picker-batch-field') {
       const form = target.closest<HTMLFormElement>('[data-form="bean-picker-batch"]');
-      if (form) await this.saveBeanPickerBatch(form);
+      const submission = form ? readBeanInventoryForm(form) : null;
+      if (submission?.type === 'batch') await this.beanInventoryBrowser.saveBatch(submission);
       return;
     }
     if (target.dataset.action === 'bean-prefill') {
       const select = target as HTMLSelectElement;
-      this.prefillBeanForm(select.closest<HTMLFormElement>('form'), select.value);
+      const bean = this.state.beans.find((item) => item.id === select.value) ?? null;
+      prefillBeanInventoryForm(select.closest<HTMLFormElement>('form'), bean);
       select.value = '';
       return;
     }
@@ -5859,9 +5666,9 @@ export class BeanieApp {
     if (!form || !form.isConnected) return;
     const next = event.relatedTarget instanceof Node ? event.relatedTarget : null;
     if (next && form.contains(next)) return;
-    const fields = beanFieldsFromForm(new FormData(form));
-    if (!fields.roaster || !fields.name) return;
-    await this.submitBeanPickerBean(form);
+    const submission = readBeanInventoryForm(form);
+    if (submission?.type !== 'bean' || !beanSubmissionIsComplete(submission)) return;
+    await this.beanInventoryBrowser.submit(submission);
   }
 
   private async commitActiveBeanPickerFormBeforeAction(nextEl: HTMLElement): Promise<void> {
@@ -5871,9 +5678,9 @@ export class BeanieApp {
       active?.closest<HTMLFormElement>('form[data-form="bean-picker-bean"]') ??
       this.root.querySelector<HTMLFormElement>('.bean-picker-details.open form[data-form="bean-picker-bean"], .bean-picker-modal.create-mode form[data-form="bean-picker-bean"]');
     if (!form || !form.isConnected || form.contains(nextEl)) return;
-    const fields = beanFieldsFromForm(new FormData(form));
-    if (!fields.roaster || !fields.name) return;
-    await this.submitBeanPickerBean(form);
+    const submission = readBeanInventoryForm(form);
+    if (submission?.type !== 'bean' || !beanSubmissionIsComplete(submission)) return;
+    await this.beanInventoryBrowser.submit(submission);
   }
 
   private async onSubmit(event: Event): Promise<void> {
@@ -5893,19 +5700,10 @@ export class BeanieApp {
       }
       return;
     }
-    if (form.dataset.form === 'bean-picker-bean') {
+    const beanInventorySubmission = readBeanInventoryForm(form);
+    if (beanInventorySubmission) {
       event.preventDefault();
-      await this.submitBeanPickerBean(form);
-      return;
-    }
-    if (form.dataset.form === 'bean-picker-batch') {
-      event.preventDefault();
-      await this.submitBeanPickerBatch(form);
-      return;
-    }
-    if (form.dataset.form === 'batch-storage-dates') {
-      event.preventDefault();
-      await this.saveBatchStorageDates(form);
+      await this.beanInventoryBrowser.submit(beanInventorySubmission);
       return;
     }
     if (form.dataset.form === 'grinder-editor') {
@@ -5943,584 +5741,8 @@ export class BeanieApp {
     if (projection.shouldScheduleApply) this.scheduleApply();
   }
 
-  private async updateInventoryBatch(
-    request: BatchUpdateRequest,
-    options: {
-      optimisticStatus?: string;
-      savedStatus?: string;
-      optimisticPatch?: Partial<AppState>;
-      settledPatch?: Partial<AppState>;
-    } = {}
-  ): Promise<'saved' | 'failed' | 'skipped'> {
-    if (!this.requireInventoryJournalForWrite(request.demo)) return 'failed';
-    const start = this.beanInventory.startBatchUpdate(request);
-    if (start.type === 'missing') return 'skipped';
-    this.adoptInventoryProjection(start.projection, {
-      ...options.optimisticPatch,
-      status: options.optimisticStatus ?? start.status
-    });
-    if (start.complete || !start.completion) return 'saved';
-
-    const outcome = await start.completion;
-    if (outcome.type === 'failed') {
-      console.error('[Beanie] Inventory update failed', outcome.error ?? outcome.reason);
-    }
-    this.adoptInventoryProjection(outcome.projection, {
-      ...options.settledPatch,
-      status: outcome.type === 'saved' ? options.savedStatus ?? outcome.status : outcome.status
-    });
-    return outcome.type === 'saved' ? 'saved' : 'failed';
-  }
-
-  private requireInventoryJournalForWrite(demo: boolean): boolean {
-    if (demo || this.inventoryJournalReady) return true;
-    this.setState({ status: 'Bag changes are read-only — local journal unavailable' });
-    return false;
-  }
-
-  private async submitBeanPickerBean(form: HTMLFormElement): Promise<void> {
-    if (this.state.busy) return;
-    const data = new FormData(form);
-    const fields = beanFieldsFromForm(data);
-    if (!fields.roaster || !fields.name) return;
-
-    const editingId = form.dataset.id || null;
-    if (!editingId && !this.requireInventoryJournalForWrite(this.state.demo)) return;
-    this.setState({ busy: true, status: editingId ? 'Saving bean' : 'Adding bean' });
-
-    if (!editingId) {
-      const prefillBeanId = String(data.get('prefillBeanId') ?? '');
-      const continuingBean = prefillBeanId ? this.state.beans.find((item) => item.id === prefillBeanId) ?? null : null;
-      if (continuingBean && beanFieldsUnchanged(fields, continuingBean)) {
-        await this.addFirstStockToBean(continuingBean, data, 'Stock added');
-        return;
-      }
-    }
-
-    const result = await this.beanWorkflow.saveBean({
-      beans: this.state.beans,
-      batchesByBean: this.state.batchesByBean,
-      editingId,
-      fields,
-      demo: this.state.demo,
-      nowMs: Date.now()
-    }, {
-      createBean: (input) => gateway.createBean(input),
-      updateBean: (id, input) => gateway.updateBean(id, input),
-      putBeans: (beans) => beanieCache.putBeans(beans)
-    });
-
-    if (result.type === 'failed') {
-      console.error('[Beanie] Save bean failed', result.error);
-      this.setState({ busy: false, status: result.status });
-      return;
-    }
-
-    if (!editingId) {
-      const batchInput = batchFieldsFromForm(data, result.bean.id);
-      const created = await this.beanInventory.createBatch({
-        beanId: result.bean.id,
-        batch: batchInput,
-        demo: this.state.demo,
-        nowMs: Date.now()
-      });
-
-      if (created.type === 'failed') {
-        console.error('[Beanie] Add first stock failed', created.error);
-        const beans = mergeSavedBean(this.state.beans, result.bean, false);
-        void beanieCache.putBeans(beans).catch(() => {});
-        this.setState({
-          beans,
-          batchesByBean: ensureBeanBatchOwner(this.state.batchesByBean, result.bean.id),
-          beanPickerBeanId: result.bean.id,
-          beanPickerMode: 'inspect',
-          beanPickerDraftBatchBeanId: result.bean.id,
-          beanPickerDraftBatch: batchInput,
-          beanPickerEditingBeanId: null,
-          beanPickerEditingBatchId: null,
-          busy: false,
-          status: created.status
-        });
-        return;
-      }
-
-      const beans = mergeSavedBean(this.state.beans, result.bean, false);
-      void beanieCache.putBeans(beans).catch(() => {});
-      if (created.type === 'reconciliation-required' && created.phase === 'create') {
-        this.markInventoryReview(result.bean.id, true);
-        this.adoptInventoryProjection(created.projection, {
-          beans,
-          beanPickerBeanId: result.bean.id,
-          beanPickerMode: 'inspect',
-          beanPickerDraftBatchBeanId: result.bean.id,
-          beanPickerDraftBatch: batchInput,
-          beanPickerEditingBeanId: null,
-          beanPickerEditingBatchId: null,
-          busy: false,
-          status: created.status
-        });
-        return;
-      }
-      this.markInventoryReview(result.bean.id, false);
-      this.adoptInventoryProjection(created.projection, {
-        beans,
-        beanPickerBeanId: result.bean.id,
-        beanPickerMode: 'inspect',
-        beanPickerDraftBatch: null,
-        beanPickerEditingBeanId: null,
-        beanPickerEditingBatchId: null,
-        formNumbers: omitKeys(this.state.formNumbers, [createStockFormKey('weight'), createStockFormKey('weightRemaining')]),
-        busy: false,
-        status: created.type === 'reconciliation-required'
-          ? created.status
-          : this.state.demo ? 'Bean and stock added (demo)' : 'Bean and stock added'
-      });
-      return;
-    }
-
-    const beans = mergeSavedBean(this.state.beans, result.bean, true);
-    void beanieCache.putBeans(beans).catch(() => {});
-    this.setState({
-      beans,
-      beanPickerBeanId: result.bean.id,
-      beanPickerMode: 'inspect',
-      beanPickerEditingBeanId: editingId ? this.state.beanPickerEditingBeanId : null,
-      beanPickerEditingBatchId: null,
-      busy: false,
-      status: result.status
-    });
-  }
-
-  private async addFirstStockToBean(bean: Bean, data: FormData, status: string): Promise<void> {
-    const batchInput = batchFieldsFromForm(data, bean.id);
-    const result = await this.beanInventory.createBatch({
-      beanId: bean.id,
-      batch: batchInput,
-      demo: this.state.demo,
-      nowMs: Date.now()
-    });
-
-    if (result.type === 'failed') {
-      console.error('[Beanie] Add stock to existing bean failed', result.error);
-      this.setState({
-        beanPickerBeanId: bean.id,
-        beanPickerMode: 'inspect',
-        beanPickerDraftBatchBeanId: bean.id,
-        beanPickerDraftBatch: batchInput,
-        busy: false,
-        status: result.status
-      });
-      return;
-    }
-
-    const beans = promoteBean(this.state.beans, bean.id);
-    void beanieCache.putBeans(beans).catch(() => {});
-    if (result.type === 'reconciliation-required' && result.phase === 'create') {
-      this.markInventoryReview(bean.id, true);
-      this.adoptInventoryProjection(result.projection, {
-        beans,
-        beanPickerBeanId: bean.id,
-        beanPickerMode: 'inspect',
-        beanPickerDraftBatchBeanId: bean.id,
-        beanPickerDraftBatch: batchInput,
-        beanPickerEditingBeanId: null,
-        beanPickerEditingBatchId: null,
-        busy: false,
-        status: result.status
-      });
-      return;
-    }
-    this.markInventoryReview(bean.id, false);
-    this.adoptInventoryProjection(result.projection, {
-      beans,
-      beanPickerBeanId: bean.id,
-      beanPickerMode: 'inspect',
-      beanPickerDraftBatchBeanId: null,
-      beanPickerDraftBatch: null,
-      beanPickerEditingBeanId: null,
-      beanPickerEditingBatchId: null,
-      formNumbers: omitKeys(this.state.formNumbers, [createStockFormKey('weight'), createStockFormKey('weightRemaining')]),
-      busy: false,
-      status: result.type === 'reconciliation-required'
-        ? result.status
-        : this.state.demo ? `${status} (demo)` : status
-    });
-  }
-
-  private async archiveBean(id: string): Promise<void> {
-    if (!window.confirm('Delete this coffee? It will be hidden from the bean list.')) return;
-    this.setState({ busy: true, status: 'Deleting coffee' });
-    const result = await this.beanWorkflow.archiveBean({
-      beans: this.state.beans,
-      id,
-      selectedBeanId: this.state.selectedBeanId,
-      demo: this.state.demo
-    }, {
-      updateBean: (beanId, fields) => gateway.updateBean(beanId, fields),
-      invalidateBeanMutation: (beanId) => beanieCache.invalidateBeanMutation(beanId),
-      putBeans: (beans) => beanieCache.putBeans(beans)
-    });
-
-    if (result.type === 'failed') {
-      console.error('[Beanie] Delete bean failed', result.error);
-      this.setState({ busy: false, status: result.status });
-      return;
-    }
-
-    // Deleting from the bean picker should leave the user in the picker, landing
-    // on a neighbouring coffee, rather than dropping back to the workbench.
-    const inPicker = this.state.modal === 'bean-picker';
-    const prevIndex = this.state.beans.findIndex((bean) => bean.id === id);
-    const nextFocusId = inPicker
-      ? result.beans[prevIndex]?.id ?? result.beans[prevIndex - 1]?.id ?? result.beans[0]?.id ?? null
-      : this.state.beanPickerBeanId;
-    this.setState({
-      beans: result.beans,
-      view: inPicker ? this.state.view : 'workbench',
-      modal: inPicker ? 'bean-picker' : this.state.modal === 'bean-picker' ? null : this.state.modal,
-      beanPickerBeanId: inPicker ? nextFocusId : this.state.beanPickerBeanId,
-      beanPickerMode: inPicker && !nextFocusId ? 'create' : this.state.beanPickerMode,
-      beanPickerEditingBeanId: null,
-      beanPickerEditingBatchId: null,
-      busy: false,
-      status: result.status
-    });
-    if (result.archivedSelectedBean) {
-      if (result.nextSelectedBeanId) await this.selectBean(result.nextSelectedBeanId, { apply: false, preferWorkflow: false });
-      else this.setState({ selectedBeanId: null });
-    }
-  }
-
-  private startBatchDraftInPicker(beanId: string | null): void {
-    if (!beanId) return;
-    const bean = this.state.beans.find((item) => item.id === beanId);
-    if (!bean) return;
-    const current = this.state.batchesByBean[bean.id] ?? [];
-    const latest = latestBatch(current);
-    const weightKey = newStockFormKey(bean.id, 'weight');
-    const remainingKey = newStockFormKey(bean.id, 'weightRemaining');
-    const weight = inputValue(latest?.weight ?? 250);
-    this.setState({
-      beanPickerBeanId: bean.id,
-      beanPickerMode: 'inspect',
-      beanPickerDraftBatchBeanId: bean.id,
-      beanPickerDraftBatch: null,
-      beanPickerEditingBatchId: null,
-      formNumbers: {
-        ...this.state.formNumbers,
-        [weightKey]: this.state.formNumbers[weightKey] ?? weight,
-        [remainingKey]: this.state.formNumbers[remainingKey] ?? weight
-      },
-      status: 'Adding stock'
-    });
-  }
-
-  private async selectBatchFromPicker(beanId: string, batchId: string): Promise<void> {
-    await this.ensureBatchesLoaded(beanId);
-    const bean = this.state.beans.find((item) => item.id === beanId);
-    const batch = bean ? (this.state.batchesByBean[bean.id] ?? []).find((item) => item.id === batchId) : null;
-    if (!bean || !batch || isFinishedBatch(batch)) return;
-    this.completeSecondTapHint('bean');
-    // Selecting a bag to brew keeps the picker open so you can keep managing bags;
-    // it just marks this bag as the one in use.
-    this.setState({ secondTapHint: null });
-    await this.selectBean(bean.id, { apply: true, preferWorkflow: false, preferredBatchId: batch.id });
-  }
-
-  private cancelBatchDraft(): void {
-    const beanId = this.state.beanPickerDraftBatchBeanId;
-    if (!beanId) return;
-    this.setState({
-      beanPickerDraftBatchBeanId: null,
-      beanPickerDraftBatch: null,
-      formNumbers: omitKeys(this.state.formNumbers, [
-        newStockFormKey(beanId, 'weight'),
-        newStockFormKey(beanId, 'weightRemaining')
-      ]),
-      status: 'Stock draft cancelled'
-    });
-  }
-
-  private async saveBeanPickerBatch(form: HTMLFormElement): Promise<void> {
-    const beanId = form.dataset.beanId;
-    const batchId = form.dataset.batchId;
-    if (!beanId || !batchId) return;
-    const bean = this.state.beans.find((item) => item.id === beanId);
-    if (!bean) return;
-    const current = this.state.batchesByBean[bean.id] ?? [];
-    const previous = current.find((item) => item.id === batchId);
-    if (!previous) return;
-    const batchInput = batchFieldsFromForm(new FormData(form), bean.id, previous);
-    await this.updateInventoryBatch({
-      beanId: bean.id,
-      batchId,
-      patch: batchInput,
-      purpose: 'edit',
-      demo: this.state.demo
-    });
-  }
-
-  private async saveBeanPickerBatchValue(
-    beanId: string,
-    batchId: string,
-    name: string,
-    value: string
-  ): Promise<void> {
-    const bean = this.state.beans.find((item) => item.id === beanId);
-    if (!bean) return;
-    const current = this.state.batchesByBean[bean.id] ?? [];
-    const previous = current.find((item) => item.id === batchId);
-    if (!previous) return;
-    const nextValue = numberOrNullInput(value);
-    // Patch only the edited field (the gateway merges partial bodies): echoing
-    // the whole batch here would clobber concurrent edits from other devices.
-    const batchInput: Partial<BeanBatch> = { beanId: bean.id };
-    const weight = name === 'weight' ? nextValue : previous.weight ?? null;
-    if (name === 'weight') batchInput.weight = nextValue;
-    // Keep "left" within the bag size whether the bag or the remaining changed.
-    const remaining = clampRemainingToWeight(
-      name === 'weightRemaining' ? nextValue : previous.weightRemaining ?? null,
-      weight
-    );
-    if (name === 'weightRemaining' || remaining !== (previous.weightRemaining ?? null)) {
-      batchInput.weightRemaining = remaining;
-    }
-    await this.updateInventoryBatch({
-      beanId: bean.id,
-      batchId,
-      patch: batchInput,
-      purpose: 'edit',
-      demo: this.state.demo
-    });
-  }
-
-  private batchStorageSelection(): { bean: Bean; batch: BeanBatch } | null {
-    const target = this.state.batchStorageTarget;
-    if (!target) return null;
-    const bean = this.state.beans.find((item) => item.id === target.beanId);
-    const batch = bean ? (this.state.batchesByBean[bean.id] ?? []).find((item) => item.id === target.batchId) : null;
-    return bean && batch ? { bean, batch } : null;
-  }
-
-  private async saveBatchStorageEvent(
-    type: 'frozen' | 'thawed',
-    target: { beanId: string; batchId: string } | null = null
-  ): Promise<void> {
-    const selection = target ? this.batchAndBeanByIds(target.beanId, target.batchId) : this.batchStorageSelection();
-    if (!selection) return;
-    const batchInput = {
-      beanId: selection.bean.id,
-      ...appendBatchStorageEvent(selection.batch, type, new Date())
-    };
-    await this.saveBatchStoragePatch(selection.bean, selection.batch.id, batchInput, type === 'frozen' ? 'Bag frozen' : 'Bag moved to shelf');
-  }
-
-  private batchAndBeanByIds(beanId: string, batchId: string): { bean: Bean; batch: BeanBatch } | null {
-    const bean = this.state.beans.find((item) => item.id === beanId);
-    const batch = bean ? (this.state.batchesByBean[bean.id] ?? []).find((item) => item.id === batchId) : null;
-    return bean && batch ? { bean, batch } : null;
-  }
-
-  private async saveBatchStorageDates(form: HTMLFormElement): Promise<void> {
-    const selection = this.batchStorageSelection();
-    if (!selection) return;
-    const data = new FormData(form);
-    const events = batchStorageEvents(selection.batch);
-    const patch: Partial<BeanBatch> = { beanId: selection.bean.id };
-    let changed = false;
-
-    // Roast date — only when the row is shown, and only if it actually moved.
-    if (form.elements.namedItem('roast')) {
-      const roastValue = String(data.get('roast') ?? '').trim();
-      if (roastValue && roastValue !== dateInputValue(selection.batch.roastDate)) {
-        patch.roastDate = roastValue;
-        changed = true;
-      }
-    }
-
-    if (events.length === 0) {
-      // Empty history: the form may offer a single "first freeze date" to backfill.
-      const addValue = String(data.get('event-new') ?? '').trim();
-      if (addValue) {
-        const at = new Date(addValue);
-        if (Number.isNaN(at.valueOf())) {
-          this.setState({ status: 'Choose a valid date' });
-          return;
-        }
-        Object.assign(patch, appendBatchStorageEvent(selection.batch, 'frozen', at));
-        changed = true;
-      }
-    } else {
-      const atDates = events.map((_, index) => String(data.get(`event-${index}`) ?? ''));
-      const rebuilt = setBatchStorageEventDates(selection.batch, atDates, new Date());
-      if (rebuilt.storageEvents) {
-        Object.assign(patch, rebuilt);
-        changed = true;
-      }
-    }
-
-    if (!changed) {
-      this.setState({ status: 'No date changes' });
-      return;
-    }
-    await this.saveBatchStoragePatch(selection.bean, selection.batch.id, patch, 'Dates saved');
-  }
-
-  private async freezeStock(beanId: string, batchId: string): Promise<void> {
-    if (!this.requireInventoryJournalForWrite(this.state.demo)) return;
-    const formKey = freezeAmountFormKey(batchId);
-    const amountRaw = numberOrNullInput(this.state.formNumbers[formKey] ?? null);
-    const start = this.beanInventory.startFreezeStock({
-      beanId,
-      batchId,
-      amountGrams: amountRaw,
-      demo: this.state.demo,
-      nowMs: Date.now()
-    });
-    if (start.type === 'missing') return;
-    if (start.type === 'nothing-to-freeze') {
-      this.setState({ status: start.status });
-      return;
-    }
-    if (start.type === 'optimistic') {
-      this.adoptInventoryProjection(start.projection, {
-        beanPickerFreezeBatchId: null,
-        formNumbers: omitKey(this.state.formNumbers, formKey),
-        status: start.status
-      });
-      if (start.complete || !start.completion) return;
-    } else {
-      // Close the confirmation immediately. The controller deduplicates the
-      // in-flight split as the correctness fence; this also removes the visual
-      // opportunity to submit the same physical split twice.
-      this.setState({
-        beanPickerFreezeBatchId: null,
-        formNumbers: omitKey(this.state.formNumbers, formKey),
-        status: start.status
-      });
-    }
-
-    const outcome = await start.completion!;
-    if (outcome.type === 'failed') {
-      console.error('[Beanie] Freeze stock failed', outcome.error ?? outcome.reason);
-      if (outcome.projection) {
-        this.adoptInventoryProjection(outcome.projection, { status: outcome.status });
-      } else {
-        this.setState({ status: outcome.status });
-      }
-      return;
-    }
-    if (outcome.type === 'reconciliation-required') {
-      console.error('[Beanie] Freeze stock needs reconciliation', outcome.error);
-    }
-    this.adoptInventoryProjection(outcome.projection, {
-      beanPickerFreezeBatchId: null,
-      formNumbers: omitKey(this.state.formNumbers, formKey),
-      status: outcome.status
-    });
-  }
-
-  private async saveBatchStoragePatch(
-    bean: Bean,
-    batchId: string,
-    batchInput: Partial<BeanBatch>,
-    status: string
-  ): Promise<'saved' | 'failed' | 'skipped'> {
-    return this.updateInventoryBatch({
-      beanId: bean.id,
-      batchId,
-      patch: batchInput,
-      purpose: 'stock',
-      demo: this.state.demo
-    }, { optimisticStatus: status, savedStatus: status });
-  }
-
-  private async finishBatchFromPicker(beanId: string | null, batchId: string): Promise<void> {
-    if (!beanId) return;
-    const bean = this.state.beans.find((item) => item.id === beanId);
-    if (!bean) return;
-    const current = this.state.batchesByBean[bean.id] ?? [];
-    const batch = current.find((item) => item.id === batchId);
-    if (!batch) return;
-    if (isFinishedBatch(batch)) return;
-
-    if (this.state.beanPickerEditingBatchId === batchId) {
-      this.setState({ beanPickerEditingBatchId: null });
-    }
-    await this.updateInventoryBatch({
-      beanId: bean.id,
-      batchId,
-      patch: { beanId: bean.id, weightRemaining: 0 },
-      purpose: 'finish',
-      demo: this.state.demo
-    });
-  }
-
-  private async submitBeanPickerBatch(form: HTMLFormElement): Promise<void> {
-    if (this.state.busy) return;
-    const beanId = form.dataset.beanId;
-    if (!beanId) return;
-    if (!this.requireInventoryJournalForWrite(this.state.demo)) return;
-    const bean = this.state.beans.find((item) => item.id === beanId);
-    if (!bean) return;
-    const batchId = form.dataset.batchId || null;
-    const previous = batchId
-      ? (this.state.batchesByBean[bean.id] ?? []).find((item) => item.id === batchId)
-      : undefined;
-    const batchInput = batchFieldsFromForm(new FormData(form), bean.id, previous);
-
-    this.setState({
-      busy: true,
-      ...(!batchId ? { beanPickerDraftBatch: batchInput } : {}),
-      status: batchId ? 'Saving stock' : 'Adding stock'
-    });
-    if (!batchId) {
-      const result = await this.beanInventory.createBatch({
-        beanId: bean.id,
-        batch: batchInput,
-        demo: this.state.demo,
-        nowMs: Date.now()
-      });
-
-      if (result.type === 'failed') {
-        console.error('[Beanie] Save batch failed', result.error);
-        this.setState({ busy: false, status: result.status });
-        return;
-      }
-
-      if (result.type === 'reconciliation-required' && result.phase === 'create') {
-        this.markInventoryReview(bean.id, true);
-        this.adoptInventoryProjection(result.projection, {
-          busy: false,
-          status: result.status
-        });
-        return;
-      }
-      this.markInventoryReview(bean.id, false);
-      this.adoptInventoryProjection(result.projection, {
-        beanPickerDraftBatchBeanId: null,
-        beanPickerDraftBatch: null,
-        beanPickerEditingBatchId: null,
-        formNumbers: omitKeys(this.state.formNumbers, [
-          newStockFormKey(bean.id, 'weight'),
-          newStockFormKey(bean.id, 'weightRemaining')
-        ]),
-        busy: false,
-        status: result.status
-      });
-      return;
-    }
-
-    const result = await this.updateInventoryBatch({
-      beanId: bean.id,
-      batchId,
-      patch: batchInput,
-      purpose: 'edit',
-      demo: this.state.demo
-    }, {
-      optimisticPatch: { busy: false }
-    });
-    if (result === 'skipped') this.setState({ busy: false });
+  private applyBeanInventoryBrowserEvent(event: BeanInventoryBrowserEvent): void {
+    this.setState(projectBeanInventoryBrowserEvent(this.state, event));
   }
 
   private async submitGrinderEditor(form: HTMLFormElement): Promise<void> {
@@ -7061,7 +6283,12 @@ export class BeanieApp {
       return;
     }
     if (edit.target === 'bean-picker-batch' && edit.beanId && edit.batchId && edit.name) {
-      await this.saveBeanPickerBatchValue(edit.beanId, edit.batchId, edit.name, value);
+      await this.beanInventoryBrowser.saveBatchValue(
+        edit.beanId,
+        edit.batchId,
+        edit.name,
+        value
+      );
       return;
     }
     if (edit.target === 'form-field' && edit.formKey) {
@@ -7239,7 +6466,7 @@ export class BeanieApp {
       selectedBean: bean,
       selectedBatch: this.selectedBatch(),
       batchesByBean: this.state.batchesByBean,
-      beans: this.sortedBeansForPicker(),
+      beans: this.beanInventoryBrowser.sortedBeans(),
       beanSearch: this.state.search,
       shotSearch: this.state.shotSearch,
       favoriteBeanIds: this.state.favoriteBeans,
@@ -7547,49 +6774,10 @@ export class BeanieApp {
   }
 
   private renderBeanPickerModal(): string {
-    const query = this.state.search.trim().toLowerCase();
-    const beans = this.sortedBeansForPicker();
     return renderBeanPickerModalView({
-      search: this.state.search,
-      autofocusSearch: this.state.beanPickerAutofocusSearch,
-      matches: beans.filter((bean) => beanLabel(bean).toLowerCase().includes(query)),
-      focusedBean: this.beanPickerFocusedBean(),
-      mode: this.state.beanPickerMode,
-      selectedBeanId: this.state.selectedBeanId,
-      selectedBatchId: this.state.selectedBatchId,
-      favoriteBeanIds: this.state.favoriteBeans,
-      focusedBatchId: this.state.beanPickerFocusedBatchId,
-      freezeStepperBatchId: this.state.beanPickerFreezeBatchId,
-      batchesByBean: this.state.batchesByBean,
-      prefillBeans: beans,
-      draftBatchBeanId: this.state.beanPickerDraftBatchBeanId,
-      draftBatch: this.state.beanPickerDraftBatch,
-      editingBeanDetailsId: this.state.beanPickerEditingBeanId,
-      editingBatchId: this.state.beanPickerEditingBatchId,
-      showAllBags: this.state.beanPickerShowAllBags,
-      formNumbers: this.state.formNumbers,
-      secondTapHint: this.state.secondTapHint,
+      ...this.beanInventoryBrowser.presentation(),
       averageDoseIn: this.averageDoseIn()
     });
-  }
-
-  private sortedBeansForPicker(): Bean[] {
-    const usage = this.state.beanUsageAt;
-    const selectedId = this.state.selectedBeanId;
-    const favorites = new Set(this.state.favoriteBeans);
-    return [...this.state.beans].sort((a, b) => {
-      // Favorites stay pinned to the top, then fall back to the usual order.
-      const fa = favorites.has(a.id) ? 0 : 1;
-      const fb = favorites.has(b.id) ? 0 : 1;
-      if (fa !== fb) return fa - fb;
-      return compareBeansForPicker(a, b, usage, selectedId);
-    });
-  }
-
-  private beanPickerFocusedBean(): Bean | null {
-    if (this.state.beanPickerMode === 'create') return null;
-    const id = this.state.beanPickerBeanId ?? this.state.selectedBeanId;
-    return this.state.beans.find((bean) => bean.id === id) ?? this.selectedBean();
   }
 
   private renderProfilesPage(): string {
@@ -7714,7 +6902,7 @@ export class BeanieApp {
   }
 
   private renderBatchStorageModal(): string {
-    const selection = this.batchStorageSelection();
+    const selection = this.beanInventoryBrowser.storageSelection();
     return selection ? renderBatchStorageModalView(selection.bean, selection.batch) : '';
   }
 
@@ -7978,7 +7166,7 @@ export class BeanieApp {
       field: this.state.shotEditField,
       beanDialog: this.state.shotBeanEdit,
       grinders: this.state.grinders,
-      beans: this.sortedBeansForPicker(),
+      beans: this.beanInventoryBrowser.sortedBeans(),
       batchesByBean: this.state.batchesByBean,
       shots: this.state.shots
     });
@@ -8142,16 +7330,6 @@ function demoRecoveryTransientReset(): Partial<AppState> {
     phoneTab: 'home',
     modal: null,
     scanner: null,
-    beanPickerBeanId: null,
-    beanPickerMode: 'inspect',
-    beanPickerAutofocusSearch: false,
-    beanPickerDraftBatchBeanId: null,
-    beanPickerDraftBatch: null,
-    beanPickerEditingBeanId: null,
-    beanPickerEditingBatchId: null,
-    beanPickerFocusedBatchId: null,
-    beanPickerFreezeBatchId: null,
-    batchStorageTarget: null,
     deleteShotTarget: null,
     editingGrinderId: null,
     profileEditor: null,
@@ -8211,20 +7389,6 @@ function keepKeys<T>(record: Record<string, T>, keys: Set<string>): Record<strin
   return next;
 }
 
-function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
-  const { [key]: _removed, ...rest } = record;
-  return rest;
-}
-
-function omitKeys<T>(record: Record<string, T>, keys: string[]): Record<string, T> {
-  const remove = new Set(keys);
-  const next: Record<string, T> = {};
-  for (const [key, value] of Object.entries(record)) {
-    if (!remove.has(key)) next[key] = value;
-  }
-  return next;
-}
-
 function beansChanged(current: Bean[], next: Bean[]): boolean {
   if (current.length !== next.length) return true;
   for (let index = 0; index < current.length; index += 1) {
@@ -8257,32 +7421,12 @@ function decimalPlaces(value: number): number {
 
 
 
-function mergeSavedBean(latest: readonly Bean[], saved: Bean, editing: boolean): Bean[] {
-  return editing
-    ? latest.map((bean) => bean.id === saved.id ? saved : bean)
-    : [saved, ...latest.filter((bean) => bean.id !== saved.id)];
-}
-
-function ensureBeanBatchOwner(
-  latest: Record<string, BeanBatch[]>,
-  beanId: string
-): Record<string, BeanBatch[]> {
-  if (Object.prototype.hasOwnProperty.call(latest, beanId)) return latest;
-  return { ...latest, [beanId]: [] };
-}
-
 function isFinishedBatch(batch: BeanBatch): boolean {
   return typeof batch.weightRemaining === 'number' && Number.isFinite(batch.weightRemaining) && batch.weightRemaining < 5;
 }
 
 function isUsableBatch(batch: BeanBatch): boolean {
   return !isFinishedBatch(batch);
-}
-
-function inputValue(value: unknown): string {
-  if (value == null) return '';
-  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : String(round(value, 3));
-  return String(value);
 }
 
 function isEditField(value: string | undefined): value is EditField {
