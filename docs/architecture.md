@@ -356,7 +356,9 @@ Examples:
 
 - `InputDialog.ts`: reusable numeric/text dialog model/render helpers.
 - `LiveChart.ts`: canvas drawing class.
-- `profileEditor.ts`: profile editor state and render logic.
+- `profileEditor.ts`: profile editor UI session state, field reducers, and
+  rendering. Persistent profile decoding and encoding live in
+  `domain/profileModel.ts` and are shared by non-UI flows.
 - `shotGraphModel.ts`, `profileChartModel.ts`, `liveChartModel.ts`: chart data
   shaping.
 - `html.ts`: escaping helpers.

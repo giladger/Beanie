@@ -1,6 +1,10 @@
 import type { Profile } from '../api/types';
-import { createProfileEditorState, profileFromEditorState } from '../components/profileEditor';
-import { FIELD_SPECS, type EditorStep } from './profileModel';
+import {
+  decodeProfile,
+  encodeProfile,
+  FIELD_SPECS,
+  type EditorStep
+} from './profileModel';
 import { canEditAsBasic, compileSimpleToSteps, parseStepsToSimple } from './simpleProfile';
 import type { DialInSuggestion } from './dialIn';
 
@@ -36,8 +40,8 @@ export function applyProfileTweak(
   const target = numericTarget(suggestion);
   if (!parameter || target == null) return null;
 
-  const state = createProfileEditorState(profile);
-  const steps = state.steps;
+  const model = decodeProfile(profile);
+  const steps = model.steps;
   const tweaked = canEditAsBasic(steps)
     ? tweakSimpleSteps(steps, parameter, target)
     : tweakAdvancedSteps(steps, parameter, target);
@@ -45,10 +49,10 @@ export function applyProfileTweak(
   // A tweak that lands on the current value would spawn a pointless variant.
   if (Math.abs(tweaked.current - tweaked.value) < 0.05) return null;
 
-  const baseTitle = baseProfileTitle(state.title);
+  const baseTitle = baseProfileTitle(model.title);
   const title = `${baseTitle}${DEREK_SUFFIX}${variantLabel(parameter, tweaked.value)}`;
   return {
-    profile: profileFromEditorState({ ...state, steps: tweaked.steps, title }),
+    profile: encodeProfile({ ...model, steps: tweaked.steps, title }),
     baseTitle,
     summary: `${parameterLabel(parameter)} ${formatTweakValue(parameter, tweaked.current)} → ${formatTweakValue(parameter, tweaked.value)}`
   };

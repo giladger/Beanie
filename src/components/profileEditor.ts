@@ -8,16 +8,21 @@ import {
   type SimpleType
 } from '../domain/simpleProfile';
 import {
+  decodeProfile,
+  defaultProfileStep,
+  encodeProfile,
   FIELD_SPECS,
+  legacyProfileTypeFromType,
   MAX_STEPS,
   PROFILE_BEVERAGE_TYPES,
+  profileTypeFromLegacy,
   type EditorStep,
   type ProfileMetaKey,
+  type ProfileModel,
   type StepExit,
   type StepExitCondition,
   type StepExitType,
   type StepFieldKey,
-  type StepLimiter,
   type StepPump,
   type StepTransition
 } from '../domain/profileModel';
@@ -35,19 +40,7 @@ interface ChartPlot {
   h: number;
 }
 
-export interface ProfileEditorState {
-  title: string;
-  author: string;
-  notes: string;
-  beverageType: string;
-  type: string;
-  legacyProfileType: string;
-  tankTemperature: number | null;
-  targetWeight: number | null;
-  targetVolume: number | null;
-  targetVolumeCountStart: number | null;
-  version: string;
-  steps: EditorStep[];
+export interface ProfileEditorState extends ProfileModel {
   selectedStep: number;
   /** Which editor surface is shown. Derived from `canEditAsBasic` on load; the user can toggle. */
   editorMode: EditorMode;
@@ -56,7 +49,6 @@ export interface ProfileEditorState {
   dirty: boolean;
   /** Outcome of the last save attempt, surfaced as a banner; null when none. */
   saveNotice: { tone: 'error' | 'success'; message: string } | null;
-  extra: Record<string, unknown>;
 }
 
 const META_NUMBER_KEYS: ProfileMetaKey[] = [
@@ -65,21 +57,6 @@ const META_NUMBER_KEYS: ProfileMetaKey[] = [
   'target_volume',
   'target_volume_count_start'
 ];
-
-const TOP_LEVEL_PROFILE_KEYS = new Set([
-  'title',
-  'author',
-  'notes',
-  'beverage_type',
-  'type',
-  'legacy_profile_type',
-  'tank_temperature',
-  'target_weight',
-  'target_volume',
-  'target_volume_count_start',
-  'version',
-  'steps'
-]);
 
 type NumericStepField = Extract<
   StepFieldKey,
@@ -105,91 +82,15 @@ const STEP_FIELD_LIMITS: Record<NumericStepField, { min: number; max: number }> 
   limiter_range: { min: FIELD_SPECS.limiterRange.min, max: FIELD_SPECS.limiterRange.max }
 };
 
-const KNOWN_STEP_KEYS = new Set([
-  'name',
-  'temperature',
-  'sensor',
-  'pump',
-  'pressure',
-  'flow',
-  'transition',
-  'seconds',
-  'volume',
-  'weight',
-  'exit',
-  'limiter'
-]);
-
 export function createProfileEditorState(profile: Profile | null): ProfileEditorState {
-  if (!profile) {
-    return {
-      title: 'New profile',
-      author: '',
-      notes: '',
-      beverageType: 'espresso',
-      type: 'advanced',
-      legacyProfileType: 'settings_2c',
-      // reaprime requires both tank_temperature and target_volume_count_start
-      // on every profile, so prefill their canonical defaults rather than leave
-      // them unset (target_weight / target_volume stay optional).
-      tankTemperature: FIELD_SPECS.tankTemperature.default,
-      targetWeight: null,
-      targetVolume: null,
-      targetVolumeCountStart: FIELD_SPECS.targetVolumeCountStart.default,
-      version: '2',
-      steps: [defaultStep()],
-      selectedStep: 0,
-      editorMode: 'advanced',
-      advancedTab: 'steps',
-      dirty: false,
-      saveNotice: null,
-      extra: {}
-    };
-  }
-
-  const record = profile as Record<string, unknown>;
-  // Read canonical reaprime `steps` first, falling back to the de1app Tcl
-  // `advanced_shot` list so imported tablet profiles load correctly.
-  const rawSteps = Array.isArray(profile.steps)
-    ? profile.steps
-    : Array.isArray(record.advanced_shot)
-      ? (record.advanced_shot as unknown[])
-      : [];
-  const steps = rawSteps.map(readStep);
-  const extra = extraTopLevelFields(profile);
-  const inferredType = inferProfileTypeFromSteps(steps);
-  const type = profile.type ?? typeFromLegacy(profile.legacy_profile_type) ?? inferredType;
-  const finalSteps = steps.length > 0 ? steps : [defaultStep()];
+  const model = decodeProfile(profile);
   return {
-    title: stringValue(profile.title) ?? stringValue(record.profile_title) ?? '',
-    author: profile.author ?? '',
-    notes: stringValue(profile.notes) ?? stringValue(record.profile_notes) ?? '',
-    beverageType: profile.beverage_type ?? 'espresso',
-    type,
-    legacyProfileType: profile.legacy_profile_type ?? legacyFromType(type),
-    tankTemperature: aliasNumber(record, ['tank_temperature', 'tank_desired_water_temperature']),
-    targetWeight: aliasNumber(record, [
-      'target_weight',
-      'final_desired_shot_weight_advanced',
-      'final_desired_shot_weight'
-    ]),
-    targetVolume: aliasNumber(record, [
-      'target_volume',
-      'final_desired_shot_volume_advanced',
-      'final_desired_shot_volume'
-    ]),
-    targetVolumeCountStart: aliasNumber(record, [
-      'target_volume_count_start',
-      'final_desired_shot_volume_advanced_count_start'
-    ]),
-    version: profile.version ?? '2',
-    steps: finalSteps,
+    ...model,
     selectedStep: 0,
-    editorMode: canEditAsBasic(finalSteps) ? 'basic' : 'advanced',
+    editorMode: profile != null && canEditAsBasic(model.steps) ? 'basic' : 'advanced',
     advancedTab: 'steps',
     dirty: false,
-    saveNotice: null,
-    extra
+    saveNotice: null
   };
 }
 
@@ -228,7 +129,7 @@ export function setProfileMeta(
           ? { notes: value }
           : key === 'beverage_type'
             ? { beverageType: value }
-            : { legacyProfileType: value, type: typeFromLegacy(value) };
+            : { legacyProfileType: value, type: profileTypeFromLegacy(value) };
   return { ...state, ...next, dirty: true };
 }
 
@@ -353,7 +254,7 @@ export function setSimpleProfileField(
   return {
     ...state,
     type,
-    legacyProfileType: legacyFromType(type),
+    legacyProfileType: legacyProfileTypeFromType(type),
     steps: compileSimpleToSteps(nextKnobs, type),
     dirty: true
   };
@@ -433,7 +334,7 @@ export function setSimpleProfileType(state: ProfileEditorState, type: SimpleType
   return {
     ...state,
     type,
-    legacyProfileType: legacyFromType(type),
+    legacyProfileType: legacyProfileTypeFromType(type),
     steps: compileSimpleToSteps(knobs, type),
     selectedStep: 0,
     editorMode: 'basic',
@@ -498,7 +399,7 @@ export function addStep(state: ProfileEditorState): ProfileEditorState {
         limiter: selected.limiter ? { ...selected.limiter } : null,
         extra: { ...selected.extra }
       }
-    : defaultStep();
+    : defaultProfileStep();
   const insertAt = clamp(state.selectedStep + 1, 0, state.steps.length);
   const steps = [...state.steps.slice(0, insertAt), step, ...state.steps.slice(insertAt)];
   return { ...state, steps, selectedStep: insertAt, dirty: true };
@@ -530,27 +431,7 @@ export function selectStep(state: ProfileEditorState, index: number): ProfileEdi
 }
 
 export function profileFromEditorState(state: ProfileEditorState): Profile {
-  const profile: Profile = {
-    ...state.extra,
-    version: state.version,
-    steps: state.steps.map(writeStep)
-  };
-  if (state.title) profile.title = state.title;
-  if (state.author) profile.author = state.author;
-  if (state.notes) profile.notes = state.notes;
-  if (state.beverageType) profile.beverage_type = state.beverageType;
-  if (state.type) profile.type = state.type;
-  if (state.legacyProfileType) profile.legacy_profile_type = state.legacyProfileType;
-  // tank_temperature and target_volume_count_start are mandatory server-side
-  // (reaprime rejects a profile without either), so always emit them — falling
-  // back to their defaults — instead of dropping them when the field is empty.
-  // target_weight / target_volume stay optional and are only sent when set.
-  profile.tank_temperature = state.tankTemperature ?? FIELD_SPECS.tankTemperature.default;
-  profile.target_volume_count_start =
-    state.targetVolumeCountStart ?? FIELD_SPECS.targetVolumeCountStart.default;
-  if (state.targetWeight != null) profile.target_weight = state.targetWeight;
-  if (state.targetVolume != null) profile.target_volume = state.targetVolume;
-  return profile;
+  return encodeProfile(state);
 }
 
 function renderSaveNotice(state: ProfileEditorState): string {
@@ -1030,140 +911,6 @@ function selectedStepBand(model: ProfileChartModel, selectedStep: number, plot: 
   return `<rect class="pe-chart-selected" x="${x.toFixed(1)}" y="${plot.y}" width="${width.toFixed(1)}" height="${plot.h}"></rect>`;
 }
 
-function inferProfileTypeFromSteps(steps: EditorStep[]): string {
-  if (!steps.length) return 'advanced';
-  const hasPressure = steps.some((step) => step.pump === 'pressure' || step.pressure > 0);
-  const hasFlow = steps.some((step) => step.pump === 'flow' || step.flow > 0);
-  if (hasFlow && !hasPressure) return 'flow';
-  if (hasPressure && !hasFlow) return 'pressure';
-  const firstPressure = steps.findIndex((step) => step.pump === 'pressure');
-  const flowAfterPressure = firstPressure >= 0 && steps.some((step, index) => index > firstPressure && step.pump === 'flow');
-  if (hasPressure && hasFlow && firstPressure >= 0 && !flowAfterPressure) return 'pressure';
-  return 'advanced';
-}
-
-function defaultStep(): EditorStep {
-  return {
-    name: 'Pressure',
-    temperature: 93,
-    sensor: 'coffee',
-    pump: 'pressure',
-    pressure: 9,
-    flow: 6,
-    transition: 'fast',
-    seconds: 30,
-    volume: 0,
-    weight: 0,
-    exit: null,
-    limiter: null,
-    extra: {}
-  };
-}
-
-// de1app flat per-step keys that `readStep` folds into nested `exit`/`limiter`.
-// Consumed here so they don't survive into the canonical reaprime output.
-const TCL_STEP_FLAT_KEYS = new Set([
-  'exit_if',
-  'exit_type',
-  'exit_pressure_over',
-  'exit_pressure_under',
-  'exit_flow_over',
-  'exit_flow_under',
-  'max_flow_or_pressure',
-  'max_flow_or_pressure_range'
-]);
-
-function readStep(raw: unknown): EditorStep {
-  const record = objectRecord(raw) ?? {};
-  const base = defaultStep();
-  const extra: Record<string, unknown> = {};
-  for (const key of Object.keys(record)) {
-    if (!KNOWN_STEP_KEYS.has(key) && !TCL_STEP_FLAT_KEYS.has(key)) extra[key] = record[key];
-  }
-  return {
-    name: stringValue(record.name) ?? base.name,
-    temperature: numeric(record.temperature) ?? base.temperature,
-    sensor: record.sensor === 'water' ? 'water' : 'coffee',
-    pump: record.pump === 'flow' ? 'flow' : 'pressure',
-    pressure: numeric(record.pressure) ?? base.pressure,
-    flow: numeric(record.flow) ?? base.flow,
-    transition: record.transition === 'smooth' ? 'smooth' : 'fast',
-    seconds: numeric(record.seconds) ?? base.seconds,
-    volume: numeric(record.volume) ?? 0,
-    weight: numeric(record.weight) ?? 0,
-    exit: readExit(record),
-    limiter: readLimiter(record),
-    extra
-  };
-}
-
-// Accepts a step record and reads the nested `exit` object (reaprime v2) or,
-// failing that, the de1app flat `exit_if`/`exit_type`/`exit_*` keys.
-function readExit(record: Record<string, unknown>): StepExit | null {
-  const nested = objectRecord(record.exit);
-  if (nested) {
-    const value = numeric(nested.value);
-    if (value == null) return null;
-    return {
-      type: nested.type === 'flow' ? 'flow' : 'pressure',
-      condition: nested.condition === 'under' ? 'under' : 'over',
-      value
-    };
-  }
-  if (!isTruthyFlag(record.exit_if)) return null;
-  const exitType = stringValue(record.exit_type);
-  if (!exitType) return null;
-  const type: StepExitType = exitType.startsWith('flow') ? 'flow' : 'pressure';
-  const condition: StepExitCondition = exitType.endsWith('under') ? 'under' : 'over';
-  const value = numeric(record[`exit_${type}_${condition}`]);
-  if (value == null) return null;
-  return { type, condition, value };
-}
-
-// Reads nested `limiter` (reaprime v2) or de1app flat `max_flow_or_pressure`.
-function readLimiter(record: Record<string, unknown>): StepLimiter | null {
-  const nested = objectRecord(record.limiter);
-  if (nested) {
-    const value = numeric(nested.value);
-    if (value == null) return null;
-    return { value, range: numeric(nested.range) ?? FIELD_SPECS.limiterRange.default };
-  }
-  const flat = numeric(record.max_flow_or_pressure);
-  if (flat == null || flat <= 0) return null;
-  return {
-    value: flat,
-    range: numeric(record.max_flow_or_pressure_range) ?? FIELD_SPECS.limiterRange.default
-  };
-}
-
-function isTruthyFlag(value: unknown): boolean {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'number') return value !== 0;
-  if (typeof value === 'string') return value === '1' || value.toLowerCase() === 'true';
-  return false;
-}
-
-function writeStep(step: EditorStep): Record<string, unknown> {
-  const out: Record<string, unknown> = {
-    ...step.extra,
-    name: step.name,
-    temperature: step.temperature,
-    sensor: step.sensor,
-    pump: step.pump,
-    pressure: step.pressure,
-    flow: step.flow,
-    transition: step.transition,
-    seconds: step.seconds,
-    volume: step.volume,
-    weight: step.weight
-  };
-  if (step.exit) out.exit = { type: step.exit.type, condition: step.exit.condition, value: step.exit.value };
-  else delete out.exit;
-  if (step.limiter) out.limiter = { value: step.limiter.value, range: step.limiter.range };
-  else delete out.limiter;
-  return out;
-}
-
 function updateStep(
   state: ProfileEditorState,
   index: number,
@@ -1190,60 +937,8 @@ function setStepLimiterRange(step: EditorStep, range: number): EditorStep {
   return { ...step, limiter: { ...step.limiter, range } };
 }
 
-// de1app Tcl aliases that `createProfileEditorState` reads into typed fields.
-// Excluded from `extra` so they don't leak back into the canonical reaprime
-// output alongside their normalized counterparts.
-const CONSUMED_ALIAS_KEYS = new Set([
-  'advanced_shot',
-  'profile_title',
-  'profile_notes',
-  'tank_desired_water_temperature',
-  'final_desired_shot_weight_advanced',
-  'final_desired_shot_weight',
-  'final_desired_shot_volume_advanced',
-  'final_desired_shot_volume',
-  'final_desired_shot_volume_advanced_count_start'
-]);
-
-function extraTopLevelFields(profile: Profile): Record<string, unknown> {
-  const extra: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(profile)) {
-    if (!TOP_LEVEL_PROFILE_KEYS.has(key) && !CONSUMED_ALIAS_KEYS.has(key)) extra[key] = value;
-  }
-  return extra;
-}
-
-function aliasNumber(record: Record<string, unknown>, keys: string[]): number | null {
-  for (const key of keys) {
-    const value = numeric(record[key]);
-    if (value != null) return value;
-  }
-  return null;
-}
-
-function typeFromLegacy(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  if (value === 'settings_2a') return 'pressure';
-  if (value === 'settings_2b') return 'flow';
-  return 'advanced';
-}
-
-function legacyFromType(value: string | undefined): string {
-  if (value === 'pressure') return 'settings_2a';
-  if (value === 'flow') return 'settings_2b';
-  return 'settings_2c';
-}
-
-function objectRecord(value: unknown): Record<string, unknown> | null {
-  return value != null && typeof value === 'object' ? (value as Record<string, unknown>) : null;
-}
-
 function stringValue(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
-}
-
-function numeric(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function parseNumber(value: string): number | null {

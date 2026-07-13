@@ -103,6 +103,11 @@ AI-agent work does not infer completion from extracted filenames alone.
   Stable bean or known batch identity must prove ownership, known-foreign/unresolved
   summaries are omitted, cached measurements survive, and the total reports
   only rows actually present rather than the global page's remote count.
+- Profile serialization extraction: canonical and de1app/Tcl profile
+  decoding, alias consumption, defaults, unknown-field preservation, and
+  canonical encoding now live in `domain/profileModel.ts`. The editor owns
+  only UI session state and rendering, while Derek profile tweaks use the same
+  domain codec without importing the component layer.
 
 ## Deferred — architecture debt (ordered by value)
 
@@ -136,9 +141,7 @@ The remaining work starts here:
 7. **Shared demo/remote save helper.** Six controller save flows repeat the
    same skeleton (demo id minting, `(demo)` status suffix, fail-soft cache
    write). A `saveWithDemoFallback` helper would collapse ~150 lines.
-8. **Profile (de)serialization out of `profileEditor.ts`** (the
-   `readStep`/`writeStep`/alias tables, ~200 lines) into `domain/profileModel`.
-9. **`hotWaterDataForNativeWorkflow`** and the thrice-duplicated
+8. **`hotWaterDataForNativeWorkflow`** and the thrice-duplicated
    `positiveNumber`/`formatNumber` helpers → `domain/waterSettings`.
 
 ## Deferred — smaller cleanups

@@ -125,12 +125,6 @@ export const DEPENDENCY_DEBT: readonly DependencyDebt[] = [
     migration: 'Move CapturedImage/fileToScaledImage callers to the injected platform port.'
   },
   {
-    from: 'domain/profileTweaks.ts',
-    to: 'components/profileEditor.ts',
-    reason: 'Domain tweak logic imports editor reducers colocated with rendering.',
-    migration: 'Extract profile editor state/reducers to domain/profileEditorModel.ts.'
-  },
-  {
     from: 'views/cleaningWizardView.ts',
     to: 'controllers/cleaningWizardController.ts',
     reason: 'The view imports controller state helpers directly.',
