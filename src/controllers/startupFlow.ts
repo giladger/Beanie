@@ -17,7 +17,7 @@ import {
   selectInitialBean
 } from '../domain/beanWorkflow';
 import { recipeFingerprint } from '../domain/recipeIdentity';
-import { beanUsageFromShots } from './beanWorkflowController';
+import { beanIdForContext, beanUsageFromShots } from './beanWorkflowController';
 
 export type StartupPhase =
   | 'starting'
@@ -86,6 +86,12 @@ export interface StartupCachedPatch {
   readonly grinders: Grinder[];
   readonly profiles: ProfileRecord[];
   readonly selectedBeanId: string | null;
+  readonly shots: ShotRecord[];
+  /** Count of records proven present in this cached page, not a remote total. */
+  readonly shotsTotal: number;
+  readonly shotsLoadingMore: false;
+  readonly detailShotId: null;
+  readonly compareShotId: null;
   readonly draft: RecipeDraft;
   readonly appliedSignature: string;
   readonly demo: false;
@@ -261,7 +267,11 @@ export class StartupFlow {
           return { type: 'ignored', reason: 'authority-changed' };
         }
         if (cached.workflow && cached.beans && cached.beans.length > 0) {
-          this.commit(cachedProjection(cached, this.deps.readLastBeanId()));
+          this.commit(cachedProjection(
+            cached,
+            this.deps.readLastBeanId(),
+            this.host.snapshot().batchesByBean
+          ));
           hadUsableData = true;
         }
       }
@@ -450,7 +460,8 @@ export class StartupFlow {
 
 function cachedProjection(
   cached: GatewayStartupSnapshot['data'],
-  lastBeanId: string | null
+  lastBeanId: string | null,
+  batchesByBean: Record<string, BeanBatch[]>
 ): Extract<StartupProjection, { type: 'cached' }> {
   const workflow = cached.workflow;
   const beans = cached.beans;
@@ -460,6 +471,11 @@ function cachedProjection(
   const grinders = cached.grinders ?? [];
   const profiles = cached.profiles ?? [];
   const selected = selectInitialBean(beans, workflow, lastBeanId, cached.latestShots?.items[0]);
+  const history = cachedShotHistoryForSelection(cached.latestShots, {
+    beanId: selected?.id ?? null,
+    beans,
+    batchesByBean
+  });
   return {
     type: 'cached',
     authoritativeWorkflow: workflow,
@@ -470,6 +486,11 @@ function cachedProjection(
       grinders,
       profiles,
       selectedBeanId: selected?.id ?? null,
+      shots: history.records,
+      shotsTotal: history.total,
+      shotsLoadingMore: false,
+      detailShotId: null,
+      compareShotId: null,
       draft: normalizeDraft(recipeFromWorkflow(workflow), profiles, grinders),
       appliedSignature: recipeFingerprint(workflow),
       demo: false,
@@ -507,6 +528,14 @@ function gatewayProjection(input: {
     : null;
   const grinders = input.startup.data.grinders ?? [];
   const profiles = input.startup.data.profiles ?? [];
+  const resetHistory = resetBeanState && offlineWithCache
+    ? cachedShotHistoryForSelection(input.latestShots, {
+        beanId: selected?.id ?? null,
+        beans: input.beans,
+        // Never use demo inventory to infer ownership of cached live shots.
+        batchesByBean: input.recoveringFromDemo ? {} : input.batchesByBean
+      })
+    : { records: [], total: 0 };
   return {
     type: 'gateway',
     authoritativeWorkflow: input.workflow,
@@ -544,8 +573,8 @@ function gatewayProjection(input: {
         selectedBeanId: selected?.id ?? null,
         selectedBatchId: null,
         batchesByBean: {},
-        shots: [],
-        shotsTotal: 0,
+        shots: resetHistory.records,
+        shotsTotal: resetHistory.total,
         shotsLoadingMore: false,
         detailShotId: null,
         compareShotId: null,
@@ -554,6 +583,46 @@ function gatewayProjection(input: {
       } : {})
     }
   };
+}
+
+/**
+ * Converts one mixed latest-shot cache page into truthful History state for a
+ * concrete bean selection. History is intentionally bean-wide across bags. A
+ * stable bean id proves ownership directly; a known batch-to-bean mapping may
+ * prove older records that predate bean ids. Records resolving to another
+ * known bean or to no bean are omitted rather than guessed from mutable labels.
+ *
+ * The global page cannot prove the selected bean's remote total, so `total`
+ * deliberately counts only the records present in this page.
+ */
+export function cachedShotHistoryForSelection(
+  page: PaginatedShots | null | undefined,
+  selection: {
+    readonly beanId: string | null;
+    readonly beans: Bean[];
+    readonly batchesByBean: Record<string, BeanBatch[]>;
+  }
+): { records: ShotRecord[]; total: number } {
+  if (!page || !selection.beanId) return { records: [], total: 0 };
+  const records = page.items
+    .filter((shot) => {
+      const explicitBeanId = shot.workflow?.context?.beanId;
+      if (typeof explicitBeanId === 'string' && explicitBeanId.length > 0) {
+        return explicitBeanId === selection.beanId;
+      }
+      return beanIdForContext(
+        shot.workflow?.context,
+        selection.beans,
+        selection.batchesByBean
+      ) === selection.beanId;
+    })
+    .map((shot): ShotRecord => ({
+      ...shot,
+      measurements: Array.isArray((shot as Partial<ShotRecord>).measurements)
+        ? (shot as ShotRecord).measurements
+        : []
+    }));
+  return { records, total: records.length };
 }
 
 function terminalGatewayPatch(

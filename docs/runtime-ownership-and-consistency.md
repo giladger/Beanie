@@ -139,6 +139,15 @@ gateway replaces demo data, the app restores the pre-demo synced-cache snapshot
 non-demo settings recovery before selection and connected effects. Sample edits
 therefore neither appear as user data offline nor authorize a real write.
 
+The unscoped latest-shot cache page is projected into offline History only
+after stable identity resolves each summary to the selected bean. History stays
+bean-wide across bags; known batch ownership may recover legacy records without
+bean ids, while known-foreign or unresolved records are omitted. Hydration is
+cache-only and preserves full cached measurements when present. Because the
+global page cannot prove a bean-specific remote total, startup exposes only the
+number of matching cached rows and disables misleading pagination until a
+repository-backed selection replaces it.
+
 Dose-journal hydration is a separate startup track, not another
 `StartupFlow` await. This matters because another browser context can block
 IndexedDB indefinitely. The shell remains usable while

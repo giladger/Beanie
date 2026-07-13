@@ -104,6 +104,23 @@ export async function loadFullShot(
   }
 }
 
+/**
+ * Hydrate cached summaries without acquiring gateway authority or writing the
+ * cache. A missing/corrupt full record remains a useful history row with an
+ * explicitly empty measurement series.
+ */
+export async function hydrateCachedShotSummaries(
+  summaries: readonly ShotSummary[],
+  cache: Pick<ShotRepositoryCache, 'getShotRecord'>
+): Promise<ShotRecord[]> {
+  return Promise.all(summaries.map(async (summary) => {
+    const cached = await cache.getShotRecord(summary.id).catch(() => null);
+    return cached
+      ? mergeShotSummaryIntoRecord(cached, summary)
+      : { ...summary, measurements: [] };
+  }));
+}
+
 export async function loadLatestShotCandidates(
   limit: number,
   deps: ShotRepositoryDeps

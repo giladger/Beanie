@@ -1,6 +1,7 @@
 import type { PaginatedShots, ShotRecord, ShotSummary } from '../api/types';
 import {
   fetchShotPage,
+  hydrateCachedShotSummaries,
   loadFullShot,
   loadLatestBeanUsage,
   loadLatestShotCandidates,
@@ -159,6 +160,30 @@ await run('loadFullShot merges cached measurements with fresh summary fields', a
   equal(loaded.measurements.length, 1);
   equal(cache.recordWrites.length, 1);
   equal(gateway.shotIds.length, 0);
+});
+
+await run('cache-only shot hydration preserves order and degrades misses to summaries', async () => {
+  const summaries: ShotSummary[] = [
+    summary,
+    { id: 'shot-2', timestamp: '2026-06-02T10:00:00.000Z' },
+    { id: 'shot-3', timestamp: '2026-06-03T10:00:00.000Z' }
+  ];
+  const reads: string[] = [];
+  const loaded = await hydrateCachedShotSummaries(summaries, {
+    getShotRecord: async (id) => {
+      reads.push(id);
+      if (id === 'shot-1') return fullRecord;
+      if (id === 'shot-2') throw new Error('corrupt cache entry');
+      return null;
+    }
+  });
+
+  equal(reads.join(','), 'shot-1,shot-2,shot-3');
+  equal(loaded.map((shot) => shot.id).join(','), 'shot-1,shot-2,shot-3');
+  equal(loaded[0]?.shotNotes, 'summary notes');
+  equal(loaded[0]?.measurements.length, 1);
+  equal(loaded[1]?.measurements.length, 0);
+  equal(loaded[2]?.measurements.length, 0);
 });
 
 await run('loadFullShot fetches and caches a record when no cached record exists', async () => {

@@ -69,10 +69,14 @@ failure leaves startup usable but stock mutations fail closed with a read-only
 status; the shell retries hydration rather than silently allowing an
 unreserved write.
 
-One startup continuity gap remains: the cached latest-shot page informs bean
-usage and initial-bean choice, but cached-only projection does not yet hydrate
-`AppState.shots`. History can therefore remain empty until a live or
-repository-backed bean selection succeeds.
+Cached startup also publishes a bounded, bean-wide History projection. Stable
+bean identity or a currently known batch-to-bean mapping must prove ownership;
+known-foreign and unresolved summaries are omitted rather than guessed from
+coffee labels. Full cached records retain their measurements, summary-only records
+remain useful rows with an empty series, and the displayed total counts only
+the records actually present in the mixed global cache page. A later live or
+repository-backed bean selection replaces that bounded offline projection with
+an authoritative bean page and total.
 
 The live shot path is intentionally more direct for performance:
 

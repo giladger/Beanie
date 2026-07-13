@@ -98,6 +98,11 @@ AI-agent work does not infer completion from extracted filenames alone.
   journal/dose work before releasing waiters and closing the shared gateway
   coordinator. True cross-device exactly-once still requires gateway DELETE
   receipts.
+- Architecture extraction phase six: cached-only startup now hydrates the
+  selected bean's bounded History page through cache-only shot-record merging.
+  Stable bean or known batch identity must prove ownership, known-foreign/unresolved
+  summaries are omitted, cached measurements survive, and the total reports
+  only rows actually present rather than the global page's remote count.
 
 ## Deferred — architecture debt (ordered by value)
 
@@ -113,31 +118,27 @@ The remaining work starts here:
    reservation, durable admission, optimism/canonicalization, cache projection,
    and release out of `BeanieApp` while retaining the existing reconciler and
    inventory authorities.
-3. **Cached offline shot hydration.** `StartupFlow` uses cached latest shots for
-   bean usage and initial selection, but its cached projection does not populate
-   the shell's shot list. Define the selected-bean/batch filtering contract and
-   publish the cached page so History is useful during a cold offline start.
-4. **Harden settings contracts.** Replace plain-string field keys and cast-built
+3. **Harden settings contracts.** Replace plain-string field keys and cast-built
    patches with group-indexed keys. Make public cache/repository/settings
    capability parameters required and fail closed instead of defaulting true.
-5. **Expose inventory-journal readiness in the stock UI.** Runtime adapters and
+4. **Expose inventory-journal readiness in the stock UI.** Runtime adapters and
    submit handlers fail closed, but bag mutation controls still look enabled
    until the user clicks and receives the read-only status. Pass an explicit
    capability into the bean-picker/storage views and disable only mutation
    controls while preserving inventory browsing.
-6. **Finish controller boundary injection.** Remove gateway/cache singleton
+5. **Finish controller boundary injection.** Remove gateway/cache singleton
    imports from scanner, Derek, and profile-editor flows; move scanner
    `location`/`document` and profile-editor `HTMLElement` access behind shell
    adapters.
-7. **Remaining optimistic one-offs.** Move `setMachineRefillLevel` to its
+6. **Remaining optimistic one-offs.** Move `setMachineRefillLevel` to its
    matching controller with revisioned confirmed rollback and stale-result
    fencing.
-8. **Shared demo/remote save helper.** Six controller save flows repeat the
+7. **Shared demo/remote save helper.** Six controller save flows repeat the
    same skeleton (demo id minting, `(demo)` status suffix, fail-soft cache
    write). A `saveWithDemoFallback` helper would collapse ~150 lines.
-9. **Profile (de)serialization out of `profileEditor.ts`** (the
+8. **Profile (de)serialization out of `profileEditor.ts`** (the
    `readStep`/`writeStep`/alias tables, ~200 lines) into `domain/profileModel`.
-10. **`hotWaterDataForNativeWorkflow`** and the thrice-duplicated
+9. **`hotWaterDataForNativeWorkflow`** and the thrice-duplicated
    `positiveNumber`/`formatNumber` helpers → `domain/waterSettings`.
 
 ## Deferred — smaller cleanups

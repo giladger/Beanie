@@ -6,8 +6,10 @@ import type {
   Grinder,
   PaginatedShots,
   ProfileRecord,
+  ShotRecord,
   Workflow
 } from '../api/types';
+import { hydrateCachedShotSummaries } from './shotRepository';
 
 export interface StartupCache {
   putWorkflow(workflow: Workflow | null, canCommit?: () => boolean): Promise<void>;
@@ -20,6 +22,7 @@ export interface StartupCache {
   getGrinders(): Promise<Grinder[]>;
   getProfiles(): Promise<ProfileRecord[]>;
   getShotPage(query: URLSearchParams): Promise<PaginatedShots | null>;
+  getShotRecord(id: string): Promise<ShotRecord | null>;
 }
 
 interface LoadStartupOptions {
@@ -123,13 +126,19 @@ export async function cachedStartupData(
   latestShotQuery: URLSearchParams,
   cache: StartupCache
 ): Promise<GatewayStartupSnapshot['data']> {
-  const [workflow, beans, grinders, profiles, latestShots] = await Promise.all([
+  const [workflow, beans, grinders, profiles, latestShotPage] = await Promise.all([
     cache.getWorkflow().catch(() => null),
     cache.getBeans().catch(() => []),
     cache.getGrinders().catch(() => []),
     cache.getProfiles().catch(() => []),
     cache.getShotPage(latestShotQuery).catch(() => null)
   ]);
+  const latestShots = latestShotPage
+    ? {
+        ...latestShotPage,
+        items: await hydrateCachedShotSummaries(latestShotPage.items, cache)
+      }
+    : null;
 
   return {
     workflow: workflow ?? undefined,

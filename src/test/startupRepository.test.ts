@@ -11,6 +11,7 @@ import type {
   Grinder,
   PaginatedShots,
   ProfileRecord,
+  ShotRecord,
   Workflow
 } from '../api/types';
 
@@ -36,6 +37,7 @@ class FakeStartupCache implements StartupCache {
   grinders: Grinder[] = [];
   profiles: ProfileRecord[] = [];
   latestShots: PaginatedShots | null = null;
+  shotRecords = new Map<string, ShotRecord>();
   failPutProfiles = false;
 
   async putWorkflow(workflowValue: Workflow | null): Promise<void> {
@@ -83,6 +85,10 @@ class FakeStartupCache implements StartupCache {
   async getShotPage(): Promise<PaginatedShots | null> {
     return this.latestShots;
   }
+
+  async getShotRecord(id: string): Promise<ShotRecord | null> {
+    return this.shotRecords.get(id) ?? null;
+  }
 }
 
 await run('cacheStartupData writes loaded startup resources and ignores write failures', async () => {
@@ -120,6 +126,26 @@ await run('cachedStartupData does not present empty collection defaults as cache
   equal(cached.grinders, undefined);
   equal(cached.profiles, undefined);
   equal(cached.latestShots, undefined);
+});
+
+await run('cachedStartupData hydrates cached measurements under fresh summary metadata', async () => {
+  const cache = new FakeStartupCache();
+  cache.latestShots = latestShots;
+  cache.shotRecords.set('shot-1', {
+    id: 'shot-1',
+    timestamp: '2026-05-01T10:00:00.000Z',
+    shotNotes: 'cached full record',
+    measurements: [{
+      machine: { timestamp: '2026-05-01T10:00:00.000Z', pressure: 9 }
+    }]
+  });
+
+  const cached = await cachedStartupData(latestQuery(), cache);
+  const shot = cached.latestShots?.items[0] as ShotRecord | undefined;
+
+  equal(shot?.timestamp, latestShots.items[0]?.timestamp);
+  equal(shot?.shotNotes, 'cached full record');
+  equal(shot?.measurements.length, 1);
 });
 
 await run('loadGatewayStartupWithCache fills failed resources from cache with truthful metadata', async () => {

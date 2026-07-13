@@ -11,6 +11,7 @@ import type {
   Workflow
 } from '../api/types';
 import {
+  cachedShotHistoryForSelection,
   StartupFlow,
   type StartupAuxiliaryOperation,
   type StartupEffectPlan,
@@ -41,6 +42,48 @@ const latestShots: PaginatedShots = {
   offset: 0
 };
 
+await run('cached history uses stable selection identities and a truthful cached total', () => {
+  const page: PaginatedShots = {
+    items: [
+      shotSummary('exact', 'bean-1', 'batch-1'),
+      shotSummary('same-bean-other-batch', 'bean-1', 'batch-2'),
+      shotSummary('legacy-batch-only', null, 'batch-1'),
+      shotSummary('conflicting-bean', 'bean-2', 'batch-1'),
+      shotSummary('archived-foreign-bean', 'archived-bean', 'batch-1')
+    ],
+    total: 400,
+    limit: 50,
+    offset: 0
+  };
+  const selectionBeans = [bean, { id: 'bean-2', roaster: 'Other', name: 'Coffee' }];
+  const selectionBatches = {
+    'bean-1': [{ id: 'batch-1', beanId: 'bean-1' }]
+  };
+
+  const beanHistory = cachedShotHistoryForSelection(page, {
+    beanId: 'bean-1',
+    beans: selectionBeans,
+    batchesByBean: selectionBatches
+  });
+  equal(
+    beanHistory.records.map((shot) => shot.id),
+    ['exact', 'same-bean-other-batch', 'legacy-batch-only']
+  );
+  equal(beanHistory.total, 3);
+  equal(beanHistory.records[0]?.measurements.length, 0);
+
+  const identityOnlyHistory = cachedShotHistoryForSelection(page, {
+    beanId: 'bean-1',
+    beans: selectionBeans,
+    batchesByBean: {}
+  });
+  equal(
+    identityOnlyHistory.records.map((shot) => shot.id),
+    ['exact', 'same-bean-other-batch']
+  );
+  equal(identityOnlyHistory.total, 2);
+});
+
 await run('settings gate cache publication and cache precedes the gateway result', async () => {
   const settingsGate = deferred<void>();
   const gatewayGate = deferred<GatewayStartupSnapshot>();
@@ -59,6 +102,13 @@ await run('settings gate cache publication and cache precedes the gateway result
   await flushAsync();
   equal(types(harness.projections), ['loading', 'cached']);
   equal(harness.readLastBeanIdCalls, 1);
+  const cached = harness.projections.find(
+    (projection): projection is Extract<StartupProjection, { type: 'cached' }> =>
+      projection.type === 'cached'
+  );
+  equal(cached?.patch.shots.map((shot) => shot.id), ['shot-1']);
+  equal(cached?.patch.shotsTotal, 1);
+  equal(cached?.patch.detailShotId, null);
 
   gatewayGate.resolve(startup('connected'));
   const outcome = await loading;
@@ -292,8 +342,8 @@ await run('demo recovery never starts a settings read from offline-cache mode', 
   equal(gateway?.patch.selectedBeanId, bean.id);
   equal(gateway?.patch.selectedBatchId, null);
   equal(Object.keys(gateway?.patch.batchesByBean ?? {}).length, 0);
-  equal(gateway?.patch.shots?.length, 0);
-  equal(gateway?.patch.shotsTotal, 0);
+  equal(gateway?.patch.shots?.map((shot) => shot.id), ['shot-1']);
+  equal(gateway?.patch.shotsTotal, 1);
   equal(gateway?.patch.draft?.dose, 18);
 });
 
@@ -435,6 +485,38 @@ await run('disposal after the settings await suppresses all later work', async (
   equal(harness.flow.snapshot.inFlight, false);
 });
 
+await run('disposal during cached shot hydration suppresses cache publication', async () => {
+  const cacheGate = deferred<GatewayStartupSnapshot['data']>();
+  const harness = createHarness({ loadCached: () => cacheGate.promise });
+  const loading = harness.flow.load();
+  await waitFor(() => harness.cachedCalls === 1);
+
+  harness.flow.dispose();
+  cacheGate.resolve({ workflow, beans: [bean], latestShots });
+  const outcome = await loading;
+
+  equal(outcome.type, 'disposed');
+  equal(types(harness.projections), ['loading']);
+  equal(harness.gatewayCalls, 0);
+  equal(harness.effects, []);
+});
+
+await run('transport replacement during cached shot hydration suppresses stale history', async () => {
+  const cacheGate = deferred<GatewayStartupSnapshot['data']>();
+  const harness = createHarness({ loadCached: () => cacheGate.promise });
+  const loading = harness.flow.load();
+  await waitFor(() => harness.cachedCalls === 1);
+
+  harness.invalidateAuthority();
+  cacheGate.resolve({ workflow, beans: [bean], latestShots });
+  const outcome = await loading;
+
+  equal(outcome, { type: 'ignored', reason: 'authority-changed' });
+  equal(types(harness.projections), ['loading']);
+  equal(harness.gatewayCalls, 0);
+  equal(harness.effects, []);
+});
+
 await run('disposal during selection suppresses deferred apply and terminal effects', async () => {
   const selectionGate = deferred<void>();
   const harness = createHarness({
@@ -484,6 +566,7 @@ await run('transport demotion during selection suppresses every terminal startup
 interface HarnessOptions {
   initial?: Partial<StartupHostSnapshot>;
   cached?: GatewayStartupSnapshot['data'];
+  loadCached?: () => Promise<GatewayStartupSnapshot['data']>;
   startup?: GatewayStartupSnapshot;
   machine?: MachineSnapshot;
   loadSettings?: () => Promise<void>;
@@ -542,7 +625,7 @@ function createHarness(options: HarnessOptions = {}): {
     loadSettings: options.loadSettings ?? (async () => {}),
     loadCached: async () => {
       cachedCalls += 1;
-      return options.cached ?? {};
+      return options.loadCached ? options.loadCached() : options.cached ?? {};
     },
     loadGateway: async () => {
       gatewayCalls += 1;
@@ -668,6 +751,23 @@ function machine(state: MachineSnapshot['state']['state']): MachineSnapshot {
     targetGroupTemperature: 93,
     profileFrame: 0,
     steamTemperature: 140
+  };
+}
+
+function shotSummary(
+  id: string,
+  beanId: string | null,
+  batchId: string | null
+): PaginatedShots['items'][number] {
+  return {
+    id,
+    timestamp: '2026-07-12T10:00:00.000Z',
+    workflow: {
+      context: {
+        beanId,
+        beanBatchId: batchId
+      }
+    }
   };
 }
 
