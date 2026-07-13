@@ -1,5 +1,8 @@
 import {
   ScreensaverIsland,
+  type ScreensaverHost,
+  type ScreensaverResources,
+  type ScreensaverSnapshot,
   type ScreensaverTimer
 } from '../render/screensaverIsland';
 
@@ -100,9 +103,59 @@ class FakeImage extends FakeElement {
   }
 }
 
-run('screensaver island gates clocks and releases faded image resources', () => {
+function createIsland(
+  timer: ScreensaverTimer,
+  initial: Partial<ScreensaverSnapshot> = {},
+  resourceOverrides: Partial<ScreensaverResources> = {}
+): {
+  island: ScreensaverIsland;
+  snapshot: ScreensaverSnapshot & { status?: string };
+} {
+  const snapshot: ScreensaverSnapshot & { status?: string } = {
+    demo: false,
+    asleep: true,
+    appAwake: false,
+    saverPreview: false,
+    wakeZonePreview: null,
+    screensaverPhotos: [],
+    screensaverMode: 'photos-clock',
+    screensaverBrightness: 25,
+    sleepOverlay: {
+      showOverlay: true,
+      showWakeAppZone: false,
+      zonePosition: 'top'
+    },
+    ...initial
+  };
+  const host: ScreensaverHost = {
+    snapshot: () => snapshot,
+    patch: (patch) => Object.assign(snapshot, patch),
+    hasConnectedAuthority: () => true,
+    machineIsSleeping: () => snapshot.asleep,
+    clockLabel: () => '14:05'
+  };
+  const resources: ScreensaverResources = {
+    loadPhotos: async () => [],
+    storePhotos: async () => {},
+    deletePhotos: async () => {},
+    transcode: async () => ({
+      mime: 'image/jpeg',
+      dataUrl: 'photo',
+      width: 1,
+      height: 1,
+      pixels: 1
+    }),
+    setBrightness: async () => true,
+    readRequestedBrightness: async () => 100,
+    refreshDisplayState: async () => {},
+    ...resourceOverrides
+  };
+  return { island: new ScreensaverIsland(host, resources, timer), snapshot };
+}
+
+await run('screensaver island gates clocks and releases faded image resources', () => {
   const timer = new FakeTimer();
-  const island = new ScreensaverIsland(timer);
+  const { island } = createIsland(timer, { screensaverPhotos: ['first-photo'] });
   const root = new FakeElement();
   const topClock = new FakeElement();
   const saverClock = new FakeElement();
@@ -137,8 +190,8 @@ run('screensaver island gates clocks and releases faded image resources', () => 
   equal(photoB.hasAttribute('src'), false);
 });
 
-run('screensaver island reconciles a changed single-photo model on surviving nodes', () => {
-  const island = new ScreensaverIsland(new FakeTimer());
+await run('screensaver island reconciles a changed single-photo model on surviving nodes', () => {
+  const { island } = createIsland(new FakeTimer(), { screensaverPhotos: ['old-photo'] });
   const root = new FakeElement();
   const photoA = new FakeImage();
   const photoB = new FakeImage();
@@ -154,9 +207,97 @@ run('screensaver island reconciles a changed single-photo model on surviving nod
   island.dispose();
 });
 
-function run(name: string, fn: () => void): void {
+await run('screensaver island renders the complete sleep surface and owns wake-zone preview expiry', () => {
+  const timer = new FakeTimer();
+  const { island, snapshot } = createIsland(timer, {
+    screensaverPhotos: ['data:image/jpeg;base64,a&b'],
+    sleepOverlay: {
+      showOverlay: true,
+      showWakeAppZone: true,
+      zonePosition: 'right'
+    }
+  });
+
+  const sleeping = island.renderOverlay();
+  includes(sleeping, 'data-action="wake"');
+  includes(sleeping, 'sleep-wake-app-zone-right');
+  includes(sleeping, 'data:image/jpeg;base64,a&amp;b');
+  includes(sleeping, '>14:05</span>');
+
+  island.previewWakeZone('left');
+  equal(snapshot.wakeZonePreview, 'left');
+  includes(island.renderOverlay(), 'sleep-wake-app-zone-left wake-zone-preview');
+  timer.advance(2000);
+  equal(snapshot.wakeZonePreview, null);
+  island.dispose();
+});
+
+await run('screensaver island imports photos through its narrow native-resource and cache ports', async () => {
+  const stored: string[][] = [];
+  const { island, snapshot } = createIsland(
+    new FakeTimer(),
+    { screensaverPhotos: ['old'] },
+    {
+      transcode: async (_file, options) => {
+        equal(options.maxEdge, 1600);
+        equal(options.mimeType, 'image/jpeg');
+        return {
+          mime: 'image/jpeg',
+          dataUrl: 'new',
+          width: 10,
+          height: 10,
+          pixels: 100
+        };
+      },
+      storePhotos: async (photos) => {
+        stored.push([...photos]);
+      }
+    }
+  );
+
+  await island.addPhotos([{ type: 'image/jpeg', name: 'new.jpg' } as File]);
+  equal(stored.length, 1);
+  equal(stored[0]?.join(','), 'old,new');
+  equal(snapshot.screensaverPhotos.join(','), 'old,new');
+  equal(snapshot.status, '2 screensaver photos stored');
+  island.dispose();
+});
+
+await run('screensaver island owns sleep dim and delayed wake brightness restoration', async () => {
+  const timer = new FakeTimer();
+  const brightnessWrites: number[] = [];
+  const { island, snapshot } = createIsland(
+    timer,
+    {
+      asleep: true,
+      screensaverMode: 'clock',
+      screensaverBrightness: 30
+    },
+    {
+      setBrightness: async (brightness) => {
+        brightnessWrites.push(brightness);
+        return true;
+      },
+      readRequestedBrightness: async () => 30
+    }
+  );
+
+  island.scheduleSleepDim(1000);
+  timer.advance(1000);
+  await flushPromises();
+  equal(brightnessWrites.join(','), '30');
+
+  Object.assign(snapshot, { asleep: false });
+  island.observeSleepState(false);
+  timer.advance(1500);
+  await flushPromises();
+  equal(brightnessWrites.join(','), '30,100');
+  island.dispose();
+});
+
+async function run(name: string, fn: () => void | Promise<void>): Promise<void> {
   try {
-    fn();
+    await fn();
     console.log(`ok - ${name}`);
   } catch (error) {
     console.error(`not ok - ${name}`);
@@ -164,8 +305,19 @@ function run(name: string, fn: () => void): void {
   }
 }
 
+async function flushPromises(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 function equal<T>(actual: T, expected: T): void {
   if (actual !== expected) {
     throw new Error(`Expected ${String(expected)}, received ${String(actual)}`);
+  }
+}
+
+function includes(value: string, expected: string): void {
+  if (!value.includes(expected)) {
+    throw new Error(`Expected ${JSON.stringify(value)} to include ${JSON.stringify(expected)}`);
   }
 }

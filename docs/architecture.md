@@ -382,7 +382,9 @@ The shell coordinator.
 - routing between app views/modals
 - form parsing and DOM reads
 - WebSocket ownership
-- timers and animation frames
+- shell-level timers and animation frames not already owned by a focused
+  lifecycle owner (for example, `ScreensaverIsland` owns the complete sleep
+  surface runtime)
 - canvas/DOM live-shot patching
 - calling controllers and applying controller outcomes
 - deciding when to re-render

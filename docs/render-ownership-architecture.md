@@ -30,7 +30,7 @@ that contract from the code delivered with this decision.
 | Water alert band | Landed | Soft-alert display projection is stabilized in raw millimetres before the tank lookup; the machine's hard `needsWater` state remains immediate. |
 | Live readouts | Landed as one combined island | A 10 Hz channel gates text/classes, owns the morph-opaque readouts and rail, resets between shots, observes rail layout, and performs stage work only on stage/reason revisions. Splitting numeric/stage models remains optional cleanup. |
 | Charts | Landed | Exclusive canvas ownership, independent invalidation, resize/DPR/theme/visibility sources, model keys including profile identity, backing-store caps, listener/observer cleanup, suspension, and 1×1 teardown. The app's competing live RAF owner has been removed. |
-| Screensaver | Landed shared lifecycle | App orchestration schedules only while a visible photo surface is active; `ScreensaverIsland` owns both clocks and image DOM/resources, load/error generations, crossfade cleanup, and one-photo reconciliation. Imports close every `ImageBitmap` in `finally`. |
+| Screensaver | Landed owned lifecycle | `ScreensaverIsland` owns the complete sleep surface: clock/slideshow timers, render/bind, image DOM/resources, photo import persistence, wake-app idle/preview timers, and ordered brightness dim/restore through injected capabilities. Imports close every `ImageBitmap` in `finally`. |
 | Other hot surfaces | Landed | Derek token streaming is a complete, session-reset 20 Hz island; profile slider labels have a named render owner. |
 | Async flow ownership | Landed for reviewed flows | Monotonic operation epochs/request identities prevent Derek, scanner, and profile save/import continuations from crossing close/reopen sessions. |
 | Enforcement | Landed with named debt | AST tests reject presentation DOM writes in `app.ts` and controllers; the markup guard permits intentional sinks only under `src/render`; the dependency policy enforces layer directions, exact debt, and runtime acyclicity. |
@@ -553,20 +553,23 @@ The existing binders migrate as follows:
 
 ## Screensaver resource lifecycle
 
-The slideshow is split into orchestration and resource ownership rather than a
-timer plus unrelated DOM callbacks.
-
-`BeanieApp` owns the selected photo index and the slideshow interval decision.
-It arms one timer only while the document is visible and a mounted, active
-photo surface can advance; disposal or any ineligible render cancels it.
+The sleep surface is one focused browser runtime rather than app-owned timers
+plus unrelated DOM callbacks. `BeanieApp` supplies a narrow feature snapshot
+and cache/transcode/brightness capabilities, then retains only lifecycle,
+machine-event, and delegated-action calls.
 
 `ScreensaverIsland` owns:
 
 - the two image elements and which lease is active/incoming;
+- the selected photo index and eligible slideshow interval;
+- the minute-boundary clock timer and burn-in position;
 - the crossfade-completion timer;
 - `load`/`error` handlers;
 - generation tokens for stale async callbacks;
 - current mounted photo URL and reconciliation with application selection;
+- photo load/import/clear persistence through injected cache and transcoder ports;
+- wake-zone preview and awake-over-sleep idle timers;
+- sleep brightness dim/restore ordering through the shell's injected display lane;
 - object URLs, when Blob-backed sources are used;
 - clearing hidden and detached image sources;
 - visibility/mount state.
@@ -578,7 +581,7 @@ Data URLs cannot be revoked, but clearing `src` releases Beanie's reference to
 the decoded surface. Stored compressed photo strings remain ordinary IndexedDB
 data, not mounted image resources.
 
-The host does no slideshow work while the overlay is absent, the configured
+The owner does no slideshow work while the overlay is absent, the configured
 mode does not show photos, the document is hidden, or the app is disposed. On
 resume it schedules one future transition; it does not replay missed intervals.
 
@@ -630,7 +633,7 @@ src/render/renderChannel.ts      generic bounded latest-value scheduler
 src/render/*Presentation.ts      projector inputs, complete VMs, equality
 src/render/*Island.ts            DOM owners for imperative islands
 src/render/chartHost.ts          chart mount/observer/invalidation owner
-src/render/screensaverIsland.ts  image/clock resource owner
+src/render/screensaverIsland.ts  complete sleep/screensaver browser owner
 src/render/renderer.ts           morphdom shell policy only
 src/components/LiveChart.ts      bounded canvas drawing resource
 src/app.ts                       composition and structural transition glue
@@ -834,7 +837,8 @@ Run `morphRender()` against a DOM implementation that actually provides
 - fade completion releases the outgoing source and object URL;
 - a superseded load/fade callback cannot mutate the current layers;
 - load failure retains the current image and releases the failed lease;
-- dispose cancels both timers, clears handlers and sources, and revokes every
+- dispose cancels all clocks, slideshow, fade, preview, idle, and brightness
+  timers; clears handlers and sources; and revokes every
   owned URL;
 - every imported `ImageBitmap` closes on success, missing context, encode
   failure, and thrown error.
@@ -998,8 +1002,8 @@ once, and teardown returns resources/counts to baseline.
 
 ### Phase 4 — Screensaver resources — **code landed; hardware gate pending**
 
-1. Separate app-owned interval/index orchestration from island-owned DOM,
-   callbacks, decoded-image leases, and fade cleanup.
+1. Consolidate interval/index orchestration, DOM, callbacks, decoded-image
+   leases, import persistence, and sleep/wake timers under the island owner.
 2. Arm the interval only while visible, mounted, and eligible.
 3. Make import bitmap cleanup exception-safe.
 4. Add photo-cycle lifecycle tests; run the device soak in Phase 6.
