@@ -922,36 +922,6 @@ p {
   gap: 6px;
 }
 
-.recipe-apply-chip {
-  min-height: 20px;
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--muted) 13%, transparent);
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 900;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.recipe-apply-chip.pending {
-  background: color-mix(in srgb, var(--teal) 16%, transparent);
-  color: var(--teal);
-}
-
-.recipe-apply-chip.ok {
-  background: color-mix(in srgb, var(--green) 15%, transparent);
-  color: var(--green);
-}
-
-.recipe-apply-chip.warn,
-.recipe-apply-chip.alert {
-  background: color-mix(in srgb, var(--amber) 17%, transparent);
-  color: var(--amber);
-}
-
 .settings-resource-warning {
   display: grid;
   gap: 4px;
@@ -9737,38 +9707,6 @@ p {
     align-items: center;
     gap: 8px;
     min-width: 0;
-  }
-
-  .phone-apply-chip {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    line-height: 1.1;
-    flex: 0 0 auto;
-    padding: 2px 8px;
-    border-radius: 999px;
-    border: 1px solid var(--line-strong);
-    background: var(--panel-2);
-    color: var(--muted);
-    font-size: 10.5px;
-    font-weight: 900;
-    letter-spacing: 0.02em;
-    text-transform: uppercase;
-  }
-
-  .phone-apply-chip.pending {
-    border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
-    color: var(--accent);
-  }
-
-  .phone-apply-chip.ok {
-    border-color: color-mix(in srgb, var(--green) 45%, var(--line));
-    color: color-mix(in srgb, var(--green) 80%, var(--ink));
-  }
-
-  .phone-apply-chip.alert {
-    border-color: color-mix(in srgb, var(--red) 55%, var(--line));
-    color: var(--red);
   }
 
   .phone-input-wrap em {

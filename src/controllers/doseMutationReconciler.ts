@@ -852,7 +852,8 @@ export class DoseMutationReconciler {
             return this.reconcileClaim(
               entry,
               claim.record.idempotencyKey,
-              claim.leaseToken
+              claim.leaseToken,
+              claim.record.attemptCount
             );
           }
         );
@@ -983,9 +984,51 @@ export class DoseMutationReconciler {
   private async reconcileClaim(
     entry: DoseMutationAdjustmentEntry,
     idempotencyKey: string,
-    leaseToken: string
+    leaseToken: string,
+    attemptCount: number
   ): Promise<ReconciledDose | null> {
     const batch = await this.deps.readBatch(entry.batchId);
+    const currentRemaining = finiteNonNegative(batch?.weightRemaining);
+    if (batch && currentRemaining != null && entry.baseRemaining != null) {
+      if (approximatelyEqual(currentRemaining, entry.expectedRemaining)) {
+        return {
+          batch,
+          saved: null,
+          outcome: 'already-applied',
+          weightRemaining: currentRemaining
+        };
+      }
+      if (!approximatelyEqual(currentRemaining, entry.baseRemaining)) {
+        // The bag moved away from both the admitted base and target. A second
+        // delta could consume/return beans twice, so terminate for inventory
+        // review instead of rebasing an automatic retry.
+        return {
+          batch,
+          saved: null,
+          outcome: 'not-applicable',
+          weightRemaining: currentRemaining
+        };
+      }
+      return this.commitAdjustment(
+        entry,
+        batch,
+        entry.expectedRemaining,
+        idempotencyKey,
+        leaseToken
+      );
+    }
+    if (attemptCount > 1 && entry.baseRemaining == null) {
+      // Legacy entries predate durable base/target evidence. They may execute
+      // once, but an ambiguous failure must never replay a fresh delta.
+      return {
+        batch,
+        saved: null,
+        outcome: currentRemaining != null && approximatelyEqual(currentRemaining, entry.expectedRemaining)
+          ? 'already-applied'
+          : 'not-applicable',
+        weightRemaining: currentRemaining
+      };
+    }
     if (entry.adjustment === 'deduction') {
       const resolution = resolvePendingDose(entry, batch);
       if (resolution.action === 'drop') {
@@ -1013,7 +1056,6 @@ export class DoseMutationReconciler {
         weightRemaining: null
       };
     }
-    const currentRemaining = finiteNonNegative(batch.weightRemaining);
     if (currentRemaining == null) {
       return { batch, saved: null, outcome: 'not-applicable', weightRemaining: null };
     }
@@ -1155,6 +1197,10 @@ function validateEnqueueInput(
   if (!input.batchId.trim()) throw new Error('batchId must not be empty');
   if (!input.beanId.trim()) throw new Error('beanId must not be empty');
   if (!Number.isFinite(input.dose) || input.dose <= 0) throw new Error('dose must be a finite positive number');
+  if (
+    input.baseRemaining != null &&
+    (!Number.isFinite(input.baseRemaining) || input.baseRemaining < 0)
+  ) throw new Error('baseRemaining must be a finite non-negative number');
   if (!Number.isFinite(input.expectedRemaining)) throw new Error('expectedRemaining must be finite');
   if (
     input.projectionRevision != null &&
@@ -1170,6 +1216,7 @@ function adjustmentPayload(
     batchId: input.batchId,
     beanId: input.beanId,
     dose: input.dose,
+    ...(input.baseRemaining == null ? {} : { baseRemaining: input.baseRemaining }),
     expectedRemaining: input.expectedRemaining,
     at: input.at
   };
@@ -1213,6 +1260,7 @@ function shotDeleteReclaimPayload(
     beanId: input.beanId,
     batchId: input.batchId,
     dose: input.dose,
+    ...(input.baseRemaining == null ? {} : { baseRemaining: input.baseRemaining }),
     expectedRemaining: input.expectedRemaining,
     at: input.at
   };
@@ -1285,6 +1333,8 @@ function isPendingDosePayload(value: unknown): value is PendingDose {
   return typeof entry.batchId === 'string' && entry.batchId.length > 0 &&
     typeof entry.beanId === 'string' && entry.beanId.length > 0 &&
     typeof entry.dose === 'number' && Number.isFinite(entry.dose) && entry.dose > 0 &&
+    (entry.baseRemaining == null ||
+      (typeof entry.baseRemaining === 'number' && Number.isFinite(entry.baseRemaining))) &&
     typeof entry.expectedRemaining === 'number' && Number.isFinite(entry.expectedRemaining) &&
     typeof entry.at === 'string' && Number.isFinite(Date.parse(entry.at));
 }

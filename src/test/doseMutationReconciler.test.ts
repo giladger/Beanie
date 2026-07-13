@@ -615,15 +615,19 @@ await run('an older retry-wait deduction blocks a newer reclaim on the same inve
     }
   });
   harness.batches.set('batch-1', batch('batch-1', 100));
-  await enqueueDose(harness, input('shot-consumed', 'batch-1', 18, 82));
+  await enqueueDose(harness, {
+    ...input('shot-consumed', 'batch-1', 18, 82),
+    baseRemaining: 100
+  });
   await waitFor(() => harness.retries.length === 1);
   harness.updates.length = 0;
 
   // Even an identical event timestamp keeps the already-enqueued deduction
   // as the aggregate head before its inverse.
-  await enqueueReclaim(harness,
-    reclaimInput('shot-consumed', 'batch-1', 18, 100)
-  );
+  await enqueueReclaim(harness, {
+    ...reclaimInput('shot-consumed', 'batch-1', 18, 100),
+    baseRemaining: 82
+  });
   await settle();
   // The newer pending reclaim is due, but the older retry head is not.
   equal(harness.updates.length, 0);
@@ -706,41 +710,39 @@ await run('causal admission canonicalizes legacy batch lanes before ordering', a
   await harness.reconciler.dispose();
 });
 
-await run('a lost reclaim response replays the same idempotency key without adding twice', async () => {
-  let receipt: BeanBatch | null = null;
-  let receiptKey: string | null = null;
+await run('a lost reclaim response recognizes the durable absolute target without replaying', async () => {
+  let first = true;
   const harness = createHarness({
-    update: async (id, patch, idempotencyKey, batches) => {
-      if (receipt) {
-        equal(idempotencyKey, receiptKey);
-        return receipt;
-      }
+    update: async (id, patch, _idempotencyKey, batches) => {
       const saved = { ...batches.get(id)!, ...patch };
       batches.set(id, saved);
-      receipt = saved;
-      receiptKey = idempotencyKey;
-      throw new Error('response lost');
+      if (first) {
+        first = false;
+        throw new Error('response lost');
+      }
+      return saved;
     }
   });
   harness.batches.set('batch-1', batch('batch-1', 70));
-  await enqueueReclaim(harness, reclaimInput('shot-lost', 'batch-1', 20, 100));
+  await enqueueReclaim(harness, {
+    ...reclaimInput('shot-lost', 'batch-1', 20, 90),
+    baseRemaining: 70
+  });
   await waitFor(() => harness.retries.length === 1);
   equal(harness.batches.get('batch-1')?.weightRemaining, 90);
 
   harness.setNow('2026-07-10T10:00:30.000Z');
   await harness.reconciler.trigger();
-  await waitFor(() => harness.saved.length === 1);
+  await waitFor(() => harness.settlements.length === 1);
 
-  // A non-idempotent replay would apply the freshly computed 110. The gateway
-  // receipt for the stable key instead resolves the original physical +20.
-  deepEqual(harness.updates.map((update) => update.patch.weightRemaining), [90, 110]);
-  equal(harness.updates[0]?.idempotencyKey, harness.updates[1]?.idempotencyKey);
+  // The fresh read is already at the admitted target, so no second PUT is sent.
+  deepEqual(harness.updates.map((update) => update.patch.weightRemaining), [90]);
   equal(harness.updates[0]?.idempotencyKey, pendingDoseReclaimIdempotencyKey('shot-lost', 'batch-1'));
   equal(harness.batches.get('batch-1')?.weightRemaining, 90);
-  equal(harness.saved[0]?.weightRemaining, 90);
+  equal(harness.settlements[0]?.resolvedRemaining, 90);
   equal(harness.storage.records().find(
     (record) => record.idempotencyKey === pendingDoseReclaimIdempotencyKey('shot-lost', 'batch-1')
-  )?.receipt?.outcome, 'committed');
+  )?.receipt?.outcome, 'already-applied');
   await harness.reconciler.dispose();
 });
 
@@ -880,7 +882,7 @@ await run('dispatches previously journaled batch-key doses on the current invent
   await harness.reconciler.dispose();
 });
 
-await run('a legacy retry head blocks a newer canonical dose until it is due', async () => {
+await run('an ambiguous legacy retry blocks newer dose work and fails the chain closed', async () => {
   const storage = new FakeStorage();
   const seed = new DurableMutationOutbox({ indexedDB: null, storage });
   const legacy = await seed.enqueue({
@@ -910,7 +912,10 @@ await run('a legacy retry head blocks a newer canonical dose until it is due', a
     idempotencyKey: pendingDoseIdempotencyKey('shot-newer', 'batch-1'),
     kind: PENDING_DOSE_MUTATION_KIND,
     aggregateKey: 'bean-inventory:bean-1',
-    payload: legacyDose('batch-1', 18, 64, '2026-07-10T10:01:00.000Z'),
+    payload: {
+      ...legacyDose('batch-1', 18, 64, '2026-07-10T10:01:00.000Z'),
+      baseRemaining: 82
+    },
     createdAt: new Date('2026-07-10T10:01:00.000Z')
   });
   await seed.dispose();
@@ -929,11 +934,17 @@ await run('a legacy retry head blocks a newer canonical dose until it is due', a
 
   harness.setNow('2026-07-10T10:05:00.000Z');
   await harness.reconciler.trigger();
-  await waitFor(() => harness.saved.length === 2);
+  await waitFor(() => storage.records().filter(
+    (record) => record.kind === PENDING_DOSE_MUTATION_KIND && record.state === 'acknowledged'
+  ).length === 2);
 
-  deepEqual(harness.updates.map((update) => update.patch.weightRemaining), [82, 64]);
+  deepEqual(harness.updates, []);
   deepEqual(harness.exactKeys, ['bean-inventory:bean-1', 'bean-inventory:bean-1']);
-  equal(harness.batches.get('batch-1')?.weightRemaining, 64);
+  deepEqual(harness.settlements.map((settlement) => settlement.outcome), [
+    'not-applicable',
+    'not-applicable'
+  ]);
+  equal(harness.batches.get('batch-1')?.weightRemaining, 100);
   await harness.reconciler.dispose();
 });
 
@@ -953,7 +964,10 @@ await run('claims only dose mutations one at a time and uses a five-minute lease
   const harness = createHarness({ storage, update: () => updateGate.promise });
   harness.batches.set('batch-1', batch('batch-1', 100));
   harness.batches.set('batch-2', batch('batch-2', 100));
-  await enqueueDose(harness, input('shot-1', 'batch-1', 18, 82));
+  await enqueueDose(harness, {
+    ...input('shot-1', 'batch-1', 18, 82),
+    baseRemaining: 100
+  });
   await enqueueDose(harness, input('shot-2', 'batch-2', 18, 82));
   await waitFor(() => harness.updates.length === 1);
 
@@ -979,7 +993,10 @@ await run('backs retries off exponentially and does not retry before the due tim
     }
   });
   harness.batches.set('batch-1', batch('batch-1', 100));
-  await enqueueDose(harness, input('shot-1', 'batch-1', 18, 82));
+  await enqueueDose(harness, {
+    ...input('shot-1', 'batch-1', 18, 82),
+    baseRemaining: 100
+  });
   await waitFor(() => harness.retries.length === 1);
   equal(harness.retries[0]?.attemptCount, 1);
   equal(harness.retries[0]?.retryAt.toISOString(), '2026-07-10T10:00:30.000Z');

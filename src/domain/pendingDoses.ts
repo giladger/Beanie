@@ -10,6 +10,8 @@ export interface PendingDose {
   beanId: string;
   /** Grams the shot used. */
   dose: number;
+  /** Authoritative bag weight observed before the absolute target was prepared. */
+  baseRemaining?: number;
   /** The weightRemaining the failed write tried to store. */
   expectedRemaining: number;
   /** When the shot ended (ISO) — entries too old to matter are pruned. */
@@ -104,6 +106,8 @@ function isPendingDose(value: unknown): value is PendingDose {
     typeof entry.beanId === 'string' &&
     typeof entry.dose === 'number' &&
     Number.isFinite(entry.dose) &&
+    (entry.baseRemaining === undefined ||
+      (typeof entry.baseRemaining === 'number' && Number.isFinite(entry.baseRemaining))) &&
     typeof entry.expectedRemaining === 'number' &&
     Number.isFinite(entry.expectedRemaining) &&
     typeof entry.at === 'string'

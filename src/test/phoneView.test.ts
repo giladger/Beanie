@@ -40,11 +40,15 @@ run('phone home hero opens the bean picker and shows bag facts', () => {
   includes(html, '~10 shots');
 });
 
-run('phone home hides the passive not-applied recipe label', () => {
-  const html = renderPhoneShell({ ...model(), applyState: 'stale' });
-
-  excludes(html, 'phone-apply-chip');
-  excludes(html, 'Not applied');
+run('phone home never decorates the recipe name with apply state', () => {
+  for (const applyState of ['stale', 'pending', 'applied', 'failed'] as const) {
+    const html = renderPhoneShell({ ...model(), applyState });
+    excludes(html, 'phone-apply-chip');
+    excludes(html, 'Not applied');
+    excludes(html, '>Applied<');
+    excludes(html, 'Applying…');
+    excludes(html, 'Apply failed');
+  }
 });
 
 run('phone bean rows carry the picker stock facts and favorites', () => {

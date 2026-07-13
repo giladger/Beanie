@@ -211,7 +211,7 @@ await run('plugin settings save uses Reaprime POST endpoint', async () => {
   }));
 });
 
-await run('batch mutations forward durable idempotency keys to the gateway', async () => {
+await run('batch mutations keep durable identity out of Reaprime request headers', async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const restore = installFetchStub(calls, {
     id: 'batch-1',
@@ -231,10 +231,7 @@ await run('batch mutations forward durable idempotency keys to the gateway', asy
   equal(calls.length, 1);
   equal(calls[0]!.url, '/api/v1/bean-batches/batch-1');
   equal(calls[0]!.init?.method, 'PUT');
-  equal(
-    headerValue(calls[0]!.init?.headers, 'Idempotency-Key'),
-    'pending-dose:v1:shot-1:batch-1'
-  );
+  equal(headerValue(calls[0]!.init?.headers, 'Idempotency-Key'), null);
 });
 
 await run('visualizer verify calls plugin verifyCredentials endpoint', async () => {
@@ -459,7 +456,7 @@ await run('createBatch nests storageEvents under extras and lifts them back from
     const sent = JSON.parse(calls[0]!.init?.body as string) as { storageEvents?: unknown; extras?: { storageEvents?: BeanBatchStorageEvent[] } };
     equal(sent.storageEvents, undefined);
     equal(sent.extras?.storageEvents?.[0]?.at, '2026-05-30T08:00:00.000Z');
-    equal(headerValue(calls[0]!.init?.headers, 'Idempotency-Key'), 'bean-batch-create:v1:bean-1:123');
+    equal(headerValue(calls[0]!.init?.headers, 'Idempotency-Key'), null);
     equal(saved.storageEvents?.[0]?.at, '2026-05-30T08:00:00.000Z');
     equal(saved.frozen, true);
   } finally {

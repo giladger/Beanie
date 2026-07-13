@@ -224,7 +224,7 @@ export function renderRecipeEditor(model: WorkbenchRecipeViewModel): string {
   const mark = (control: string) => (derekMarkFor(model.derekTweak, control) ? ' derek-changed' : '');
   return `
     <section class="recipe-grid">
-      ${controlProfile(draft.profileTitle ?? 'No profile', model.derekTweak, model.applyState, mark('profile'))}
+      ${controlProfile(draft.profileTitle ?? 'No profile', model.derekTweak, mark('profile'))}
       ${controlNumber('Dose', 'dose', draft.dose, 0.5, mark('dose'))}
       ${controlNumber('Yield', 'yield', draft.yield, 1, mark('yield'))}
       ${controlRatio(model.ratioLabel)}
@@ -290,31 +290,19 @@ function controlGrind(value: string, step: number, markClass = ''): string {
 function controlProfile(
   title: string,
   tweak: { summary: string; parameter: string | null } | null | undefined,
-  applyState: WorkbenchRecipeViewModel['applyState'],
   markClass = ''
 ): string {
   const revert = tweak
     ? `<button type="button" class="derek-tweak-revert" data-action="derek-revert-tweak" title="${escapeAttr(`Revert: ${tweak.summary}`)}" aria-label="${escapeAttr(`Revert Derek tweak: ${tweak.summary}`)}">${icon('rotate-ccw')}<span>Revert tweak</span></button>`
     : '';
-  const apply = recipeApplyChip(applyState);
   return `
     <div class="select-control profile-control panel${markClass}">
-      <div class="profile-label-row"><label>Profile</label><span class="profile-label-actions">${revert}${apply}</span></div>
+      <div class="profile-label-row"><label>Profile</label><span class="profile-label-actions">${revert}</span></div>
       <button type="button" class="profile-button" data-action="open-profile-picker">
         <span>${escapeHtml(title)}</span>
       </button>
     </div>
   `;
-}
-
-function recipeApplyChip(state: WorkbenchRecipeViewModel['applyState'] = 'idle'): string {
-  if (state === 'idle' || state === 'stale') return '';
-  const presentation = {
-    pending: { label: 'Applying…', tone: 'pending' },
-    applied: { label: 'Applied', tone: 'ok' },
-    failed: { label: 'Apply failed', tone: 'alert' }
-  }[state];
-  return `<span class="recipe-apply-chip ${presentation.tone}">${escapeHtml(presentation.label)}</span>`;
 }
 
 function controlRatio(label: string): string {

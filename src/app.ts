@@ -5146,6 +5146,7 @@ export class BeanieApp {
         batchId: batch.id,
         beanId: bean.id,
         dose,
+        baseRemaining: remaining,
         expectedRemaining: next,
         projectionRevision,
         at

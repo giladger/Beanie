@@ -297,6 +297,7 @@ export class ShotDeletionFlow {
           beanId: intent.beanId,
           batchId: intent.batchId,
           dose: intent.dose,
+          baseRemaining: admission.baseRemaining,
           expectedRemaining: admission.expectedRemaining,
           projectionRevision: admission.projectionRevision,
           at: this.deps.now().toISOString()
@@ -660,6 +661,7 @@ export class ShotDeletionFlow {
 
   private captureAdmission(intent: ShotDoseReclaimIntent): {
     readonly projectionRevision: number;
+    readonly baseRemaining: number;
     readonly expectedRemaining: number;
   } | null {
     const batch = this.deps.snapshot().batchesByBean[intent.beanId]
@@ -668,6 +670,7 @@ export class ShotDeletionFlow {
     if (remaining == null) return null;
     return {
       projectionRevision: this.deps.remainingWeightRevision(intent.batchId),
+      baseRemaining: remaining,
       expectedRemaining: doseReclaimRemaining(remaining, intent.dose, batch?.weight)
     };
   }

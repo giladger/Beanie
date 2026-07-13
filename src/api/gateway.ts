@@ -101,7 +101,7 @@ export class GatewayRequestError extends Error {
 }
 
 export interface GatewayMutationRequestOptions {
-  /** Forwarded for servers that provide replay-safe mutation receipts. */
+  /** Local operation identity. Reaprime does not accept/receipt this on the wire. */
   idempotencyKey?: string;
 }
 
@@ -365,7 +365,7 @@ export const gateway = {
   createBatch: (
     beanId: string,
     batch: Partial<BeanBatch>,
-    options: GatewayMutationRequestOptions = {}
+    _options: GatewayMutationRequestOptions = {}
   ) =>
     fetchJson<BeanBatch>(
       'batches',
@@ -373,24 +373,20 @@ export const gateway = {
       readBatch,
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(options.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : {})
-        },
+        // Reaprime's installed-skin CORS allowlist does not include
+        // Idempotency-Key. Keep operation identity in the local journal only.
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(toGatewayBatchBody(batch))
       }
     ).then(fromGatewayBatch),
   updateBatch: (
     id: string,
     batch: Partial<BeanBatch>,
-    options: GatewayMutationRequestOptions = {}
+    _options: GatewayMutationRequestOptions = {}
   ) =>
     fetchJson<BeanBatch>('batches', `/api/v1/bean-batches/${encodeURIComponent(id)}`, readBatch, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(options.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : {})
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(toGatewayBatchBody(batch))
     }).then(fromGatewayBatch),
   deleteBatch: (id: string) =>
