@@ -87,9 +87,23 @@ await run('cached history uses stable selection identities and a truthful cached
 await run('settings gate cache publication and cache precedes the gateway result', async () => {
   const settingsGate = deferred<void>();
   const gatewayGate = deferred<GatewayStartupSnapshot>();
+  const cachedWorkflow: Workflow = {
+    ...workflow,
+    profile: { title: 'Default', tank_temperature: 91 }
+  };
+  const cachedProfiles: ProfileRecord[] = [{
+    id: 'profile-1',
+    profile: { title: 'Default', tank_temperature: 94 }
+  }];
   const harness = createHarness({
     loadSettings: () => settingsGate.promise,
-    cached: { workflow, beans: [bean], grinders, profiles, latestShots },
+    cached: {
+      workflow: cachedWorkflow,
+      beans: [bean],
+      grinders,
+      profiles: cachedProfiles,
+      latestShots
+    },
     loadGateway: () => gatewayGate.promise
   });
 
@@ -109,6 +123,8 @@ await run('settings gate cache publication and cache precedes the gateway result
   equal(cached?.patch.shots.map((shot) => shot.id), ['shot-1']);
   equal(cached?.patch.shotsTotal, 1);
   equal(cached?.patch.detailShotId, null);
+  equal(cached?.patch.draft.brewTemp, 91);
+  equal(cached?.patch.draft.profile, cachedProfiles[0]?.profile);
 
   gatewayGate.resolve(startup('connected'));
   const outcome = await loading;

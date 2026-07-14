@@ -116,6 +116,7 @@ export function recipeFromWorkflow(workflow: Workflow | null): RecipeDraft {
   return {
     profileTitle: workflow?.profile?.title ?? null,
     profile: workflow?.profile ?? null,
+    brewTemp: profileBaseTemperature(workflow?.profile),
     dose: numberOrNull(ctx?.targetDoseWeight),
     yield: numberOrNull(ctx?.targetYield),
     grinderId: ctx?.grinderId ?? null,

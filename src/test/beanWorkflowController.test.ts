@@ -175,8 +175,12 @@ await run('bean workflow controller prefers matching workflow when requested', a
   const selectedBean = bean('bean-1');
   const controller = new BeanWorkflowController();
   const selection = required(controller.beginBeanSelection(selectedBean.id, [selectedBean]));
+  const libraryProfile = {
+    id: 'workflow-profile',
+    profile: { title: 'Workflow Profile', tank_temperature: 94 }
+  };
   const workflow: Workflow = {
-    profile: { title: 'Workflow Profile' },
+    profile: { title: 'Workflow Profile', tank_temperature: 91 },
     context: {
       coffeeName: selectedBean.name,
       coffeeRoaster: selectedBean.roaster,
@@ -190,7 +194,7 @@ await run('bean workflow controller prefers matching workflow when requested', a
     options: { preferWorkflow: true },
     beans: [selectedBean],
     workflow,
-    profiles: [],
+    profiles: [libraryProfile],
     grinders: [],
     loadBatches: async () => [],
     loadFirstShots: async () => ({ records: [shot('shot-1', '2026-06-07T10:00:00.000Z', selectedBean)], total: 1 }),
@@ -202,6 +206,8 @@ await run('bean workflow controller prefers matching workflow when requested', a
   equal(result.type === 'selected' ? result.draft.dose : null, 19);
   equal(result.type === 'selected' ? result.draft.yield : null, 38);
   equal(result.type === 'selected' ? result.draft.profileTitle : null, 'Workflow Profile');
+  equal(result.type === 'selected' ? result.draft.brewTemp : null, 91);
+  equal(result.type === 'selected' ? result.draft.profile : null, libraryProfile.profile);
 });
 
 await run('bean workflow controller keeps fallback recipe for beans without shots', async () => {
