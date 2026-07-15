@@ -982,28 +982,6 @@ p {
   font-weight: 900;
 }
 
-.operation-feedback {
-  position: fixed;
-  z-index: 46;
-  right: 12px;
-  bottom: 12px;
-  max-width: min(520px, calc(100vw - 24px));
-  padding: 8px 11px;
-  border: 1px solid color-mix(in srgb, var(--teal) 45%, var(--line));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--bg) 90%, var(--teal) 10%);
-  box-shadow: var(--shadow);
-  color: var(--ink);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.operation-feedback.alert {
-  border-color: color-mix(in srgb, var(--amber) 55%, var(--line));
-  background: color-mix(in srgb, var(--bg) 90%, var(--amber) 10%);
-  color: var(--amber);
-}
-
 .bootstrap-failure {
   min-height: 100vh;
   display: grid;
@@ -1052,9 +1030,6 @@ p {
     display: none;
   }
 
-  .operation-feedback {
-    bottom: calc(72px + var(--sa-bottom));
-  }
 }
 
 .select-control:first-child {

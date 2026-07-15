@@ -201,6 +201,21 @@ await run('BeanieApp starts by rendering the workbench shell and delegated liste
   app.dispose();
 });
 
+await run('BeanieApp keeps operation status without rendering floating feedback', () => {
+  const root = new FakeElement();
+  const app = new BeanieApp(root as unknown as HTMLElement);
+  const harness = app as unknown as {
+    state: { status: string };
+    setState(next: Record<string, unknown>): void;
+  };
+
+  harness.setState({ settingsLoaded: true, status: 'Shot recipe loaded' });
+
+  equal(harness.state.status, 'Shot recipe loaded');
+  equal(root.innerHTML.includes('operation-feedback'), false);
+  app.dispose();
+});
+
 await run('blocked dose journal discovery does not block application bootstrap', async () => {
   const root = new FakeElement();
   const app = new BeanieApp(root as unknown as HTMLElement);
@@ -577,6 +592,7 @@ await run('an offline Wake rejection keeps the sleeping presentation intact', as
   const root = new FakeElement();
   const app = new BeanieApp(root as unknown as HTMLElement);
   const harness = app as unknown as {
+    state: { status: string };
     setState(next: Record<string, unknown>): void;
     machineClickActions(): Record<string, () => void | Promise<void>>;
   };
@@ -597,7 +613,7 @@ await run('an offline Wake rejection keeps the sleeping presentation intact', as
   await harness.machineClickActions().wake?.();
 
   includes(root.innerHTML, 'aria-label="Wake machine"');
-  includes(root.innerHTML, 'Machine controls are read-only until live data reconnects');
+  equal(harness.state.status, 'Machine controls are read-only until live data reconnects');
   delete hostWindow.__DECENT_HOST__;
   app.dispose();
 });

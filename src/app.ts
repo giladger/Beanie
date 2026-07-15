@@ -32,7 +32,6 @@ import {
   SocketSupervisor
 } from './api/runtime/socketSupervisor';
 import { readMachineSnapshot, readScaleSnapshot, readShotStateEvent } from './api/guards';
-import { escapeHtml } from './components/html';
 import {
   emptyDecisionLog,
   nextDecisionLog,
@@ -1491,8 +1490,6 @@ export class BeanieApp {
   private lastWaterAlert: WaterAlertLevel = 'none';
   private readonly waterAlertProjector = new WaterAlertProjector();
   private machineProgressReturnView: View | null = null;
-  private statusFeedbackTimer: number | null = null;
-  private statusFeedbackUntilMs = 0;
   private lastPresenceHeartbeatMs = 0;
   private lastScaleFrameMs: number | null = null;
   private noScaleBrewFlashStartedMs: number | null = null;
@@ -2035,7 +2032,6 @@ export class BeanieApp {
     });
     this.appScope.dispose();
     this.telemetryStore.dispose();
-    if (this.statusFeedbackTimer != null) window.clearTimeout(this.statusFeedbackTimer);
     if (this.doseJournalHydrationRetryTimer != null) {
       window.clearTimeout(this.doseJournalHydrationRetryTimer);
       this.doseJournalHydrationRetryTimer = null;
@@ -6392,7 +6388,6 @@ export class BeanieApp {
     const html = `
       <div class="app-shell ${renderPhone ? 'app-shell-phone' : isPage ? 'app-shell-page' : ''} ${this.hasRuntimeModeBanner() ? 'has-runtime-banner' : ''}">
         ${this.renderRuntimeModeBanner()}
-        ${this.renderOperationFeedback()}
         ${renderPhone ? this.renderPhoneApp(bean) : isPage ? this.renderPage() : this.renderWorkbench(bean, topbarStats)}
         ${this.renderLivePanel()}
         ${this.renderModal()}
@@ -6737,14 +6732,6 @@ export class BeanieApp {
 
   private hasRuntimeModeBanner(): boolean {
     return this.state.startupPhase !== 'connected' && this.state.startupPhase !== 'connecting';
-  }
-
-  private renderOperationFeedback(): string {
-    if (Date.now() >= this.statusFeedbackUntilMs) return '';
-    const status = this.state.status.trim();
-    if (!status) return '';
-    const alert = /fail|couldn['’]t|unavailable|error|not sent|reverted/i.test(status);
-    return `<div class="operation-feedback ${alert ? 'alert' : ''}" role="status" aria-live="polite">${escapeHtml(status)}</div>`;
   }
 
   private renderLivePanel(): string {
@@ -7292,18 +7279,6 @@ export class BeanieApp {
       next.selectedBatchId !== this.state.selectedBatchId;
     if (beanSelectionChanged || batchSelectionChanged) {
       this.selectionRevision += 1;
-    }
-    if (typeof next.status === 'string' && next.status !== this.state.status) {
-      const status = next.status.trim();
-      const structural = /^(Starting|Loading|Connected|Offline|DEMO)/.test(status);
-      if (!structural) {
-        this.statusFeedbackUntilMs = Date.now() + 4_000;
-        if (this.statusFeedbackTimer != null) window.clearTimeout(this.statusFeedbackTimer);
-        this.statusFeedbackTimer = window.setTimeout(() => {
-          this.statusFeedbackTimer = null;
-          if (!this.disposed) this.render();
-        }, 4_050);
-      }
     }
     this.state = { ...this.state, ...next };
     this.render();
