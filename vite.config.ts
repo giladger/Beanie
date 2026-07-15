@@ -11,6 +11,7 @@ const requestedVitePort = Number(env.VITE_PORT ?? 5173);
 const vitePort = Number.isInteger(requestedVitePort) && requestedVitePort > 0 && requestedVitePort <= 65535
   ? requestedVitePort
   : 5173;
+const loopbackDevOrigin = /^https?:\/\/(?:(?:[^:]+\.)?localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/;
 
 export default defineConfig({
   base: './',
@@ -25,6 +26,12 @@ export default defineConfig({
     host: '127.0.0.1',
     port: vitePort,
     strictPort: true,
+    // Decent serves the dev shim from its own hostname while the shim loads
+    // source modules from Vite. Keep Vite's loopback policy and allow only that
+    // known cross-origin page instead of exposing source to arbitrary origins.
+    cors: {
+      origin: [loopbackDevOrigin, 'http://decent:3000']
+    },
     proxy: {
       '/api': {
         target: `http://${gatewayHost}`,

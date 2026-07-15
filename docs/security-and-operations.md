@@ -63,9 +63,10 @@ library names that should not be sent to that provider.
 ## Development network defaults
 
 Vite's development and preview servers bind to `127.0.0.1` by default. The dev
-server keeps Vite's restricted localhost-origin CORS policy; it does not expose
-the write-capable gateway proxy to arbitrary websites. LAN variants must still
-be treated as intentionally exposed developer tools.
+server restricts CORS to loopback origins and Decent.app's development page at
+`http://decent:3000`; it does not expose the write-capable gateway proxy to
+arbitrary websites. LAN variants must still be treated as intentionally
+exposed developer tools.
 
 | Command | Bind address | Intended use |
 | --- | --- | --- |
