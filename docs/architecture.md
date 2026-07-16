@@ -408,7 +408,7 @@ parse a field, call a controller, write a local preference through a domain
 helper, set state, and render.
 
 This is a direction, not a claim that the extraction is finished. `src/app.ts`
-is now 7,428 lines, down from 10,572 on `main`. It is materially smaller but not
+is now 7,380 lines, down from 10,572 on `main`. It is materially smaller but not
 yet a small composition shell. These high-value verticals have now been extracted:
 
 1. `BeanSelectionFlow`: selection mode/provenance, batch and shot acquisition,

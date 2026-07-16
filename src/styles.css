@@ -938,50 +938,6 @@ p {
   color: var(--muted);
 }
 
-.runtime-mode-banner {
-  position: fixed;
-  z-index: 45;
-  top: calc(var(--topbar) + 7px);
-  left: 50%;
-  max-width: min(680px, calc(100vw - 24px));
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  border: 1px solid color-mix(in srgb, var(--amber) 55%, var(--line));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--bg) 90%, var(--amber) 10%);
-  box-shadow: var(--shadow);
-  color: var(--ink);
-  font-size: 11px;
-  transform: translateX(-50%);
-}
-
-.runtime-mode-banner strong {
-  flex: none;
-  color: var(--amber);
-  font-weight: 950;
-  letter-spacing: 0.03em;
-}
-
-.runtime-mode-banner span {
-  overflow: hidden;
-  color: var(--muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.runtime-mode-banner button {
-  flex: none;
-  padding: 3px 8px;
-  border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--line));
-  border-radius: 999px;
-  background: transparent;
-  color: var(--ink);
-  font: inherit;
-  font-weight: 900;
-}
-
 .bootstrap-failure {
   min-height: 100vh;
   display: grid;
@@ -1018,18 +974,6 @@ p {
   margin-top: 8px;
   overflow-wrap: anywhere;
   color: var(--muted);
-}
-
-@media (max-width: 640px), (max-height: 500px) and (max-width: 900px) {
-  .runtime-mode-banner {
-    top: calc(8px + var(--sa-top));
-    max-width: calc(100vw - 16px - var(--sa-left) - var(--sa-right));
-  }
-
-  .runtime-mode-banner span {
-    display: none;
-  }
-
 }
 
 .select-control:first-child {
@@ -10631,26 +10575,12 @@ p {
   }
 }
 
-/* Persistent runtime-mode banners reserve their own visual lane instead of
-   covering the first workbench/settings controls. Kept at the end so the
-   responsive page-shell rules above cannot overwrite the reservation. */
-.app-shell.has-runtime-banner:not(.app-shell-phone) > .workbench,
-.app-shell.has-runtime-banner.app-shell-page > .page-body {
-  padding-top: 42px;
-}
-
-/* Keep the focused dialog above persistent banners and transient feedback.
-   Water, sleep, and store-error overlays intentionally retain higher layers. */
+/* Keep the focused dialog above non-modal shell surfaces. Water, sleep, and
+   store-error overlays intentionally retain higher layers. */
 .modal-backdrop {
   z-index: 60;
 }
 
 .modal-backdrop.water-alert-backdrop {
   z-index: 80;
-}
-
-@media (max-width: 640px), (max-height: 500px) and (max-width: 900px) {
-  .app-shell-phone.has-runtime-banner .phone-main {
-    padding-top: calc(46px + var(--sa-top));
-  }
 }

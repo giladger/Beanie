@@ -5040,9 +5040,6 @@ export class BeanieApp {
 
   private settingsClickActions(): Record<string, ClickActionHandler> {
     return {
-      'retry-startup': async () => {
-        await this.retryStartupConnection();
-      },
       'retry-store-write': () => {
         this.retryFailedStoreWrites();
       },
@@ -6386,8 +6383,7 @@ export class BeanieApp {
     const topbarStats = this.topbarViewModel();
     this.topbarIsland.offer(topbarStats);
     const html = `
-      <div class="app-shell ${renderPhone ? 'app-shell-phone' : isPage ? 'app-shell-page' : ''} ${this.hasRuntimeModeBanner() ? 'has-runtime-banner' : ''}">
-        ${this.renderRuntimeModeBanner()}
+      <div class="app-shell ${renderPhone ? 'app-shell-phone' : isPage ? 'app-shell-page' : ''}">
         ${renderPhone ? this.renderPhoneApp(bean) : isPage ? this.renderPage() : this.renderWorkbench(bean, topbarStats)}
         ${this.renderLivePanel()}
         ${this.renderModal()}
@@ -6713,25 +6709,6 @@ export class BeanieApp {
         </div>
       </div>
     `;
-  }
-
-  private renderRuntimeModeBanner(): string {
-    if (!this.hasRuntimeModeBanner()) return '';
-    if (this.state.startupPhase === 'retrying') {
-      return `<div class="runtime-mode-banner retrying" role="status"><strong>Reconnecting…</strong><span>Keeping the current data visible.</span></div>`;
-    }
-    const demo = this.state.startupPhase === 'demo' || this.state.demo;
-    const limited = this.state.startupPhase === 'limited';
-    return `
-      <div class="runtime-mode-banner ${demo ? 'demo' : limited ? 'limited' : 'offline'}" role="status">
-        <strong>${demo ? 'DEMO · sample data' : limited ? 'LIMITED · mixed data' : 'OFFLINE · cached data'}</strong>
-        <span>${demo ? 'Machine actions are simulated and changes are not saved.' : limited ? 'Some resources are cached or unavailable; Beanie is retrying them.' : 'Data may be stale; machine changes can fail until the gateway returns.'}</span>
-        <button type="button" data-action="retry-startup">Retry now</button>
-      </div>`;
-  }
-
-  private hasRuntimeModeBanner(): boolean {
-    return this.state.startupPhase !== 'connected' && this.state.startupPhase !== 'connecting';
   }
 
   private renderLivePanel(): string {

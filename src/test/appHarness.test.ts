@@ -201,18 +201,25 @@ await run('BeanieApp starts by rendering the workbench shell and delegated liste
   app.dispose();
 });
 
-await run('BeanieApp keeps operation status without rendering floating feedback', () => {
+await run('BeanieApp keeps runtime status without rendering floating feedback', () => {
   const root = new FakeElement();
   const app = new BeanieApp(root as unknown as HTMLElement);
   const harness = app as unknown as {
-    state: { status: string };
+    state: { status: string; startupPhase: string };
     setState(next: Record<string, unknown>): void;
   };
 
-  harness.setState({ settingsLoaded: true, status: 'Shot recipe loaded' });
+  harness.setState({
+    settingsLoaded: true,
+    startupPhase: 'demo',
+    demo: true,
+    status: 'Shot recipe loaded'
+  });
 
   equal(harness.state.status, 'Shot recipe loaded');
+  equal(harness.state.startupPhase, 'demo');
   equal(root.innerHTML.includes('operation-feedback'), false);
+  equal(root.innerHTML.includes('runtime-mode-banner'), false);
   app.dispose();
 });
 

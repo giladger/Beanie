@@ -111,7 +111,7 @@ AI-agent work does not infer completion from extracted filenames alone.
 - Corrective shell extraction: account/plugin settings sessions, shot editing,
   the screensaver runtime, flow calibration, bean selection, dose admission,
   machine settings/refill, and the bean-inventory browser now have focused
-  owners. `src/app.ts` fell from 10,572 to 7,428 lines (−3,144, about 30%) while
+  owners. `src/app.ts` fell from 10,572 to 7,380 lines (−3,192, about 30%) while
   retaining one `AppState`, one gateway scheduler, one inventory facade, and
   one durable dose journal. The shell now wires typed feature events and DOM
   adapters instead of carrying those workflows inline.
@@ -125,7 +125,7 @@ AI-agent work does not infer completion from extracted filenames alone.
 ## Deferred — architecture debt (ordered by value)
 
 Per [architecture.md](architecture.md), workflow policy should leave
-`BeanieApp`. At 7,428 lines, `src/app.ts` is materially smaller and its largest
+`BeanieApp`. At 7,380 lines, `src/app.ts` is materially smaller and its largest
 inventory/settings/editing sessions are independently testable, but it is still
 not a small composition shell. The remaining work starts here:
 

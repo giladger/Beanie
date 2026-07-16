@@ -13,10 +13,10 @@ test('gateway failure reaches an explicit, usable demo shell', async ({ page }) 
 
   await page.goto('/');
 
-  const mode = page.locator('.runtime-mode-banner');
-  await expect(mode).toContainText('DEMO · sample data');
-  await expect(mode).toContainText('changes are not saved');
-  await expect(page.locator('.top-stat.stat-tone-alert')).toContainText('Demo');
+  const floatingStatus = page.locator('.runtime-mode-banner');
+  const topbarStatus = page.locator('.top-stat.stat-tone-alert');
+  await expect(floatingStatus).toHaveCount(0);
+  await expect(topbarStatus).toContainText('Demo');
 
   await page.getByRole('button', { name: 'Settings' }).first().click();
   await expect(page.getByRole('navigation', { name: 'Settings sections' })).toBeVisible();
@@ -86,7 +86,8 @@ test('gateway failure reaches an explicit, usable demo shell', async ({ page }) 
   });
   await page.reload();
 
-  await expect(mode).toContainText('OFFLINE · cached data');
+  await expect(floatingStatus).toHaveCount(0);
+  await expect(topbarStatus).toContainText('Offline');
   await page.getByRole('button', { name: 'Increase Dose' }).click();
   await expect(page.locator('.recipe-apply-chip')).toHaveCount(0);
   expect(workflowWrites).toBe(0);
