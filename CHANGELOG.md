@@ -1,5 +1,125 @@
 # Changelog
 
+## v0.3.1 - 2026-07-16
+
+This release concentrates on long-running stability, recovery after interrupted
+gateway operations, and making Beanie safer to evolve. It also includes a set
+of focused workflow and interface refinements.
+
+### Long-running runtime and rendering stability
+
+- Reworked high-frequency rendering around DOM morphing, bounded update
+  channels, and stable presentation islands. Live charts, the topbar, Derek
+  streaming, profile editing, water alerts, and the screensaver can now update
+  without repeatedly rebuilding unrelated parts of the page, replacing chart
+  canvases, or losing scroll and input state.
+- Added deterministic cleanup for charts, WebSockets, timers, background tasks,
+  image object URLs, scanner images, and screensaver resources. Together with
+  capped chart backing stores and suspension while charts are hidden, this
+  addresses the known WebView graphics-growth paths
+- Supervised gateway WebSockets now own reconnect, stale-callback rejection,
+  validation, and shutdown across machine, scale, water, display, and shot-state
+  feeds. A reconnect can no longer leave an old socket or delayed task competing
+  with the current runtime.
+- Cached shot graph models and coalesced live telemetry updates avoid rebuilding
+  expensive chart data on every application render while preserving full shot
+  detail.
+- Added explicit lifecycle and render-ownership tests for chart canvases,
+  screensaver images, streaming responses, topbar updates, background work, and
+  socket replacement.
+
+### Startup, history, and workflow recovery
+
+- Offline startup now restores the selected coffee's bounded shot history from
+  the local cache, including cached measurements where available. A temporarily
+  unavailable gateway no longer makes legitimate recent shots disappear or
+  substitutes demo records for the user's library.
+- Startup and reconnect are now single-flight operations with stale-result
+  fencing. Invalid collection rows are discarded individually, and a delayed or
+  incomplete response cannot overwrite newer confirmed state.
+- Loading a saved shot now carries its brew temperature into the next workflow.
+  The skin also preserves the gateway's current workflow temperature during
+  startup instead of replacing it with the default recipe temperature.
+- Temporary workflow restoration is retried after reconnect, so a failed first
+  attempt does not silently leave the machine on the wrong workflow.
+- Live shots and dose deductions now follow the coffee and bag in the machine's
+  confirmed workflow instead of the visible draft or a cached workflow. Scanning
+  and saving a new coffee no longer silently makes it active; selection changes
+  only after the user explicitly chooses it.
+- Settings loaded from unavailable gateway endpoints retain their provenance
+  and become visibly read-only, with Retry, instead of presenting fallback
+  values as confirmed machine state. Failed optimistic saves roll back only the
+  fields they owned, so newer edits remain intact.
+
+### Inventory and shot integrity
+
+- Hardened the durable mutation journal for dose deductions, dose reclaims, and
+  shot deletion with reclaim. Retries retain the original bag weight and absolute
+  target; ambiguous or divergent remote state stops for review instead of
+  applying another delta.
+- Inventory operations for the same coffee now share one ordered lane in each
+  runtime. Delayed shot deductions, browser edits, split freezes, and reclaims
+  are rebased against authoritative bag state so stale local completions cannot
+  overwrite newer local intent.
+- Delete-with-reclaim now records its transaction before deleting the shot and
+  atomically hands the inventory slot to the reclaim worker after a successful
+  delete, or after an owned retry confirms that the shot is already absent. If
+  Beanie cannot durably protect the reclaim, it fails before deleting the shot.
+- Startup discovers unfinished inventory work independently of the visible UI,
+  overlays pending adjustments without turning them into cached truth, and
+  reconciles acknowledgements created by another browser context.
+- Browser-based bag updates no longer send the gateway's unsupported
+  `Idempotency-Key` header. Retry safety comes from the local journal, original
+  bag weight, and absolute target weight, with a fail-closed conflict when the
+  remote bag changed unexpectedly.
+
+### Workflow and interface refinements
+
+- Refined profile selection on tablet: the first tap previews a profile and the
+  confirming second tap loads it, with a discoverable hint while the gesture is
+  being learned. Phone selection remains a direct single tap.
+- Saving a profile now loads it immediately and returns to the workbench.
+  Duplicate profile content is reported explicitly, profile notes have a proper
+  multiline editor, and text-entry focus and caret position survive unrelated
+  renders.
+- Bean selection now prioritizes newly added coffees and coffees with the most
+  recent shot, making the currently relevant bags easier to reach.
+- Removed passive recipe apply-state badges for a quieter interface; persistent
+  machine state remains available in the topbar.
+- Added consistent keyboard focus indicators, reduced-motion support, disabled
+  styling for unavailable settings, and several small layout and interaction
+  fixes across profile editing, shot history, and Derek notes.
+
+### Architecture, privacy, and release operations
+
+- Extracted startup, inventory, live-shot completion, shot deletion, settings,
+  machine actions, cleaning, profile application, editing, account sessions,
+  the screensaver, calibration, and selection workflows from the application
+  shell. `src/app.ts` is about 30% smaller while retaining one application state
+  and one low-level gateway scheduler.
+- Established a single gateway mutation scheduler with typed owners for machine
+  commands, inventory, settings, workflow application, and deletion. Architecture
+  guards now reject duplicate command paths, legacy mutation lanes, and forbidden
+  dependency shortcuts—important protection when multiple AI agents maintain the
+  repository.
+- Centralized profile decoding and encoding for canonical Reaprime and imported
+  de1app/Tcl formats, preserving unknown fields while preventing legacy aliases
+  from leaking back into saved profiles.
+- Moved Gemini scanner keys to device-local storage, migrated and removed legacy
+  gateway copies, and added an explicit key-removal control. On-device image
+  processing now has explicit decoded-pixel and concurrency bounds and reliably
+  releases its resources. Scanner requests have bounded durations; Derek streams
+  also have bounded buffers and answer sizes.
+- Clearing the local cache now preserves synced preferences and intentionally
+  device-local data such as the scanner key, theme, and screensaver photos.
+- Local development and preview servers now bind to loopback by default; explicit
+  LAN commands are required for tablet testing, and the known Decent development
+  origin is allowed without opening Vite to arbitrary sites.
+- Added browser smoke tests, architecture checks, storage/privacy coverage, and
+  stricter CI and release validation. The release command now accepts an explicit
+  version, requires matching changelog notes, verifies tests/build/manifest, and
+  atomically publishes the release commit and tag.
+
 ## v0.3.0 - 2026-07-07
 
 ### Derek dial-in helper
