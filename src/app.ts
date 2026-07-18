@@ -5362,6 +5362,7 @@ export class BeanieApp {
       profileFocusId: id,
       status: record ? `Previewing ${profileShortTitle(record.profile.title ?? id)}` : this.state.status
     });
+    this.scheduleApply();
   }
 
   private goView(view: View): void {
