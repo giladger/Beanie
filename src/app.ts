@@ -6483,8 +6483,7 @@ export class BeanieApp {
           ? clockLabel(new Date(), this.state.settingsPreferences.clockFormat)
           : null,
         cleaningDue: cleaningDueNow,
-        asleep: this.state.asleep,
-        derekEnabled: this.derekFlow.derekEnabled()
+        asleep: this.state.asleep
       },
       hero: this.heroViewModel(bean),
       recipe: {
