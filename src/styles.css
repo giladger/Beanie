@@ -1169,8 +1169,10 @@ p {
   box-shadow: inset 3px 0 0 var(--teal);
 }
 
-.shot-item.has-second-tap-hint {
-  padding-right: 118px;
+/* The tooltip floats over the bottom-right corner, so only the profile line
+ * needs to clear it — padding the whole item would truncate the recipe line. */
+.shot-item.has-second-tap-hint .shot-item-profile {
+  padding-right: 106px;
 }
 
 .second-tap-tooltip {
