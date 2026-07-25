@@ -1,5 +1,11 @@
-import type { BeanBatch } from '../api/types';
-import { batchOptionLabel, dateInputValue, recentBatches } from '../domain/beanDisplay';
+import type { Bean, BeanBatch } from '../api/types';
+import {
+  batchOptionLabel,
+  dateInputValue,
+  recentBatches,
+  rotationBeans,
+  type RotationInput
+} from '../domain/beanDisplay';
 
 run('batchOptionLabel formats roast date and remaining weight', () => {
   includes(batchOptionLabel(batch('batch-1', '2026-06-05T10:00:00.000Z', 125.5)), '125.5g');
@@ -24,6 +30,81 @@ run('dateInputValue preserves yyyy-mm-dd prefixes and rejects malformed dates', 
   equal(dateInputValue('not a date'), '');
   equal(dateInputValue(null), '');
 });
+
+run('rotationBeans pins favorites in star order before recency fill', () => {
+  const result = rotationBeans(rotation({
+    favoriteBeanIds: ['fav-old', 'fav-new'],
+    recentBeanIds: ['recent', 'fav-new', 'other']
+  }));
+
+  equal(result.map((bean) => bean.id).join(','), 'fav-old,fav-new');
+});
+
+run('rotationBeans excludes the selected bean and fills from selection history', () => {
+  const result = rotationBeans(rotation({
+    selectedBeanId: 'fav-old',
+    favoriteBeanIds: ['fav-old'],
+    recentBeanIds: ['fav-old', 'recent', 'other']
+  }));
+
+  equal(result.map((bean) => bean.id).join(','), 'recent,other');
+});
+
+run('rotationBeans drops beans whose known bags are all finished, keeps unknown stock', () => {
+  const result = rotationBeans(rotation({
+    favoriteBeanIds: ['fav-old', 'fav-new'],
+    recentBeanIds: ['recent'],
+    batchesByBean: {
+      // Every known bag finished: the pinned bean leaves its slot.
+      'fav-old': [batch('a', null, 2)],
+      // A live bag keeps the slot; no data at all also keeps it.
+      'fav-new': [batch('b', null, 2), batch('c', null, 180)]
+    }
+  }));
+
+  equal(result.map((bean) => bean.id).join(','), 'fav-new,recent');
+});
+
+run('rotationBeans falls back to shot usage when the selection history is empty', () => {
+  const result = rotationBeans(rotation({
+    recentBeanIds: [],
+    beanUsageAt: { other: 30, recent: 20, 'fav-old': 10 }
+  }));
+
+  equal(result.map((bean) => bean.id).join(','), 'other,recent');
+});
+
+run('rotationBeans skips archived or unknown beans and honors the limit', () => {
+  const result = rotationBeans(rotation({
+    favoriteBeanIds: ['gone', 'archived', 'fav-new'],
+    recentBeanIds: ['recent', 'other'],
+    limit: 3
+  }));
+
+  equal(result.map((bean) => bean.id).join(','), 'fav-new,recent,other');
+});
+
+function rotation(overrides: Partial<RotationInput>): RotationInput {
+  return {
+    beans: [
+      bean('fav-old'),
+      bean('fav-new'),
+      bean('recent'),
+      bean('other'),
+      { ...bean('archived'), archived: true }
+    ],
+    selectedBeanId: 'selected',
+    favoriteBeanIds: [],
+    recentBeanIds: [],
+    beanUsageAt: {},
+    batchesByBean: {},
+    ...overrides
+  };
+}
+
+function bean(id: string): Bean {
+  return { id, roaster: 'Roaster', name: `Bean ${id}` };
+}
 
 function batch(id: string, roastDate: string | null, weightRemaining: number | null): BeanBatch {
   return {

@@ -3,8 +3,14 @@ import {
   favoriteProfilesKey,
   getSyncedItem,
   lastBeanKey,
+  recentBeansKey,
   setSyncedItem
 } from './settingsStore';
+
+// How many selections the recents list keeps. Only the first couple render as
+// workbench rotation tiles, but a longer tail survives beans getting archived
+// or running out of stock in between.
+const RECENT_BEANS_MAX = 8;
 
 export function readLastBeanId(): string | null {
   return getSyncedItem(lastBeanKey);
@@ -12,6 +18,20 @@ export function readLastBeanId(): string | null {
 
 export function writeLastBeanId(beanId: string): void {
   setSyncedItem(lastBeanKey, beanId);
+  const recents = [beanId, ...readRecentBeanIds().filter((id) => id !== beanId)];
+  setSyncedItem(recentBeansKey, JSON.stringify(recents.slice(0, RECENT_BEANS_MAX)));
+}
+
+/** Selection history, most recent first (includes the current bean). */
+export function readRecentBeanIds(): string[] {
+  try {
+    const raw = getSyncedItem(recentBeansKey);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
 }
 
 export function readFavoriteProfiles(): string[] {

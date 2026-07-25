@@ -28,6 +28,7 @@ export const screensaverBrightnessKey = 'beanie.settings.screensaver-brightness'
 export const favoriteProfilesKey = 'beanie.favorite-profiles';
 export const favoriteBeansKey = 'beanie.favorite-beans';
 export const lastBeanKey = 'beanie.last-bean-id';
+export const recentBeansKey = 'beanie.recent-bean-ids';
 export const flowCalGlobalKey = 'beanie.flow-cal.global';
 export const flowCalOverridesKey = 'beanie.flow-cal.profile-overrides';
 export const machinePresetLabelsKey = 'beanie.machine-preset-labels';
@@ -56,6 +57,7 @@ export const SYNCED_SETTING_KEYS: readonly string[] = [
   favoriteProfilesKey,
   favoriteBeansKey,
   lastBeanKey,
+  recentBeansKey,
   flowCalGlobalKey,
   flowCalOverridesKey,
   machinePresetLabelsKey,

@@ -94,6 +94,7 @@ import {
   clearPendingDerekTweak,
   readLastBeanId,
   readPendingDerekTweak,
+  readRecentBeanIds,
   readStorageEventsMigrated,
   migrateLegacyGeminiApiKey,
   writeFavoriteBeans,
@@ -101,6 +102,7 @@ import {
   writeLastBeanId
 
 } from './domain/storage';
+import { rotationBeans } from './domain/beanDisplay';
 import {
   demoBatches,
   demoBeans,
@@ -4882,6 +4884,13 @@ export class BeanieApp {
 
   private recipeClickActions(): Record<string, ClickActionHandler> {
     return {
+      // One-tap coffee switch from a hero rotation tile. Same semantics as
+      // picking the bean in the picker: swap coffee + recipe and apply it.
+      'switch-bean': async ({ id }) => {
+        if (!id || id === this.state.selectedBeanId) return;
+        this.setState({ secondTapHint: null });
+        await this.selectBean(id, { apply: true, preferWorkflow: false });
+      },
       'adjust': ({ el, field }) => {
         if (field) this.adjustField(field, Number(el.dataset.delta ?? '0'));
       },
@@ -6503,8 +6512,9 @@ export class BeanieApp {
   }
 
   private heroViewModel(bean: Bean | null): WorkbenchHeroViewModel {
+    const rotation = this.heroRotationTiles(bean);
     if (!bean) {
-      return { beanName: 'Pick a bag', roaster: null, age: null, remaining: null, shotsLeft: null, beanId: null };
+      return { beanName: 'Pick a bag', roaster: null, age: null, remaining: null, shotsLeft: null, beanId: null, rotation };
     }
     const batch = this.selectedBatch();
     const remaining = positiveNumber(batch?.weightRemaining);
@@ -6516,8 +6526,26 @@ export class BeanieApp {
       age: roastAgeLabel(batch),
       remaining: remaining == null ? null : formatGrams(remaining),
       shotsLeft: shotsLeft == null ? null : `~${shotsLeft} shot${shotsLeft === 1 ? '' : 's'}`,
-      beanId: bean.id
+      beanId: bean.id,
+      rotation
     };
+  }
+
+  private heroRotationTiles(selected: Bean | null): WorkbenchHeroViewModel['rotation'] {
+    const favorites = new Set(this.state.favoriteBeans);
+    return rotationBeans({
+      beans: this.state.beans,
+      selectedBeanId: selected?.id ?? null,
+      favoriteBeanIds: this.state.favoriteBeans,
+      recentBeanIds: readRecentBeanIds(),
+      beanUsageAt: this.state.beanUsageAt,
+      batchesByBean: this.state.batchesByBean
+    }).map((bean) => ({
+      id: bean.id,
+      name: bean.name?.trim() || beanLabel(bean),
+      roaster: bean.roaster?.trim() || null,
+      favorite: favorites.has(bean.id)
+    }));
   }
 
   // Average dose-in across the bean's loaded shots (state.shots is already

@@ -26,6 +26,15 @@ export interface WorkbenchHeroViewModel {
   remaining: string | null;
   shotsLeft: string | null;
   beanId: string | null;
+  /** One-tap switch tiles for the other beans in rotation (may be empty). */
+  rotation: WorkbenchRotationTile[];
+}
+
+export interface WorkbenchRotationTile {
+  id: string;
+  name: string;
+  roaster: string | null;
+  favorite: boolean;
 }
 
 export interface WorkbenchRecipeViewModel {
@@ -184,20 +193,40 @@ export function renderTopbar(model: WorkbenchTopbarViewModel): string {
   `;
 }
 
+// The hero row is one shared hit area for the bean picker (the wrapper div
+// carries the action, so gaps between children still open it) with the
+// rotation tiles opting out via their own switch-bean action. The title and
+// facts are real buttons so the picker stays reachable for keyboard/AT users.
 export function renderHero(model: WorkbenchHeroViewModel): string {
+  const rotation = model.rotation.length === 0
+    ? ''
+    : `<span class="hero-rotation">${model.rotation.map(renderRotationTile).join('')}</span>`;
   return `
-    <button class="hero panel" data-action="open-bean-picker" aria-label="Choose bean" title="Choose bean">
-      <span class="bean-title">
-        <span class="bean-name">${escapeHtml(model.beanName)}</span>
-        ${model.roaster ? `<span class="bean-roaster">${escapeHtml(model.roaster)}</span>` : ''}
-        ${icon('chevron-down')}
-      </span>
-      <span class="hero-facts">
+    <div class="hero panel ${model.rotation.length > 0 ? 'has-rotation' : ''}" data-action="open-bean-picker">
+      <button class="hero-open" data-action="open-bean-picker" aria-label="Choose bean" title="Choose bean">
+        <span class="bean-title">
+          <span class="bean-name">${escapeHtml(model.beanName)}</span>
+          ${model.roaster ? `<span class="bean-roaster">${escapeHtml(model.roaster)}</span>` : ''}
+          ${icon('chevron-down')}
+        </span>
+      </button>
+      ${rotation}
+      <button class="hero-facts" data-action="open-bean-picker" aria-label="Choose bean" title="Choose bean">
         ${model.remaining ? `<span class="hero-remaining">${escapeHtml(model.remaining)}</span>` : ''}
         ${model.shotsLeft ? `<span class="hero-shots">${escapeHtml(model.shotsLeft)}</span>` : ''}
         ${(model.remaining || model.shotsLeft) && model.age ? '<span class="hero-divider" aria-hidden="true"></span>' : ''}
         ${model.age ? `<span class="hero-roast">${escapeHtml(model.age)}</span>` : ''}
-      </span>
+      </button>
+    </div>
+  `;
+}
+
+function renderRotationTile(tile: WorkbenchRotationTile): string {
+  const eyebrow = [tile.favorite ? '★' : null, tile.roaster].filter(Boolean).join(' ');
+  return `
+    <button class="hero-rotation-tile" data-action="switch-bean" data-id="${escapeAttr(tile.id)}" aria-label="Switch to ${escapeAttr(tile.name)}" title="Switch to ${escapeAttr(tile.name)}">
+      ${eyebrow ? `<small>${escapeHtml(eyebrow)}</small>` : ''}
+      <strong>${escapeHtml(tile.name)}</strong>
     </button>
   `;
 }

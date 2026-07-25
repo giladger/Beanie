@@ -1,4 +1,4 @@
-import type { BeanBatch } from '../api/types';
+import type { Bean, BeanBatch } from '../api/types';
 import {
   batchStorageEvents,
   batchStorageState,
@@ -106,6 +106,54 @@ export function recentBatches(batches: BeanBatch[], limit: number): BeanBatch[] 
       return bd - ad;
     })
     .slice(0, limit);
+}
+
+export interface RotationInput {
+  beans: readonly Bean[];
+  selectedBeanId: string | null;
+  /** Star order (oldest star first) — pinned rotation slots. */
+  favoriteBeanIds: readonly string[];
+  /** Selection history, most recent first. */
+  recentBeanIds: readonly string[];
+  /** Last-shot timestamp per bean — recency fallback predating the history. */
+  beanUsageAt: Readonly<Record<string, number>>;
+  batchesByBean: Readonly<Record<string, readonly BeanBatch[]>>;
+  limit?: number;
+}
+
+/**
+ * The workbench rotation strip: beans reachable in one tap beside the hero.
+ * Starred beans hold slots first (in star order); whatever room is left is
+ * filled by most recently used beans. The selected bean is never a tile (it IS
+ * the hero), and a bean whose every known bag is finished drops out — beans
+ * with no loaded batch data stay in, since absence of data is not empty stock.
+ */
+export function rotationBeans(input: RotationInput): Bean[] {
+  const limit = input.limit ?? 2;
+  if (limit <= 0) return [];
+  const byId = new Map(input.beans.map((bean) => [bean.id, bean]));
+  const hasStock = (id: string): boolean => {
+    const batches = input.batchesByBean[id];
+    if (!batches || batches.length === 0) return true;
+    return batches.some((batch) => !isNearlyEmptyBatch(batch));
+  };
+  const usageRecency = [...input.beans]
+    .filter((bean) => (input.beanUsageAt[bean.id] ?? 0) > 0)
+    .sort((a, b) => (input.beanUsageAt[b.id] ?? 0) - (input.beanUsageAt[a.id] ?? 0))
+    .map((bean) => bean.id);
+  const picked: Bean[] = [];
+  const seen = new Set<string>();
+  for (const id of [...input.favoriteBeanIds, ...input.recentBeanIds, ...usageRecency]) {
+    if (picked.length >= limit) break;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    if (id === input.selectedBeanId) continue;
+    const bean = byId.get(id);
+    if (!bean || bean.archived) continue;
+    if (!hasStock(id)) continue;
+    picked.push(bean);
+  }
+  return picked;
 }
 
 export function dateInputValue(value: string | null | undefined): string {

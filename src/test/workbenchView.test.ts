@@ -67,7 +67,7 @@ run('workbench marks the status stat with the alert tone when the gateway link i
 run('workbench hides remaining/age chips and machine commands when model says unavailable', () => {
   const html = renderWorkbench(
     model({
-      hero: { beanName: 'Pick a bag', roaster: null, age: null, remaining: null, shotsLeft: null, beanId: null },
+      hero: { beanName: 'Pick a bag', roaster: null, age: null, remaining: null, shotsLeft: null, beanId: null, rotation: [] },
       topbar: {
         ...model().topbar,
         cleaningDue: false,
@@ -81,6 +81,42 @@ run('workbench hides remaining/age chips and machine commands when model says un
   excludes(html, 'hero-roast');
   excludes(html, 'data-action="machine-command"');
   excludes(html, 'has-badge');
+});
+
+run('workbench hero renders one-tap rotation tiles beside the picker buttons', () => {
+  const base = model();
+  const html = renderWorkbench(
+    model({
+      hero: {
+        ...base.hero,
+        rotation: [
+          { id: 'bean-2', name: 'Decaf <Cauca>', roaster: 'La "Palma"', favorite: true },
+          { id: 'bean-3', name: 'Simbi', roaster: null, favorite: false }
+        ]
+      }
+    })
+  );
+
+  includes(html, 'hero panel has-rotation');
+  includes(html, 'data-action="switch-bean" data-id="bean-2"');
+  includes(html, 'data-action="switch-bean" data-id="bean-3"');
+  // Pinned tiles carry the star in the roaster eyebrow; roasterless beans
+  // render the name alone rather than an empty eyebrow.
+  includes(html, '<small>★ La &quot;Palma&quot;</small>');
+  includes(html, '<strong>Decaf &lt;Cauca&gt;</strong>');
+  excludes(html, '<small></small>');
+  includes(html, 'aria-label="Switch to Simbi"');
+  // The whole row still opens the picker: wrapper div plus the two buttons.
+  includes(html, 'div class="hero panel has-rotation" data-action="open-bean-picker"');
+  includes(html, 'hero-open');
+  includes(html, 'hero-facts');
+});
+
+run('workbench hero omits the rotation strip when there is nothing to switch to', () => {
+  const html = renderWorkbench(model());
+  excludes(html, 'has-rotation');
+  excludes(html, 'hero-rotation');
+  excludes(html, 'switch-bean');
 });
 
 run('workbench hides the topbar clock when the preference turns it off', () => {
@@ -210,7 +246,8 @@ function model(overrides: Partial<WorkbenchViewModel> = {}): WorkbenchViewModel 
       age: '3 days off roast',
       remaining: '118g',
       shotsLeft: '~6 shots',
-      beanId: 'bean-1'
+      beanId: 'bean-1',
+      rotation: []
     },
     recipe: {
       draft: {

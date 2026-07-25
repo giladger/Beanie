@@ -778,8 +778,79 @@ p {
   cursor: pointer;
 }
 
+.hero.has-rotation {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
 .hero:active {
   background: var(--panel-2);
+}
+
+.hero-open {
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hero-rotation {
+  min-width: 0;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.hero-rotation-tile {
+  min-width: 0;
+  max-width: 150px;
+  height: 38px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hero-rotation-tile:active {
+  background: var(--panel-3);
+}
+
+.hero-rotation-tile small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.hero-rotation-tile strong {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.1;
+  color: var(--ink);
 }
 
 .bean-title {
@@ -823,6 +894,12 @@ p {
   align-items: baseline;
   gap: 8px;
   white-space: nowrap;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
 }
 
 .hero-remaining {
@@ -7277,6 +7354,16 @@ p {
 
   .hero {
     grid-template-columns: 1fr;
+  }
+
+  /* The stacked narrow layout has no horizontal room for one-tap switch
+     tiles; the picker remains the way to change beans there. */
+  .hero.has-rotation {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-rotation {
+    display: none;
   }
 
   .recipe-grid {
