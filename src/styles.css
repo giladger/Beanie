@@ -776,14 +776,16 @@ p {
   font: inherit;
   color: var(--ink);
   cursor: pointer;
+  /* The wrapper div is tappable (delegated open-bean-picker), and Android
+     WebView paints its default tap highlight across the whole row for it.
+     Press feedback comes from the per-button :active rules instead. */
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .hero.has-rotation {
   grid-template-columns: minmax(0, 1fr) auto auto;
-}
-
-.hero:active {
-  background: var(--panel-2);
 }
 
 .hero-open {
@@ -798,6 +800,13 @@ p {
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+/* Flash only the pressed control, never the whole row — a dock tap must not
+   light up the title and facts around it. */
+.hero-open:active,
+.hero-facts:active {
+  background: var(--panel-2);
 }
 
 /* Fixed dock at the hero's right edge: fixed-width slots behind a divider, so

@@ -76,7 +76,7 @@ import {
   ratioFor,
   recipeFromWorkflow,
   recipeFromShot,
-  roastAgeLabel,
+  freshnessBadgeLabel,
   selectInitialBean,
   shotFilterForBean,
   yieldForRatio
@@ -6523,7 +6523,9 @@ export class BeanieApp {
     return {
       beanName: bean.name?.trim() || beanLabel(bean),
       roaster: bean.roaster?.trim() || null,
-      age: roastAgeLabel(batch),
+      // Compact "65d" / "65d · 40a" badge form — the hero row has no width to
+      // spare for prose, and the picker already teaches the d/a vocabulary.
+      age: freshnessBadgeLabel(batch),
       remaining: remaining == null ? null : formatGrams(remaining),
       shotsLeft: shotsLeft == null ? null : `~${shotsLeft} shot${shotsLeft === 1 ? '' : 's'}`,
       beanId: bean.id,

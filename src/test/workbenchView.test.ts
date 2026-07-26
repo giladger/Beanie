@@ -33,7 +33,7 @@ run('workbench renders topbar metrics, hero bean actions, recipe controls, and h
   includes(html, 'data-action="open-bean-picker"');
   includes(html, '118g');
   includes(html, '~6 shots');
-  includes(html, '3 days off roast');
+  includes(html, '3d');
   includes(html, 'data-field="dose" data-delta="-0.5"');
   includes(html, 'data-field="grinderSetting" data-delta="-0.25"');
   excludes(html, 'recipe-apply-chip');
@@ -249,7 +249,7 @@ function model(overrides: Partial<WorkbenchViewModel> = {}): WorkbenchViewModel 
     hero: {
       beanName: 'Milky & Cake',
       roaster: 'Dak <Roasters>',
-      age: '3 days off roast',
+      age: '3d',
       remaining: '118g',
       shotsLeft: '~6 shots',
       beanId: 'bean-1',
