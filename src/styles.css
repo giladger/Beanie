@@ -800,28 +800,30 @@ p {
   cursor: pointer;
 }
 
+/* Fixed dock at the hero's right edge: fixed-width slots behind a divider, so
+   the switch targets keep their exact position and size no matter how long the
+   (dynamic) bean name and stock facts to their left are. */
 .hero-rotation {
-  min-width: 0;
   display: inline-flex;
   gap: 6px;
+  padding-left: 12px;
+  border-left: 1px solid var(--line-strong);
 }
 
 .hero-rotation-tile {
-  min-width: 0;
-  max-width: 150px;
-  height: 38px;
+  width: 132px;
+  min-height: 38px;
   display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  gap: 2px;
-  padding: 0 12px;
-  border: 1px solid var(--line);
+  gap: 5px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius);
   background: var(--panel-2);
   color: var(--ink);
   font: inherit;
-  text-align: left;
+  line-height: 1.1;
   cursor: pointer;
 }
 
@@ -829,27 +831,19 @@ p {
   background: var(--panel-3);
 }
 
-.hero-rotation-tile small {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 9px;
-  font-weight: 900;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  line-height: 1;
+.hero-rotation-fav {
+  flex: none;
+  font-size: 11px;
   color: var(--muted);
 }
 
-.hero-rotation-tile strong {
-  max-width: 100%;
+.hero-rotation-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 900;
-  line-height: 1.1;
   color: var(--ink);
 }
 

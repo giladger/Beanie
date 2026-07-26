@@ -33,7 +33,8 @@ export interface WorkbenchHeroViewModel {
 export interface WorkbenchRotationTile {
   id: string;
   name: string;
-  roaster: string | null;
+  /** Full "Roaster Name" label for the tooltip/aria — the button shows name only. */
+  label: string;
   favorite: boolean;
 }
 
@@ -195,8 +196,10 @@ export function renderTopbar(model: WorkbenchTopbarViewModel): string {
 
 // The hero row is one shared hit area for the bean picker (the wrapper div
 // carries the action, so gaps between children still open it) with the
-// rotation tiles opting out via their own switch-bean action. The title and
+// rotation dock opting out via its own switch-bean action. The title and
 // facts are real buttons so the picker stays reachable for keyboard/AT users.
+// The dock sits at the fixed right edge with fixed-width slots so the switch
+// targets never move when the (variable-width) bean name or facts change.
 export function renderHero(model: WorkbenchHeroViewModel): string {
   const rotation = model.rotation.length === 0
     ? ''
@@ -210,23 +213,22 @@ export function renderHero(model: WorkbenchHeroViewModel): string {
           ${icon('chevron-down')}
         </span>
       </button>
-      ${rotation}
       <button class="hero-facts" data-action="open-bean-picker" aria-label="Choose bean" title="Choose bean">
         ${model.remaining ? `<span class="hero-remaining">${escapeHtml(model.remaining)}</span>` : ''}
         ${model.shotsLeft ? `<span class="hero-shots">${escapeHtml(model.shotsLeft)}</span>` : ''}
         ${(model.remaining || model.shotsLeft) && model.age ? '<span class="hero-divider" aria-hidden="true"></span>' : ''}
         ${model.age ? `<span class="hero-roast">${escapeHtml(model.age)}</span>` : ''}
       </button>
+      ${rotation}
     </div>
   `;
 }
 
 function renderRotationTile(tile: WorkbenchRotationTile): string {
-  const eyebrow = [tile.favorite ? '★' : null, tile.roaster].filter(Boolean).join(' ');
   return `
-    <button class="hero-rotation-tile" data-action="switch-bean" data-id="${escapeAttr(tile.id)}" aria-label="Switch to ${escapeAttr(tile.name)}" title="Switch to ${escapeAttr(tile.name)}">
-      ${eyebrow ? `<small>${escapeHtml(eyebrow)}</small>` : ''}
-      <strong>${escapeHtml(tile.name)}</strong>
+    <button class="hero-rotation-tile" data-action="switch-bean" data-id="${escapeAttr(tile.id)}" aria-label="Switch to ${escapeAttr(tile.label)}" title="Switch to ${escapeAttr(tile.label)}">
+      ${tile.favorite ? '<span class="hero-rotation-fav" aria-hidden="true">★</span>' : ''}
+      <span class="hero-rotation-name">${escapeHtml(tile.name)}</span>
     </button>
   `;
 }

@@ -122,11 +122,15 @@ export interface RotationInput {
 }
 
 /**
- * The workbench rotation strip: beans reachable in one tap beside the hero.
+ * The workbench rotation dock: beans reachable in one tap beside the hero.
  * Starred beans hold slots first (in star order); whatever room is left is
  * filled by most recently used beans. The selected bean is never a tile (it IS
  * the hero), and a bean whose every known bag is finished drops out — beans
  * with no loaded batch data stay in, since absence of data is not empty stock.
+ *
+ * Recency decides only WHICH beans fill the free slots, never where they sit:
+ * fills display in name order so a slot's position doesn't trade places with
+ * its neighbor every time a switch reshuffles recency.
  */
 export function rotationBeans(input: RotationInput): Bean[] {
   const limit = input.limit ?? 2;
@@ -141,19 +145,22 @@ export function rotationBeans(input: RotationInput): Bean[] {
     .filter((bean) => (input.beanUsageAt[bean.id] ?? 0) > 0)
     .sort((a, b) => (input.beanUsageAt[b.id] ?? 0) - (input.beanUsageAt[a.id] ?? 0))
     .map((bean) => bean.id);
-  const picked: Bean[] = [];
+  const favorites = new Set(input.favoriteBeanIds);
+  const pinned: Bean[] = [];
+  const fills: Bean[] = [];
   const seen = new Set<string>();
   for (const id of [...input.favoriteBeanIds, ...input.recentBeanIds, ...usageRecency]) {
-    if (picked.length >= limit) break;
+    if (pinned.length + fills.length >= limit) break;
     if (seen.has(id)) continue;
     seen.add(id);
     if (id === input.selectedBeanId) continue;
     const bean = byId.get(id);
     if (!bean || bean.archived) continue;
     if (!hasStock(id)) continue;
-    picked.push(bean);
+    (favorites.has(id) ? pinned : fills).push(bean);
   }
-  return picked;
+  fills.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  return [...pinned, ...fills];
 }
 
 export function dateInputValue(value: string | null | undefined): string {

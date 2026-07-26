@@ -83,15 +83,15 @@ run('workbench hides remaining/age chips and machine commands when model says un
   excludes(html, 'has-badge');
 });
 
-run('workbench hero renders one-tap rotation tiles beside the picker buttons', () => {
+run('workbench hero renders one-tap rotation tiles docked after the facts', () => {
   const base = model();
   const html = renderWorkbench(
     model({
       hero: {
         ...base.hero,
         rotation: [
-          { id: 'bean-2', name: 'Decaf <Cauca>', roaster: 'La "Palma"', favorite: true },
-          { id: 'bean-3', name: 'Simbi', roaster: null, favorite: false }
+          { id: 'bean-2', name: 'Decaf <Cauca>', label: 'La "Palma" Decaf <Cauca>', favorite: true },
+          { id: 'bean-3', name: 'Simbi', label: 'Rwanda Simbi', favorite: false }
         ]
       }
     })
@@ -100,16 +100,22 @@ run('workbench hero renders one-tap rotation tiles beside the picker buttons', (
   includes(html, 'hero panel has-rotation');
   includes(html, 'data-action="switch-bean" data-id="bean-2"');
   includes(html, 'data-action="switch-bean" data-id="bean-3"');
-  // Pinned tiles carry the star in the roaster eyebrow; roasterless beans
-  // render the name alone rather than an empty eyebrow.
-  includes(html, '<small>★ La &quot;Palma&quot;</small>');
-  includes(html, '<strong>Decaf &lt;Cauca&gt;</strong>');
-  excludes(html, '<small></small>');
-  includes(html, 'aria-label="Switch to Simbi"');
+  // Tiles show the bean name only; the full roaster label lives in the
+  // tooltip/aria, and pinned tiles carry a star glyph.
+  includes(html, '<span class="hero-rotation-name">Decaf &lt;Cauca&gt;</span>');
+  includes(html, 'hero-rotation-fav');
+  includes(html, 'title="Switch to La &quot;Palma&quot; Decaf &lt;Cauca&gt;"');
+  includes(html, 'aria-label="Switch to Rwanda Simbi"');
+  excludes(html, '<small>');
+  // The dock is the last hero child so it hugs the fixed right edge.
+  const factsAt = html.indexOf('hero-facts');
+  const dockAt = html.indexOf('hero-rotation');
+  if (factsAt < 0 || dockAt < 0 || dockAt < factsAt) {
+    throw new Error('Expected the rotation dock to render after the facts');
+  }
   // The whole row still opens the picker: wrapper div plus the two buttons.
   includes(html, 'div class="hero panel has-rotation" data-action="open-bean-picker"');
   includes(html, 'hero-open');
-  includes(html, 'hero-facts');
 });
 
 run('workbench hero omits the rotation strip when there is nothing to switch to', () => {

@@ -6543,7 +6543,7 @@ export class BeanieApp {
     }).map((bean) => ({
       id: bean.id,
       name: bean.name?.trim() || beanLabel(bean),
-      roaster: bean.roaster?.trim() || null,
+      label: beanLabel(bean),
       favorite: favorites.has(bean.id)
     }));
   }

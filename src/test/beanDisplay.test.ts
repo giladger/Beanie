@@ -47,7 +47,9 @@ run('rotationBeans excludes the selected bean and fills from selection history',
     recentBeanIds: ['fav-old', 'recent', 'other']
   }));
 
-  equal(result.map((bean) => bean.id).join(','), 'recent,other');
+  // Recency chooses the fills; display order is by name ("Bean other" sorts
+  // before "Bean recent") so slots don't trade places after every switch.
+  equal(result.map((bean) => bean.id).join(','), 'other,recent');
 });
 
 run('rotationBeans drops beans whose known bags are all finished, keeps unknown stock', () => {
@@ -81,7 +83,24 @@ run('rotationBeans skips archived or unknown beans and honors the limit', () => 
     limit: 3
   }));
 
-  equal(result.map((bean) => bean.id).join(','), 'fav-new,recent,other');
+  equal(result.map((bean) => bean.id).join(','), 'fav-new,other,recent');
+});
+
+run('rotationBeans keeps fill slots in name order even when recency reshuffles', () => {
+  const onZebra = rotationBeans(rotation({
+    beans: [bean('alpha'), bean('mid'), bean('zebra')],
+    selectedBeanId: 'zebra',
+    recentBeanIds: ['zebra', 'mid', 'alpha']
+  }));
+  equal(onZebra.map((item) => item.id).join(','), 'alpha,mid');
+
+  // Switch to mid: alpha keeps its first slot; zebra takes the freed one.
+  const onMid = rotationBeans(rotation({
+    beans: [bean('alpha'), bean('mid'), bean('zebra')],
+    selectedBeanId: 'mid',
+    recentBeanIds: ['mid', 'zebra', 'alpha']
+  }));
+  equal(onMid.map((item) => item.id).join(','), 'alpha,zebra');
 });
 
 function rotation(overrides: Partial<RotationInput>): RotationInput {
