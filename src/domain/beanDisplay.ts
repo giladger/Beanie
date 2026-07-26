@@ -113,9 +113,9 @@ export interface RotationInput {
   selectedBeanId: string | null;
   /** Star order (oldest star first) — pinned rotation slots. */
   favoriteBeanIds: readonly string[];
-  /** Selection history, most recent first. */
+  /** Selection history, most recent first — fallback for never-brewed beans. */
   recentBeanIds: readonly string[];
-  /** Last-shot timestamp per bean — recency fallback predating the history. */
+  /** Last-shot timestamp per bean — the primary recency signal. */
   beanUsageAt: Readonly<Record<string, number>>;
   batchesByBean: Readonly<Record<string, readonly BeanBatch[]>>;
   limit?: number;
@@ -131,6 +131,11 @@ export interface RotationInput {
  * Recency decides only WHICH beans fill the free slots, never where they sit:
  * fills display in name order so a slot's position doesn't trade places with
  * its neighbor every time a switch reshuffles recency.
+ *
+ * "Recent" means recently BREWED (last shot per bean), not recently selected —
+ * browsing the picker or tapping a dock button must not promote a bean you
+ * never pulled into the rotation. The selection history only ranks beans that
+ * have no shot on record (e.g. a bag added moments ago).
  */
 export function rotationBeans(input: RotationInput): Bean[] {
   const limit = input.limit ?? 2;
@@ -149,7 +154,7 @@ export function rotationBeans(input: RotationInput): Bean[] {
   const pinned: Bean[] = [];
   const fills: Bean[] = [];
   const seen = new Set<string>();
-  for (const id of [...input.favoriteBeanIds, ...input.recentBeanIds, ...usageRecency]) {
+  for (const id of [...input.favoriteBeanIds, ...usageRecency, ...input.recentBeanIds]) {
     if (pinned.length + fills.length >= limit) break;
     if (seen.has(id)) continue;
     seen.add(id);

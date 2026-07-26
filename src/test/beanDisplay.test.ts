@@ -86,6 +86,19 @@ run('rotationBeans skips archived or unknown beans and honors the limit', () => 
   equal(result.map((bean) => bean.id).join(','), 'fav-new,other,recent');
 });
 
+run('rotationBeans ranks brewed beans above merely selected ones', () => {
+  // Regression: an idle picker/dock selection (never brewed) must not displace
+  // the beans actually pulled recently.
+  const result = rotationBeans(rotation({
+    beans: [bean('blend'), bean('alchemist'), bean('shantawene'), bean('guji')],
+    selectedBeanId: 'blend',
+    recentBeanIds: ['blend', 'alchemist', 'shantawene', 'guji'],
+    beanUsageAt: { blend: 300, guji: 250, shantawene: 200 }
+  }));
+
+  equal(result.map((item) => item.id).join(','), 'guji,shantawene');
+});
+
 run('rotationBeans keeps fill slots in name order even when recency reshuffles', () => {
   const onZebra = rotationBeans(rotation({
     beans: [bean('alpha'), bean('mid'), bean('zebra')],
