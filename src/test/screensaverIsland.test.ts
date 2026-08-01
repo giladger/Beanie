@@ -295,6 +295,106 @@ await run('screensaver island owns sleep dim and delayed wake brightness restora
   island.dispose();
 });
 
+await run('screensaver island never restores the saver dim level it read while asleep', async () => {
+  const timer = new FakeTimer();
+  const brightnessWrites: number[] = [];
+  const { island, snapshot } = createIsland(
+    timer,
+    { asleep: true, screensaverMode: 'clock', screensaverBrightness: 25 },
+    {
+      setBrightness: async (brightness) => {
+        brightnessWrites.push(brightness);
+        return true;
+      },
+      // Nothing else brought the backlight up, so the wake restore must write.
+      readRequestedBrightness: async () => 25
+    }
+  );
+
+  // A reload with the machine already asleep sees only saver-era display
+  // frames. Adopting one as the wake target used to strand the screen at 25%.
+  island.observeDisplayBrightness(25);
+  island.scheduleSleepDim(0);
+  timer.advance(0);
+  await flushPromises();
+  equal(brightnessWrites.join(','), '25');
+
+  Object.assign(snapshot, { asleep: false });
+  island.observeSleepState(false);
+  timer.advance(1500);
+  await flushPromises();
+  equal(brightnessWrites.join(','), '25,100');
+  island.dispose();
+});
+
+await run('screensaver island restores the awake brightness it observed before the dim', async () => {
+  const timer = new FakeTimer();
+  const brightnessWrites: number[] = [];
+  const { island, snapshot } = createIsland(
+    timer,
+    { asleep: false, screensaverMode: 'clock', screensaverBrightness: 25 },
+    {
+      setBrightness: async (brightness) => {
+        brightnessWrites.push(brightness);
+        return true;
+      },
+      readRequestedBrightness: async () => 25
+    }
+  );
+
+  island.observeDisplayBrightness(60);
+  Object.assign(snapshot, { asleep: true });
+  island.observeSleepState(true);
+  timer.advance(0);
+  await flushPromises();
+  equal(brightnessWrites.join(','), '25');
+  // The dim echoes back on the display channel; it is not the user's level.
+  island.observeDisplayBrightness(25);
+
+  Object.assign(snapshot, { asleep: false });
+  island.observeSleepState(false);
+  // Frames keep reporting the dim until the restore lands a second later.
+  island.observeDisplayBrightness(25);
+  timer.advance(1500);
+  await flushPromises();
+  equal(brightnessWrites.join(','), '25,60');
+  island.dispose();
+});
+
+await run('screensaver island finishes a wake restore whose check was cancelled', async () => {
+  const timer = new FakeTimer();
+  const brightnessWrites: number[] = [];
+  const { island, snapshot } = createIsland(
+    timer,
+    { asleep: true, screensaverMode: 'clock', screensaverBrightness: 25 },
+    {
+      setBrightness: async (brightness) => {
+        brightnessWrites.push(brightness);
+        return true;
+      },
+      readRequestedBrightness: async () => 25
+    }
+  );
+
+  island.scheduleSleepDim(0);
+  timer.advance(0);
+  await flushPromises();
+  Object.assign(snapshot, { asleep: false });
+  island.observeSleepState(false);
+  // A socket blip demotes authority and clears this island's write timers.
+  island.clearAutomaticWriteTimers();
+  timer.advance(1500);
+  await flushPromises();
+  equal(brightnessWrites.join(','), '25');
+
+  // The restore is still owed, so the next awake frame re-arms it.
+  island.observeSleepState(false);
+  timer.advance(1500);
+  await flushPromises();
+  equal(brightnessWrites.join(','), '25,100');
+  island.dispose();
+});
+
 async function run(name: string, fn: () => void | Promise<void>): Promise<void> {
   try {
     await fn();
@@ -306,8 +406,8 @@ async function run(name: string, fn: () => void | Promise<void>): Promise<void> 
 }
 
 async function flushPromises(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
+  // Enough microtask turns for a scheduled read-then-write restore to land.
+  for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
 }
 
 function equal<T>(actual: T, expected: T): void {
