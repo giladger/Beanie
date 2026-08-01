@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.3.2 - 2026-08-01
+
+- Added a bean rotation dock to the workbench hero: the beans you keep going
+  back to sit beside the current bean as one-tap tiles, and tapping one switches
+  coffee and recipe exactly like picking it in the bean picker. Starred beans
+  hold the slots first, in star order; the remaining slots go to the beans with
+  the most recent shots. A bean whose every known bag is finished drops out of
+  the rotation.
+- Made "recent" mean recently brewed. Free rotation slots rank by each bean's
+  last shot, so merely opening a bean in the picker or tapping its dock tile no
+  longer promotes a bean you never pulled. Selection history now only ranks
+  beans with no shot on record, such as a bag added moments ago.
+- Compacted the hero facts: bean age uses the badge form (`65d`, or `65d · 40a`
+  when the active bag's age differs) instead of the days-off-roast prose, giving
+  the bean name back its width.
+- Fixed the shot recipe line being truncated while the second-tap hint tooltip
+  was showing — only the profile line clears the tooltip now.
+- Removed the "Ask Derek" button from the topbar toolbar. Derek is still
+  reachable from a shot's dial-in action in shot history and on the phone.
+
 ## v0.3.1 - 2026-07-16
 
 This release concentrates on long-running stability, recovery after interrupted
