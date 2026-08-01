@@ -18,8 +18,14 @@ import { buildEnrichPrompt, LABEL_SCAN_PROMPT } from '../domain/labelScan';
  * here is tolerant either way.
  */
 
-/** Default free-tier multimodal model. Single knob — swap to taste. */
-export const GEMINI_LABEL_MODEL = 'gemini-2.5-flash';
+/**
+ * Default free-tier multimodal model. Single knob — swap to taste.
+ *
+ * Keep this on a current family. Google pulled the 2.5 models for newly created
+ * keys ("no longer available to new users") long before their listed shutdown,
+ * so a stale default reads as a broken scanner to everyone but the first users.
+ */
+export const GEMINI_LABEL_MODEL = 'gemini-3.6-flash';
 
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
@@ -38,12 +44,15 @@ export interface ScanImage {
 
 type GeminiPart = { text: string } | { inline_data: { mime_type: string; data: string } };
 
+/** The 2.5 family understands only `thinkingBudget`, 3.x only `thinkingLevel`. */
+type ThinkingConfig = { thinkingLevel: string } | { thinkingBudget: number };
+
 export interface GeminiRequest {
   contents: Array<{ parts: GeminiPart[] }>;
   generationConfig: {
     responseMimeType: string;
-    temperature: number;
-    thinkingConfig: { thinkingBudget: number };
+    temperature?: number;
+    thinkingConfig: ThinkingConfig;
   };
 }
 
@@ -69,7 +78,11 @@ export function isGeminiKeyError(error: unknown): boolean {
 }
 
 /** Pure: build the generateContent request body from images + prompt. */
-export function buildGeminiRequest(images: ScanImage[], prompt: string): GeminiRequest {
+export function buildGeminiRequest(
+  images: ScanImage[],
+  prompt: string,
+  model: string = GEMINI_LABEL_MODEL
+): GeminiRequest {
   const imageParts: GeminiPart[] = images.map((image) => ({
     inline_data: { mime_type: image.mime, data: image.base64 }
   }));
@@ -77,13 +90,24 @@ export function buildGeminiRequest(images: ScanImage[], prompt: string): GeminiR
     contents: [{ parts: [...imageParts, { text: prompt }] }],
     generationConfig: {
       responseMimeType: 'application/json',
-      // The 2.5 family degenerates (loops, empty candidates) at exactly 0.
-      temperature: 0.2,
-      // Reading print needs no reasoning pass — disabling thinking is faster
-      // and avoids the empty responses dynamic thinking sometimes produces.
-      thinkingConfig: { thinkingBudget: 0 }
+      ...samplingFor(model)
     }
   };
+}
+
+/**
+ * Pure: the sampling knobs, which the two families spell differently.
+ *
+ * Reading print needs no reasoning pass — the floor is faster and avoids the
+ * empty candidates dynamic thinking sometimes produces — but 2.5 writes that as
+ * `thinkingBudget: 0` and 3.x as `thinkingLevel: 'minimal'`, and sending both in
+ * one request is a 400. Temperature splits the same way: 2.5 degenerates (loops,
+ * empty candidates) near 0 so it gets 0.2, while Google asks that 3.x stay at its
+ * default of 1 — there it's *dropping below* the default that causes the looping.
+ */
+function samplingFor(model: string): { temperature?: number; thinkingConfig: ThinkingConfig } {
+  if (model.includes('gemini-2.')) return { temperature: 0.2, thinkingConfig: { thinkingBudget: 0 } };
+  return { thinkingConfig: { thinkingLevel: 'minimal' } };
 }
 
 /** Pure: pull the model's JSON out of a generateContent response and coerce it. */
@@ -156,8 +180,9 @@ export async function scanLabel(
 ): Promise<LabelScan> {
   if (images.length === 0) throw new GeminiError('Add at least one photo of the bag');
   if (!apiKey.trim()) throw new GeminiError('Add your Gemini API key first');
-  const body = buildGeminiRequest(images, options.prompt ?? LABEL_SCAN_PROMPT);
-  const payload = await postGenerateContent(modelUrl(options.model), apiKey, body, options);
+  const model = options.model ?? GEMINI_LABEL_MODEL;
+  const body = buildGeminiRequest(images, options.prompt ?? LABEL_SCAN_PROMPT, model);
+  const payload = await postGenerateContent(modelUrl(model), apiKey, body, options);
   return parseGeminiResponse(payload);
 }
 
@@ -195,9 +220,10 @@ export interface EnrichRequest {
 
 /**
  * Pure: build the grounded generateContent body. The Google Search tool lets the
- * model look up the roaster's site. No `responseMimeType` here — JSON mode is
- * incompatible with grounding on these models, so the prompt asks for JSON and
- * `extractJsonObject` pulls it back out of the (possibly prose-wrapped) answer.
+ * model look up the roaster's site. No `responseMimeType` here — the 2.5 family
+ * rejects JSON mode alongside grounding (3.x allows the pair), so the prompt asks
+ * for JSON either way and `extractJsonObject` pulls it back out of the (possibly
+ * prose-wrapped) answer.
  * Thinking stays on: it measurably helps the model pick the right product page.
  */
 export function buildEnrichRequest(prompt: string): EnrichRequest {

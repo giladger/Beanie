@@ -27,9 +27,18 @@ run('builds a generateContent body with image parts before the text prompt', () 
   equal((parts[1] as { inline_data: { mime_type: string; data: string } }).inline_data.data, 'BBB');
   equal((parts[2] as { text: string }).text, 'read this');
   equal(body.generationConfig.responseMimeType, 'application/json');
+  // 3.x floors thinking with a level, and wants its default temperature left alone.
+  equal((body.generationConfig.thinkingConfig as { thinkingLevel: string }).thinkingLevel, 'minimal');
+  equal(body.generationConfig.temperature, undefined);
+});
+
+run('falls back to the 2.5 spelling of the sampling knobs when pinned to that family', () => {
+  const body = buildGeminiRequest([{ mime: 'image/jpeg', base64: 'AAA' }], 'read this', 'gemini-2.5-flash');
+
+  // Sending 2.5's thinkingBudget and 3.x's thinkingLevel in one request is a 400.
+  equal((body.generationConfig.thinkingConfig as { thinkingBudget: number }).thinkingBudget, 0);
+  equal('thinkingLevel' in body.generationConfig.thinkingConfig, false);
   equal(body.generationConfig.temperature, 0.2);
-  // Thinking is disabled for plain extraction — it adds latency and can yield empty candidates.
-  equal(body.generationConfig.thinkingConfig.thinkingBudget, 0);
 });
 
 run('parses the JSON text out of a generateContent response', () => {
