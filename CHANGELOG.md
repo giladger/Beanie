@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Fixed bag-label scanning on newly issued Gemini API keys. Google stopped
+  serving `gemini-2.5-flash` to keys created after early July, so a fresh free
+  key answered every scan with "no longer available to new users". The scanner
+  now runs on `gemini-3.6-flash`, and reads the label as quickly as before.
+
 ## v0.3.2 - 2026-08-01
 
 - Added a bean rotation dock to the workbench hero: the beans you keep going
