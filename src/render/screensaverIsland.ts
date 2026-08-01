@@ -88,6 +88,13 @@ const browserTimer: ScreensaverTimer = {
 
 const WAKE_APP_IDLE_SCREEN_OFF_MS = 5 * 60 * 1000;
 
+/**
+ * Where a wake returns the backlight to when no trustworthy awake level was
+ * ever observed — a reload with the machine already asleep and dimmed leaves
+ * this island with nothing but saver-era readings to go on.
+ */
+const FULL_WAKE_BRIGHTNESS = 100;
+
 export class ScreensaverIsland {
   private topClock: HTMLElement | null = null;
   private saverClock: HTMLElement | null = null;
@@ -106,9 +113,11 @@ export class ScreensaverIsland {
   private clockPosition = screensaverClockPosition(0.5, 0.5);
   private clockMovedAtMs = Date.now();
   private sleepBrightnessDimmed = false;
+  /** Level the saver dimmed to; non-null means a wake restore is still owed. */
   private lastSleepDimLevel: number | null = null;
-  private wakeAppRestoreBrightness = 100;
+  private wakeAppRestoreBrightness = FULL_WAKE_BRIGHTNESS;
   private sleepDimPromise: Promise<void> | null = null;
+  private brightnessRestoreInFlight = false;
   private started = false;
   private disposed = false;
   private currentPhotoUrl: string | null = null;
@@ -212,7 +221,10 @@ export class ScreensaverIsland {
     const hadSleepDim = this.sleepBrightnessDimmed || this.sleepBrightnessTimer != null;
     this.clearSleepBrightnessTimer();
     this.sleepBrightnessDimmed = false;
-    if (hadSleepDim) this.verifySleepBrightnessRestored();
+    // A dim owes a restore until one is actually written, so every awake frame
+    // is another chance to finish it: a check cancelled mid-flight (a socket
+    // blip clears this island's automatic write timers) is not lost.
+    if (hadSleepDim || this.lastSleepDimLevel != null) this.verifySleepBrightnessRestored();
   }
 
   scheduleSleepDim(delayMs: number): void {
@@ -234,34 +246,42 @@ export class ScreensaverIsland {
 
   observeDisplayBrightness(requestedBrightness: number): void {
     if (this.disposed) return;
-    const dimActive = this.sleepBrightnessDimmed || this.sleepBrightnessTimer != null;
-    if (requestedBrightness > 0 && !dimActive) {
+    if (requestedBrightness > 0 && !this.saverOwnsDisplayBrightness()) {
       this.wakeAppRestoreBrightness = requestedBrightness;
     }
   }
 
   noteUserBrightness(brightness: number): void {
     if (this.disposed) return;
-    if (brightness !== 0) this.sleepBrightnessDimmed = false;
+    if (brightness === 0) return;
+    // An explicit level from the user replaces both the saver's dim and
+    // whatever the next wake would otherwise have restored.
+    this.sleepBrightnessDimmed = false;
+    this.lastSleepDimLevel = null;
+    this.wakeAppRestoreBrightness = brightness;
   }
 
   async wakeAppWithoutMachine(): Promise<void> {
     if (this.disposed) return;
-    const wasDimmed = this.sleepBrightnessDimmed;
+    const dimLevel = this.lastSleepDimLevel;
+    const wasDimmed = this.sleepBrightnessDimmed || dimLevel != null;
     this.clearSleepBrightnessTimer();
     this.sleepBrightnessDimmed = false;
     this.lastSleepDimLevel = null;
     this.host.patch({ appAwake: true, status: 'App awake — machine still asleep' });
     this.armWakeAppIdleTimer();
     if (!this.host.hasConnectedAuthority() || !wasDimmed) return;
+    this.brightnessRestoreInFlight = true;
     try {
       // Wait out any dim PUT already in flight so this restore is the last write.
       if (this.sleepDimPromise) await this.sleepDimPromise;
       if (!this.disposed && this.host.hasConnectedAuthority()) {
-        await this.resources.setBrightness(this.wakeAppRestoreBrightness);
+        await this.resources.setBrightness(this.wakeRestoreBrightness(dimLevel ?? 0));
       }
     } catch (error) {
       console.warn('[Beanie] Wake-app brightness restore failed', error);
+    } finally {
+      this.brightnessRestoreInFlight = false;
     }
   }
 
@@ -547,34 +567,89 @@ export class ScreensaverIsland {
     }
   }
 
+  /**
+   * Whether the level the display reports is the saver's own rather than one
+   * the user chose. Adopting a saver-era reading as the wake target is what
+   * strands the screen at the dim level after a wake tap — the restore then
+   * writes back the very level it is meant to undo. The window covers the dim
+   * itself, a dim about to be written, the whole owed-restore window (the
+   * restore lands well after the machine reports awake), and any reading taken
+   * while the saver is up, including one that arrives before this island has
+   * seen its first machine frame.
+   */
+  private saverOwnsDisplayBrightness(): boolean {
+    if (this.sleepBrightnessDimmed || this.sleepBrightnessTimer != null) return true;
+    if (this.lastSleepDimLevel != null || this.brightnessRestoreInFlight) return true;
+    return this.host.machineIsSleeping() && !this.host.snapshot().appAwake;
+  }
+
+  /**
+   * Level to come back to after a saver dim. The remembered awake level is only
+   * trusted when it would actually brighten the screen: one at or below the dim
+   * is either a saver-era reading that slipped through or a contradictory
+   * configuration, and writing it back leaves the screen looking asleep.
+   */
+  private wakeRestoreBrightness(dimLevel: number): number {
+    return this.wakeAppRestoreBrightness > dimLevel
+      ? this.wakeAppRestoreBrightness
+      : FULL_WAKE_BRIGHTNESS;
+  }
+
   private verifySleepBrightnessRestored(): void {
     if (this.disposed) return;
     const dimLevel = this.lastSleepDimLevel;
-    this.lastSleepDimLevel = null;
-    if (!this.host.hasConnectedAuthority() || dimLevel == null) {
+    if (dimLevel == null) {
+      // Nothing was dimmed for this sleep; just re-read what the display is at.
       void this.resources.refreshDisplayState();
       return;
     }
-    this.cancelTimer('sleepWakeRestoreTimer');
+    // The restore stays owed until it is written, so a check that cannot start
+    // yet — no write authority, or one already scheduled or running — is simply
+    // re-armed by the next awake frame rather than dropped.
+    if (
+      !this.host.hasConnectedAuthority() ||
+      this.sleepWakeRestoreTimer != null ||
+      this.brightnessRestoreInFlight
+    ) return;
     this.sleepWakeRestoreTimer = this.timer.schedule(() => {
       this.sleepWakeRestoreTimer = null;
-      void (async () => {
-        if (this.disposed || !this.host.hasConnectedAuthority()) return;
-        try {
-          if (this.sleepDimPromise) await this.sleepDimPromise;
-          if (this.disposed || !this.host.hasConnectedAuthority()) return;
-          const requestedBrightness = await this.resources.readRequestedBrightness();
-          if (
-            this.disposed ||
-            !this.host.hasConnectedAuthority() ||
-            requestedBrightness > dimLevel
-          ) return;
-          await this.resources.setBrightness(this.wakeAppRestoreBrightness);
-        } catch (error) {
-          console.warn('[Beanie] Wake brightness restore check failed', error);
-        }
-      })();
+      void this.restoreBrightnessAfterWake(dimLevel);
     }, 1500);
+  }
+
+  /**
+   * The tablet can bring its own backlight up on wake, so only write when the
+   * display is still sitting at the level the saver dimmed it to.
+   */
+  private async restoreBrightnessAfterWake(dimLevel: number): Promise<void> {
+    if (this.disposed || !this.host.hasConnectedAuthority()) return;
+    this.brightnessRestoreInFlight = true;
+    try {
+      // Wait out any dim PUT already in flight so this restore is the last write.
+      if (this.sleepDimPromise) await this.sleepDimPromise;
+      if (this.disposed || !this.host.hasConnectedAuthority()) return;
+      // A sleep that arrived after this check was scheduled owns the display
+      // again; brightening now would light the screen back up mid-saver. The
+      // new dim keeps owing its own restore for when the machine wakes.
+      if (this.sleepBrightnessDimmed || this.host.machineIsSleeping()) return;
+      const requestedBrightness = await this.resources.readRequestedBrightness();
+      if (this.disposed || !this.host.hasConnectedAuthority()) return;
+      // Settled either way from here: the tablet already brought the screen
+      // back, or this write is the restore.
+      this.settleOwedWakeRestore(dimLevel);
+      if (requestedBrightness > dimLevel) return;
+      await this.resources.setBrightness(this.wakeRestoreBrightness(dimLevel));
+    } catch (error) {
+      this.settleOwedWakeRestore(dimLevel);
+      console.warn('[Beanie] Wake brightness restore check failed', error);
+    } finally {
+      this.brightnessRestoreInFlight = false;
+    }
+  }
+
+  /** Only this dim's restore is settled; a newer dim keeps owing its own. */
+  private settleOwedWakeRestore(dimLevel: number): void {
+    if (this.lastSleepDimLevel === dimLevel) this.lastSleepDimLevel = null;
   }
 
   private clearSleepBrightnessTimer(): void {
