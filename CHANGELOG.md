@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.3.3 - 2026-08-01
 
 - Fixed bag-label scanning on newly issued Gemini API keys. Google stopped
   serving `gemini-2.5-flash` to keys created after early July, so a fresh free
