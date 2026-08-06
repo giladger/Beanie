@@ -74,6 +74,50 @@ export type SaveProfileResult =
       error: unknown;
     };
 
+export interface OriginalProfileDeps {
+  /** Read one profile by id — the visible list alone can't be trusted to hold it. */
+  loadProfile(id: string): Promise<ProfileRecord>;
+}
+
+/**
+ * The profile this one was saved from, if any. Editing a bundled default saves
+ * a copy rather than writing the default in place (see `profileSaveMode`), and
+ * reaprime records that copy's `parentId` — so a profile with a parent is one
+ * whose settings can be put back the way they shipped.
+ */
+export function originalProfileId(
+  profiles: ProfileRecord[],
+  editingId: string | null
+): string | null {
+  if (!editingId) return null;
+  return profiles.find((item) => item.id === editingId)?.parentId ?? null;
+}
+
+// A chain this long is already pathological; the cap just stops a cycle or a
+// runaway ancestry from spinning the editor.
+const MAX_PROFILE_ANCESTRY = 8;
+
+/**
+ * Walk up the parent chain to the profile a derived one ultimately came from —
+ * normally the bundled default it was first saved off, which is where the walk
+ * stops. Returns null only when the chain yields nothing.
+ */
+export async function loadOriginalProfile(
+  parentId: string,
+  deps: OriginalProfileDeps
+): Promise<ProfileRecord | null> {
+  const seen = new Set<string>();
+  let record: ProfileRecord | null = null;
+  let id: string | null = parentId;
+  while (id && !seen.has(id) && seen.size < MAX_PROFILE_ANCESTRY) {
+    seen.add(id);
+    record = await deps.loadProfile(id);
+    if (record.isDefault) break;
+    id = record.parentId ?? null;
+  }
+  return record;
+}
+
 export function profileSaveMode(
   profiles: ProfileRecord[],
   editingId: string | null

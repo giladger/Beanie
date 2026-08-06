@@ -10,7 +10,9 @@ import {
   removeStep,
   renderEditorModeBar,
   renderProfileEditor,
+  restoreProfileSettings,
   setEditorMode,
+  setProfileMeta,
   setSimpleProfileField,
   setSimpleProfileType,
   setSimpleStagePump,
@@ -349,6 +351,49 @@ run('updates pressure editor scalar fields without dropping profile steps', () =
   const capped = setSimpleProfileField(next, 'pre_pressure', '8');
   equal(capped.steps[0].limiter?.value, 8);
   equal(capped.steps[0].exit?.value, 4.5);
+});
+
+run('restoreProfileSettings puts the brewing back but keeps the profile its own', () => {
+  const edited = setSimpleProfileField(
+    setProfileMeta(
+      setProfileMeta(createProfileEditorState(pressureProfile()), 'title', 'My Default'),
+      'notes',
+      'my own notes'
+    ),
+    'hold_pressure',
+    '11'
+  );
+  equal(edited.steps[1].pressure, 11);
+
+  const restored = restoreProfileSettings(edited, pressureProfile());
+
+  // brewing goes back to the original
+  equal(restored.steps[1].pressure, 9);
+  equal(restored.targetVolume, 36);
+  equal(restored.tankTemperature, 90);
+  equal(restored.selectedStep, 0);
+  // identity stays the user's
+  equal(restored.title, 'My Default');
+  equal(restored.notes, 'my own notes');
+  // nothing is written yet — Save is still the committing step, and the banner
+  // has to survive the editor being dirty to say so
+  equal(restored.dirty, true);
+  equal(restored.saveNotice?.tone, 'info');
+  includes(renderProfileEditor(restored), 'Original settings restored');
+});
+
+run('restoring steps the basic editor cannot express leaves basic mode', () => {
+  const basic = createProfileEditorState(pressureProfile());
+  equal(basic.editorMode, 'basic');
+
+  // sampleProfile is a 2-step advanced profile — recompiling knobs over it
+  // would throw the restored steps away, so the editor must switch.
+  const restored = restoreProfileSettings(basic, sampleProfile());
+  equal(restored.editorMode, 'advanced');
+  equal(restored.steps.length, 2);
+
+  // a restore that stays expressible keeps whichever mode was open
+  equal(restoreProfileSettings(basic, pressureProfile()).editorMode, 'basic');
 });
 
 run('opens a canonical simple profile in basic mode, advanced otherwise', () => {

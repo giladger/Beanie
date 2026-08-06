@@ -53,7 +53,12 @@ export interface ProfileEditorState extends ProfileModel {
   advancedTab: AdvancedTab;
   dirty: boolean;
   /** Outcome of the last save attempt, surfaced as a banner; null when none. */
-  saveNotice: { tone: 'error' | 'success'; message: string } | null;
+  /**
+   * Banner above the editor. `error`/`success` report a save; `info` reports a
+   * change made to the editor that still needs saving, so unlike `success` it
+   * survives the editor being dirty — that is the whole point of it.
+   */
+  saveNotice: { tone: 'error' | 'success' | 'info'; message: string } | null;
 }
 
 const META_NUMBER_KEYS: ProfileMetaKey[] = [
@@ -495,6 +500,40 @@ export function profileFromEditorState(state: ProfileEditorState): Profile {
   return encodeProfile(state);
 }
 
+/**
+ * Put the brewing settings back to `original` — the profile this one was saved
+ * from. Only how it pours is restored (steps plus the Limits-tab stops); the
+ * profile keeps its own name, author, notes and beverage, so restoring the
+ * settings never renames someone's profile out from under them.
+ *
+ * The editor is left dirty rather than written back, so the restore is visible
+ * on the chart and still has to be saved — or walked away from.
+ */
+export function restoreProfileSettings(
+  state: ProfileEditorState,
+  original: Profile
+): ProfileEditorState {
+  const model = decodeProfile(original);
+  return {
+    ...state,
+    steps: model.steps,
+    type: model.type,
+    legacyProfileType: model.legacyProfileType,
+    tankTemperature: model.tankTemperature,
+    targetWeight: model.targetWeight,
+    targetVolume: model.targetVolume,
+    targetVolumeCountStart: model.targetVolumeCountStart,
+    selectedStep: 0,
+    // Basic mode edits by recompiling knobs, so leaving it open on steps it
+    // can't express would let the next nudge overwrite what we just restored.
+    editorMode: state.editorMode === 'basic' && !canEditAsBasic(model.steps)
+      ? 'advanced'
+      : state.editorMode,
+    dirty: true,
+    saveNotice: { tone: 'info', message: 'Original settings restored — Save to keep them' }
+  };
+}
+
 function renderSaveNotice(state: ProfileEditorState): string {
   const notice = state.saveNotice;
   if (!notice) return '';
@@ -502,9 +541,9 @@ function renderSaveNotice(state: ProfileEditorState): string {
   // the editor is dirty; errors (validation, save failure, duplicate) persist
   // until they're resolved.
   if (notice.tone === 'success' && state.dirty) return '';
-  if (notice.tone === 'success') {
+  if (notice.tone === 'success' || notice.tone === 'info') {
     return `
-    <div class="pe-save-notice success" role="status">
+    <div class="pe-save-notice ${notice.tone}" role="status">
       <strong>${escapeHtml(notice.message)}</strong>
     </div>`;
   }

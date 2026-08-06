@@ -188,6 +188,13 @@ export interface ProfileRecord {
   profile: Profile;
   visibility?: 'visible' | 'hidden' | 'deleted';
   isDefault?: boolean;
+  /**
+   * The profile this one was saved from. reaprime sets it when a profile is
+   * created with a `parentId` — which is what editing a bundled default does,
+   * since defaults are never written in place. It is the trail back to the
+   * original a profile's settings can be restored from.
+   */
+  parentId?: string | null;
 }
 
 export interface WorkflowContext {

@@ -362,6 +362,7 @@ function validateProfileRecord(value: unknown, path: string, issues: ValidationI
   validateRequiredObject(obj, 'profile', path, issues, validateProfile);
   optionalStringEnum(obj, 'visibility', path, issues, ['visible', 'hidden', 'deleted'], true);
   optionalBoolean(obj, 'isDefault', path, issues);
+  optionalString(obj, 'parentId', path, issues, true);
 }
 
 function validateWorkflow(value: unknown, path: string, issues: ValidationIssue[]): void {

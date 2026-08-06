@@ -411,6 +411,14 @@ export const gateway = {
       '/api/v1/profiles?visibility=visible',
       readProfiles
     ),
+  // One profile by id. Used to read the original a derived profile was saved
+  // from, which may be hidden and so absent from the visible list.
+  profile: (id: string) =>
+    fetchJson<ProfileRecord>(
+      'profiles',
+      `/api/v1/profiles/${encodeURIComponent(id)}`,
+      readProfile
+    ),
   createProfile: (body: { profile: Profile; parentId?: string }) =>
     fetchJson<ProfileRecord>('profiles', '/api/v1/profiles', readProfile, {
       method: 'POST',

@@ -12,6 +12,7 @@ import {
   nudgeStepField,
   profileFromEditorState,
   removeStep,
+  restoreProfileSettings,
   selectStep,
   setAdvancedTab,
   setEditorMode,
@@ -27,7 +28,9 @@ import {
 } from '../components/profileEditor';
 import {
   editProfileEditorInput,
+  loadOriginalProfile,
   newProfileEditorInput,
+  originalProfileId,
   saveProfile,
   selectProfileForDraft
 } from './profileEditorController';
@@ -118,6 +121,7 @@ export class ProfileEditorFlow {
   private readonly editorEpoch = new OperationEpoch();
   private readonly importEpoch = new OperationEpoch();
   private activeEditorSave: number | null = null;
+  private activeEditorRestore: number | null = null;
 
   constructor(
     private readonly host: ProfileEditorFlowHost,
@@ -128,6 +132,7 @@ export class ProfileEditorFlow {
     this.editorEpoch.invalidate();
     this.importEpoch.invalidate();
     this.activeEditorSave = null;
+    this.activeEditorRestore = null;
   }
 
   profileEditorClickActions(): Record<string, ClickActionHandler> {
@@ -158,6 +163,9 @@ export class ProfileEditorFlow {
       },
       'save-profile': async () => {
         await this.submitProfileEditor();
+      },
+      'pe-restore-original': async () => {
+        await this.restoreProfileOriginal();
       },
       'pe-add-step': () => {
         this.editorDispatch(addStep);
@@ -333,6 +341,7 @@ export class ProfileEditorFlow {
     const canceledEditorSave = this.activeEditorSave != null;
     this.editorEpoch.invalidate();
     this.activeEditorSave = null;
+    this.activeEditorRestore = null;
     this.host.setState({
       view: 'profile-editor',
       editingProfileId,
@@ -444,6 +453,57 @@ export class ProfileEditorFlow {
       status: result.status
     });
     this.host.scheduleApply();
+  }
+
+  /**
+   * Put the edited profile's brewing settings back to the profile it was saved
+   * from — for a copy of a bundled default, the default as Decent shipped it.
+   * The original is loaded into the editor rather than written to the gateway,
+   * so the user sees it on the chart and still chooses whether to Save.
+   */
+  async restoreProfileOriginal(): Promise<void> {
+    const state = this.host.state();
+    const editingId = state.editingProfileId;
+    const parentId = originalProfileId(state.profiles, editingId);
+    if (!parentId || !state.profileEditor || state.busy) return;
+
+    const operation = this.editorEpoch.begin();
+    this.activeEditorRestore = operation;
+    this.host.setState({ busy: true, status: 'Loading the original profile' });
+    try {
+      const original = await loadOriginalProfile(parentId, {
+        // The visible list already holds most parents; only reach for the
+        // gateway when it doesn't (a hidden or soft-deleted original).
+        loadProfile: async (id) =>
+          this.host.state().profiles.find((item) => item.id === id) ?? (await gateway.profile(id))
+      });
+      if (!this.restoreCurrent(operation, editingId)) return;
+      this.activeEditorRestore = null;
+      const editor = this.host.state().profileEditor;
+      if (!original || !editor) {
+        this.host.setState({ busy: false, status: 'Could not find the original profile' });
+        return;
+      }
+      this.host.setState({
+        busy: false,
+        profileEditor: restoreProfileSettings(editor, original.profile),
+        status: 'Original settings restored — save to keep them'
+      });
+    } catch (err) {
+      console.error('[Beanie] Restore original profile failed', err);
+      if (!this.restoreCurrent(operation, editingId)) return;
+      this.activeEditorRestore = null;
+      this.host.setState({ busy: false, status: 'Could not load the original profile' });
+    }
+  }
+
+  private restoreCurrent(operation: number, editingId: string | null): boolean {
+    return (
+      this.editorEpoch.owns(operation) &&
+      this.activeEditorRestore === operation &&
+      this.host.state().profileEditor != null &&
+      this.host.state().editingProfileId === editingId
+    );
   }
 
   private editorCurrent(operation: number, editingId: string | null): boolean {

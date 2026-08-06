@@ -211,6 +211,7 @@ import {
   type BeanInventoryBrowserEvent
 } from './controllers/beanInventoryBrowserProjection';
 import {
+  originalProfileId,
   selectProfileForDraft,
   toggleFavoriteProfile
 } from './controllers/profileEditorController';
@@ -6946,6 +6947,10 @@ export class BeanieApp {
     const pe = this.state.profileEditor;
     if (!pe) return this.pageHeader('Profile');
     const disabled = this.state.busy ? ' disabled' : '';
+    // Only a profile saved off another one has an original to go back to —
+    // editing a bundled default saves a copy, so it's the copy that carries the
+    // trail (see originalProfileId).
+    const restorable = originalProfileId(this.state.profiles, this.state.editingProfileId) != null;
     // One compact header row — Back · Basic/Advanced toggle · Save — no title
     // (tablet real estate). Basic and advanced share the same dark chrome.
     return `
@@ -6953,6 +6958,9 @@ export class BeanieApp {
         <button class="page-back" type="button" data-action="go-view" data-value="profiles" aria-label="Back"${disabled}>${icon('chevron-left')}<span>Back</span></button>
         ${renderEditorModeBar(pe, this.state.busy)}
         <div class="page-head-actions">
+          ${restorable
+            ? `<button type="button" class="pe-restore" data-action="pe-restore-original"${disabled} title="Put this profile's settings back to the profile it was saved from">${icon('rotate-ccw')}<span>Restore original</span></button>`
+            : ''}
           <button type="button" class="pe-save commit-action" data-action="save-profile"${disabled}>${icon('check')}<span>${this.state.busy ? 'Saving…' : 'Save'}</span></button>
         </div>
       </header>

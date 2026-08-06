@@ -4786,6 +4786,21 @@ p {
   color: var(--green);
 }
 
+.pe-save-notice.info {
+  border: 1px solid color-mix(in srgb, var(--teal) 50%, transparent);
+  background: color-mix(in srgb, var(--teal) 12%, var(--panel-2));
+}
+
+.pe-save-notice.info strong {
+  color: var(--teal);
+}
+
+/* Basic mode renders the banner as a sibling of the editor body, so it needs
+   the page margins the editor's own sections carry. */
+.profile-editor-page > .pe-save-notice {
+  margin: 12px 16px 0;
+}
+
 .pe-save-notice span {
   color: var(--soft);
   font-size: 0.92em;
@@ -8259,6 +8274,35 @@ p {
 .pe-save .icon {
   width: 16px;
   height: 16px;
+}
+
+/* Restore original: the same pill as Save, outlined rather than filled — it
+   only loads the original into the editor, Save is still the committing step. */
+.pe-restore {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.1;
+  gap: 6px;
+  height: 38px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--soft);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.pe-restore .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.pe-restore:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* match the toggle pill height to Back / Save */

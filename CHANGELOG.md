@@ -2,6 +2,12 @@
 
 ## v0.3.4 - 2026-08-06
 
+- Added "Restore original" to the profile editor. Editing one of Decent's
+  bundled profiles saves a copy rather than overwriting the original, so the
+  copy now carries a button that puts its brewing settings back to the profile
+  it came from — however far you've since taken it. Your name and notes stay
+  yours, the restored settings land in the editor where you can see them on the
+  graph, and nothing is written until you hit Save.
 - Rebuilt the profile editor's Basic mode along the lines of the Insight skin:
   each stage now shows its own flow, pressure and temperature, with a
   Flow/Pressure toggle that picks which of the two the pump chases. The other

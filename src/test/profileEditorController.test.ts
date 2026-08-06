@@ -1,7 +1,9 @@
 import type { Profile, ProfileRecord } from '../api/types';
 import {
   editProfileEditorInput,
+  loadOriginalProfile,
   newProfileEditorInput,
+  originalProfileId,
   profileSaveMode,
   saveProfile,
   selectProfileForDraft,
@@ -294,6 +296,60 @@ await run('profile editor controller reports gateway save failures', async () =>
 
   equal(result.type, 'failed');
   equal(result.type === 'failed' ? result.status : null, 'Save profile failed');
+});
+
+await run('only a profile saved off another one offers an original to restore', () => {
+  const profiles = [
+    record('default', 'Default', true),
+    { ...record('copy', 'Default'), parentId: 'default' },
+    record('scratch', 'Scratch')
+  ];
+
+  equal(originalProfileId(profiles, 'copy'), 'default');
+  equal(originalProfileId(profiles, 'default'), null); // a bundled default is the original
+  equal(originalProfileId(profiles, 'scratch'), null); // never saved off anything
+  equal(originalProfileId(profiles, 'missing'), null);
+  equal(originalProfileId(profiles, null), null);
+});
+
+await run('restoring an original walks up to the bundled default it came from', async () => {
+  const chain: Record<string, ProfileRecord> = {
+    root: record('root', 'Bundled', true),
+    mid: { ...record('mid', 'Mid'), parentId: 'root' }
+  };
+  const asked: string[] = [];
+  const original = await loadOriginalProfile('mid', {
+    loadProfile: async (id) => {
+      asked.push(id);
+      return chain[id]!;
+    }
+  });
+
+  equal(original?.id, 'root');
+  equal(asked.join(','), 'mid,root');
+});
+
+await run('restoring an original stops at a parentless profile and survives a cycle', async () => {
+  const orphan = await loadOriginalProfile('lone', {
+    loadProfile: async () => record('lone', 'Lone')
+  });
+  equal(orphan?.id, 'lone');
+
+  // A parent chain that points back at itself must terminate, not spin.
+  let reads = 0;
+  const cyclic: Record<string, ProfileRecord> = {
+    a: { ...record('a', 'A'), parentId: 'b' },
+    b: { ...record('b', 'B'), parentId: 'a' }
+  };
+  const looped = await loadOriginalProfile('a', {
+    loadProfile: async (id) => {
+      reads += 1;
+      if (reads > 8) throw new Error('unbounded ancestry walk');
+      return cyclic[id]!;
+    }
+  });
+  equal(looped != null, true);
+  equal(reads, 2);
 });
 
 function profile(title: string): Profile {
