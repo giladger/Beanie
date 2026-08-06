@@ -1,5 +1,6 @@
 import {
   de1MachineSettingsPatchBody,
+  displayWakeLockRequestFrame,
   readDecentAccountStatus,
   readDisplayState,
   readReaSettings,
@@ -46,6 +47,11 @@ run('readDisplayState clamps brightness and fills support defaults', () => {
   equal(display.lowBatteryBrightnessActive, true);
   equal(display.platformSupported.brightness, false);
   equal(display.platformSupported.wakeLock, true);
+});
+
+run('display wake-lock request frame carries the requestWakeLock command', () => {
+  const frame = JSON.parse(displayWakeLockRequestFrame) as { command?: unknown };
+  equal(frame.command, 'requestWakeLock');
 });
 
 run('readDecentAccountStatus accepts logged-in and email shapes', () => {

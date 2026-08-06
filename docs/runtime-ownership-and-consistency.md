@@ -171,7 +171,14 @@ Each WebSocket is owned by a `SocketSupervisor`. The supervisor owns exactly:
 - retry/backoff state;
 - decode and lifecycle callbacks;
 - stale-callback rejection after stop/reconnect;
-- idempotent start, stop, and dispose.
+- idempotent start, stop, and dispose;
+- outbound sends, which reach only the current open socket.
+
+Outbound frames are refused unless a socket is open, so a claim that must last
+for a connection is sent from `onOpen` and every reconnect re-sends it. The
+display socket claims Decent.app's wake-lock override that way: the shell
+releases the claim when the socket closes, so the tablet stays awake for exactly
+as long as Beanie is the connected skin.
 
 The app no longer carries five parallel sets of socket, retry timer, attempt,
 and callback fields. Browser construction and scheduling are injected adapters,

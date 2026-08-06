@@ -114,6 +114,16 @@ export interface DisplayState {
   platformSupported: DisplayPlatformSupport;
 }
 
+/**
+ * Claims the shell's wake-lock override on `/ws/v1/display`.
+ *
+ * The override outranks the shell's own machine-state rule, which drops the
+ * wake-lock whenever the machine sleeps or the DE1 link goes down. The shell
+ * releases it on its own when this socket closes, so the claim lasts exactly as
+ * long as Beanie is the connected skin.
+ */
+export const displayWakeLockRequestFrame = JSON.stringify({ command: 'requestWakeLock' });
+
 export interface DecentAccountStatus {
   loggedIn: boolean;
   email: string | null;

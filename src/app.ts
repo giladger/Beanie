@@ -189,7 +189,7 @@ import {
 import { demoSettingsBundle, type SettingsBundle } from './domain/settingsModel';
 import type { SettingsResourceStates } from './domain/resourceState';
 import type { DecentAccountStatus, DisplayState } from './api/settings';
-import { readDisplayState } from './api/settings';
+import { displayWakeLockRequestFrame, readDisplayState } from './api/settings';
 import { createSettingsController } from './controllers/settingsController';
 import { SettingsMutationFlow } from './controllers/settingsMutationFlow';
 import { MachineSettingsFlow } from './controllers/machineSettingsFlow';
@@ -1646,8 +1646,12 @@ export class BeanieApp {
       onMessage: (snapshot) => {
         this.telemetryStore.ingest('display', snapshot);
       },
+      onOpen: () => {
+        this.displayStream.send(displayWakeLockRequestFrame);
+      },
       onFailure: (failure) => {
         if (failure.phase === 'decode') console.warn('[Beanie] Bad display frame', failure.error);
+        if (failure.phase === 'send') console.warn('[Beanie] Wake-lock claim failed', failure.error);
       }
     });
     this.shotStateStream = new SocketSupervisor<ShotStateEvent>({

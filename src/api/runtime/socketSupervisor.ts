@@ -4,6 +4,7 @@ export interface SupervisedWebSocket<RawData = string> {
   onmessage: ((event: MessageEvent<RawData>) => void) | null;
   onerror: ((event: Event) => void) | null;
   onclose: ((event: CloseEvent) => void) | null;
+  send(data: string): void;
   close(): void;
 }
 
@@ -50,6 +51,7 @@ export type SocketSupervisorFailure<RawData> =
   | { readonly phase: 'connect'; readonly error: unknown }
   | { readonly phase: 'decode'; readonly error: unknown; readonly data: RawData }
   | { readonly phase: 'socket'; readonly event: Event }
+  | { readonly phase: 'send'; readonly error: unknown; readonly data: string }
   | { readonly phase: 'close'; readonly error: unknown }
   | { readonly phase: 'backoff'; readonly error: unknown }
   | { readonly phase: 'schedule'; readonly error: unknown };
@@ -114,6 +116,25 @@ export class SocketSupervisor<Message, RawData = string> {
     this.running = true;
     this.consecutiveFailures = 0;
     this.connect();
+  }
+
+  /**
+   * Send a frame on the currently open socket.
+   *
+   * Returns false when nothing is open, so a caller that needs the peer to know
+   * something for the life of a connection sends from `onOpen` and lets every
+   * reconnect re-send it, rather than tracking connection state itself.
+   */
+  send(data: string): boolean {
+    const socket = this.socket;
+    if (socket == null || this.currentState !== 'open') return false;
+    try {
+      socket.send(data);
+      return true;
+    } catch (error) {
+      this.options.onFailure?.({ phase: 'send', error, data });
+      return false;
+    }
   }
 
   /** Stop and release the socket/timer. A later start begins a fresh session. */

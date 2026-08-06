@@ -12,6 +12,13 @@ class FakeSocket<RawData> implements SupervisedWebSocket<RawData> {
   onerror: ((event: Event) => void) | null = null;
   onclose: ((event: CloseEvent) => void) | null = null;
   closeCalls = 0;
+  sent: string[] = [];
+  sendError: unknown = null;
+
+  send(data: string): void {
+    if (this.sendError != null) throw this.sendError;
+    this.sent.push(data);
+  }
 
   close(): void {
     this.closeCalls += 1;
@@ -241,6 +248,74 @@ run('dispose is terminal, idempotent, and closes exactly once', () => {
   equal(supervisor.state, 'disposed');
   equal(supervisor.isDisposed, true);
   equal(supervisor.isRunning, false);
+  equal(scheduler.activeCount, 0);
+});
+
+run('socket supervisor sends only while open and re-sends on every reconnect', () => {
+  const scheduler = new FakeScheduler();
+  const sockets: FakeSocket<string>[] = [];
+  const supervisor = new SocketSupervisor<number, string>({
+    url: 'ws://gateway/display',
+    socketFactory: () => {
+      const socket = new FakeSocket<string>();
+      sockets.push(socket);
+      return socket;
+    },
+    scheduler,
+    backoffDelayMs: () => 100,
+    decode: Number,
+    onMessage: () => {},
+    onOpen: () => {
+      supervisor.send('claim');
+    }
+  });
+
+  equal(supervisor.send('before-start'), false);
+
+  supervisor.start();
+  equal(supervisor.send('while-connecting'), false);
+
+  sockets[0]!.serverOpen();
+  deepEqual(sockets[0]!.sent, ['claim']);
+
+  sockets[0]!.serverClose();
+  equal(supervisor.send('while-retrying'), false);
+
+  scheduler.runNext();
+  sockets[1]!.serverOpen();
+  deepEqual(sockets[1]!.sent, ['claim']);
+
+  supervisor.stop();
+  equal(supervisor.send('after-stop'), false);
+  deepEqual(sockets[1]!.sent, ['claim']);
+});
+
+run('socket supervisor reports a send failure and keeps the connection open', () => {
+  const scheduler = new FakeScheduler();
+  const sockets: FakeSocket<string>[] = [];
+  const failures: SocketSupervisorFailure<string>[] = [];
+  const supervisor = new SocketSupervisor<number, string>({
+    url: 'ws://gateway/display',
+    socketFactory: () => {
+      const socket = new FakeSocket<string>();
+      sockets.push(socket);
+      return socket;
+    },
+    scheduler,
+    backoffDelayMs: () => 100,
+    decode: Number,
+    onMessage: () => {},
+    onFailure: (failure) => failures.push(failure)
+  });
+
+  supervisor.start();
+  sockets[0]!.serverOpen();
+  sockets[0]!.sendError = new Error('socket closing');
+
+  equal(supervisor.send('claim'), false);
+  equal(failures.length, 1);
+  equal(failures[0]!.phase, 'send');
+  equal(supervisor.state, 'open');
   equal(scheduler.activeCount, 0);
 });
 

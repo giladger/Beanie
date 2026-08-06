@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.3.4 - 2026-08-06
+
+- Kept the tablet awake for as long as Beanie is on screen. Decent.app releases
+  its wake-lock whenever the machine sleeps or the DE1 link drops, which left
+  the tablet free to fall asleep on its own OS screen timeout; Beanie now claims
+  the wake-lock override on its display socket and re-claims it after every
+  reconnect. Decent.app drops the claim by itself the moment Beanie's socket
+  closes, so leaving the skin hands sleep control straight back. Note that the
+  screen now stays powered while the machine sleeps, at whatever brightness the
+  sleep screen has set.
+
 ## v0.3.3 - 2026-08-01
 
 - Fixed bag-label scanning on newly issued Gemini API keys. Google stopped
