@@ -24,6 +24,10 @@
   decline — so profiles that mix flow and pressure stages, or vary temperature
   or limits per stage, get the friendly editor too. Editing in Basic still
   cannot silently drop anything a profile carries.
+- Fixed the profile editor hugging the left edge on wide windows. Its content
+  is capped at a fixed column width, and past that cap the column now centres —
+  the way Settings and the profile list already did — instead of leaving a band
+  of empty space down the right-hand side.
 
 - Kept the tablet awake for as long as Beanie is on screen. Decent.app releases
   its wake-lock whenever the machine sleeps or the DE1 link drops, which left
@@ -33,6 +37,16 @@
   closes, so leaving the skin hands sleep control straight back. Note that the
   screen now stays powered while the machine sleeps, at whatever brightness the
   sleep screen has set.
+- Fixed a tap on the sleep screen sometimes leaving the tablet stuck at the
+  screensaver's dim brightness. The wake restore wrote back whatever level the
+  display last reported, and while the saver is up that level is the saver's
+  own dim — so the restore could put 25% back onto a screen already sitting at
+  25%. Levels read while the saver owns the screen are no longer taken as the
+  brightness to wake back to, one that wouldn't actually brighten the screen
+  falls back to full, and a brightness you set yourself becomes the level a
+  wake returns to. A dim also keeps owing its restore until one is written, so
+  a restore lost to a brief connection blip is retried on the next awake frame
+  instead of being dropped.
 
 ## v0.3.3 - 2026-08-01
 
