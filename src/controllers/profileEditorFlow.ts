@@ -17,6 +17,7 @@ import {
   setEditorMode,
   setProfileMeta,
   setSimpleProfileType,
+  setSimpleStagePump,
   setStepExit,
   setStepField,
   setStepPump,
@@ -32,6 +33,7 @@ import {
 } from './profileEditorController';
 import { beanieCache } from '../domain/cache';
 import type { StepFieldKey } from '../domain/profileModel';
+import type { SimpleStageId } from '../domain/simpleProfile';
 import { OperationEpoch } from './operationEpoch';
 
 export interface ProfileEditTarget {
@@ -213,6 +215,12 @@ export class ProfileEditorFlow {
       },
       'pe-set-simple-type': ({ value }) => {
         this.editorDispatch((pe) => setSimpleProfileType(pe, value === 'flow' ? 'flow' : 'pressure'));
+      },
+      'pe-simple-pump': ({ el, value }) => {
+        const stage = el.dataset.stage as SimpleStageId | undefined;
+        if (stage) {
+          this.editorDispatch((pe) => setSimpleStagePump(pe, stage, value === 'flow' ? 'flow' : 'pressure'));
+        }
       },
       'pe-advanced-tab': ({ value }) => {
         this.editorDispatch((pe) => setAdvancedTab(pe, value === 'limits' ? 'limits' : 'steps'));

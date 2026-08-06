@@ -152,7 +152,7 @@ run('downgradeUntweakableSuggestions demotes cards the engine cannot apply', () 
   const profile = profileFromEditorState({
     ...createProfileEditorState(null),
     title: 'Simple',
-    steps: compileSimpleToSteps(defaultSimpleKnobs('pressure'), 'pressure')
+    steps: compileSimpleToSteps(defaultSimpleKnobs('pressure'))
   });
   const kept = downgradeUntweakableSuggestions(state, profile);
   equal(kept.suggestions[0]!.kind, 'profile');

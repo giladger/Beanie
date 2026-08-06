@@ -3,8 +3,13 @@ import {
   canEditAsBasic,
   compileSimpleToSteps,
   defaultSimpleKnobs,
+  defaultStageTarget,
   parseStepsToSimple,
+  simpleProfileType,
+  SIMPLE_STAGE_IDS,
   type SimpleKnobs,
+  type SimpleStage,
+  type SimpleStageId,
   type SimpleType
 } from '../domain/simpleProfile';
 import {
@@ -200,46 +205,73 @@ export function nudgeStepField(
   return setStepField(state, index, key, String(clampNumber(current + delta, min, max)));
 }
 
+/**
+ * Basic-editor field keys. Every stage exposes the same four knobs (time, flow,
+ * pressure, temperature) so all three are visible on every stage; `pre_until`
+ * is preinfusion's pressure exit and `stop_volume` is the profile-level stop.
+ */
 export type SimpleProfileField =
-  | 'temperature'
   | 'pre_time'
   | 'pre_flow'
   | 'pre_pressure'
-  | 'main_time'
-  | 'main_target'
-  | 'limit'
+  | 'pre_temp'
+  | 'pre_until'
+  | 'hold_time'
+  | 'hold_flow'
+  | 'hold_pressure'
+  | 'hold_temp'
   | 'decline_time'
-  | 'decline_target'
+  | 'decline_flow'
+  | 'decline_pressure'
+  | 'decline_temp'
   | 'stop_volume';
 
-type NumericKnobKey = Exclude<keyof SimpleKnobs, 'preName' | 'mainName' | 'declineName'>;
+type StageProp = 'seconds' | 'flow' | 'pressure' | 'temperature';
 
-const SIMPLE_FIELD_TO_KNOB: Record<Exclude<SimpleProfileField, 'stop_volume'>, NumericKnobKey> = {
-  temperature: 'temperature',
-  pre_time: 'preTime',
-  pre_flow: 'preFlow',
-  pre_pressure: 'prePressure',
-  main_time: 'mainTime',
-  main_target: 'mainTarget',
-  limit: 'limit',
-  decline_time: 'declineTime',
-  decline_target: 'declineTarget'
+const STAGE_PROP_BY_SUFFIX: Record<string, StageProp> = {
+  time: 'seconds',
+  flow: 'flow',
+  pressure: 'pressure',
+  temp: 'temperature'
 };
 
+/** Split `hold_pressure` into the stage it edits and the property it sets. */
+function splitSimpleField(
+  key: SimpleProfileField
+): { stage: SimpleStageId; prop: StageProp } | null {
+  const at = key.indexOf('_');
+  if (at < 0) return null;
+  const stage = key.slice(0, at);
+  const prop = STAGE_PROP_BY_SUFFIX[key.slice(at + 1)];
+  if (!prop || !SIMPLE_STAGE_IDS.includes(stage as SimpleStageId)) return null;
+  return { stage: stage as SimpleStageId, prop };
+}
+
 function simpleStateType(state: ProfileEditorState): SimpleType {
-  return parseStepsToSimple(state.steps)?.type ?? (state.type === 'flow' ? 'flow' : 'pressure');
+  return state.type === 'flow' ? 'flow' : 'pressure';
 }
 
-function simpleKnobsOf(state: ProfileEditorState): { type: SimpleType; knobs: SimpleKnobs } {
-  const parsed = parseStepsToSimple(state.steps);
-  if (parsed) return parsed;
-  const type = simpleStateType(state);
-  return { type, knobs: defaultSimpleKnobs(type) };
+function simpleKnobsOf(state: ProfileEditorState): SimpleKnobs {
+  return parseStepsToSimple(state.steps) ?? defaultSimpleKnobs(simpleStateType(state));
 }
 
-// Simple edits never poke at individual steps. They read the current knobs out
-// of the steps, change one, and recompile — so the steps stay canonical and the
-// basic⇄advanced guard keeps holding (see domain/simpleProfile.ts).
+/**
+ * Recompile the steps from knobs. Simple edits never poke at individual steps:
+ * they read the current knobs out of the steps, change one, and recompile — so
+ * the steps stay canonical and the basic⇄advanced guard keeps holding (see
+ * domain/simpleProfile.ts). The profile kind follows the stages' pumps.
+ */
+function withSimpleKnobs(state: ProfileEditorState, knobs: SimpleKnobs): ProfileEditorState {
+  const type = simpleProfileType(knobs);
+  return {
+    ...state,
+    type,
+    legacyProfileType: legacyProfileTypeFromType(type),
+    steps: compileSimpleToSteps(knobs),
+    dirty: true
+  };
+}
+
 export function setSimpleProfileField(
   state: ProfileEditorState,
   key: SimpleProfileField,
@@ -249,15 +281,14 @@ export function setSimpleProfileField(
   if (key === 'stop_volume') {
     return { ...state, targetVolume: parsedValue, dirty: true };
   }
-  const { type, knobs } = simpleKnobsOf(state);
-  const nextKnobs: SimpleKnobs = { ...knobs, [SIMPLE_FIELD_TO_KNOB[key]]: parsedValue };
-  return {
-    ...state,
-    type,
-    legacyProfileType: legacyProfileTypeFromType(type),
-    steps: compileSimpleToSteps(nextKnobs, type),
-    dirty: true
-  };
+  const knobs = simpleKnobsOf(state);
+  if (key === 'pre_until') {
+    return withSimpleKnobs(state, { ...knobs, preExitPressure: parsedValue });
+  }
+  const field = splitSimpleField(key);
+  if (!field) return state;
+  const stage = { ...knobs[field.stage], [field.prop]: parsedValue };
+  return withSimpleKnobs(state, { ...knobs, [field.stage]: stage });
 }
 
 export function nudgeSimpleProfileField(
@@ -265,36 +296,58 @@ export function nudgeSimpleProfileField(
   key: SimpleProfileField,
   delta: number
 ): ProfileEditorState {
-  const { type, knobs } = simpleKnobsOf(state);
-  const current = key === 'stop_volume' ? (state.targetVolume ?? 0) : knobs[SIMPLE_FIELD_TO_KNOB[key]];
-  const { min, max } = simpleFieldLimits(key, type);
+  const current = simpleFieldValue(state, key);
+  if (current == null) return state;
+  const { min, max } = simpleFieldLimits(key);
   return setSimpleProfileField(state, key, String(clampNumber(current + delta, min, max)));
 }
 
+function simpleFieldValue(state: ProfileEditorState, key: SimpleProfileField): number | null {
+  if (key === 'stop_volume') return state.targetVolume ?? 0;
+  const knobs = simpleKnobsOf(state);
+  if (key === 'pre_until') return knobs.preExitPressure;
+  const field = splitSimpleField(key);
+  return field ? knobs[field.stage][field.prop] : null;
+}
+
 /**
- * Dialog/nudge bounds for the simple (basic) editor, by profile kind: the
- * main target and the limit swap their pressure/flow scales when the kind
- * flips. Shared by renderSimpleControl (data-min/data-max) and the nudges.
+ * Switch which axis a stage's pump follows. Both numbers stay put — only their
+ * roles swap, so the old target becomes the stage's cap and toggling back
+ * restores exactly what was there. A target that would land on 0 is seeded with
+ * the stage's canonical default rather than leaving a dead stage behind.
  */
-function simpleFieldLimits(key: SimpleProfileField, type: SimpleType): { min: number; max: number } {
-  switch (key) {
+export function setSimpleStagePump(
+  state: ProfileEditorState,
+  stageId: SimpleStageId,
+  pump: SimpleType
+): ProfileEditorState {
+  const knobs = simpleKnobsOf(state);
+  const current = knobs[stageId];
+  if (current.pump === pump) return state;
+  const stage = { ...current, pump };
+  if (pump === 'pressure' && stage.pressure <= 0) stage.pressure = defaultStageTarget(stageId, 'pressure');
+  if (pump === 'flow' && stage.flow <= 0) stage.flow = defaultStageTarget(stageId, 'flow');
+  return withSimpleKnobs(state, { ...knobs, [stageId]: stage });
+}
+
+/**
+ * Dialog/nudge bounds for the basic editor. Pressure and flow keep their own
+ * scale whichever role they are playing, so a cap can't be nudged past what the
+ * machine can deliver. Shared by renderSimpleRow (data-min/data-max) and nudges.
+ */
+function simpleFieldLimits(key: SimpleProfileField): { min: number; max: number } {
+  if (key === 'stop_volume') return { min: 0, max: 100 };
+  if (key === 'pre_until') return { min: 0, max: 12 };
+  const field = splitSimpleField(key);
+  switch (field?.prop) {
+    case 'seconds':
+      return { min: 0, max: 60 };
+    case 'flow':
+      return { min: 0, max: 8 };
     case 'temperature':
       return { min: 1, max: 105 };
-    case 'pre_time':
-    case 'main_time':
-    case 'decline_time':
-      return { min: 0, max: 60 };
-    case 'pre_flow':
-      return { min: 0, max: 8 };
-    case 'pre_pressure':
+    default:
       return { min: 0, max: 12 };
-    case 'main_target':
-    case 'decline_target':
-      return { min: 0, max: type === 'flow' ? 8 : 12 };
-    case 'limit':
-      return { min: 0, max: type === 'flow' ? 12 : 8 };
-    case 'stop_volume':
-      return { min: 0, max: 100 };
   }
 }
 
@@ -328,18 +381,26 @@ export function currentLimiterRange(state: ProfileEditorState): number {
     ?? FIELD_SPECS.limiterRange.default;
 }
 
-/** Set the simple profile kind (pressure/flow), recompiling the current knobs. */
+/**
+ * Set the simple profile kind (pressure/flow) and open the basic editor. Only
+ * the two main stages take the kind — preinfusion stays flow-pumped, the way
+ * de1app's own simple pressure profile (settings_2a) preinfuses.
+ */
 export function setSimpleProfileType(state: ProfileEditorState, type: SimpleType): ProfileEditorState {
-  const { knobs } = simpleKnobsOf(state);
-  return {
-    ...state,
-    type,
-    legacyProfileType: legacyProfileTypeFromType(type),
-    steps: compileSimpleToSteps(knobs, type),
-    selectedStep: 0,
-    editorMode: 'basic',
-    dirty: true
+  const knobs = simpleKnobsOf(state);
+  const retarget = (stage: SimpleStage, id: SimpleStageId): SimpleStage => {
+    if (stage.pump === type) return stage;
+    const next = { ...stage, pump: type };
+    if (type === 'pressure' && next.pressure <= 0) next.pressure = defaultStageTarget(id, 'pressure');
+    if (type === 'flow' && next.flow <= 0) next.flow = defaultStageTarget(id, 'flow');
+    return next;
   };
+  const next = withSimpleKnobs(state, {
+    ...knobs,
+    hold: retarget(knobs.hold, 'hold'),
+    decline: retarget(knobs.decline, 'decline')
+  });
+  return { ...next, selectedStep: 0, editorMode: 'basic' };
 }
 
 export function setStepPump(state: ProfileEditorState, index: number, pump: StepPump): ProfileEditorState {
@@ -484,93 +545,108 @@ export function renderEditorModeBar(state: ProfileEditorState, disabled = false)
   `;
 }
 
-function renderSimpleTypeToggle(type: SimpleType): string {
-  return `
-    <div class="pe-kind-bar" role="group" aria-label="Profile kind">
-      <button type="button" class="pe-kind-btn ${type === 'pressure' ? 'active' : ''}" data-action="pe-set-simple-type" data-value="pressure">Pressure</button>
-      <button type="button" class="pe-kind-btn ${type === 'flow' ? 'active' : ''}" data-action="pe-set-simple-type" data-value="flow">Flow</button>
-    </div>
-  `;
-}
-
 function renderSimpleProfileEditor(state: ProfileEditorState): string {
-  const { type, knobs } = simpleKnobsOf(state);
-  const isFlow = type === 'flow';
-  const mainUnit = isFlow ? 'ml/s' : 'bar';
-  const mainLabel = isFlow ? 'flow' : 'pressure';
-  const mainIcon = isFlow ? 'droplets' : 'gauge';
-  const mainTone = isFlow ? 'blue' : 'purple';
-  const limitUnit = isFlow ? 'bar' : 'ml/s';
-  const limitLabel = isFlow ? 'pressure limit' : 'flow limit';
-  const stopVolume = state.targetVolume ?? 0;
+  const knobs = simpleKnobsOf(state);
   return `
-    <div class="profile-editor">
+    <div class="profile-editor pe-basic">
       ${renderIdentityMeta(state)}
-      <div class="pe-kind-row">${renderSimpleTypeToggle(type)}</div>
       <div class="pe-simple-chart">${renderDe1ExplanationChart(state)}</div>
       <div class="pe-simple-stages">
-      <div class="pe-ctl-group">
-        <span class="pe-ctl-group-title">1 · Preinfuse</span>
-        <div class="pe-ctl-grid">
-          ${renderSimpleControl(type, 'pre_time', 'time', knobs.preTime, 's', 1, 'timer', 'stage')}
-          ${renderSimpleControl(type, 'pre_flow', 'flow', knobs.preFlow, 'ml/s', 0.1, 'droplets', 'blue')}
-          ${renderSimpleControl(type, 'pre_pressure', isFlow ? 'stop at pressure' : 'until pressure', knobs.prePressure, 'bar', 0.1, 'gauge', 'purple')}
-        </div>
-      </div>
-      <div class="pe-ctl-group">
-        <span class="pe-ctl-group-title">2 · ${isFlow ? 'Hold' : 'Rise &amp; hold'}</span>
-        <div class="pe-ctl-grid">
-          ${renderSimpleControl(type, 'main_time', 'time', knobs.mainTime, 's', 1, 'timer', 'stage')}
-          ${renderSimpleControl(type, 'main_target', mainLabel, knobs.mainTarget, mainUnit, 0.1, mainIcon, mainTone)}
-          ${renderSimpleControl(type, 'limit', limitLabel, knobs.limit, limitUnit, 0.1, 'sliders-horizontal', 'amber', true)}
-        </div>
-      </div>
-      <div class="pe-ctl-group">
-        <span class="pe-ctl-group-title">3 · Decline</span>
-        <div class="pe-ctl-grid">
-          ${renderSimpleControl(type, 'decline_time', 'time', knobs.declineTime, 's', 1, 'timer', 'stage')}
-          ${renderSimpleControl(type, 'decline_target', `${mainLabel} end`, knobs.declineTarget, mainUnit, 0.1, mainIcon, mainTone)}
-        </div>
-      </div>
-      <div class="pe-ctl-group">
-        <span class="pe-ctl-group-title">4 · Finish</span>
-        <div class="pe-ctl-grid">
-          ${renderSimpleControl(type, 'stop_volume', 'stop at volume', stopVolume, 'ml', 1, 'beaker', 'blue', true)}
-          ${renderSimpleControl(type, 'temperature', 'temperature', knobs.temperature, '°C', 0.5, 'thermometer', 'red')}
-        </div>
-      </div>
+        ${renderSimpleStage('pre', '1 · Preinfuse', knobs.pre, knobs.preExitPressure)}
+        ${renderSimpleStage('hold', `2 · ${knobs.hold.pump === 'flow' ? 'Hold' : 'Rise &amp; hold'}`, knobs.hold)}
+        ${renderSimpleStage('decline', '3 · Decline', knobs.decline)}
+        ${renderFinishStage(state)}
       </div>
     </div>
   `;
 }
 
-// A simple-editor control card — the same .pe-ctl card the advanced editor uses,
-// wired to the scalar pe-simple-field / pe-simple-nudge actions (no per-step index).
-function renderSimpleControl(
-  type: SimpleType,
+/**
+ * One stage column: the Insight-style read-out where flow, pressure and
+ * temperature are all on screen for every stage. The pump toggle picks which of
+ * flow/pressure the machine chases — the other one relabels to "… limit" and
+ * reads "off" at 0, so the same two rows cover both roles.
+ */
+function renderSimpleStage(
+  id: SimpleStageId,
+  title: string,
+  stage: SimpleStage,
+  exitPressure?: number
+): string {
+  const isFlow = stage.pump === 'flow';
+  const pressureLabel = isFlow ? 'pressure limit' : id === 'decline' ? 'pressure end' : 'pressure';
+  const flowLabel = isFlow ? (id === 'decline' ? 'flow end' : 'flow') : 'flow limit';
+  return `
+    <section class="pe-stage-col">
+      <header class="pe-stage-head">
+        <span class="pe-ctl-group-title">${title}</span>
+        ${renderStagePumpToggle(id, stage.pump)}
+      </header>
+      <div class="pe-row-grid">
+        ${renderSimpleRow(`${id}_time` as SimpleProfileField, 'time', stage.seconds, 's', 1, 'timer', 'time')}
+        ${renderSimpleRow(`${id}_flow` as SimpleProfileField, flowLabel, stage.flow, 'ml/s', 0.1, 'droplets', 'flow', { target: isFlow })}
+        ${renderSimpleRow(`${id}_pressure` as SimpleProfileField, pressureLabel, stage.pressure, 'bar', 0.1, 'gauge', 'pressure', { target: !isFlow })}
+        ${exitPressure == null
+          ? ''
+          : renderSimpleRow('pre_until', 'until pressure', exitPressure, 'bar', 0.1, 'arrow-up-to-line', 'pressure')}
+        ${renderSimpleRow(`${id}_temp` as SimpleProfileField, 'temperature', stage.temperature, '°C', 0.5, 'thermometer', 'temp')}
+      </div>
+    </section>
+  `;
+}
+
+function renderFinishStage(state: ProfileEditorState): string {
+  return `
+    <section class="pe-stage-col">
+      <header class="pe-stage-head">
+        <span class="pe-ctl-group-title">4 · Finish</span>
+      </header>
+      <div class="pe-row-grid">
+        ${renderSimpleRow('stop_volume', 'stop at volume', state.targetVolume ?? 0, 'ml', 1, 'beaker', 'flow', { offWhenZero: true })}
+      </div>
+    </section>
+  `;
+}
+
+function renderStagePumpToggle(id: SimpleStageId, pump: SimpleType): string {
+  const button = (value: SimpleType, label: string) => `
+    <button type="button" class="pe-pump-btn ${pump === value ? 'active' : ''}" data-action="pe-simple-pump" data-stage="${id}" data-value="${value}">${label}</button>`;
+  return `
+    <div class="pe-pump-bar" role="group" aria-label="What the pump follows">
+      ${button('flow', 'Flow')}${button('pressure', 'Pressure')}
+    </div>
+  `;
+}
+
+/**
+ * A compact row control — icon, label, then −/value/+ — wired to the scalar
+ * pe-simple-field / pe-simple-nudge actions (no per-step index). Rows rather
+ * than the advanced editor's tall cards so a whole stage fits on a short tablet.
+ */
+function renderSimpleRow(
   key: SimpleProfileField,
   label: string,
   value: number,
   unit: string,
   step: number,
   iconName: string,
-  tone: string,
-  offWhenZero = false
+  tone: 'time' | 'flow' | 'pressure' | 'temp',
+  options: { target?: boolean; offWhenZero?: boolean } = {}
 ): string {
-  const { min, max } = simpleFieldLimits(key, type);
+  const { min, max } = simpleFieldLimits(key);
   const formatted = formatNumber(value);
-  const display = offWhenZero && value <= 0
+  // A cap reads "off" at zero; a target always shows its number.
+  const isCap = options.target === false;
+  const display = (options.offWhenZero || isCap) && value <= 0
     ? '<span class="pe-ctl-off">off</span>'
     : `${escapeHtml(formatted)}${unit ? `<em>${escapeHtml(unit)}</em>` : ''}`;
   return `
-    <div class="pe-ctl ${escapeAttr(tone)}">
-      <button type="button" class="pe-ctl-face" tabindex="-1" aria-label="${escapeAttr(label)}">${icon(iconName)}</button>
-      <span class="pe-ctl-label">${escapeHtml(label)}</span>
-      <div class="pe-ctl-stepper">
-        <button type="button" class="pe-ctl-step" data-action="pe-simple-nudge" data-key="${key}" data-delta="${-step}" aria-label="decrease ${escapeAttr(label)}">${icon('minus')}</button>
-        <button type="button" class="pe-ctl-value" data-action="pe-edit-value" data-target="simple-field" data-key="${key}" data-min="${min}" data-max="${max}" data-step="${step}" data-value="${escapeAttr(formatted)}" data-title="${escapeAttr(label)}" data-unit="${escapeAttr(unit)}" aria-label="edit ${escapeAttr(label)}">${display}</button>
-        <button type="button" class="pe-ctl-step" data-action="pe-simple-nudge" data-key="${key}" data-delta="${step}" aria-label="increase ${escapeAttr(label)}">${icon('plus')}</button>
-      </div>
+    <div class="pe-row ${escapeAttr(tone)} ${options.target ? 'target' : ''}">
+      <span class="pe-row-face">${icon(iconName)}</span>
+      <span class="pe-row-label">${escapeHtml(label)}</span>
+      <button type="button" class="pe-row-step" data-action="pe-simple-nudge" data-key="${key}" data-delta="${-step}" aria-label="decrease ${escapeAttr(label)}">${icon('minus')}</button>
+      <button type="button" class="pe-row-value" data-action="pe-edit-value" data-target="simple-field" data-key="${key}" data-min="${min}" data-max="${max}" data-step="${step}" data-value="${escapeAttr(formatted)}" data-title="${escapeAttr(label)}" data-unit="${escapeAttr(unit)}" aria-label="edit ${escapeAttr(label)}">${display}</button>
+      <button type="button" class="pe-row-step" data-action="pe-simple-nudge" data-key="${key}" data-delta="${step}" aria-label="increase ${escapeAttr(label)}">${icon('plus')}</button>
     </div>
   `;
 }
@@ -848,30 +924,46 @@ function renderProfileChart(state: ProfileEditorState): string {
   `;
 }
 
+/**
+ * The basic editor's preview: pressure, flow and temperature on one de1app-style
+ * 0–12 axis (temperature at ÷10, as the advanced chart does), so every stage's
+ * three numbers are readable at a glance whichever axis it is pumping. A node
+ * marks each stage's end on the axis that stage's pump follows.
+ */
 function renderDe1ExplanationChart(state: ProfileEditorState): string {
+  // A wide, short viewBox: the svg scales to the panel width with `height: auto`,
+  // so its aspect ratio *is* its on-screen height. Keeping that ratio close to the
+  // box it lands in is what stops it letterboxing into the middle of the page.
   const width = 1188;
-  const height = 250;
-  const plot: ChartPlot = { x: 32, y: 10, w: 1136, h: 228 };
-  const isFlow = state.type === 'flow';
-  const maxValue = isFlow ? 8 : 12;
+  const height = 190;
+  const plot: ChartPlot = { x: 32, y: 8, w: 1136, h: 142 };
+  const maxValue = 12;
   const model = buildProfileChartModel(state.steps);
-  const trace = isFlow ? model.flow : model.pressure;
-  const mainLine = traceToPath(trace, plot, model.totalSeconds, maxValue);
-  const ticks = isFlow ? [0, 2, 4, 6, 8] : [1, 3, 5, 7, 9, 11];
-  const axisTitle = isFlow ? 'flow (ml/s)' : 'pressure (bar)';
+  const pressure = traceToPath(model.pressure, plot, model.totalSeconds, maxValue);
+  const flow = traceToPath(model.flow, plot, model.totalSeconds, maxValue);
+  const temperature = traceToPath(
+    model.temperature.map((point) => ({ t: point.t, v: point.v / 10 })),
+    plot,
+    model.totalSeconds,
+    maxValue
+  );
   const nodes = model.spans.map((span, index) => {
     const step = state.steps[index];
+    const isFlow = step?.pump === 'flow';
     const value = step ? (isFlow ? step.flow : step.pressure) : 0;
     return {
+      kind: isFlow ? 'flow' : 'pressure',
       x: plot.x + (span.end / model.totalSeconds) * plot.w,
       y: plot.y + plot.h - clamp01(value / maxValue) * plot.h
     };
   });
+  const legend = (x: number, kind: string, label: string) =>
+    `<text class="pe-de1-legend ${kind}" x="${x}" y="${height - 8}">${escapeHtml(label)}</text>`;
   return `
     <section class="pe-de1-chart-panel" aria-label="Profile preview">
-      <svg class="pe-de1-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeAttr(axisTitle)} profile">
+      <svg class="pe-de1-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Pressure, flow, and temperature profile">
         <rect class="pe-de1-plot" x="${plot.x}" y="${plot.y}" width="${plot.w}" height="${plot.h}" rx="3"></rect>
-        ${ticks.map((tick) => {
+        ${[0, 2, 4, 6, 8, 10, 12].map((tick) => {
           const y = plot.y + plot.h - clamp01(tick / maxValue) * plot.h;
           return `
             <line class="pe-de1-grid" x1="${plot.x}" x2="${plot.x + plot.w}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}"></line>
@@ -882,11 +974,15 @@ function renderDe1ExplanationChart(state: ProfileEditorState): string {
           const x = plot.x + plot.w * tick;
           return `<line class="pe-de1-grid x" x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${plot.y}" y2="${plot.y + plot.h}"></line>`;
         }).join('')}
-        <path class="pe-de1-main-fill ${isFlow ? 'flow' : 'pressure'}" d="${mainLine}L${(plot.x + plot.w).toFixed(1)} ${(plot.y + plot.h).toFixed(1)}L${plot.x} ${(plot.y + plot.h).toFixed(1)}Z" stroke="none"></path>
-        <path class="pe-de1-main-line ${isFlow ? 'flow' : 'pressure'}" d="${mainLine}" fill="none"></path>
+        <path class="pe-de1-main-line temp" d="${temperature}" fill="none"></path>
+        <path class="pe-de1-main-line flow" d="${flow}" fill="none"></path>
+        <path class="pe-de1-main-line pressure" d="${pressure}" fill="none"></path>
         ${nodes.map((point) => `
-          <circle class="pe-de1-node ${isFlow ? 'flow' : 'pressure'}" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="6"></circle>
+          <circle class="pe-de1-node ${point.kind}" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="6"></circle>
         `).join('')}
+        ${legend(plot.x, 'pressure', 'pressure (bar)')}
+        ${legend(plot.x + 190, 'flow', 'flow (ml/s)')}
+        ${legend(plot.x + 360, 'temp', 'temperature (÷10 °C)')}
       </svg>
     </section>
   `;

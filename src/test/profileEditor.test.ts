@@ -13,6 +13,7 @@ import {
   setEditorMode,
   setSimpleProfileField,
   setSimpleProfileType,
+  setSimpleStagePump,
   setStepField,
   setStepPump
 } from '../components/profileEditor';
@@ -175,15 +176,20 @@ run('nudgeStepField keeps the limiter range at its non-zero floor', () => {
 run('nudgeSimpleProfileField clamps to the basic dialog ranges', () => {
   const state = createProfileEditorState(pressureProfile());
 
-  // pressure target tops out at 12 bar
-  let up = setSimpleProfileField(state, 'main_target', '12');
-  up = nudgeSimpleProfileField(up, 'main_target', 0.1);
-  equal(parseStepsToSimple(up.steps)?.knobs.mainTarget, 12);
+  // pressure tops out at 12 bar
+  let up = setSimpleProfileField(state, 'hold_pressure', '12');
+  up = nudgeSimpleProfileField(up, 'hold_pressure', 0.1);
+  equal(parseStepsToSimple(up.steps)?.hold.pressure, 12);
+
+  // flow tops out at 8 ml/s, in either role
+  let fast = setSimpleProfileField(state, 'hold_flow', '8');
+  fast = nudgeSimpleProfileField(fast, 'hold_flow', 0.1);
+  equal(parseStepsToSimple(fast.steps)?.hold.flow, 8);
 
   // temperature stops at 1 °C, not 0
-  let cooled = setSimpleProfileField(state, 'temperature', '1');
-  cooled = nudgeSimpleProfileField(cooled, 'temperature', -0.5);
-  equal(parseStepsToSimple(cooled.steps)?.knobs.temperature, 1);
+  let cooled = setSimpleProfileField(state, 'hold_temp', '1');
+  cooled = nudgeSimpleProfileField(cooled, 'hold_temp', -0.5);
+  equal(parseStepsToSimple(cooled.steps)?.hold.temperature, 1);
 
   // stop_volume lives on targetVolume and is clamped to 100 ml
   let vol = setSimpleProfileField(state, 'stop_volume', '99.5');
@@ -191,6 +197,43 @@ run('nudgeSimpleProfileField clamps to the basic dialog ranges', () => {
   equal(vol.targetVolume, 100);
   vol = nudgeSimpleProfileField(vol, 'stop_volume', 1);
   equal(vol.targetVolume, 100);
+});
+
+run('each stage keeps its own temperature in the basic editor', () => {
+  const state = createProfileEditorState(pressureProfile());
+  const next = setSimpleProfileField(setSimpleProfileField(state, 'pre_temp', '94'), 'decline_temp', '88');
+
+  equal(next.steps[0].temperature, 94);
+  equal(next.steps[2].temperature, 88);
+  equal(canEditAsBasic(next.steps), true);
+});
+
+run('setSimpleStagePump swaps target and cap without losing either number', () => {
+  const state = createProfileEditorState(pressureProfile());
+  const capped = setSimpleProfileField(state, 'hold_flow', '2.4'); // 9 bar target, 2.4 ml/s cap
+  const flowed = setSimpleStagePump(capped, 'hold', 'flow');
+
+  equal(flowed.steps[1].pump, 'flow');
+  equal(flowed.steps[1].flow, 2.4); // the old cap is now the target
+  equal(flowed.steps[1].limiter?.value, 9); // the old target is now the cap
+  equal(canEditAsBasic(flowed.steps), true);
+
+  // toggling back restores exactly what was there
+  const back = setSimpleStagePump(flowed, 'hold', 'pressure');
+  equal(back.steps[1].pressure, 9);
+  equal(back.steps[1].limiter?.value, 2.4);
+
+  // hold and decline now disagree, so the profile reads as advanced-kind
+  equal(flowed.type, 'advanced');
+  equal(setSimpleStagePump(flowed, 'decline', 'flow').type, 'flow');
+});
+
+run('setSimpleStagePump seeds a target that would land on zero', () => {
+  const state = setSimpleProfileField(createProfileEditorState(pressureProfile()), 'hold_flow', '0');
+  const flowed = setSimpleStagePump(state, 'hold', 'flow');
+
+  if (!(flowed.steps[1].flow > 0)) throw new Error('expected a seeded flow target');
+  equal(flowed.steps[1].limiter?.value, 9);
 });
 
 run('setStepPump switches the controlled target', () => {
@@ -285,16 +328,27 @@ run('renders the basic pressure editor for normalized pressure profiles', () => 
   includes(html, '4 · Finish');
   includes(html, 'data-action="pe-edit-value"');
   includes(html, 'data-action="pe-simple-nudge"');
-  includes(html, 'data-action="pe-set-simple-type"');
+  // every stage shows flow, pressure and temperature, and can toggle its pump
+  for (const stage of ['pre', 'hold', 'decline']) {
+    includes(html, `data-key="${stage}_flow"`);
+    includes(html, `data-key="${stage}_pressure"`);
+    includes(html, `data-key="${stage}_temp"`);
+    includes(html, `data-action="pe-simple-pump" data-stage="${stage}"`);
+  }
 });
 
 run('updates pressure editor scalar fields without dropping profile steps', () => {
   const state = createProfileEditorState(pressureProfile());
-  const next = setSimpleProfileField(state, 'pre_pressure', '4.5');
+  const next = setSimpleProfileField(state, 'pre_until', '4.5');
 
   equal(next.steps.length, 3);
   equal(next.steps[0].exit?.value, 4.5);
   equal(next.dirty, true);
+
+  // the preinfuse stage's own pressure knob is its cap, not the exit
+  const capped = setSimpleProfileField(next, 'pre_pressure', '8');
+  equal(capped.steps[0].limiter?.value, 8);
+  equal(capped.steps[0].exit?.value, 4.5);
 });
 
 run('opens a canonical simple profile in basic mode, advanced otherwise', () => {
@@ -326,13 +380,13 @@ run('switching simple type recompiles the knobs as flow', () => {
   equal(next.steps[2]!.pump, 'flow');
 });
 
-run('mode bar carries the Basic/Advanced toggle; body carries the kind toggle', () => {
+run('mode bar carries the Basic/Advanced toggle; body carries the per-stage pumps', () => {
   const state = createProfileEditorState(pressureProfile());
   const bar = renderEditorModeBar(state);
   includes(bar, 'data-action="pe-set-mode"');
   includes(bar, '>Advanced<');
   const body = renderProfileEditor(state);
-  includes(body, 'data-action="pe-set-simple-type"');
+  includes(body, 'data-action="pe-simple-pump"');
 });
 
 function sampleProfile(): Profile {

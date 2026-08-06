@@ -2,6 +2,23 @@
 
 ## v0.3.4 - 2026-08-06
 
+- Rebuilt the profile editor's Basic mode along the lines of the Insight skin:
+  each stage now shows its own flow, pressure and temperature, with a
+  Flow/Pressure toggle that picks which of the two the pump chases. The other
+  one becomes that stage's limit and reads "off" when unset, so toggling swaps
+  the pair's roles without losing either number. Temperature is per stage rather
+  than one setting for the whole profile, and the preview graph draws pressure,
+  flow and temperature together.
+- Fixed Basic mode being cut off at the bottom on shorter tablets. The controls
+  are compact rows instead of tall cards, the graph is sized so it can't push
+  the stages off-screen, and the page scrolls rather than clipping whatever
+  doesn't fit.
+- Widened which profiles open in Basic. Basic now cares only about a profile's
+  skeleton — a preinfusion that ends on rising pressure, a hold, then a smooth
+  decline — so profiles that mix flow and pressure stages, or vary temperature
+  or limits per stage, get the friendly editor too. Editing in Basic still
+  cannot silently drop anything a profile carries.
+
 - Kept the tablet awake for as long as Beanie is on screen. Decent.app releases
   its wake-lock whenever the machine sleeps or the DE1 link drops, which left
   the tablet free to fall asleep on its own OS screen timeout; Beanie now claims

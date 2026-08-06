@@ -6956,7 +6956,7 @@ export class BeanieApp {
           <button type="button" class="pe-save commit-action" data-action="save-profile"${disabled}>${icon('check')}<span>${this.state.busy ? 'Saving…' : 'Save'}</span></button>
         </div>
       </header>
-      <fieldset class="page-body profile-editor-page"${disabled}>
+      <fieldset class="page-body profile-editor-page ${pe.editorMode === 'basic' ? 'pe-page-basic' : ''}"${disabled}>
         ${renderProfileEditor(pe)}
       </fieldset>
     `;

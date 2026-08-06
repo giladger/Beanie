@@ -5,7 +5,12 @@ import {
   FIELD_SPECS,
   type EditorStep
 } from './profileModel';
-import { canEditAsBasic, compileSimpleToSteps, parseStepsToSimple } from './simpleProfile';
+import {
+  canEditAsBasic,
+  compileSimpleToSteps,
+  parseStepsToSimple,
+  type SimpleKnobs
+} from './simpleProfile';
 import type { DialInSuggestion } from './dialIn';
 
 // Turns an accepted profile-level Derek suggestion into a tweaked copy of the
@@ -85,37 +90,45 @@ function tweakSimpleSteps(
   parameter: TweakableParameter,
   target: number
 ): StepsTweak | null {
-  const parsed = parseStepsToSimple(steps);
-  if (!parsed) return null;
-  const knobs = { ...parsed.knobs };
+  const knobs = parseStepsToSimple(steps);
+  if (!knobs) return null;
 
   switch (parameter) {
     case 'peak_pressure': {
-      if (parsed.type === 'pressure') {
-        const value = clamp(target, FIELD_SPECS.stepPressure);
-        const current = knobs.mainTarget;
-        knobs.mainTarget = value;
-        return { steps: compileSimpleToSteps(knobs, parsed.type), current, value };
+      // Either way the knob is the hold stage's `pressure`: its target when the
+      // hold pumps pressure, otherwise its pressure ceiling. On a flow hold only
+      // an existing ceiling moves — introducing one is more than a one-knob change.
+      const pumpsPressure = knobs.hold.pump === 'pressure';
+      const current = knobs.hold.pressure;
+      if (!pumpsPressure && current <= 0) return null;
+      const value = clamp(target, pumpsPressure ? FIELD_SPECS.stepPressure : FIELD_SPECS.limiterValue);
+      const next: SimpleKnobs = { ...knobs, hold: { ...knobs.hold, pressure: value } };
+      // A ceiling shared with the decline stage moves with it, so the pair stays coherent.
+      if (!pumpsPressure && knobs.decline.pump === 'flow' && knobs.decline.pressure === current) {
+        next.decline = { ...knobs.decline, pressure: value };
       }
-      // On a flow profile the pressure ceiling is the limiter; only adjust an
-      // existing one — introducing a limiter is more than a one-knob change.
-      if (knobs.limit <= 0) return null;
-      const value = clamp(target, FIELD_SPECS.limiterValue);
-      const current = knobs.limit;
-      knobs.limit = value;
-      return { steps: compileSimpleToSteps(knobs, parsed.type), current, value };
+      return { steps: compileSimpleToSteps(next), current, value };
     }
     case 'preinfusion_time': {
       const value = clamp(target, FIELD_SPECS.preinfusionTime);
-      const current = knobs.preTime;
-      knobs.preTime = value;
-      return { steps: compileSimpleToSteps(knobs, parsed.type), current, value };
+      const current = knobs.pre.seconds;
+      return {
+        steps: compileSimpleToSteps({ ...knobs, pre: { ...knobs.pre, seconds: value } }),
+        current,
+        value
+      };
     }
     case 'preinfusion_flow': {
+      // Only meaningful while preinfusion pumps flow; otherwise its flow number
+      // is a ceiling, not the rate Derek is asking about.
+      if (knobs.pre.pump !== 'flow') return null;
       const value = clamp(target, FIELD_SPECS.preinfusionFlow);
-      const current = knobs.preFlow;
-      knobs.preFlow = value;
-      return { steps: compileSimpleToSteps(knobs, parsed.type), current, value };
+      const current = knobs.pre.flow;
+      return {
+        steps: compileSimpleToSteps({ ...knobs, pre: { ...knobs.pre, flow: value } }),
+        current,
+        value
+      };
     }
   }
 }

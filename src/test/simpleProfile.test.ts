@@ -6,11 +6,12 @@ import {
   compileSimpleToSteps,
   defaultSimpleKnobs,
   parseStepsToSimple,
+  simpleProfileType,
   type SimpleKnobs
 } from '../domain/simpleProfile';
 
 run('compiles a pressure simple profile to canonical steps', () => {
-  const steps = compileSimpleToSteps(defaultSimpleKnobs('pressure'), 'pressure');
+  const steps = compileSimpleToSteps(defaultSimpleKnobs('pressure'));
   equal(steps.length, 3);
   equal(steps[0]!.pump, 'flow');
   equal(steps[0]!.exit?.type, 'pressure');
@@ -20,75 +21,96 @@ run('compiles a pressure simple profile to canonical steps', () => {
   equal(steps[2]!.transition, 'smooth');
 });
 
-run('pressure knobs survive a compile → parse round-trip', () => {
-  const knobs: SimpleKnobs = {
-    ...defaultSimpleKnobs('pressure'),
-    temperature: 92.5,
-    preTime: 12,
-    preFlow: 4.5,
-    prePressure: 4,
-    mainTime: 20,
-    mainTarget: 8.6,
-    limit: 2.4,
-    declineTime: 28,
-    declineTarget: 5.5
-  };
-  const steps = compileSimpleToSteps(knobs, 'pressure');
-  equal(canEditAsBasic(steps), true);
-  const parsed = parseStepsToSimple(steps);
-  equal(parsed?.type, 'pressure');
-  equalKnobs(parsed!.knobs, knobs);
+run('a fresh profile carries no cap it never asked for', () => {
+  for (const steps of [compileSimpleToSteps(defaultSimpleKnobs('pressure')), compileSimpleToSteps(defaultSimpleKnobs('flow'))]) {
+    for (const step of steps) equal(step.limiter, null);
+  }
 });
 
-run('flow knobs survive a compile → parse round-trip (limiter caps pressure)', () => {
+run('pressure knobs survive a compile → parse round-trip', () => {
+  const base = defaultSimpleKnobs('pressure');
   const knobs: SimpleKnobs = {
-    ...defaultSimpleKnobs('flow'),
-    mainTarget: 2.2,
-    limit: 9, // pressure limit on a flow profile
-    declineTarget: 1.2
+    pre: { ...base.pre, seconds: 12, flow: 4.5, temperature: 92.5 },
+    preExitPressure: 4,
+    hold: { ...base.hold, seconds: 20, pressure: 8.6, flow: 2.4, temperature: 92.5 },
+    decline: { ...base.decline, seconds: 28, pressure: 5.5, temperature: 92.5 }
   };
-  const steps = compileSimpleToSteps(knobs, 'flow');
+  const steps = compileSimpleToSteps(knobs);
   equal(canEditAsBasic(steps), true);
-  // limiter applied across hold + decline
+  // the hold's off-axis flow is its cap
+  equal(steps[1]!.limiter?.value, 2.4);
+  equalKnobs(parseStepsToSimple(steps)!, knobs);
+  equal(simpleProfileType(knobs), 'pressure');
+});
+
+run('flow knobs survive a compile → parse round-trip (the cap is pressure)', () => {
+  const base = defaultSimpleKnobs('flow');
+  const knobs: SimpleKnobs = {
+    ...base,
+    hold: { ...base.hold, flow: 2.2, pressure: 9 },
+    decline: { ...base.decline, flow: 1.2, pressure: 9 }
+  };
+  const steps = compileSimpleToSteps(knobs);
+  equal(canEditAsBasic(steps), true);
   equal(steps[1]!.limiter?.value, 9);
   equal(steps[2]!.limiter?.value, 9);
-  const parsed = parseStepsToSimple(steps);
-  equal(parsed?.type, 'flow');
-  equalKnobs(parsed!.knobs, knobs);
+  equalKnobs(parseStepsToSimple(steps)!, knobs);
+  equal(simpleProfileType(knobs), 'flow');
+});
+
+run('every stage keeps its own pump, temperature and cap', () => {
+  const base = defaultSimpleKnobs('pressure');
+  const knobs: SimpleKnobs = {
+    ...base,
+    pre: { ...base.pre, temperature: 94, pressure: 0 },
+    hold: { ...base.hold, temperature: 92, flow: 2.5 },
+    decline: { ...base.decline, pump: 'flow', flow: 1.4, pressure: 6, temperature: 90 }
+  };
+  const steps = compileSimpleToSteps(knobs);
+  equal(canEditAsBasic(steps), true);
+  equal(steps[0]!.temperature, 94);
+  equal(steps[1]!.temperature, 92);
+  equal(steps[2]!.pump, 'flow');
+  equal(steps[2]!.limiter?.value, 6);
+  equalKnobs(parseStepsToSimple(steps)!, knobs);
+  // hold and decline disagree, so the profile is no longer one de1app kind
+  equal(simpleProfileType(knobs), 'advanced');
 });
 
 run('editing a knob recompiles and stays basic', () => {
-  const knobs = { ...defaultSimpleKnobs('pressure'), mainTarget: 9, limit: 0 };
-  let steps = compileSimpleToSteps(knobs, 'pressure');
-  // simulate a slider edit: re-parse, mutate, recompile
-  const next = { ...parseStepsToSimple(steps)!.knobs, mainTarget: 7.5, limit: 2.5 };
-  steps = compileSimpleToSteps(next, 'pressure');
+  const base = defaultSimpleKnobs('pressure');
+  let steps = compileSimpleToSteps(base);
+  // simulate an edit: re-parse, mutate, recompile
+  const parsed = parseStepsToSimple(steps)!;
+  steps = compileSimpleToSteps({ ...parsed, hold: { ...parsed.hold, pressure: 7.5, flow: 2.5 } });
   equal(canEditAsBasic(steps), true);
-  equal(parseStepsToSimple(steps)?.knobs.mainTarget, 7.5);
-  equal(parseStepsToSimple(steps)?.knobs.limit, 2.5);
+  equal(parseStepsToSimple(steps)?.hold.pressure, 7.5);
+  equal(parseStepsToSimple(steps)?.hold.flow, 2.5);
 });
 
-run('a profile with no limiter parses with limit 0 and round-trips', () => {
-  const steps = compileSimpleToSteps({ ...defaultSimpleKnobs('pressure'), limit: 0 }, 'pressure');
+run('a stage with no cap parses back to 0 and round-trips', () => {
+  const base = defaultSimpleKnobs('pressure');
+  const steps = compileSimpleToSteps({ ...base, hold: { ...base.hold, flow: 0 } });
   equal(steps[1]!.limiter, null);
-  equal(parseStepsToSimple(steps)?.knobs.limit, 0);
+  equal(parseStepsToSimple(steps)?.hold.flow, 0);
   equal(canEditAsBasic(steps), true);
 });
 
 // `parse` rejects any step count != 3 up front, so the only way a non-simple
-// profile could be mis-classified as basic is a 3-step one. These fixtures mirror
-// every distinct 3-step shape in the reaprime default library (D-Flow, Damians_Q,
-// the baselines, psph/rohan-soup, the Blue Willow tea) — all must open advanced.
-run('rejects every advanced 3-step shape — opens advanced, never basic', () => {
+// profile could be mis-classified as basic is a 3-step one. Basic mode is about
+// the *skeleton* — fast preinfuse that exits on rising pressure, fast hold,
+// smooth decline — while pressure, flow and temperature are free per stage. So a
+// 3-step profile whose skeleton matches opens basic even with mixed pumps; only
+// shapes the knobs genuinely cannot express must open advanced.
+run('rejects 3-step shapes the basic knobs cannot express', () => {
   // ≠ 3 steps (e.g. rao_allonge n=2)
   equal(canEditAsBasic(stepsOf(advanced([flow(2), flow(2)]))), false);
-  // p / p / f  (D-Flow, Damians_Q): preinfuse is pressure-pumped, not flow
+  // preinfuse missing its pressure-over exit (D-Flow, Damians_Q: p / p / f)
   equal(canEditAsBasic(stepsOf(advanced([press(2), press(9), flow(2, 'smooth')]))), false);
-  // f / p / f  (Blue Willow): hold and decline pumps disagree
-  equal(canEditAsBasic(stepsOf(advanced([preinfuse(), press(9), flow(2, 'smooth')]))), false);
-  // f / f / p-fast (baseline_hc/lc/mc): decline pump differs and isn't smooth
+  equal(canEditAsBasic(stepsOf(advanced([flow(4), press(9), press(6, 'smooth')]))), false);
+  // f / f / p-fast (baseline_hc/lc/mc): the decline isn't smooth
   equal(canEditAsBasic(stepsOf(advanced([preinfuse(), flow(2), press(6, 'fast')]))), false);
-  // f / f / f all-fast (baseline_ulc): decline isn't smooth
+  // f / f / f all-fast (baseline_ulc): the decline isn't smooth
   equal(canEditAsBasic(stepsOf(advanced([preinfuse(), flow(2), flow(1)]))), false);
   // psph/rohan-soup: a flow hold that carries its own exit condition
   equal(
@@ -97,31 +119,40 @@ run('rejects every advanced 3-step shape — opens advanced, never basic', () =>
     ),
     false
   );
-  // preinfuse missing its pressure-over exit
-  equal(canEditAsBasic(stepsOf(advanced([flow(4), press(9), press(6, 'smooth')]))), false);
-  // preinfuse carrying a limiter (the basic preinfuse never does)
-  equal(
-    canEditAsBasic(stepsOf(advanced([{ ...preinfuse(), limiter: { value: 8, range: 0.6 } }, press(9), press(6, 'smooth')]))),
-    false
-  );
   // a water-sensor step
   equal(
     canEditAsBasic(stepsOf(advanced([{ ...preinfuse(), sensor: 'water' }, press(9), press(6, 'smooth')]))),
     false
   );
-  // hold and decline limiters disagree
-  equal(
-    canEditAsBasic(
-      stepsOf(
-        advanced([
-          preinfuse(),
-          { ...press(9), limiter: { value: 8, range: 0.6 } },
-          { ...press(6, 'smooth'), limiter: { value: 4, range: 0.6 } }
-        ])
-      )
-    ),
-    false
+});
+
+run('accepts the basic skeleton even when the stages differ', () => {
+  // f / p / f (Blue Willow): each stage picks its own pump
+  const mixed = stepsOf(advanced([preinfuse(), press(9), flow(2, 'smooth')]));
+  equal(canEditAsBasic(mixed), true);
+  equal(parseStepsToSimple(mixed)?.hold.pump, 'pressure');
+  equal(parseStepsToSimple(mixed)?.decline.pump, 'flow');
+
+  // caps that differ stage to stage, including one on the preinfuse
+  const capped = stepsOf(
+    advanced([
+      { ...preinfuse(), limiter: { value: 8, range: 0.6 } },
+      { ...press(9), limiter: { value: 2, range: 0.6 } },
+      { ...press(6, 'smooth'), limiter: { value: 4, range: 0.6 } }
+    ])
   );
+  equal(canEditAsBasic(capped), true);
+  equal(parseStepsToSimple(capped)?.pre.pressure, 8);
+  equal(parseStepsToSimple(capped)?.hold.flow, 2);
+  equal(parseStepsToSimple(capped)?.decline.flow, 4);
+
+  // temperatures that differ stage to stage
+  const temps = stepsOf(
+    advanced([{ ...preinfuse(), temperature: 94 }, press(9), { ...press(6, 'smooth'), temperature: 88 }])
+  );
+  equal(canEditAsBasic(temps), true);
+  equal(parseStepsToSimple(temps)?.pre.temperature, 94);
+  equal(parseStepsToSimple(temps)?.decline.temperature, 88);
 });
 
 run('per-step popup / custom field disqualifies basic mode', () => {
@@ -184,7 +215,7 @@ function equal<T>(actual: T, expected: T): void {
 }
 
 function equalKnobs(actual: SimpleKnobs, expected: SimpleKnobs): void {
-  for (const key of Object.keys(expected) as (keyof SimpleKnobs)[]) {
-    equal(actual[key] as unknown, expected[key] as unknown);
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`Knobs differ:\n  expected ${JSON.stringify(expected)}\n  received ${JSON.stringify(actual)}`);
   }
 }

@@ -18,8 +18,13 @@ function profileWithSteps(title: string, steps: EditorStep[]): Profile {
 }
 
 function simplePressureProfile(title = 'Best Practice'): Profile {
-  const knobs = { ...defaultSimpleKnobs('pressure'), preTime: 20, preFlow: 4, mainTarget: 8.6 };
-  return profileWithSteps(title, compileSimpleToSteps(knobs, 'pressure'));
+  const base = defaultSimpleKnobs('pressure');
+  const knobs = {
+    ...base,
+    pre: { ...base.pre, seconds: 20, flow: 4 },
+    hold: { ...base.hold, pressure: 8.6 }
+  };
+  return profileWithSteps(title, compileSimpleToSteps(knobs));
 }
 
 function advancedStep(patch: Partial<EditorStep>): EditorStep {
@@ -49,10 +54,10 @@ run('simple profile: preinfusion_time tweak edits the knob and retitles', () => 
   equal(result.summary, 'Preinfusion time 20s → 30s');
   const state = createProfileEditorState(result.profile);
   const parsed = parseStepsToSimple(state.steps);
-  equal(parsed?.knobs.preTime, 30);
+  equal(parsed?.pre.seconds, 30);
   // The single-parameter promise: nothing else moved.
-  equal(parsed?.knobs.mainTarget, 8.6);
-  equal(parsed?.knobs.preFlow, 4);
+  equal(parsed?.hold.pressure, 8.6);
+  equal(parsed?.pre.flow, 4);
 });
 
 run('simple pressure profile: peak_pressure tweak edits the hold target', () => {
@@ -60,18 +65,25 @@ run('simple pressure profile: peak_pressure tweak edits the hold target', () => 
   if (!result) throw new Error('expected a tweak');
   equal(result.summary, 'Peak pressure 8.6 bar → 7 bar');
   const parsed = parseStepsToSimple(createProfileEditorState(result.profile).steps);
-  equal(parsed?.knobs.mainTarget, 7);
+  equal(parsed?.hold.pressure, 7);
 });
 
 run('simple flow profile: peak_pressure adjusts an existing pressure limiter only', () => {
-  const withLimiter = { ...defaultSimpleKnobs('flow'), limit: 8.4 };
-  const limited = profileWithSteps('Flow', compileSimpleToSteps(withLimiter, 'flow'));
+  const base = defaultSimpleKnobs('flow');
+  const withLimiter = {
+    ...base,
+    hold: { ...base.hold, pressure: 8.4 },
+    decline: { ...base.decline, pressure: 8.4 }
+  };
+  const limited = profileWithSteps('Flow', compileSimpleToSteps(withLimiter));
   const result = applyProfileTweak(limited, suggestion('peak_pressure', 7.5));
   if (!result) throw new Error('expected a tweak');
   const parsed = parseStepsToSimple(createProfileEditorState(result.profile).steps);
-  equal(parsed?.knobs.limit, 7.5);
+  // the cap the hold shares with the decline moves as a pair
+  equal(parsed?.hold.pressure, 7.5);
+  equal(parsed?.decline.pressure, 7.5);
 
-  const uncapped = profileWithSteps('Flow', compileSimpleToSteps(defaultSimpleKnobs('flow'), 'flow'));
+  const uncapped = profileWithSteps('Flow', compileSimpleToSteps(defaultSimpleKnobs('flow')));
   equal(applyProfileTweak(uncapped, suggestion('peak_pressure', 7.5)), null);
 });
 
@@ -120,7 +132,7 @@ run('targets are clamped to machine ranges', () => {
   const result = applyProfileTweak(simplePressureProfile(), suggestion('preinfusion_time', 500));
   if (!result) throw new Error('expected a tweak');
   const parsed = parseStepsToSimple(createProfileEditorState(result.profile).steps);
-  equal(parsed?.knobs.preTime, 60);
+  equal(parsed?.pre.seconds, 60);
 });
 
 run('a no-op tweak produces no variant', () => {

@@ -92,11 +92,16 @@ run('done renders answer and cards with radio semantics and apply', () => {
   if (html.includes('<script')) throw new Error('unescaped html');
 });
 
+function preTimeKnobs(seconds: number) {
+  const base = defaultSimpleKnobs('pressure');
+  return { ...base, pre: { ...base.pre, seconds } };
+}
+
 run('renderTweakPreview draws before/after traces that actually differ', () => {
   const profile = profileFromEditorState({
     ...createProfileEditorState(null),
     title: 'Simple',
-    steps: compileSimpleToSteps({ ...defaultSimpleKnobs('pressure'), preTime: 8 }, 'pressure')
+    steps: compileSimpleToSteps(preTimeKnobs(8))
   });
   const suggestion: DialInSuggestion = {
     kind: 'profile',
