@@ -8153,7 +8153,10 @@ p {
   overflow: hidden;
   border: 0;
   padding: 0;
-  margin: 0;
+  /* `auto` clears the fieldset's UA inline margin *and* keeps .page-body's
+     centring — a flat `margin: 0` left the editor pinned to the left of any
+     window wider than the 1240px column. */
+  margin: 0 auto;
   min-inline-size: 0;
 }
 
