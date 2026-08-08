@@ -12,6 +12,12 @@
   only when its own form is submitted, and moving off a field still saves an
   edit to a coffee you already have. Duplicates already in your list stay until
   you delete them — open the coffee in the picker and use the bin.
+- Kept finished coffees on the two quick-switch tiles beside the current coffee.
+  A coffee whose bags had all run out used to give up its tile, which took it
+  away exactly when you still wanted it — to log the shot you just pulled from
+  the last of it, or to compare against it. Stars and recent shots decide the
+  tiles as before; how much is left in the bag no longer comes into it, and only
+  archiving a coffee takes it off the dock.
 
 ## v0.3.4 - 2026-08-06
 
