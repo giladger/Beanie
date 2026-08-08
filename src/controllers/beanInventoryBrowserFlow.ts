@@ -393,9 +393,17 @@ export class BeanInventoryBrowserFlow {
     };
   }
 
-  async submit(submission: BeanInventoryFormSubmission): Promise<void> {
+  /**
+   * `autosave` marks a submission the DOM adapter volunteered — a blur, or a
+   * click heading somewhere else — rather than one the user asked for by
+   * submitting the form.
+   */
+  async submit(
+    submission: BeanInventoryFormSubmission,
+    options: { readonly autosave?: boolean } = {}
+  ): Promise<void> {
     if (submission.type === 'bean') {
-      await this.submitBean(submission);
+      await this.submitBean(submission, options.autosave === true);
     } else if (submission.type === 'batch') {
       await this.submitBatch(submission);
     } else {
@@ -518,10 +526,17 @@ export class BeanInventoryBrowserFlow {
     });
   }
 
-  private async submitBean(submission: BeanFormSubmission): Promise<void> {
+  private async submitBean(submission: BeanFormSubmission, autosave: boolean): Promise<void> {
     const snapshot = this.host.snapshot();
     if (snapshot.busy || !beanSubmissionIsComplete(submission)) return;
     const editingId = submission.editingId;
+    // A coffee is added only when its own form is submitted. The edit form has
+    // no save button and so depends on the volunteered commit, but a create
+    // form must never be read that way: the render after a successful add
+    // tears that form down, and the blur the tear-down fires still finds it
+    // filled and briefly still connected — which added the same coffee and
+    // its bag a second time.
+    if (!editingId && autosave) return;
     if (!editingId && !this.requireWrite(snapshot.demo)) return;
     this.host.emit({
       type: 'status-changed',
