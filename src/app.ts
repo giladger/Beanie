@@ -6545,8 +6545,7 @@ export class BeanieApp {
       selectedBeanId: selected?.id ?? null,
       favoriteBeanIds: this.state.favoriteBeans,
       recentBeanIds: readRecentBeanIds(),
-      beanUsageAt: this.state.beanUsageAt,
-      batchesByBean: this.state.batchesByBean
+      beanUsageAt: this.state.beanUsageAt
     }).map((bean) => ({
       id: bean.id,
       name: bean.name?.trim() || beanLabel(bean),

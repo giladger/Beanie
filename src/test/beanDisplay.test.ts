@@ -52,19 +52,15 @@ run('rotationBeans excludes the selected bean and fills from selection history',
   equal(result.map((bean) => bean.id).join(','), 'other,recent');
 });
 
-run('rotationBeans drops beans whose known bags are all finished, keeps unknown stock', () => {
+run('rotationBeans keeps beans whose bags are all finished', () => {
+  // A finished bag is still one tap away: you may want to log its last shot or
+  // compare against it, so only archiving removes a bean from the dock.
   const result = rotationBeans(rotation({
     favoriteBeanIds: ['fav-old', 'fav-new'],
-    recentBeanIds: ['recent'],
-    batchesByBean: {
-      // Every known bag finished: the pinned bean leaves its slot.
-      'fav-old': [batch('a', null, 2)],
-      // A live bag keeps the slot; no data at all also keeps it.
-      'fav-new': [batch('b', null, 2), batch('c', null, 180)]
-    }
+    recentBeanIds: ['recent']
   }));
 
-  equal(result.map((bean) => bean.id).join(','), 'fav-new,recent');
+  equal(result.map((bean) => bean.id).join(','), 'fav-old,fav-new');
 });
 
 run('rotationBeans falls back to shot usage when the selection history is empty', () => {
@@ -129,7 +125,6 @@ function rotation(overrides: Partial<RotationInput>): RotationInput {
     favoriteBeanIds: [],
     recentBeanIds: [],
     beanUsageAt: {},
-    batchesByBean: {},
     ...overrides
   };
 }

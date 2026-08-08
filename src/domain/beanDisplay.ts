@@ -117,7 +117,6 @@ export interface RotationInput {
   recentBeanIds: readonly string[];
   /** Last-shot timestamp per bean — the primary recency signal. */
   beanUsageAt: Readonly<Record<string, number>>;
-  batchesByBean: Readonly<Record<string, readonly BeanBatch[]>>;
   limit?: number;
 }
 
@@ -125,8 +124,11 @@ export interface RotationInput {
  * The workbench rotation dock: beans reachable in one tap beside the hero.
  * Starred beans hold slots first (in star order); whatever room is left is
  * filled by most recently used beans. The selected bean is never a tile (it IS
- * the hero), and a bean whose every known bag is finished drops out — beans
- * with no loaded batch data stay in, since absence of data is not empty stock.
+ * the hero).
+ *
+ * Stock is deliberately NOT a filter: a coffee you just finished is the one
+ * you're most likely to reach for (to log the last shot, to compare, to weigh
+ * a fresh bag in), so a finished bag keeps its slot until the bean is archived.
  *
  * Recency decides only WHICH beans fill the free slots, never where they sit:
  * fills display in name order so a slot's position doesn't trade places with
@@ -141,11 +143,6 @@ export function rotationBeans(input: RotationInput): Bean[] {
   const limit = input.limit ?? 2;
   if (limit <= 0) return [];
   const byId = new Map(input.beans.map((bean) => [bean.id, bean]));
-  const hasStock = (id: string): boolean => {
-    const batches = input.batchesByBean[id];
-    if (!batches || batches.length === 0) return true;
-    return batches.some((batch) => !isNearlyEmptyBatch(batch));
-  };
   const usageRecency = [...input.beans]
     .filter((bean) => (input.beanUsageAt[bean.id] ?? 0) > 0)
     .sort((a, b) => (input.beanUsageAt[b.id] ?? 0) - (input.beanUsageAt[a.id] ?? 0))
@@ -161,7 +158,6 @@ export function rotationBeans(input: RotationInput): Bean[] {
     if (id === input.selectedBeanId) continue;
     const bean = byId.get(id);
     if (!bean || bean.archived) continue;
-    if (!hasStock(id)) continue;
     (favorites.has(id) ? pinned : fills).push(bean);
   }
   fills.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
