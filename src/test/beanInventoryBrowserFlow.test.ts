@@ -89,6 +89,58 @@ await run('browser routes an inline bag edit through the inventory facade', asyn
   equal(harness.state.status, 'Batch saved');
 });
 
+// Adding a coffee ends in a render that removes the create form, and the blur
+// that removal fires re-offers the same filled form. Acting on that volunteered
+// commit added the coffee and its bag a second time.
+await run('browser adds a coffee only for its own submit, never a volunteered commit', async () => {
+  const harness = createHarness();
+  const submission = {
+    type: 'bean' as const,
+    editingId: null,
+    prefillBeanId: null,
+    fields: { roaster: 'Friedhats', name: 'Kilimbi' },
+    firstStock: {
+      roastDate: '2026-08-08',
+      roastLevel: null,
+      weight: { present: true, value: 250 },
+      weightRemaining: { present: true, value: 250 }
+    }
+  };
+
+  await harness.flow.submit(submission, { autosave: true });
+  equal(harness.beanCreates.length, 0);
+  equal(harness.batchCreates.length, 0);
+
+  await harness.flow.submit(submission);
+  equal(harness.beanCreates.length, 1);
+  equal(harness.batchCreates.length, 1);
+
+  // The same blur arriving after the save must not add the coffee again.
+  await harness.flow.submit(submission, { autosave: true });
+  equal(harness.beanCreates.length, 1);
+  equal(harness.batchCreates.length, 1);
+});
+
+await run('browser still saves an edited coffee from a volunteered commit', async () => {
+  const harness = createHarness();
+  await harness.flow.submit({
+    type: 'bean',
+    editingId: 'bean-1',
+    prefillBeanId: null,
+    fields: { roaster: 'Friedhats', name: 'Purple Rain', notes: 'Blackcurrant' },
+    firstStock: {
+      roastDate: null,
+      roastLevel: null,
+      weight: { present: false, value: null },
+      weightRemaining: { present: false, value: null }
+    }
+  }, { autosave: true });
+
+  equal(harness.beanUpdates.length, 1);
+  equal(harness.beanUpdates[0]?.id, 'bean-1');
+  equal(harness.state.beans[0]?.notes, 'Blackcurrant');
+});
+
 await run('bean inventory form adapter produces a typed, trimmed bean submission', () => {
   const NativeFormData = globalThis.FormData;
   globalThis.FormData = FakeFormData as unknown as typeof FormData;
@@ -121,6 +173,9 @@ function createHarness(): {
   flow: BeanInventoryBrowserFlow;
   inventoryRequests: Array<{ patch: Partial<BeanBatch> }>;
   selections: Array<{ beanId: string; preferredBatchId: string | null }>;
+  beanCreates: Array<Partial<Bean>>;
+  beanUpdates: Array<{ id: string; fields: Partial<Bean> }>;
+  batchCreates: Array<{ beanId: string }>;
   refreshBeans: number;
   refreshUsage: number;
 } {
@@ -145,11 +200,17 @@ function createHarness(): {
   };
   const inventoryRequests: Array<{ patch: Partial<BeanBatch> }> = [];
   const selections: Array<{ beanId: string; preferredBatchId: string | null }> = [];
+  const beanCreates: Array<Partial<Bean>> = [];
+  const beanUpdates: Array<{ id: string; fields: Partial<Bean> }> = [];
+  const batchCreates: Array<{ beanId: string }> = [];
   const result = {
     state,
     flow: null as unknown as BeanInventoryBrowserFlow,
     inventoryRequests,
     selections,
+    beanCreates,
+    beanUpdates,
+    batchCreates,
     refreshBeans: 0,
     refreshUsage: 0
   };
@@ -174,6 +235,26 @@ function createHarness(): {
     confirmArchiveBean: () => true
   };
   const inventory = {
+    createBatch: async (request: { beanId: string; batch: Partial<BeanBatch> }) => {
+      batchCreates.push({ beanId: request.beanId });
+      const created = {
+        ...request.batch,
+        id: `batch-new-${batchCreates.length}`,
+        beanId: request.beanId
+      } as BeanBatch;
+      return {
+        type: 'created',
+        batch: created,
+        projection: {
+          beanId: request.beanId,
+          batches: [...(state.batchesByBean[request.beanId] ?? []), created],
+          selectedBatchId: created.id,
+          shouldScheduleApply: false
+        },
+        recovered: false,
+        status: 'Stock added'
+      };
+    },
     startBatchUpdate: (request: { patch: Partial<BeanBatch>; beanId: string }) => {
       inventoryRequests.push({ patch: request.patch });
       const current = state.batchesByBean[request.beanId] ?? [];
@@ -198,8 +279,15 @@ function createHarness(): {
     new BeanWorkflowController(),
     inventory,
     {
-      createBean: async () => { throw new Error('unused'); },
-      updateBean: async () => { throw new Error('unused'); },
+      createBean: async (fields) => {
+        beanCreates.push(fields);
+        return { id: `bean-new-${beanCreates.length}`, ...fields } as Bean;
+      },
+      updateBean: async (id, fields) => {
+        beanUpdates.push({ id, fields });
+        const existing = state.beans.find((bean) => bean.id === id);
+        return { ...(existing ?? { id }), ...fields } as Bean;
+      },
       invalidateBeanMutation: async () => {},
       putBeans: async () => {}
     }

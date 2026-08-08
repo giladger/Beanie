@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.3.5 - 2026-08-08
+
+- Fixed a new coffee being added twice. Every coffee you added through the bag
+  form landed in the bean list as two entries, each holding its own copy of the
+  bag — so the duplicate sat there at a full bag while you pulled shots from the
+  other one. The picker saves a coffee form you have moved away from, which is
+  how an edit to a coffee's details gets saved, and adding a coffee ends in a
+  re-render that takes the form off screen: that form, on its way out and still
+  filled in, was read once more and added all over again. A coffee is now added
+  only when its own form is submitted, and moving off a field still saves an
+  edit to a coffee you already have. Duplicates already in your list stay until
+  you delete them — open the coffee in the picker and use the bin.
+
 ## v0.3.4 - 2026-08-06
 
 - Added "Restore original" to the profile editor. Editing one of Decent's

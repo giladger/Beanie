@@ -5665,7 +5665,7 @@ export class BeanieApp {
     if (next && form.contains(next)) return;
     const submission = readBeanInventoryForm(form);
     if (submission?.type !== 'bean' || !beanSubmissionIsComplete(submission)) return;
-    await this.beanInventoryBrowser.submit(submission);
+    await this.beanInventoryBrowser.submit(submission, { autosave: true });
   }
 
   private async commitActiveBeanPickerFormBeforeAction(nextEl: HTMLElement): Promise<void> {
@@ -5677,7 +5677,7 @@ export class BeanieApp {
     if (!form || !form.isConnected || form.contains(nextEl)) return;
     const submission = readBeanInventoryForm(form);
     if (submission?.type !== 'bean' || !beanSubmissionIsComplete(submission)) return;
-    await this.beanInventoryBrowser.submit(submission);
+    await this.beanInventoryBrowser.submit(submission, { autosave: true });
   }
 
   private async onSubmit(event: Event): Promise<void> {
