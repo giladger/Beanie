@@ -3,13 +3,10 @@ import {
   canEditAsBasic,
   compileSimpleToSteps,
   defaultSimpleKnobs,
-  defaultStageTarget,
   parseStepsToSimple,
-  simpleProfileType,
-  SIMPLE_STAGE_IDS,
+  simpleLimitAxis,
+  type NewProfileKind,
   type SimpleKnobs,
-  type SimpleStage,
-  type SimpleStageId,
   type SimpleType
 } from '../domain/simpleProfile';
 import {
@@ -51,14 +48,20 @@ export interface ProfileEditorState extends ProfileModel {
   editorMode: EditorMode;
   /** Sub-tab within the advanced editor (de1app settings_2c / settings_2c2). */
   advancedTab: AdvancedTab;
-  dirty: boolean;
-  /** Outcome of the last save attempt, surfaced as a banner; null when none. */
   /**
-   * Banner above the editor. `error`/`success` report a save; `info` reports a
-   * change made to the editor that still needs saving, so unlike `success` it
-   * survives the editor being dirty — that is the whole point of it.
+   * Whether the profile differs from the one the editor was opened on — a
+   * comparison, not a record of having been touched, so nudging a value up and
+   * back down leaves nothing to save.
    */
-  saveNotice: { tone: 'error' | 'success' | 'info'; message: string } | null;
+  dirty: boolean;
+  /** Signature of the profile as opened (or as last saved). See `touched`. */
+  baseline: string;
+  /**
+   * Why the last save was refused, shown as a banner above the editor; null when
+   * there is nothing to explain. Only failures get one — a save that worked is
+   * reported by the Save button, and anything else the editor can simply show.
+   */
+  saveError: string | null;
 }
 
 const META_NUMBER_KEYS: ProfileMetaKey[] = [
@@ -92,16 +95,115 @@ const STEP_FIELD_LIMITS: Record<NumericStepField, { min: number; max: number }> 
   limiter_range: { min: FIELD_SPECS.limiterRange.min, max: FIELD_SPECS.limiterRange.max }
 };
 
-export function createProfileEditorState(profile: Profile | null): ProfileEditorState {
-  const model = decodeProfile(profile);
+function newProfileModel(kind: NewProfileKind): ProfileModel {
+  const model = decodeProfile(null);
+  if (kind === 'advanced') return model;
+  return {
+    ...model,
+    type: kind,
+    legacyProfileType: legacyProfileTypeFromType(kind),
+    steps: compileSimpleToSteps(defaultSimpleKnobs(kind))
+  };
+}
+
+/**
+ * Open a profile in the editor. Which surface it gets is the profile's own
+ * property, read off its steps and fixed for the session: a canonical
+ * three-stage shape is a simple profile and opens in the simple editor,
+ * anything else is an advanced one. There is no toggle — see `profileKindLabel`
+ * for why the kind can't simply be stored and trusted.
+ */
+/**
+ * Everything about a profile that a save would write: its identity, its limits
+ * and how it pours. Deliberately not `selectedStep`, the open tab or which
+ * surface is showing — looking at a different step is not an edit.
+ *
+ * Built field by field rather than by stringifying the model, so two states that
+ * describe the same profile compare equal whatever order their keys ended up in.
+ */
+function profileEditorSignature(model: ProfileModel): string {
+  return JSON.stringify({
+    title: model.title,
+    author: model.author,
+    notes: model.notes,
+    beverageType: model.beverageType,
+    type: model.type,
+    legacyProfileType: model.legacyProfileType,
+    tankTemperature: model.tankTemperature,
+    targetWeight: model.targetWeight,
+    targetVolume: model.targetVolume,
+    targetVolumeCountStart: model.targetVolumeCountStart,
+    steps: model.steps.map((step) => ({
+      name: step.name,
+      temperature: step.temperature,
+      sensor: step.sensor,
+      pump: step.pump,
+      pressure: step.pressure,
+      flow: step.flow,
+      transition: step.transition,
+      seconds: step.seconds,
+      volume: step.volume,
+      weight: step.weight,
+      exit: step.exit
+        ? { type: step.exit.type, condition: step.exit.condition, value: step.exit.value }
+        : null,
+      limiter: step.limiter ? { value: step.limiter.value, range: step.limiter.range } : null,
+      extra: Object.keys(step.extra).sort().map((key) => [key, step.extra[key]])
+    }))
+  });
+}
+
+/**
+ * Stamp a changed editor state with whether it still matches what was opened.
+ * Every reducer returns through here, so none of them can decide on its own that
+ * an edit happened — the numbers decide.
+ */
+function touched(next: ProfileEditorState): ProfileEditorState {
+  return { ...next, dirty: profileEditorSignature(next) !== next.baseline };
+}
+
+/**
+ * Measure edits from the profile as it stands now rather than as it was built.
+ * Needed wherever the editor is adjusted after it is created — the title a new
+ * profile is given to keep it distinct is set that way, and without this the
+ * state would sit there differing from its own baseline while reading clean.
+ */
+export function rebaseProfileEditor(state: ProfileEditorState): ProfileEditorState {
+  return { ...state, baseline: profileEditorSignature(state), dirty: false };
+}
+
+export function createProfileEditorState(
+  profile: Profile | null,
+  newProfileKind: NewProfileKind = 'pressure'
+): ProfileEditorState {
+  const model = profile ? decodeProfile(profile) : newProfileModel(newProfileKind);
   return {
     ...model,
     selectedStep: 0,
-    editorMode: profile != null && canEditAsBasic(model.steps) ? 'basic' : 'advanced',
+    editorMode: canEditAsBasic(model.steps) ? 'basic' : 'advanced',
     advancedTab: 'steps',
     dirty: false,
-    saveNotice: null
+    baseline: profileEditorSignature(model),
+    saveError: null
   };
+}
+
+/**
+ * Which kind of profile this is, for the editor header.
+ *
+ * A profile's kind is not stored anywhere: reaprime's `Profile` model has no
+ * `type` field at all — `fromJson` drops one if we send it and `toJson` never
+ * emits one — so the kind is read back off the steps every time (see
+ * domain/simpleProfile.ts). That is the sturdier arrangement anyway: a stored
+ * kind could be left lying by another client's step edits, while the steps can
+ * only ever describe themselves.
+ */
+export function profileKindLabel(state: ProfileEditorState): string {
+  if (state.editorMode === 'advanced') return 'Advanced profile';
+  // In the simple editor the steps are known to parse, so the knobs' own axis is
+  // the profile's kind — a surer source than `state.type`, which starts life
+  // inferred from a profile JSON that carries no type at all.
+  return simpleKnobsOf(state).type === 'flow' ? 'Flow profile' : 'Pressure profile';
 }
 
 export function setProfileMeta(
@@ -119,15 +221,7 @@ export function setProfileMeta(
           : key === 'target_volume'
             ? { targetVolume: parsed }
             : { targetVolumeCountStart: parsed };
-    return { ...state, ...next, dirty: true };
-  }
-
-  // Choosing a simple type compiles that template (preserving knobs where the
-  // current steps already parse) and switches to the basic editor; "advanced"
-  // keeps the steps and switches to the advanced editor.
-  if (key === 'type') {
-    if (value === 'pressure' || value === 'flow') return setSimpleProfileType(state, value);
-    return { ...state, type: 'advanced', legacyProfileType: 'settings_2c', editorMode: 'advanced', dirty: true };
+    return touched({ ...state, ...next });
   }
 
   const next: Partial<ProfileEditorState> =
@@ -140,7 +234,7 @@ export function setProfileMeta(
           : key === 'beverage_type'
             ? { beverageType: value }
             : { legacyProfileType: value, type: profileTypeFromLegacy(value) };
-  return { ...state, ...next, dirty: true };
+  return touched({ ...state, ...next });
 }
 
 export function setStepField(
@@ -153,8 +247,14 @@ export function setStepField(
     switch (key) {
       case 'name':
         return { ...step, name: value };
-      case 'popup':
-        return { ...step, extra: { ...step.extra, popup: value } };
+      case 'popup': {
+        // Clearing the message drops the key rather than storing an empty one,
+        // so typing something and taking it out again leaves nothing behind.
+        const extra = { ...step.extra };
+        if (value) extra.popup = value;
+        else delete extra.popup;
+        return { ...step, extra };
+      }
       case 'sensor':
         return { ...step, sensor: value === 'water' ? 'water' : 'coffee' };
       case 'temperature':
@@ -211,46 +311,24 @@ export function nudgeStepField(
 }
 
 /**
- * Basic-editor field keys. Every stage exposes the same four knobs (time, flow,
- * pressure, temperature) so all three are visible on every stage; `pre_until`
- * is preinfusion's pressure exit and `stop_volume` is the profile-level stop.
+ * Basic-editor field keys. A simple profile chases one axis, so its two main
+ * stages expose a single `target` rather than a flow and a pressure; `limit` is
+ * the one profile-level cap on the other axis, `pre_until` is preinfusion's
+ * pressure exit, and `stop_volume` is the profile-level stop.
  */
 export type SimpleProfileField =
   | 'pre_time'
   | 'pre_flow'
-  | 'pre_pressure'
   | 'pre_temp'
   | 'pre_until'
   | 'hold_time'
-  | 'hold_flow'
-  | 'hold_pressure'
+  | 'hold_target'
   | 'hold_temp'
   | 'decline_time'
-  | 'decline_flow'
-  | 'decline_pressure'
+  | 'decline_target'
   | 'decline_temp'
+  | 'limit'
   | 'stop_volume';
-
-type StageProp = 'seconds' | 'flow' | 'pressure' | 'temperature';
-
-const STAGE_PROP_BY_SUFFIX: Record<string, StageProp> = {
-  time: 'seconds',
-  flow: 'flow',
-  pressure: 'pressure',
-  temp: 'temperature'
-};
-
-/** Split `hold_pressure` into the stage it edits and the property it sets. */
-function splitSimpleField(
-  key: SimpleProfileField
-): { stage: SimpleStageId; prop: StageProp } | null {
-  const at = key.indexOf('_');
-  if (at < 0) return null;
-  const stage = key.slice(0, at);
-  const prop = STAGE_PROP_BY_SUFFIX[key.slice(at + 1)];
-  if (!prop || !SIMPLE_STAGE_IDS.includes(stage as SimpleStageId)) return null;
-  return { stage: stage as SimpleStageId, prop };
-}
 
 function simpleStateType(state: ProfileEditorState): SimpleType {
   return state.type === 'flow' ? 'flow' : 'pressure';
@@ -263,18 +341,16 @@ function simpleKnobsOf(state: ProfileEditorState): SimpleKnobs {
 /**
  * Recompile the steps from knobs. Simple edits never poke at individual steps:
  * they read the current knobs out of the steps, change one, and recompile — so
- * the steps stay canonical and the basic⇄advanced guard keeps holding (see
- * domain/simpleProfile.ts). The profile kind follows the stages' pumps.
+ * the steps stay canonical and the guard that decides which editor a profile
+ * opens in keeps holding (see domain/simpleProfile.ts).
  */
 function withSimpleKnobs(state: ProfileEditorState, knobs: SimpleKnobs): ProfileEditorState {
-  const type = simpleProfileType(knobs);
-  return {
+  return touched({
     ...state,
-    type,
-    legacyProfileType: legacyProfileTypeFromType(type),
-    steps: compileSimpleToSteps(knobs),
-    dirty: true
-  };
+    type: knobs.type,
+    legacyProfileType: legacyProfileTypeFromType(knobs.type),
+    steps: compileSimpleToSteps(knobs)
+  });
 }
 
 export function setSimpleProfileField(
@@ -284,16 +360,26 @@ export function setSimpleProfileField(
 ): ProfileEditorState {
   const parsedValue = parseNumber(value) ?? 0;
   if (key === 'stop_volume') {
-    return { ...state, targetVolume: parsedValue, dirty: true };
+    return touched({ ...state, targetVolume: parsedValue });
   }
   const knobs = simpleKnobsOf(state);
-  if (key === 'pre_until') {
-    return withSimpleKnobs(state, { ...knobs, preExitPressure: parsedValue });
+  switch (key) {
+    case 'pre_until':
+      return withSimpleKnobs(state, { ...knobs, preExitPressure: parsedValue });
+    case 'limit':
+      return withSimpleKnobs(state, { ...knobs, limit: parsedValue });
+    case 'pre_time':
+      return withSimpleKnobs(state, { ...knobs, pre: { ...knobs.pre, seconds: parsedValue } });
+    case 'pre_flow':
+      return withSimpleKnobs(state, { ...knobs, pre: { ...knobs.pre, flow: parsedValue } });
+    case 'pre_temp':
+      return withSimpleKnobs(state, { ...knobs, pre: { ...knobs.pre, temperature: parsedValue } });
+    default: {
+      const stage = key.startsWith('hold_') ? 'hold' : 'decline';
+      const prop = key.endsWith('_time') ? 'seconds' : key.endsWith('_temp') ? 'temperature' : 'target';
+      return withSimpleKnobs(state, { ...knobs, [stage]: { ...knobs[stage], [prop]: parsedValue } });
+    }
   }
-  const field = splitSimpleField(key);
-  if (!field) return state;
-  const stage = { ...knobs[field.stage], [field.prop]: parsedValue };
-  return withSimpleKnobs(state, { ...knobs, [field.stage]: stage });
 }
 
 export function nudgeSimpleProfileField(
@@ -303,68 +389,51 @@ export function nudgeSimpleProfileField(
 ): ProfileEditorState {
   const current = simpleFieldValue(state, key);
   if (current == null) return state;
-  const { min, max } = simpleFieldLimits(key);
+  const { min, max } = simpleFieldLimits(key, simpleKnobsOf(state).type);
   return setSimpleProfileField(state, key, String(clampNumber(current + delta, min, max)));
 }
 
 function simpleFieldValue(state: ProfileEditorState, key: SimpleProfileField): number | null {
   if (key === 'stop_volume') return state.targetVolume ?? 0;
   const knobs = simpleKnobsOf(state);
-  if (key === 'pre_until') return knobs.preExitPressure;
-  const field = splitSimpleField(key);
-  return field ? knobs[field.stage][field.prop] : null;
-}
-
-/**
- * Switch which axis a stage's pump follows. Both numbers stay put — only their
- * roles swap, so the old target becomes the stage's cap and toggling back
- * restores exactly what was there. A target that would land on 0 is seeded with
- * the stage's canonical default rather than leaving a dead stage behind.
- */
-export function setSimpleStagePump(
-  state: ProfileEditorState,
-  stageId: SimpleStageId,
-  pump: SimpleType
-): ProfileEditorState {
-  const knobs = simpleKnobsOf(state);
-  const current = knobs[stageId];
-  if (current.pump === pump) return state;
-  const stage = { ...current, pump };
-  if (pump === 'pressure' && stage.pressure <= 0) stage.pressure = defaultStageTarget(stageId, 'pressure');
-  if (pump === 'flow' && stage.flow <= 0) stage.flow = defaultStageTarget(stageId, 'flow');
-  return withSimpleKnobs(state, { ...knobs, [stageId]: stage });
+  switch (key) {
+    case 'pre_until':
+      return knobs.preExitPressure;
+    case 'limit':
+      return knobs.limit;
+    case 'pre_time':
+      return knobs.pre.seconds;
+    case 'pre_flow':
+      return knobs.pre.flow;
+    case 'pre_temp':
+      return knobs.pre.temperature;
+    default: {
+      const stage = key.startsWith('hold_') ? knobs.hold : knobs.decline;
+      if (key.endsWith('_time')) return stage.seconds;
+      if (key.endsWith('_temp')) return stage.temperature;
+      return stage.target;
+    }
+  }
 }
 
 /**
  * Dialog/nudge bounds for the basic editor. Pressure and flow keep their own
- * scale whichever role they are playing, so a cap can't be nudged past what the
- * machine can deliver. Shared by renderSimpleRow (data-min/data-max) and nudges.
+ * scale — 0–12 bar, 0–8 ml/s — so which bound a target or the cap gets depends
+ * on the profile's axis. Shared by renderSimpleRow (data-min/data-max) and nudges.
  */
-function simpleFieldLimits(key: SimpleProfileField): { min: number; max: number } {
+function simpleFieldLimits(
+  key: SimpleProfileField,
+  type: SimpleType
+): { min: number; max: number } {
+  const axisLimits = (axis: SimpleType) =>
+    axis === 'flow' ? { min: 0, max: 8 } : { min: 0, max: 12 };
   if (key === 'stop_volume') return { min: 0, max: 100 };
-  if (key === 'pre_until') return { min: 0, max: 12 };
-  const field = splitSimpleField(key);
-  switch (field?.prop) {
-    case 'seconds':
-      return { min: 0, max: 60 };
-    case 'flow':
-      return { min: 0, max: 8 };
-    case 'temperature':
-      return { min: 1, max: 105 };
-    default:
-      return { min: 0, max: 12 };
-  }
-}
-
-/** Switch the editor surface. Basic is refused unless the steps pass the guard. */
-export function setEditorMode(state: ProfileEditorState, mode: EditorMode): ProfileEditorState {
-  // Switching to Basic when the steps aren't already a canonical simple shape
-  // (a brand-new profile, or any advanced profile) compiles a simple template —
-  // keeping the knobs where the steps already parse, else sensible defaults.
-  if (mode === 'basic' && !canEditAsBasic(state.steps)) {
-    return setSimpleProfileType(state, simpleStateType(state));
-  }
-  return { ...state, editorMode: mode };
+  if (key === 'pre_until') return axisLimits('pressure');
+  if (key === 'pre_flow') return axisLimits('flow');
+  if (key === 'limit') return axisLimits(simpleLimitAxis(type));
+  if (key.endsWith('_time')) return { min: 0, max: 60 };
+  if (key.endsWith('_temp')) return { min: 1, max: 105 };
+  return axisLimits(type);
 }
 
 /** Switch the Steps/Limits sub-tab in the advanced editor. */
@@ -378,34 +447,12 @@ export function setAllLimiterRanges(state: ProfileEditorState, range: number): P
   const steps = state.steps.map((step) =>
     step.limiter ? { ...step, limiter: { ...step.limiter, range: clamped } } : step
   );
-  return { ...state, steps, dirty: true };
+  return touched({ ...state, steps });
 }
 
 export function currentLimiterRange(state: ProfileEditorState): number {
   return state.steps.find((step) => step.limiter && step.limiter.value > 0)?.limiter?.range
     ?? FIELD_SPECS.limiterRange.default;
-}
-
-/**
- * Set the simple profile kind (pressure/flow) and open the basic editor. Only
- * the two main stages take the kind — preinfusion stays flow-pumped, the way
- * de1app's own simple pressure profile (settings_2a) preinfuses.
- */
-export function setSimpleProfileType(state: ProfileEditorState, type: SimpleType): ProfileEditorState {
-  const knobs = simpleKnobsOf(state);
-  const retarget = (stage: SimpleStage, id: SimpleStageId): SimpleStage => {
-    if (stage.pump === type) return stage;
-    const next = { ...stage, pump: type };
-    if (type === 'pressure' && next.pressure <= 0) next.pressure = defaultStageTarget(id, 'pressure');
-    if (type === 'flow' && next.flow <= 0) next.flow = defaultStageTarget(id, 'flow');
-    return next;
-  };
-  const next = withSimpleKnobs(state, {
-    ...knobs,
-    hold: retarget(knobs.hold, 'hold'),
-    decline: retarget(knobs.decline, 'decline')
-  });
-  return { ...next, selectedStep: 0, editorMode: 'basic' };
 }
 
 export function setStepPump(state: ProfileEditorState, index: number, pump: StepPump): ProfileEditorState {
@@ -451,7 +498,7 @@ export function duplicateStep(state: ProfileEditorState, index: number): Profile
     extra: { ...original.extra }
   };
   const steps = [...state.steps.slice(0, index + 1), copy, ...state.steps.slice(index + 1)];
-  return { ...state, steps, selectedStep: index + 1, dirty: true };
+  return touched({ ...state, steps, selectedStep: index + 1 });
 }
 
 export function addStep(state: ProfileEditorState): ProfileEditorState {
@@ -468,7 +515,7 @@ export function addStep(state: ProfileEditorState): ProfileEditorState {
     : defaultProfileStep();
   const insertAt = clamp(state.selectedStep + 1, 0, state.steps.length);
   const steps = [...state.steps.slice(0, insertAt), step, ...state.steps.slice(insertAt)];
-  return { ...state, steps, selectedStep: insertAt, dirty: true };
+  return touched({ ...state, steps, selectedStep: insertAt });
 }
 
 export function removeStep(state: ProfileEditorState, index: number): ProfileEditorState {
@@ -476,7 +523,7 @@ export function removeStep(state: ProfileEditorState, index: number): ProfileEdi
   if (state.steps.length <= 1) return state;
   const steps = state.steps.filter((_, i) => i !== index);
   const selectedStep = clamp(state.selectedStep > index ? state.selectedStep - 1 : state.selectedStep, 0, steps.length - 1);
-  return { ...state, steps, selectedStep, dirty: true };
+  return touched({ ...state, steps, selectedStep });
 }
 
 export function moveStep(state: ProfileEditorState, index: number, dir: -1 | 1): ProfileEditorState {
@@ -488,7 +535,7 @@ export function moveStep(state: ProfileEditorState, index: number, dir: -1 | 1):
   steps[index] = steps[target];
   steps[target] = moved;
   const selectedStep = state.selectedStep === index ? target : state.selectedStep === target ? index : state.selectedStep;
-  return { ...state, steps, selectedStep, dirty: true };
+  return touched({ ...state, steps, selectedStep });
 }
 
 export function selectStep(state: ProfileEditorState, index: number): ProfileEditorState {
@@ -500,65 +547,20 @@ export function profileFromEditorState(state: ProfileEditorState): Profile {
   return encodeProfile(state);
 }
 
-/**
- * Put the brewing settings back to `original` — the profile this one was saved
- * from. Only how it pours is restored (steps plus the Limits-tab stops); the
- * profile keeps its own name, author, notes and beverage, so restoring the
- * settings never renames someone's profile out from under them.
- *
- * The editor is left dirty rather than written back, so the restore is visible
- * on the chart and still has to be saved — or walked away from.
- */
-export function restoreProfileSettings(
-  state: ProfileEditorState,
-  original: Profile
-): ProfileEditorState {
-  const model = decodeProfile(original);
-  return {
-    ...state,
-    steps: model.steps,
-    type: model.type,
-    legacyProfileType: model.legacyProfileType,
-    tankTemperature: model.tankTemperature,
-    targetWeight: model.targetWeight,
-    targetVolume: model.targetVolume,
-    targetVolumeCountStart: model.targetVolumeCountStart,
-    selectedStep: 0,
-    // Basic mode edits by recompiling knobs, so leaving it open on steps it
-    // can't express would let the next nudge overwrite what we just restored.
-    editorMode: state.editorMode === 'basic' && !canEditAsBasic(model.steps)
-      ? 'advanced'
-      : state.editorMode,
-    dirty: true,
-    saveNotice: { tone: 'info', message: 'Original settings restored — Save to keep them' }
-  };
-}
-
-function renderSaveNotice(state: ProfileEditorState): string {
-  const notice = state.saveNotice;
-  if (!notice) return '';
-  // A success banner is stale the moment the user edits again, so hide it once
-  // the editor is dirty; errors (validation, save failure, duplicate) persist
-  // until they're resolved.
-  if (notice.tone === 'success' && state.dirty) return '';
-  if (notice.tone === 'success' || notice.tone === 'info') {
-    return `
-    <div class="pe-save-notice ${notice.tone}" role="status">
-      <strong>${escapeHtml(notice.message)}</strong>
-    </div>`;
-  }
+function renderSaveError(state: ProfileEditorState): string {
+  if (!state.saveError) return '';
   return `
     <div class="pe-save-notice error" role="alert">
       <strong>Couldn't save profile</strong>
-      <span>${escapeHtml(notice.message)}</span>
+      <span>${escapeHtml(state.saveError)}</span>
     </div>`;
 }
 
 export function renderProfileEditor(state: ProfileEditorState): string {
-  if (state.editorMode === 'basic') return `${renderSaveNotice(state)}${renderSimpleProfileEditor(state)}`;
+  if (state.editorMode === 'basic') return `${renderSaveError(state)}${renderSimpleProfileEditor(state)}`;
   return `
     <div class="profile-editor">
-      ${renderSaveNotice(state)}
+      ${renderSaveError(state)}
       ${renderIdentityMeta(state)}
       ${renderAdvancedTabs(state)}
       ${state.advancedTab === 'limits'
@@ -574,14 +576,9 @@ export function renderProfileEditor(state: ProfileEditorState): string {
   `;
 }
 
-export function renderEditorModeBar(state: ProfileEditorState, disabled = false): string {
-  const disabledAttr = disabled ? ' disabled' : '';
-  return `
-    <div class="pe-mode-bar" role="group" aria-label="Editor mode">
-      <button type="button" class="pe-mode-btn ${state.editorMode === 'basic' ? 'active' : ''}" data-action="pe-set-mode" data-value="basic"${disabledAttr}>Basic</button>
-      <button type="button" class="pe-mode-btn ${state.editorMode === 'advanced' ? 'active' : ''}" data-action="pe-set-mode" data-value="advanced"${disabledAttr}>Advanced</button>
-    </div>
-  `;
+/** The header's read-only "what this profile is" tag, where the toggle used to be. */
+export function renderEditorKindTag(state: ProfileEditorState): string {
+  return `<span class="pe-kind-tag">${escapeHtml(profileKindLabel(state))}</span>`;
 }
 
 function renderSimpleProfileEditor(state: ProfileEditorState): string {
@@ -591,9 +588,9 @@ function renderSimpleProfileEditor(state: ProfileEditorState): string {
       ${renderIdentityMeta(state)}
       <div class="pe-simple-chart">${renderDe1ExplanationChart(state)}</div>
       <div class="pe-simple-stages">
-        ${renderSimpleStage('pre', '1 · Preinfuse', knobs.pre, knobs.preExitPressure)}
-        ${renderSimpleStage('hold', `2 · ${knobs.hold.pump === 'flow' ? 'Hold' : 'Rise &amp; hold'}`, knobs.hold)}
-        ${renderSimpleStage('decline', '3 · Decline', knobs.decline)}
+        ${renderPreinfuseStage(knobs)}
+        ${renderMainStage(knobs, 'hold', `2 · ${knobs.type === 'flow' ? 'Hold' : 'Rise &amp; hold'}`)}
+        ${renderMainStage(knobs, 'decline', '3 · Decline')}
         ${renderFinishStage(state)}
       </div>
     </div>
@@ -601,34 +598,70 @@ function renderSimpleProfileEditor(state: ProfileEditorState): string {
 }
 
 /**
- * One stage column: the Insight-style read-out where flow, pressure and
- * temperature are all on screen for every stage. The pump toggle picks which of
- * flow/pressure the machine chases — the other one relabels to "… limit" and
- * reads "off" at 0, so the same two rows cover both roles.
+ * Preinfusion is the same on both de1app simple pages: flow-pumped, for a time,
+ * until pressure rises past a threshold. It carries no target on the profile's
+ * axis and no cap.
  */
-function renderSimpleStage(
-  id: SimpleStageId,
-  title: string,
-  stage: SimpleStage,
-  exitPressure?: number
-): string {
-  const isFlow = stage.pump === 'flow';
-  const pressureLabel = isFlow ? 'pressure limit' : id === 'decline' ? 'pressure end' : 'pressure';
-  const flowLabel = isFlow ? (id === 'decline' ? 'flow end' : 'flow') : 'flow limit';
+function renderPreinfuseStage(knobs: SimpleKnobs): string {
+  return `
+    <section class="pe-stage-col">
+      <header class="pe-stage-head">
+        <span class="pe-ctl-group-title">1 · Preinfuse</span>
+      </header>
+      <div class="pe-row-grid">
+        ${renderSimpleRow('pre_time', 'time', knobs.pre.seconds, 's', 1, 'timer', 'time', knobs.type)}
+        ${renderSimpleRow('pre_flow', 'flow', knobs.pre.flow, 'ml/s', 0.1, 'droplets', 'flow', knobs.type, { target: true })}
+        ${renderSimpleRow('pre_until', 'until pressure', knobs.preExitPressure, 'bar', 0.1, 'arrow-up-to-line', 'pressure', knobs.type)}
+        ${renderSimpleRow('pre_temp', 'temperature', knobs.pre.temperature, '°C', 0.5, 'thermometer', 'temp', knobs.type)}
+      </div>
+    </section>
+  `;
+}
+
+/**
+ * Hold and decline chase the profile's own axis — pressure on a pressure
+ * profile, flow on a flow one, never a choice per stage. The single cap on the
+ * other axis rides on the hold stage, where de1app puts "Limit flow".
+ */
+function renderMainStage(knobs: SimpleKnobs, id: 'hold' | 'decline', title: string): string {
+  const stage = knobs[id];
+  const isFlow = knobs.type === 'flow';
+  const targetLabel = isFlow
+    ? (id === 'decline' ? 'flow end' : 'flow')
+    : (id === 'decline' ? 'pressure end' : 'pressure');
+  const capAxis = simpleLimitAxis(knobs.type);
   return `
     <section class="pe-stage-col">
       <header class="pe-stage-head">
         <span class="pe-ctl-group-title">${title}</span>
-        ${renderStagePumpToggle(id, stage.pump)}
       </header>
       <div class="pe-row-grid">
-        ${renderSimpleRow(`${id}_time` as SimpleProfileField, 'time', stage.seconds, 's', 1, 'timer', 'time')}
-        ${renderSimpleRow(`${id}_flow` as SimpleProfileField, flowLabel, stage.flow, 'ml/s', 0.1, 'droplets', 'flow', { target: isFlow })}
-        ${renderSimpleRow(`${id}_pressure` as SimpleProfileField, pressureLabel, stage.pressure, 'bar', 0.1, 'gauge', 'pressure', { target: !isFlow })}
-        ${exitPressure == null
-          ? ''
-          : renderSimpleRow('pre_until', 'until pressure', exitPressure, 'bar', 0.1, 'arrow-up-to-line', 'pressure')}
-        ${renderSimpleRow(`${id}_temp` as SimpleProfileField, 'temperature', stage.temperature, '°C', 0.5, 'thermometer', 'temp')}
+        ${renderSimpleRow(`${id}_time` as SimpleProfileField, 'time', stage.seconds, 's', 1, 'timer', 'time', knobs.type)}
+        ${renderSimpleRow(
+          `${id}_target` as SimpleProfileField,
+          targetLabel,
+          stage.target,
+          isFlow ? 'ml/s' : 'bar',
+          0.1,
+          isFlow ? 'droplets' : 'gauge',
+          isFlow ? 'flow' : 'pressure',
+          knobs.type,
+          { target: true }
+        )}
+        ${id === 'hold'
+          ? renderSimpleRow(
+              'limit',
+              capAxis === 'flow' ? 'limit flow' : 'limit pressure',
+              knobs.limit,
+              capAxis === 'flow' ? 'ml/s' : 'bar',
+              0.1,
+              capAxis === 'flow' ? 'droplets' : 'gauge',
+              capAxis,
+              knobs.type,
+              { offWhenZero: true }
+            )
+          : ''}
+        ${renderSimpleRow(`${id}_temp` as SimpleProfileField, 'temperature', stage.temperature, '°C', 0.5, 'thermometer', 'temp', knobs.type)}
       </div>
     </section>
   `;
@@ -641,19 +674,9 @@ function renderFinishStage(state: ProfileEditorState): string {
         <span class="pe-ctl-group-title">4 · Finish</span>
       </header>
       <div class="pe-row-grid">
-        ${renderSimpleRow('stop_volume', 'stop at volume', state.targetVolume ?? 0, 'ml', 1, 'beaker', 'flow', { offWhenZero: true })}
+        ${renderSimpleRow('stop_volume', 'stop at volume', state.targetVolume ?? 0, 'ml', 1, 'beaker', 'flow', simpleStateType(state), { offWhenZero: true })}
       </div>
     </section>
-  `;
-}
-
-function renderStagePumpToggle(id: SimpleStageId, pump: SimpleType): string {
-  const button = (value: SimpleType, label: string) => `
-    <button type="button" class="pe-pump-btn ${pump === value ? 'active' : ''}" data-action="pe-simple-pump" data-stage="${id}" data-value="${value}">${label}</button>`;
-  return `
-    <div class="pe-pump-bar" role="group" aria-label="What the pump follows">
-      ${button('flow', 'Flow')}${button('pressure', 'Pressure')}
-    </div>
   `;
 }
 
@@ -670,13 +693,13 @@ function renderSimpleRow(
   step: number,
   iconName: string,
   tone: 'time' | 'flow' | 'pressure' | 'temp',
+  type: SimpleType,
   options: { target?: boolean; offWhenZero?: boolean } = {}
 ): string {
-  const { min, max } = simpleFieldLimits(key);
+  const { min, max } = simpleFieldLimits(key, type);
   const formatted = formatNumber(value);
-  // A cap reads "off" at zero; a target always shows its number.
-  const isCap = options.target === false;
-  const display = (options.offWhenZero || isCap) && value <= 0
+  // An optional value reads "off" at zero; everything else shows its number.
+  const display = options.offWhenZero && value <= 0
     ? '<span class="pe-ctl-off">off</span>'
     : `${escapeHtml(formatted)}${unit ? `<em>${escapeHtml(unit)}</em>` : ''}`;
   return `
@@ -923,9 +946,15 @@ function renderExitSlider(
   const iconName = type === 'pressure'
     ? (condition === 'over' ? 'arrow-up-to-line' : 'arrow-down-to-line')
     : 'droplets';
+  // The lit tile's face turns the condition back off. A step carries at most one
+  // exit, so without this there is no way to remove one once set — and 0 is no
+  // escape either, since "pressure over 0" fires the moment the step starts.
+  const faceAttrs = active
+    ? `data-action="pe-step-exit-clear" data-index="${index}" aria-label="${escapeAttr(`turn off ${label}`)}"`
+    : `data-action="pe-step-exit-preset" data-index="${index}" data-type="${type}" data-condition="${condition}" data-value="${escapeAttr(formatNumber(value || defaultExitValue(type, condition)))}" aria-label="${escapeAttr(label)}"`;
   return `
     <div class="pe-ctl exit ${active ? 'active' : ''}">
-      <button type="button" class="pe-ctl-face" data-action="pe-step-exit-preset" data-index="${index}" data-type="${type}" data-condition="${condition}" data-value="${escapeAttr(formatNumber(value || defaultExitValue(type, condition)))}" aria-label="${escapeAttr(label)}">${icon(iconName)}</button>
+      <button type="button" class="pe-ctl-face" ${faceAttrs}>${icon(iconName)}</button>
       <span class="pe-ctl-label">${escapeHtml(type)} <em>${escapeHtml(condition)}</em></span>
       <div class="pe-ctl-stepper">
         <button type="button" class="pe-ctl-step" data-action="pe-step-exit-nudge" data-index="${index}" data-type="${type}" data-condition="${condition}" data-delta="-0.1" aria-label="decrease ${escapeAttr(label)}">${icon('minus')}</button>
@@ -1053,7 +1082,7 @@ function updateStep(
 ): ProfileEditorState {
   if (index < 0 || index >= state.steps.length) return state;
   const steps = state.steps.map((step, i) => (i === index ? fn(step) : step));
-  return { ...state, steps, dirty: true };
+  return touched({ ...state, steps });
 }
 
 function setStepLimiterValue(step: EditorStep, value: number): EditorStep {

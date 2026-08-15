@@ -211,10 +211,13 @@ import {
   type BeanInventoryBrowserEvent
 } from './controllers/beanInventoryBrowserProjection';
 import {
-  originalProfileId,
+  isSupersededOriginal,
   selectProfileForDraft,
+  supersededOriginalId,
   toggleFavoriteProfile
 } from './controllers/profileEditorController';
+import { carryProfileFavorite, type ProfileIdentityMove } from './domain/profileIdentity';
+import { escapeAttr } from './components/html';
 import {
   LiveShotCompletionFlow,
   type LiveShotCompletionEvent
@@ -277,7 +280,7 @@ import {
 import { SettingsAccountPluginFlow } from './controllers/settingsAccountPluginFlow';
 import {
   createProfileEditorState,
-  renderEditorModeBar,
+  renderEditorKindTag,
   renderProfileEditor,
   setAllLimiterRanges,
   setProfileMeta,
@@ -369,6 +372,8 @@ import {
   renderGrinderEditorPage as renderGrinderEditorPageView,
   renderMachineLabelModal as renderMachineLabelModalView,
   renderImportProfileModal as renderImportProfileModalView,
+  renderNewProfileKindModal as renderNewProfileKindModalView,
+  renderRestoreOriginalModal as renderRestoreOriginalModalView,
   renderProfileNotesModal as renderProfileNotesModalView
 } from './views/formsView';
 import {
@@ -1482,6 +1487,8 @@ export class BeanieApp {
   private shotStagesChartProfile: Profile | null = null;
   // One-shot: focus the notes textarea on the render right after the modal opens.
   private pendingNotesFocus = false;
+  /** Which step the advanced editor's list was last scrolled to. */
+  private revealedProfileStep: number | null = null;
   private detailChartShotId: string | null = null;
   private detailChartCompareShotId: string | null = null;
   private simTimer: number | null = null;
@@ -1862,7 +1869,8 @@ export class BeanieApp {
         scheduleApply: () => this.scheduleApply(),
         requestNotesFocus: () => {
           this.pendingNotesFocus = true;
-        }
+        },
+        carryProfileIdentity: (move) => this.carryProfileIdentity(move)
       },
       root
     );
@@ -5257,9 +5265,11 @@ export class BeanieApp {
           this.beanInventoryBrowser.closeStorage();
           return;
         }
-        // Notes editor layers over the profile-editor page — closing it must keep
-        // the editor draft intact, so just drop the modal.
-        if (this.state.modal === 'notes-editor') {
+        // These layer over a page rather than replacing it, so closing them must
+        // leave what is underneath alone — the fallback below tears the profile
+        // editor down, which for a dialog opened *from* the editor would throw
+        // away the draft the user is still working on.
+        if (this.state.modal === 'notes-editor' || this.state.modal === 'restore-original' || this.state.modal === 'new-profile-kind') {
           this.setState({ modal: null });
           return;
         }
@@ -5466,6 +5476,21 @@ export class BeanieApp {
     }, {
       writeFavoriteProfiles: (ids) => writeFavoriteProfiles(ids)
     });
+    this.setState({ favoriteProfiles });
+  }
+
+  /**
+   * A saved profile landed on a new id (reaprime hashes brew settings, so any
+   * edit to them re-ids the record) — bring the favourite star along, rather
+   * than leaving it behind on an id that no longer exists.
+   */
+  private carryProfileIdentity(move: ProfileIdentityMove): void {
+    const favoriteProfiles = carryProfileFavorite(this.state.favoriteProfiles, move);
+    const unchanged =
+      favoriteProfiles.length === this.state.favoriteProfiles.length &&
+      favoriteProfiles.every((id, index) => id === this.state.favoriteProfiles[index]);
+    if (unchanged) return;
+    writeFavoriteProfiles(favoriteProfiles);
     this.setState({ favoriteProfiles });
   }
 
@@ -6418,12 +6443,31 @@ export class BeanieApp {
     this.syncPresentationActivity();
     restoreFocus(this.root, focus);
     this.focusNotesEditor();
+    this.revealSelectedProfileStep();
   }
 
 
   // When the notes modal has just opened, drop the caret into the textarea (at the
   // end of any existing text) so the keyboard comes up ready to type. One-shot so
   // later re-renders don't steal focus back while the user is mid-edit elsewhere.
+  /**
+   * Keep the selected step visible in the advanced editor's list. Adding,
+   * duplicating or moving a step selects it, and past the eighth the list is
+   * taller than its box — so without this the list simply doesn't react to the
+   * step you just added. Only acts when the selection actually moved, so it
+   * never fights a user scrolling the list themselves.
+   */
+  private revealSelectedProfileStep(): void {
+    const editor = this.state.profileEditor;
+    const selected = this.state.view === 'profile-editor' && editor?.editorMode === 'advanced'
+      ? editor.selectedStep
+      : null;
+    if (selected === this.revealedProfileStep) return;
+    this.revealedProfileStep = selected;
+    if (selected == null) return;
+    this.root.querySelector('.pe-step-row.active')?.scrollIntoView({ block: 'nearest' });
+  }
+
   private focusNotesEditor(): void {
     if (!this.pendingNotesFocus) return;
     this.pendingNotesFocus = false;
@@ -6778,7 +6822,13 @@ export class BeanieApp {
       focusId: this.state.profileFocusId,
       cleaningMode,
       showHidden: this.state.profilesShowHidden,
-      hiddenProfiles: this.state.hiddenProfiles,
+      // A built-in the user has saved their own version over is out of the list
+      // for good, hidden section included. reaprime won't let a bundled default
+      // be deleted, so `hidden` plus this filter is as far out of sight as one
+      // can be put — and it comes straight back the moment the replacement does.
+      hiddenProfiles: this.state.hiddenProfiles.filter(
+        (item) => !isSupersededOriginal(item, this.state.profiles)
+      ),
       showLoadHint: shouldShowSecondTapHint('profile')
     };
     return this.isPhoneLayout() ? renderPhoneProfilePickerPage(model) : renderProfilePickerPage(model);
@@ -6850,9 +6900,17 @@ export class BeanieApp {
     if (this.state.modal === 'shot-stages') return this.renderShotStagesModal();
     if (this.state.modal === 'cleaning-wizard') return this.renderCleaningWizardModal();
     if (this.state.modal === 'import-profile') return this.renderImportProfileModal();
+    if (this.state.modal === 'new-profile-kind') return renderNewProfileKindModalView();
+    if (this.state.modal === 'restore-original') return this.renderRestoreOriginalModal();
     if (this.state.modal === 'delete-profile') return this.renderDeleteProfileModal();
     if (this.state.modal === 'notes-editor') return this.renderProfileNotesModal();
     return '';
+  }
+
+  private renderRestoreOriginalModal(): string {
+    if (supersededOriginalId(this.state.profiles, this.state.editingProfileId) == null) return '';
+    const yours = this.state.profileEditor?.title?.trim() || 'This profile';
+    return renderRestoreOriginalModalView({ yours, busy: this.state.busy });
   }
 
   private renderProfileNotesModal(): string {
@@ -6948,19 +7006,42 @@ export class BeanieApp {
     const disabled = this.state.busy ? ' disabled' : '';
     // Only a profile saved off another one has an original to go back to —
     // editing a bundled default saves a copy, so it's the copy that carries the
-    // trail (see originalProfileId).
-    const restorable = originalProfileId(this.state.profiles, this.state.editingProfileId) != null;
-    // One compact header row — Back · Basic/Advanced toggle · Save — no title
-    // (tablet real estate). Basic and advanced share the same dark chrome.
+    // trail (see originalProfileId). Restore keeps its place in the header
+    // either way and greys out when there is nothing behind this profile, so it
+    // doesn't appear and disappear from one profile to the next.
+    const editingSaved = this.state.editingProfileId != null;
+    // The button is the save state: a stored profile with no pending edits reads
+    // "Saved" and has nothing to do, which is what a banner used to say and then
+    // sit there saying. A profile that has never been saved always offers Save.
+    // Neither button has anything to do until something changes. A copy of an
+    // unchanged profile is not merely pointless: a profile is known by its
+    // settings, so an identical one can't exist alongside the original, and the
+    // save comes back refused. Better to not offer it.
+    const nothingToSave = editingSaved && !pe.dirty;
+    const saved = nothingToSave && !this.state.busy;
+    const copyTitle = nothingToSave
+      ? 'Change something first — a copy has to differ from the profile it came from'
+      : 'Keep this profile as it is and save your changes as a new one';
+    // Restore means one thing only: undo a save made over one of Decent's
+    // built-ins. When nothing was replaced there is nothing to go back to.
+    const restorable = supersededOriginalId(this.state.profiles, this.state.editingProfileId) != null;
+    const restoreTitle = restorable
+      ? 'Go back to Decent’s version of this profile'
+      : 'This isn’t a changed version of one of Decent’s profiles';
+    // One compact header row — Back · kind tag · Restore/Save a copy/Save — no
+    // title (tablet real estate). Both editors share the same dark chrome.
     return `
       <header class="page-head pe-editor-head">
         <button class="page-back" type="button" data-action="go-view" data-value="profiles" aria-label="Back"${disabled}>${icon('chevron-left')}<span>Back</span></button>
-        ${renderEditorModeBar(pe, this.state.busy)}
+        ${renderEditorKindTag(pe)}
         <div class="page-head-actions">
-          ${restorable
-            ? `<button type="button" class="pe-restore" data-action="pe-restore-original"${disabled} title="Put this profile's settings back to the profile it was saved from">${icon('rotate-ccw')}<span>Restore original</span></button>`
+          ${editingSaved
+            ? `<button type="button" class="pe-restore" data-action="pe-restore-original"${disabled || !restorable ? ' disabled' : ''} title="${escapeAttr(restoreTitle)}">${icon('rotate-ccw')}<span>Restore original</span></button>`
             : ''}
-          <button type="button" class="pe-save commit-action" data-action="save-profile"${disabled}>${icon('check')}<span>${this.state.busy ? 'Saving…' : 'Save'}</span></button>
+          ${editingSaved
+            ? `<button type="button" class="pe-restore" data-action="save-profile-copy"${disabled || nothingToSave ? ' disabled' : ''} title="${escapeAttr(copyTitle)}">${icon('copy')}<span>Save a copy</span></button>`
+            : ''}
+          <button type="button" class="pe-save commit-action ${saved ? 'saved' : ''}" data-action="save-profile"${disabled || saved ? ' disabled' : ''} title="${saved ? 'Nothing to save — this profile is up to date' : 'Save this profile'}">${icon('check')}<span>${this.state.busy ? 'Saving…' : saved ? 'Saved' : 'Save'}</span></button>
         </div>
       </header>
       <fieldset class="page-body profile-editor-page ${pe.editorMode === 'basic' ? 'pe-page-basic' : ''}"${disabled}>

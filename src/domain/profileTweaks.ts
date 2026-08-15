@@ -95,19 +95,19 @@ function tweakSimpleSteps(
 
   switch (parameter) {
     case 'peak_pressure': {
-      // Either way the knob is the hold stage's `pressure`: its target when the
-      // hold pumps pressure, otherwise its pressure ceiling. On a flow hold only
-      // an existing ceiling moves — introducing one is more than a one-knob change.
-      const pumpsPressure = knobs.hold.pump === 'pressure';
-      const current = knobs.hold.pressure;
-      if (!pumpsPressure && current <= 0) return null;
-      const value = clamp(target, pumpsPressure ? FIELD_SPECS.stepPressure : FIELD_SPECS.limiterValue);
-      const next: SimpleKnobs = { ...knobs, hold: { ...knobs.hold, pressure: value } };
-      // A ceiling shared with the decline stage moves with it, so the pair stays coherent.
-      if (!pumpsPressure && knobs.decline.pump === 'flow' && knobs.decline.pressure === current) {
-        next.decline = { ...knobs.decline, pressure: value };
+      // On a pressure profile this is the hold stage's target. On a flow profile
+      // the only pressure knob is the profile's pressure cap, and only an
+      // existing one moves — introducing a cap is more than a one-knob change.
+      if (knobs.type === 'pressure') {
+        const current = knobs.hold.target;
+        const value = clamp(target, FIELD_SPECS.stepPressure);
+        const next: SimpleKnobs = { ...knobs, hold: { ...knobs.hold, target: value } };
+        return { steps: compileSimpleToSteps(next), current, value };
       }
-      return { steps: compileSimpleToSteps(next), current, value };
+      const current = knobs.limit;
+      if (current <= 0) return null;
+      const value = clamp(target, FIELD_SPECS.limiterValue);
+      return { steps: compileSimpleToSteps({ ...knobs, limit: value }), current, value };
     }
     case 'preinfusion_time': {
       const value = clamp(target, FIELD_SPECS.preinfusionTime);
@@ -119,9 +119,7 @@ function tweakSimpleSteps(
       };
     }
     case 'preinfusion_flow': {
-      // Only meaningful while preinfusion pumps flow; otherwise its flow number
-      // is a ceiling, not the rate Derek is asking about.
-      if (knobs.pre.pump !== 'flow') return null;
+      // A simple profile always preinfuses on flow, so this is always the rate.
       const value = clamp(target, FIELD_SPECS.preinfusionFlow);
       const current = knobs.pre.flow;
       return {

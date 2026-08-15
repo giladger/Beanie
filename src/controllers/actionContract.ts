@@ -29,6 +29,8 @@ export type AppModal =
   | 'shot-stages'
   | 'cleaning-wizard'
   | 'import-profile'
+  | 'new-profile-kind'
+  | 'restore-original'
   | 'delete-profile'
   | 'notes-editor'
   | 'derek'

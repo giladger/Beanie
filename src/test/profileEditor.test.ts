@@ -1,6 +1,8 @@
 import type { Profile } from '../api/types';
 import {
   addStep,
+  setAdvancedTab,
+  selectStep,
   createProfileEditorState,
   duplicateStep,
   moveStep,
@@ -8,14 +10,11 @@ import {
   nudgeStepField,
   profileFromEditorState,
   removeStep,
-  renderEditorModeBar,
+  renderEditorKindTag,
   renderProfileEditor,
-  restoreProfileSettings,
-  setEditorMode,
   setProfileMeta,
   setSimpleProfileField,
-  setSimpleProfileType,
-  setSimpleStagePump,
+  setStepExit,
   setStepField,
   setStepPump
 } from '../components/profileEditor';
@@ -90,14 +89,21 @@ run('creates editor state from an existing profile preserving metadata and steps
   equal(state.dirty, false);
 });
 
-run('creates a usable default from null', () => {
+run('creates a usable simple pressure profile from null', () => {
   const state = createProfileEditorState(null);
 
-  equal(state.steps.length, 1);
-  equal(state.steps[0].pump, 'pressure');
+  // A new profile starts as a canonical three-stage pressure profile, so the
+  // basic editor is reachable without anything having to rewrite the steps to
+  // get there (de1app likewise defaults a new preset to settings_2a).
+  equal(state.steps.length, 3);
+  equal(state.type, 'pressure');
+  equal(state.legacyProfileType, 'settings_2a');
+  equal(state.steps[1].pump, 'pressure');
+  equal(canEditAsBasic(state.steps), true);
+  equal(state.editorMode, 'basic');
   equal(state.selectedStep, 0);
   equal(state.dirty, false);
-  equal(state.saveNotice, null);
+  equal(state.saveError, null);
 });
 
 run('prefills the reaprime-required meta fields on a new profile', () => {
@@ -178,15 +184,15 @@ run('nudgeStepField keeps the limiter range at its non-zero floor', () => {
 run('nudgeSimpleProfileField clamps to the basic dialog ranges', () => {
   const state = createProfileEditorState(pressureProfile());
 
-  // pressure tops out at 12 bar
-  let up = setSimpleProfileField(state, 'hold_pressure', '12');
-  up = nudgeSimpleProfileField(up, 'hold_pressure', 0.1);
-  equal(parseStepsToSimple(up.steps)?.hold.pressure, 12);
+  // a pressure profile's target tops out at 12 bar
+  let up = setSimpleProfileField(state, 'hold_target', '12');
+  up = nudgeSimpleProfileField(up, 'hold_target', 0.1);
+  equal(parseStepsToSimple(up.steps)?.hold.target, 12);
 
-  // flow tops out at 8 ml/s, in either role
-  let fast = setSimpleProfileField(state, 'hold_flow', '8');
-  fast = nudgeSimpleProfileField(fast, 'hold_flow', 0.1);
-  equal(parseStepsToSimple(fast.steps)?.hold.flow, 8);
+  // its cap is on the flow axis, so that one tops out at 8 ml/s
+  let fast = setSimpleProfileField(state, 'limit', '8');
+  fast = nudgeSimpleProfileField(fast, 'limit', 0.1);
+  equal(parseStepsToSimple(fast.steps)?.limit, 8);
 
   // temperature stops at 1 °C, not 0
   let cooled = setSimpleProfileField(state, 'hold_temp', '1');
@@ -210,40 +216,42 @@ run('each stage keeps its own temperature in the basic editor', () => {
   equal(canEditAsBasic(next.steps), true);
 });
 
-run('setSimpleStagePump swaps target and cap without losing either number', () => {
+run('a simple profile chases one axis, with one cap on the other', () => {
+  // de1app's simple editor has no per-stage pump: settings_2a is a pressure
+  // profile, settings_2b a flow one. So a stage exposes its target, and the only
+  // knob on the other axis is the profile's single cap.
   const state = createProfileEditorState(pressureProfile());
-  const capped = setSimpleProfileField(state, 'hold_flow', '2.4'); // 9 bar target, 2.4 ml/s cap
-  const flowed = setSimpleStagePump(capped, 'hold', 'flow');
+  equal(state.type, 'pressure');
+  equal(state.steps[1].pump, 'pressure');
+  equal(state.steps[2].pump, 'pressure');
 
-  equal(flowed.steps[1].pump, 'flow');
-  equal(flowed.steps[1].flow, 2.4); // the old cap is now the target
-  equal(flowed.steps[1].limiter?.value, 9); // the old target is now the cap
-  equal(canEditAsBasic(flowed.steps), true);
+  const capped = setSimpleProfileField(state, 'limit', '2.4');
+  // one knob, both main stages — and never the preinfuse
+  equal(capped.steps[0].limiter, null);
+  equal(capped.steps[1].limiter?.value, 2.4);
+  equal(capped.steps[2].limiter?.value, 2.4);
+  equal(capped.type, 'pressure');
+  equal(canEditAsBasic(capped.steps), true);
 
-  // toggling back restores exactly what was there
-  const back = setSimpleStagePump(flowed, 'hold', 'pressure');
-  equal(back.steps[1].pressure, 9);
-  equal(back.steps[1].limiter?.value, 2.4);
+  // clearing it to 0 drops the limiter rather than leaving a dead one behind
+  const uncapped = setSimpleProfileField(capped, 'limit', '0');
+  equal(uncapped.steps[1].limiter, null);
+  equal(uncapped.steps[2].limiter, null);
+  equal(canEditAsBasic(uncapped.steps), true);
 
-  // hold and decline now disagree, so the profile reads as advanced-kind
-  equal(flowed.type, 'advanced');
-  equal(setSimpleStagePump(flowed, 'decline', 'flow').type, 'flow');
-});
-
-run('setSimpleStagePump seeds a target that would land on zero', () => {
-  const state = setSimpleProfileField(createProfileEditorState(pressureProfile()), 'hold_flow', '0');
-  const flowed = setSimpleStagePump(state, 'hold', 'flow');
-
-  if (!(flowed.steps[1].flow > 0)) throw new Error('expected a seeded flow target');
-  equal(flowed.steps[1].limiter?.value, 9);
+  // the editor offers no way to change which axis the profile chases
+  const body = renderProfileEditor(state);
+  equal(body.includes('pe-simple-pump'), false);
+  equal(body.includes('pe-set-simple-type'), false);
 });
 
 run('setStepPump switches the controlled target', () => {
+  // Step 1 is the hold stage; a new profile's preinfusion always pumps on flow.
   const state = createProfileEditorState(null);
-  equal(state.steps[0].pump, 'pressure');
-  const next = setStepPump(state, 0, 'flow');
-  equal(next.steps[0].pump, 'flow');
-  equal(state.steps[0].pump, 'pressure');
+  equal(state.steps[1].pump, 'pressure');
+  const next = setStepPump(state, 1, 'flow');
+  equal(next.steps[1].pump, 'flow');
+  equal(state.steps[1].pump, 'pressure');
 });
 
 run('addStep inserts a copy after the selected step', () => {
@@ -274,13 +282,14 @@ run('caps advanced steps at 20 (de1app limit)', () => {
 });
 
 run('removeStep keeps at least one step and respects bounds', () => {
-  const one = createProfileEditorState(null);
+  const three = createProfileEditorState(null);
+  equal(three.steps.length, 3);
+
+  const one = removeStep(removeStep(three, 0), 0);
+  equal(one.steps.length, 1);
   equal(removeStep(one, 0).steps.length, 1);
 
-  const two = addStep(one);
-  const after = removeStep(two, 0);
-  equal(after.steps.length, 1);
-  equal(removeStep(two, 5).steps.length, 2);
+  equal(removeStep(three, 5).steps.length, 3);
 });
 
 run('moveStep reorders within bounds only', () => {
@@ -309,7 +318,9 @@ run('unknown step keys survive a round-trip through profileFromEditorState', () 
 });
 
 run('renderProfileEditor includes metadata inputs and an add-step action', () => {
-  const html = renderProfileEditor(createProfileEditorState(null));
+  // A pressure/flow profile opens on the simple surface; the steps live in an
+  // advanced profile, which is now a kind you choose at creation.
+  const html = renderProfileEditor(createProfileEditorState(null, 'advanced'));
 
   includes(html, 'data-action="pe-meta"');
   includes(html, 'data-key="title"');
@@ -330,12 +341,16 @@ run('renders the basic pressure editor for normalized pressure profiles', () => 
   includes(html, '4 · Finish');
   includes(html, 'data-action="pe-edit-value"');
   includes(html, 'data-action="pe-simple-nudge"');
-  // every stage shows flow, pressure and temperature, and can toggle its pump
+  // every stage carries its own time and temperature
   for (const stage of ['pre', 'hold', 'decline']) {
-    includes(html, `data-key="${stage}_flow"`);
-    includes(html, `data-key="${stage}_pressure"`);
+    includes(html, `data-key="${stage}_time"`);
     includes(html, `data-key="${stage}_temp"`);
-    includes(html, `data-action="pe-simple-pump" data-stage="${stage}"`);
+  }
+  // the main stages carry a target on the profile's axis, not a flow AND a pressure
+  for (const stage of ['hold', 'decline']) {
+    includes(html, `data-key="${stage}_target"`);
+    equal(html.includes(`data-key="${stage}_flow"`), false);
+    equal(html.includes(`data-key="${stage}_pressure"`), false);
   }
 });
 
@@ -347,53 +362,92 @@ run('updates pressure editor scalar fields without dropping profile steps', () =
   equal(next.steps[0].exit?.value, 4.5);
   equal(next.dirty, true);
 
-  // the preinfuse stage's own pressure knob is its cap, not the exit
-  const capped = setSimpleProfileField(next, 'pre_pressure', '8');
-  equal(capped.steps[0].limiter?.value, 8);
-  equal(capped.steps[0].exit?.value, 4.5);
+  // preinfusion's only pressure knob IS the exit — de1app puts no cap there
+  equal(next.steps[0].limiter, null);
 });
 
-run('restoreProfileSettings puts the brewing back but keeps the profile its own', () => {
-  const edited = setSimpleProfileField(
-    setProfileMeta(
-      setProfileMeta(createProfileEditorState(pressureProfile()), 'title', 'My Default'),
-      'notes',
-      'my own notes'
-    ),
-    'hold_pressure',
-    '11'
-  );
-  equal(edited.steps[1].pressure, 11);
+run('a value changed and changed back leaves nothing to save', () => {
+  // Dirtiness is a comparison with the profile as opened, not a record of
+  // having touched something — so a nudge up and back down is not an edit.
+  const state = createProfileEditorState(pressureProfile());
+  equal(state.dirty, false);
 
-  const restored = restoreProfileSettings(edited, pressureProfile());
+  const up = nudgeSimpleProfileField(state, 'hold_target', 0.1);
+  equal(up.dirty, true);
+  equal(nudgeSimpleProfileField(up, 'hold_target', -0.1).dirty, false);
 
-  // brewing goes back to the original
-  equal(restored.steps[1].pressure, 9);
-  equal(restored.targetVolume, 36);
-  equal(restored.tankTemperature, 90);
-  equal(restored.selectedStep, 0);
-  // identity stays the user's
-  equal(restored.title, 'My Default');
-  equal(restored.notes, 'my own notes');
-  // nothing is written yet — Save is still the committing step, and the banner
-  // has to survive the editor being dirty to say so
-  equal(restored.dirty, true);
-  equal(restored.saveNotice?.tone, 'info');
-  includes(renderProfileEditor(restored), 'Original settings restored');
+  // the same through the numpad, and over several fields at once
+  let edited = setSimpleProfileField(state, 'hold_target', '7');
+  edited = setSimpleProfileField(edited, 'pre_time', '11');
+  edited = setProfileMeta(edited, 'title', 'Something else');
+  equal(edited.dirty, true);
+  edited = setSimpleProfileField(edited, 'hold_target', String(state.steps[1]!.pressure));
+  edited = setSimpleProfileField(edited, 'pre_time', String(state.steps[0]!.seconds));
+  equal(edited.dirty, true); // the title is still changed
+  equal(setProfileMeta(edited, 'title', state.title).dirty, false);
+
+  // and in the advanced editor, including the fields that live off the steps
+  const adv = createProfileEditorState(sampleProfile());
+  const warmer = nudgeStepField(adv, 0, 'temperature', 0.5);
+  equal(warmer.dirty, true);
+  equal(nudgeStepField(warmer, 0, 'temperature', -0.5).dirty, false);
+  equal(setProfileMeta(setProfileMeta(adv, 'notes', 'x'), 'notes', adv.notes).dirty, false);
+
+  // a toggle flipped twice, and a step's message typed then cleared
+  const sensor = setStepField(adv, 0, 'sensor', 'water');
+  equal(sensor.dirty, true);
+  equal(setStepField(sensor, 0, 'sensor', 'coffee').dirty, false);
+  const popped = setStepField(adv, 1, 'popup', 'hi');
+  equal(popped.dirty, true);
+  equal(setStepField(popped, 1, 'popup', '').dirty, false);
+
+  // looking around is never an edit
+  equal(selectStep(adv, 1).dirty, false);
+  equal(setAdvancedTab(adv, 'limits').dirty, false);
 });
 
-run('restoring steps the basic editor cannot express leaves basic mode', () => {
-  const basic = createProfileEditorState(pressureProfile());
-  equal(basic.editorMode, 'basic');
+run('a step added and removed again leaves nothing to save', () => {
+  const state = createProfileEditorState(sampleProfile());
+  const added = addStep(state);
+  equal(added.dirty, true);
+  equal(added.steps.length, state.steps.length + 1);
+  const removed = removeStep(added, added.selectedStep);
+  equal(removed.steps.length, state.steps.length);
+  equal(removed.dirty, false);
 
-  // sampleProfile is a 2-step advanced profile — recompiling knobs over it
-  // would throw the restored steps away, so the editor must switch.
-  const restored = restoreProfileSettings(basic, sampleProfile());
-  equal(restored.editorMode, 'advanced');
-  equal(restored.steps.length, 2);
+  // and a reorder undone the same way
+  const moved = moveStep(state, 0, 1);
+  equal(moved.dirty, true);
+  equal(moveStep(moved, 1, -1).dirty, false);
+});
 
-  // a restore that stays expressible keeps whichever mode was open
-  equal(restoreProfileSettings(basic, pressureProfile()).editorMode, 'basic');
+run('setProfileMeta writes each field and marks the editor dirty', () => {
+  const state = createProfileEditorState(pressureProfile());
+  equal(state.dirty, false);
+
+  // the text fields the identity panel edits
+  const titled = setProfileMeta(state, 'title', 'My Default');
+  equal(titled.title, 'My Default');
+  equal(titled.dirty, true);
+  equal(state.title, 'Default'); // the input is untouched
+  equal(setProfileMeta(state, 'author', 'Gilad').author, 'Gilad');
+  equal(setProfileMeta(state, 'notes', 'keeps its own notes').notes, 'keeps its own notes');
+  equal(setProfileMeta(state, 'beverage_type', 'filter').beverageType, 'filter');
+
+  // the Limits tab's numbers parse, and clearing one leaves it unset rather
+  // than zero — encodeProfile is what falls back to a default on the way out
+  equal(setProfileMeta(state, 'tank_temperature', '92.5').tankTemperature, 92.5);
+  equal(setProfileMeta(state, 'target_weight', '36').targetWeight, 36);
+  equal(setProfileMeta(state, 'target_volume', '40').targetVolume, 40);
+  equal(setProfileMeta(state, 'target_volume_count_start', '2').targetVolumeCountStart, 2);
+  equal(setProfileMeta(state, 'target_weight', '').targetWeight, null);
+  equal(setProfileMeta(state, 'tank_temperature', 'not a number').tankTemperature, null);
+
+  // none of it disturbs how the profile pours
+  const before = JSON.stringify(state.steps);
+  for (const key of ['title', 'author', 'notes', 'beverage_type', 'tank_temperature'] as const) {
+    equal(JSON.stringify(setProfileMeta(state, key, '7').steps), before);
+  }
 });
 
 run('opens a canonical simple profile in basic mode, advanced otherwise', () => {
@@ -402,37 +456,104 @@ run('opens a canonical simple profile in basic mode, advanced otherwise', () => 
   equal(createProfileEditorState(sampleProfile()).editorMode, 'advanced');
 });
 
-run('switching to basic converts a non-simple profile into a simple one', () => {
-  const advanced = createProfileEditorState(sampleProfile());
-  const next = setEditorMode(advanced, 'basic');
-  equal(next.editorMode, 'basic');
-  equal(canEditAsBasic(next.steps), true); // now a canonical simple profile
+run('a new profile is built as the kind that was chosen for it', () => {
+  const pressure = createProfileEditorState(null, 'pressure');
+  equal(pressure.editorMode, 'basic');
+  equal(pressure.type, 'pressure');
+  equal(pressure.legacyProfileType, 'settings_2a');
+  equal(pressure.steps.length, 3);
+  equal(pressure.steps[1]!.pump, 'pressure');
+  equal(canEditAsBasic(pressure.steps), true);
 
-  // a brand-new (1-step) profile can go basic too
-  const fresh = setEditorMode(createProfileEditorState(null), 'basic');
-  equal(fresh.editorMode, 'basic');
-  equal(canEditAsBasic(fresh.steps), true);
+  const flow = createProfileEditorState(null, 'flow');
+  equal(flow.editorMode, 'basic');
+  equal(flow.type, 'flow');
+  equal(flow.legacyProfileType, 'settings_2b');
+  equal(flow.steps[1]!.pump, 'flow');
+  equal(flow.steps[2]!.pump, 'flow');
+  equal(canEditAsBasic(flow.steps), true);
 
-  // a basic profile can always drop to advanced
-  equal(setEditorMode(createProfileEditorState(pressureProfile()), 'advanced').editorMode, 'advanced');
+  // Advanced starts from a single step to build on, and opens on the steps.
+  const advanced = createProfileEditorState(null, 'advanced');
+  equal(advanced.editorMode, 'advanced');
+  equal(advanced.steps.length, 1);
+
+  // Pressure is the default when no kind is named.
+  equal(createProfileEditorState(null).type, 'pressure');
+
+  // Nothing is dirty on open — a new profile is a starting point, not an edit.
+  for (const state of [pressure, flow, advanced]) equal(state.dirty, false);
 });
 
-run('switching simple type recompiles the knobs as flow', () => {
-  const next = setSimpleProfileType(createProfileEditorState(pressureProfile()), 'flow');
-  equal(next.type, 'flow');
-  equal(next.editorMode, 'basic');
-  equal(next.steps[1]!.pump, 'flow');
-  equal(next.steps[2]!.pump, 'flow');
+run('the header tags which kind of profile is open, with no way to switch it', () => {
+  const tag = (state: Parameters<typeof renderEditorKindTag>[0]) => renderEditorKindTag(state);
+
+  includes(tag(createProfileEditorState(null, 'pressure')), 'Pressure profile');
+  includes(tag(createProfileEditorState(null, 'flow')), 'Flow profile');
+  includes(tag(createProfileEditorState(null, 'advanced')), 'Advanced profile');
+  includes(tag(createProfileEditorState(sampleProfile())), 'Advanced profile');
+
+  includes(tag(createProfileEditorState(pressureProfile())), 'Pressure profile');
+
+  // A profile whose two main stages chase different axes is not a kind the
+  // simple editor has — it opens on the steps, and says so.
+  const mixed = createProfileEditorState(mixedAxisProfile());
+  equal(mixed.editorMode, 'advanced');
+  includes(tag(mixed), 'Advanced profile');
+
+  // The tag is a label, not a control: no action wiring anywhere in it.
+  equal(tag(createProfileEditorState(null)).includes('data-action'), false);
 });
 
-run('mode bar carries the Basic/Advanced toggle; body carries the per-stage pumps', () => {
-  const state = createProfileEditorState(pressureProfile());
-  const bar = renderEditorModeBar(state);
-  includes(bar, 'data-action="pe-set-mode"');
-  includes(bar, '>Advanced<');
-  const body = renderProfileEditor(state);
-  includes(body, 'data-action="pe-simple-pump"');
+run('a step exit can be turned back off from the tile that set it', () => {
+  // A step carries at most one exit, so if the lit tile only ever re-applied it
+  // there would be no way to remove one — and 0 is no escape, since "pressure
+  // over 0" fires the moment the step starts.
+  const state = createProfileEditorState(sampleProfile());
+  const off = renderProfileEditor(state);
+  includes(off, 'data-action="pe-step-exit-preset"');
+
+  const set = setStepExit(state, state.selectedStep, { type: 'flow', condition: 'over', value: 3 });
+  const on = renderProfileEditor(set);
+  includes(on, 'data-action="pe-step-exit-clear"');
+  includes(on, 'turn off flow is over');
+
+  const cleared = setStepExit(set, set.selectedStep, null);
+  equal(cleared.steps[cleared.selectedStep]!.exit, null);
+  equal(renderProfileEditor(cleared).includes('pe-step-exit-clear'), false);
 });
+
+run('the simple editor shows one axis and no pump choice', () => {
+  const pressure = renderProfileEditor(createProfileEditorState(pressureProfile()));
+  // the profile's own axis is the target; the other appears once, as the cap
+  includes(pressure, 'data-key="hold_target"');
+  includes(pressure, 'data-key="limit"');
+  includes(pressure, '>limit flow<');
+  equal(pressure.includes('data-action="pe-simple-pump"'), false);
+  equal(pressure.includes('>pressure limit<'), false);
+
+  // a flow profile mirrors it: flow targets, one pressure cap
+  const flowState = createProfileEditorState(null, 'flow');
+  const flowHtml = renderProfileEditor(flowState);
+  includes(flowHtml, '>limit pressure<');
+  equal(flowHtml.includes('>limit flow<'), false);
+
+  // preinfusion is flow-pumped on both, and carries no cap of its own
+  for (const html of [pressure, flowHtml]) {
+    includes(html, 'data-key="pre_flow"');
+    includes(html, 'data-key="pre_until"');
+  }
+});
+
+// f / p / f — hold and decline chase different axes, which no de1app simple page
+// can show, so it is an advanced profile.
+function mixedAxisProfile(): Profile {
+  const base = pressureProfile() as unknown as Record<string, unknown>;
+  const steps = (base.steps as Record<string, unknown>[]).map((step, index) =>
+    index === 2 ? { ...step, pump: 'flow', flow: 2, pressure: 0 } : step
+  );
+  return { ...base, steps } as unknown as Profile;
+}
 
 function sampleProfile(): Profile {
   return {

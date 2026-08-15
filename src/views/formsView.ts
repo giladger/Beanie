@@ -60,6 +60,66 @@ export function renderImportProfileModal(state: {
   `;
 }
 
+/**
+ * "What kind of preset?" — de1app's New Preset page, which is where a profile's
+ * kind is decided and the only place it ever is. A profile can't be converted
+ * afterwards, so the choice is put plainly, with what each one gives you,
+ * before any editing starts.
+ */
+export function renderNewProfileKindModal(): string {
+  const choice = (value: string, iconName: string, title: string, blurb: string) => `
+    <button type="button" class="profile-kind-choice" data-action="new-profile-kind" data-value="${escapeAttr(value)}">
+      <span class="profile-kind-face">${icon(iconName)}</span>
+      <strong>${escapeHtml(title)}</strong>
+      <small>${escapeHtml(blurb)}</small>
+    </button>`;
+  return `
+    <div class="modal-backdrop" data-action="close-modal">
+      <section class="modal new-profile-kind-modal" role="dialog" aria-modal="true" aria-label="New profile" data-action="noop">
+        <div class="modal-head">
+          <div>
+            <span class="eyebrow">New profile</span>
+            <h2>What kind?</h2>
+          </div>
+          <button type="button" class="icon-button" data-action="close-modal" aria-label="Close">${icon('x')}</button>
+        </div>
+        <div class="profile-kind-choices">
+          ${choice('pressure', 'gauge', 'Pressure', 'Preinfuse, hold a pressure, decline. The simple editor.')}
+          ${choice('flow', 'droplets', 'Flow', 'The same three stages, chasing a flow rate instead.')}
+          ${choice('advanced', 'sliders-horizontal', 'Advanced', 'Build your own steps, with exits and limits per step.')}
+        </div>
+        <p class="profile-kind-hint">Pick the one you want to work in — a profile can’t be switched between kinds later.</p>
+      </section>
+    </div>
+  `;
+}
+
+/**
+ * Restoring throws away work the user saved, so it asks first — in terms of what
+ * they lose and get back, not of the profiles being swapped underneath.
+ */
+export function renderRestoreOriginalModal(state: { yours: string; busy: boolean }): string {
+  const disabled = state.busy ? 'disabled' : '';
+  return `
+    <div class="modal-backdrop" data-action="${state.busy ? 'noop' : 'close-modal'}">
+      <section class="modal machine-label-modal" role="dialog" aria-modal="true" aria-label="Back to Decent's version" data-action="noop">
+        <div class="modal-head">
+          <div>
+            <span class="eyebrow">${escapeHtml(state.yours)}</span>
+            <h2>Back to Decent’s version?</h2>
+          </div>
+          <button type="button" class="icon-button" data-action="close-modal" aria-label="Close" ${disabled}>${icon('x')}</button>
+        </div>
+        <p class="profile-import-hint">Everything you’ve saved to this profile will be lost, and Decent’s version takes its place. This can’t be undone.</p>
+        <div class="modal-actions">
+          <button type="button" class="text-button" data-action="close-modal" ${disabled}>Cancel</button>
+          <button type="button" class="command primary" data-action="pe-restore-confirm" ${disabled}>${icon('rotate-ccw')}<span>Restore original</span></button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 export function renderMachineLabelModal(label: string): string {
   return `
     <div class="modal-backdrop" data-action="close-modal">

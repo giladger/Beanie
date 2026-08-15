@@ -12,58 +12,80 @@
 // steps. A profile that merely looks simple but carries anything the basic knobs
 // can't express fails the guard and opens in the advanced editor instead.
 //
-// The knobs are per stage (Insight-style): each of the three stages carries its
-// own pump, temperature, pressure and flow. Whichever axis the pump follows is
-// that stage's target; the other axis is its optional cap (0 = off). So the
-// basic shape a profile must have is only about its *skeleton* —
-//   1. preinfuse — fast, exits when pressure rises over a threshold
-//   2. hold      — fast
-//   3. decline   — smooth
-// — and pressure/flow/temperature are free to differ stage by stage.
+// A simple profile chases ONE axis, the way de1app's own simple editor does:
+// settings_2a is a pressure profile, settings_2b is a flow profile, and neither
+// offers per-stage pumps. So the shape a profile must have to be simple is:
+//   1. preinfuse — always FLOW-pumped, fast, exits when pressure rises over a
+//                  threshold (identical on both de1app pages)
+//   2. hold      — fast, on the profile's axis
+//   3. decline   — smooth, on the profile's axis
+// plus one profile-level cap on the *other* axis ("Limit flow" on a pressure
+// profile, "Limit pressure" on a flow profile), which de1app applies to hold and
+// decline and never to preinfusion. Temperature stays per stage — de1app can do
+// that too (espresso_temperature_steps_enabled) and it costs nothing here.
 
 import { FIELD_SPECS, type EditorStep } from './profileModel';
 
 export type SimpleType = 'pressure' | 'flow';
 export type SimpleStageId = 'pre' | 'hold' | 'decline';
 
+/**
+ * The kind a new profile is created as — the one choice de1app's "New Preset —
+ * what kind of preset?" page asks for, and the only point a profile's kind is
+ * ever chosen. Pressure and flow seed the canonical three-stage simple shape;
+ * advanced seeds a single step to build on. Afterwards a profile's steps are
+ * what say which kind it is (`canEditAsBasic`), because reaprime stores no type.
+ */
+export type NewProfileKind = SimpleType | 'advanced';
+
 export const SIMPLE_STAGE_IDS: readonly SimpleStageId[] = ['pre', 'hold', 'decline'];
 
 /**
- * One stage of a basic profile. `pressure` and `flow` are both always carried:
- * the one matching `pump` is the target the machine chases, the other is that
- * stage's cap (limiter), with 0 meaning "no cap". Flipping `pump` therefore
- * only changes which of the two numbers is the target — nothing is lost.
+ * One main stage of a simple profile. It carries only its target on the
+ * profile's own axis — there is no per-stage pump, because de1app's simple
+ * editor has none: a pressure profile's stages chase pressure and a flow
+ * profile's chase flow.
  */
 export interface SimpleStage {
   name: string;
-  pump: SimpleType;
   seconds: number;
   temperature: number;
-  pressure: number;
+  /** The value on the profile's axis: bar on a pressure profile, ml/s on a flow one. */
+  target: number;
+}
+
+/** Preinfusion, which is flow-pumped on both de1app simple pages. */
+export interface SimplePreStage {
+  name: string;
+  seconds: number;
+  temperature: number;
   flow: number;
-  /** Range of this stage's cap; only meaningful while the cap is > 0. */
-  limitRange: number;
 }
 
 export interface SimpleKnobs {
-  pre: SimpleStage;
+  /** Which axis the two main stages chase — the profile's kind. */
+  type: SimpleType;
+  pre: SimplePreStage;
   /** Preinfusion's "move on once pressure is over this" exit. */
   preExitPressure: number;
   hold: SimpleStage;
   decline: SimpleStage;
+  /**
+   * One cap on the axis the profile is NOT chasing — de1app's "Limit flow" on a
+   * pressure profile, "Limit pressure" on a flow profile. It applies to hold and
+   * decline (never preinfusion, which is flow-pumped either way). 0 means off.
+   */
+  limit: number;
+  /** Range of that cap; only meaningful while it is > 0. */
+  limitRange: number;
 }
 
-/**
- * The profile-level `type` these knobs describe, for `legacy_profile_type` and
- * the de1app editor tab. Preinfusion is excluded — de1app's own simple pressure
- * profile (settings_2a) preinfuses on flow — so the kind follows the two main
- * stages, and only a genuine mix reads as "advanced".
- */
-export function simpleProfileType(knobs: SimpleKnobs): string {
-  return knobs.hold.pump === knobs.decline.pump ? knobs.hold.pump : 'advanced';
+/** The axis a simple profile's cap sits on — always the one it isn't chasing. */
+export function simpleLimitAxis(type: SimpleType): SimpleType {
+  return type === 'pressure' ? 'flow' : 'pressure';
 }
 
-/** The canonical target for a stage once its pump switches axis. */
+/** The canonical target for a main stage on a given axis. */
 export function defaultStageTarget(stage: SimpleStageId, pump: SimpleType): number {
   if (pump === 'pressure') {
     if (stage === 'pre') return FIELD_SPECS.preinfusionStopPressure.default;
@@ -77,59 +99,84 @@ export function defaultStageTarget(stage: SimpleStageId, pump: SimpleType): numb
 
 export function defaultSimpleKnobs(type: SimpleType): SimpleKnobs {
   return {
-    pre: defaultStage('preinfusion', 'pre', 'flow', FIELD_SPECS.preinfusionTime.default),
+    type,
+    pre: {
+      name: 'preinfusion',
+      seconds: FIELD_SPECS.preinfusionTime.default,
+      temperature: FIELD_SPECS.stepTemperature.default,
+      flow: defaultStageTarget('pre', 'flow')
+    },
     preExitPressure: FIELD_SPECS.preinfusionStopPressure.default,
-    hold: defaultStage(type === 'pressure' ? 'rise and hold' : 'hold', 'hold', type, 25),
-    decline: defaultStage('decline', 'decline', type, FIELD_SPECS.declineTime.default)
-  };
-}
-
-function defaultStage(
-  name: string,
-  id: SimpleStageId,
-  pump: SimpleType,
-  seconds: number
-): SimpleStage {
-  const target = defaultStageTarget(id, pump);
-  return {
-    name,
-    pump,
-    seconds,
-    temperature: FIELD_SPECS.stepTemperature.default,
-    // The off-axis starts at 0 so a fresh profile carries no cap it never asked for.
-    pressure: pump === 'pressure' ? target : 0,
-    flow: pump === 'flow' ? target : 0,
+    hold: {
+      name: type === 'pressure' ? 'rise and hold' : 'hold',
+      seconds: 25,
+      temperature: FIELD_SPECS.stepTemperature.default,
+      target: defaultStageTarget('hold', type)
+    },
+    decline: {
+      name: 'decline',
+      seconds: FIELD_SPECS.declineTime.default,
+      temperature: FIELD_SPECS.stepTemperature.default,
+      target: defaultStageTarget('decline', type)
+    },
+    // A fresh profile carries no cap it never asked for.
+    limit: 0,
     limitRange: FIELD_SPECS.limiterRange.default
   };
 }
 
 /**
- * Compile the knobs to canonical steps: preinfuse (fast, pressure-over exit),
- * hold (fast) and decline (smooth). Each stage's off-axis value becomes its
- * limiter, matching de1app's "max flow or pressure" behaviour per step.
+ * Compile the knobs to canonical steps: preinfuse (flow-pumped, fast,
+ * pressure-over exit), hold (fast) and decline (smooth). The profile-level cap
+ * becomes hold's and decline's limiter, exactly where de1app's
+ * pressure_to_advanced_list puts `maximum_flow` — and nowhere else.
  */
 export function compileSimpleToSteps(knobs: SimpleKnobs): EditorStep[] {
-  const pre = compileStage(knobs.pre, 'fast');
-  pre.exit = { type: 'pressure', condition: 'over', value: knobs.preExitPressure };
-  return [pre, compileStage(knobs.hold, 'fast'), compileStage(knobs.decline, 'smooth')];
+  const limiter = knobs.limit > 0 ? { value: knobs.limit, range: knobs.limitRange } : null;
+  return [
+    {
+      ...baseStep(knobs.pre.name, knobs.pre.seconds, knobs.pre.temperature),
+      pump: 'flow',
+      flow: knobs.pre.flow,
+      transition: 'fast',
+      exit: { type: 'pressure', condition: 'over', value: knobs.preExitPressure }
+    },
+    compileMainStage(knobs, knobs.hold, 'fast', limiter),
+    compileMainStage(knobs, knobs.decline, 'smooth', limiter)
+  ];
 }
 
-function compileStage(stage: SimpleStage, transition: 'fast' | 'smooth'): EditorStep {
-  const cap = stage.pump === 'pressure' ? stage.flow : stage.pressure;
+function baseStep(name: string, seconds: number, temperature: number): EditorStep {
   return {
-    name: stage.name,
-    temperature: stage.temperature,
+    name,
+    temperature,
     sensor: 'coffee',
-    pump: stage.pump,
-    pressure: stage.pump === 'pressure' ? stage.pressure : 0,
-    flow: stage.pump === 'flow' ? stage.flow : 0,
-    transition,
-    seconds: stage.seconds,
+    pump: 'pressure',
+    pressure: 0,
+    flow: 0,
+    transition: 'fast',
+    seconds,
     volume: 0,
     weight: 0,
     exit: null,
-    limiter: cap > 0 ? { value: cap, range: stage.limitRange } : null,
+    limiter: null,
     extra: {}
+  };
+}
+
+function compileMainStage(
+  knobs: SimpleKnobs,
+  stage: SimpleStage,
+  transition: 'fast' | 'smooth',
+  limiter: { value: number; range: number } | null
+): EditorStep {
+  return {
+    ...baseStep(stage.name, stage.seconds, stage.temperature),
+    pump: knobs.type,
+    pressure: knobs.type === 'pressure' ? stage.target : 0,
+    flow: knobs.type === 'flow' ? stage.target : 0,
+    transition,
+    limiter: limiter ? { ...limiter } : null
   };
 }
 
@@ -153,25 +200,38 @@ export function parseStepsToSimple(steps: EditorStep[]): SimpleKnobs | null {
   if (!pre.exit || pre.exit.type !== 'pressure' || pre.exit.condition !== 'over') return null;
   if (hold.exit || decline.exit) return null;
 
+  // One axis for the whole profile, preinfused on flow, and a single cap shared
+  // by hold and decline — anything else is an advanced profile.
+  if (pre.pump !== 'flow' || pre.limiter) return null;
+  if (hold.pump !== decline.pump) return null;
+  const type: SimpleType = hold.pump === 'flow' ? 'flow' : 'pressure';
+  const limit = hold.limiter?.value ?? 0;
+  const limitRange = hold.limiter?.range ?? FIELD_SPECS.limiterRange.default;
+  if ((decline.limiter?.value ?? 0) !== limit) return null;
+  if (limit > 0 && (decline.limiter?.range ?? 0) !== limitRange) return null;
+
   return {
-    pre: parseStage(pre),
+    type,
+    pre: {
+      name: pre.name,
+      seconds: pre.seconds,
+      temperature: pre.temperature,
+      flow: pre.flow
+    },
     preExitPressure: pre.exit.value,
-    hold: parseStage(hold),
-    decline: parseStage(decline)
+    hold: parseMainStage(hold, type),
+    decline: parseMainStage(decline, type),
+    limit,
+    limitRange
   };
 }
 
-function parseStage(step: EditorStep): SimpleStage {
-  const pump: SimpleType = step.pump === 'flow' ? 'flow' : 'pressure';
-  const cap = step.limiter?.value ?? 0;
+function parseMainStage(step: EditorStep, type: SimpleType): SimpleStage {
   return {
     name: step.name,
-    pump,
     seconds: step.seconds,
     temperature: step.temperature,
-    pressure: pump === 'pressure' ? step.pressure : cap,
-    flow: pump === 'flow' ? step.flow : cap,
-    limitRange: step.limiter?.range ?? FIELD_SPECS.limiterRange.default
+    target: type === 'pressure' ? step.pressure : step.flow
   };
 }
 
@@ -191,9 +251,9 @@ function stepsEquivalent(a: EditorStep[], b: EditorStep[]): boolean {
   return a.every((step, index) => stepSignature(step) === stepSignature(b[index]!));
 }
 
-// A step's identity for guard comparison. The off-axis value (pressure on a
-// flow step, flow on a pressure step) is excluded — it never reaches the machine
-// and reaprime doesn't serialize it, so it must not affect the decision.
+// A step's identity for guard comparison. Only the value on the step's own axis
+// counts: the off-axis one never reaches the machine and reaprime doesn't
+// serialize it, so it must not affect the decision.
 function stepSignature(step: EditorStep): string {
   const primary = step.pump === 'pressure' ? step.pressure : step.flow;
   return JSON.stringify({

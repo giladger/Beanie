@@ -1,15 +1,21 @@
 import type { Profile, ProfileRecord } from '../api/types';
 import {
+  conflictingProfile,
+  isSupersededOriginal,
   editProfileEditorInput,
   loadOriginalProfile,
   newProfileEditorInput,
   originalProfileId,
+  restoreOriginalProfile,
   profileSaveMode,
   saveProfile,
   selectProfileForDraft,
+  supersededOriginalId,
   toggleFavoriteProfile,
-  toggleFavoriteProfileIds
+  toggleFavoriteProfileIds,
+  uniqueProfileTitle
 } from '../controllers/profileEditorController';
+import { carryProfileFavorite } from '../domain/profileIdentity';
 
 await run('profile save mode updates custom profiles and clones defaults', () => {
   const profiles = [
@@ -86,7 +92,19 @@ await run('profile selection normalizes even when the profile id is missing', ()
 });
 
 await run('profile editor open input models new edit and missing records', () => {
-  deepEqual(newProfileEditorInput(), { type: 'new', editingProfileId: null, profile: null });
+  // A new profile carries the kind it was created as — the only point one is chosen.
+  deepEqual(newProfileEditorInput('flow'), {
+    type: 'new',
+    editingProfileId: null,
+    profile: null,
+    kind: 'flow'
+  });
+  deepEqual(newProfileEditorInput('advanced'), {
+    type: 'new',
+    editingProfileId: null,
+    profile: null,
+    kind: 'advanced'
+  });
 
   const edit = editProfileEditorInput([record('custom', 'Custom')], 'custom');
   equal(edit.type, 'edit');
@@ -103,15 +121,56 @@ await run('profile editor controller saves demo profile copies locally', async (
       editingId: 'default',
       profile: profile('Copy'),
       demo: true,
-      nowMs: 123
+      nowMs: 123,
+      intent: 'save' as const
     },
     failingProfileDeps()
   );
 
   equal(result.type, 'saved');
   equal(result.type === 'saved' ? result.profileId : null, 'demo-profile-123');
-  equal(result.type === 'saved' ? result.profiles.length : null, 2);
-  equal(result.type === 'saved' ? result.status : null, 'Saved a copy (demo)');
+  // A plain Save over a built-in replaces it: the copy stands where it stood.
+  equal(result.type === 'saved' ? result.profiles.length : null, 1);
+  equal(result.type === 'saved' ? result.profiles[0]?.id : null, 'demo-profile-123');
+  equal(result.type === 'saved' ? result.profiles[0]?.parentId : null, 'default');
+  equal(result.type === 'saved' ? result.status : null, 'Profile saved (demo)');
+  equal(result.type === 'saved' ? result.supersededId : null, 'default');
+});
+
+await run('undoing a replacement puts the original back and drops the copy', async () => {
+  const original = record('orig', 'Gentle and sweet', true);
+  const mine = { ...record('mine', 'Gentle and sweet (copy)'), parentId: 'orig' };
+
+  const calls: string[] = [];
+  const result = await restoreOriginalProfile(
+    { profiles: [mine], hiddenProfiles: [original], editingId: 'mine', originalId: 'orig', demo: false },
+    {
+      // un-hiding comes first: a failure there must leave the copy untouched
+      unhideProfile: async (id) => { calls.push(`unhide:${id}`); },
+      deleteProfile: async (id) => { calls.push(`delete:${id}`); },
+      loadProfiles: async () => [original],
+      invalidateProfileMutation: async () => {},
+      putProfiles: async () => {}
+    }
+  );
+  equal(result.type, 'restored');
+  equal(result.type === 'restored' ? result.original.id : null, 'orig');
+  deepEqual(calls, ['unhide:orig', 'delete:mine']);
+
+  // if un-hiding fails, nothing is deleted
+  const aborted: string[] = [];
+  const failed = await restoreOriginalProfile(
+    { profiles: [mine], hiddenProfiles: [original], editingId: 'mine', originalId: 'orig', demo: false },
+    {
+      unhideProfile: async () => { throw new Error('offline'); },
+      deleteProfile: async (id) => { aborted.push(id); },
+      loadProfiles: async () => [],
+      invalidateProfileMutation: async () => {},
+      putProfiles: async () => {}
+    }
+  );
+  equal(failed.type, 'failed');
+  deepEqual(aborted, []);
 });
 
 await run('profile editor controller updates remote profiles and caches loaded profiles', async () => {
@@ -123,7 +182,8 @@ await run('profile editor controller updates remote profiles and caches loaded p
       editingId: 'custom',
       profile: profile('Updated'),
       demo: false,
-      nowMs: 123
+      nowMs: 123,
+      intent: 'save' as const
     },
     {
       createProfile: async () => {
@@ -137,7 +197,8 @@ await run('profile editor controller updates remote profiles and caches loaded p
       putProfiles: async (profiles) => {
         cachedCount = profiles.length;
       },
-      restoreProfile: async () => {}
+      restoreProfile: async () => {},
+      hideProfile: async () => {}
     }
   );
 
@@ -155,7 +216,8 @@ await run('profile editor controller falls back to saved record when profile rel
       editingId: 'custom',
       profile: profile('Updated'),
       demo: false,
-      nowMs: 123
+      nowMs: 123,
+      intent: 'save' as const
     },
     {
       createProfile: async () => {
@@ -167,7 +229,8 @@ await run('profile editor controller falls back to saved record when profile rel
       },
       invalidateProfileMutation: async () => {},
       putProfiles: async () => {},
-      restoreProfile: async () => {}
+      restoreProfile: async () => {},
+      hideProfile: async () => {}
     }
   );
 
@@ -184,7 +247,8 @@ await run('profile editor controller flags a content-hash-deduped create', async
       editingId: null,
       profile: profile('Different name, same settings'),
       demo: false,
-      nowMs: 123
+      nowMs: 123,
+      intent: 'save' as const
     },
     {
       createProfile: async () => ({ id: 'existing', profile: profile('Existing') }),
@@ -194,7 +258,8 @@ await run('profile editor controller flags a content-hash-deduped create', async
       loadProfiles: async () => [record('existing', 'Existing')],
       invalidateProfileMutation: async () => {},
       putProfiles: async () => {},
-      restoreProfile: async () => {}
+      restoreProfile: async () => {},
+      hideProfile: async () => {}
     }
   );
 
@@ -209,7 +274,8 @@ await run('profile editor controller marks a genuinely new create as not deduped
       editingId: null,
       profile: profile('Brand new'),
       demo: false,
-      nowMs: 123
+      nowMs: 123,
+      intent: 'save' as const
     },
     {
       createProfile: async () => ({ id: 'fresh', profile: profile('Brand new') }),
@@ -219,7 +285,8 @@ await run('profile editor controller marks a genuinely new create as not deduped
       loadProfiles: async () => [record('fresh', 'Brand new'), record('existing', 'Existing')],
       invalidateProfileMutation: async () => {},
       putProfiles: async () => {},
-      restoreProfile: async () => {}
+      restoreProfile: async () => {},
+      hideProfile: async () => {}
     }
   );
 
@@ -240,7 +307,8 @@ await run('profile editor controller restores a create that matched a hidden/del
       editingId: null,
       profile: profile('Resurrected'),
       demo: false,
-      nowMs: 123
+      nowMs: 123,
+      intent: 'save' as const
     },
     {
       createProfile: async () => ({ id: 'ghost', profile: profile('Old deleted title') }),
@@ -259,7 +327,8 @@ await run('profile editor controller restores a create that matched a hidden/del
       putProfiles: async () => {},
       restoreProfile: async (id) => {
         restored = id;
-      }
+      },
+      hideProfile: async () => {}
     }
   );
 
@@ -278,7 +347,8 @@ await run('profile editor controller reports gateway save failures', async () =>
       editingId: null,
       profile: profile('New'),
       demo: false,
-      nowMs: 123
+      nowMs: 123,
+      intent: 'save' as const
     },
     {
       createProfile: async () => {
@@ -290,7 +360,8 @@ await run('profile editor controller reports gateway save failures', async () =>
       loadProfiles: async () => [],
       invalidateProfileMutation: async () => {},
       putProfiles: async () => {},
-      restoreProfile: async () => {}
+      restoreProfile: async () => {},
+      hideProfile: async () => {}
     }
   );
 
@@ -352,6 +423,217 @@ await run('restoring an original stops at a parentless profile and survives a cy
   equal(reads, 2);
 });
 
+await run('a built-in is superseded by the version saved over it, and only then', () => {
+  const original = record('orig', 'Gentle and sweet', true);
+  const mine = { ...record('mine', 'Gentle and sweet (copy)'), parentId: 'orig' };
+
+  // The original is gone from the visible list, so the profile that replaced it
+  // has something to put back.
+  equal(supersededOriginalId([mine], 'mine'), 'orig');
+  // Copied rather than replaced: the original is still listed, nothing to undo.
+  equal(supersededOriginalId([original, mine], 'mine'), null);
+  // Nothing was saved off anything.
+  equal(supersededOriginalId([record('scratch', 'Scratch')], 'scratch'), null);
+  equal(supersededOriginalId([mine], null), null);
+
+  // The hidden original is filtered out of the hidden list while its
+  // replacement stands, and reappears the moment that goes.
+  equal(isSupersededOriginal(original, [mine]), true);
+  equal(isSupersededOriginal(original, []), false);
+  equal(isSupersededOriginal(original, [record('unrelated', 'Unrelated')]), false);
+});
+
+await run('Save a copy always creates, and never writes the profile it came from', async () => {
+  // A user's own profile is normally written in place, but Save a copy must
+  // create a separate one — otherwise "copy" quietly overwrites the source.
+  const mine = record('mine', 'Mine');
+  let updated = false;
+  let createdParent: string | undefined;
+  const result = await saveProfile(
+    { profiles: [mine], editingId: 'mine', profile: profile('Mine v2'), demo: false, nowMs: 1, intent: 'copy' as const },
+    {
+      ...failingProfileDeps(),
+      updateProfile: async () => { updated = true; throw new Error('must not update'); },
+      createProfile: async (input) => { createdParent = input.parentId; return { id: 'fresh', profile: input.profile }; },
+      loadProfiles: async () => [record('fresh', 'Mine v2'), mine],
+      invalidateProfileMutation: async () => {},
+      putProfiles: async () => {}
+    }
+  );
+  equal(result.type, 'saved');
+  equal(result.type === 'saved' ? result.profileId : null, 'fresh');
+  equal(updated, false);
+  equal(createdParent, 'mine');
+  // the source is still listed
+  equal(result.type === 'saved' ? result.profiles.some((p) => p.id === 'mine') : null, true);
+});
+
+await run('a plain save retires the built-in, a copy leaves it standing', async () => {
+  const profiles = [record('default', 'Gentle and sweet', true)];
+  const track = () => {
+    const hidden: string[] = [];
+    return {
+      hidden,
+      deps: {
+        ...failingProfileDeps(),
+        createProfile: async () => ({ id: 'copy', profile: profile('Gentle and sweet (copy)') }),
+        loadProfiles: async () => [record('copy', 'Gentle and sweet (copy)'), ...profiles],
+        invalidateProfileMutation: async () => {},
+        putProfiles: async () => {},
+        hideProfile: async (id: string) => { hidden.push(id); }
+      }
+    };
+  };
+
+  const save = track();
+  const saved = await saveProfile(
+    { profiles, editingId: 'default', profile: profile('Gentle and sweet (copy)'), demo: false, nowMs: 1, intent: 'save' as const },
+    save.deps
+  );
+  equal(saved.type === 'saved' ? saved.supersededId : null, 'default');
+  deepEqual(save.hidden, ['default']);
+
+  const copy = track();
+  const copied = await saveProfile(
+    { profiles, editingId: 'default', profile: profile('Gentle and sweet (copy)'), demo: false, nowMs: 1, intent: 'copy' as const },
+    copy.deps
+  );
+  equal(copied.type === 'saved' ? copied.supersededId : null, null);
+  deepEqual(copy.hidden, []);
+});
+
+await run('an unchanged save over a built-in never retires it', async () => {
+  // With nothing changed the "copy" dedupes straight back to the built-in, so
+  // hiding it would retire the very profile just saved.
+  const profiles = [record('default', 'Gentle and sweet', true)];
+  const hidden: string[] = [];
+  const result = await saveProfile(
+    { profiles, editingId: 'default', profile: profile('Gentle and sweet'), demo: false, nowMs: 1, intent: 'save' as const },
+    {
+      ...failingProfileDeps(),
+      createProfile: async () => ({ id: 'default', profile: profile('Gentle and sweet') }),
+      loadProfiles: async () => profiles,
+      invalidateProfileMutation: async () => {},
+      putProfiles: async () => {},
+      hideProfile: async (id: string) => { hidden.push(id); }
+    }
+  );
+  equal(result.type === 'saved' ? result.deduped : null, true);
+  equal(result.type === 'saved' ? result.supersededId : null, null);
+  deepEqual(hidden, []);
+});
+
+await run('a favourite follows its profile when a save re-ids it', () => {
+  // A settings edit re-hashes the record and reaprime drops the old id: the
+  // star moves with the profile, keeping its place in the list.
+  deepEqual(
+    carryProfileFavorite(['a', 'old', 'b'], { from: 'old', to: 'new', replaced: true }),
+    ['a', 'new', 'b']
+  );
+
+  // A copy of a bundled default leaves the original standing, so the copy
+  // inherits a star rather than stealing the original's.
+  deepEqual(
+    carryProfileFavorite(['default'], { from: 'default', to: 'copy', replaced: false }),
+    ['default', 'copy']
+  );
+
+  // Nothing to carry: not a favourite, or the id never moved.
+  deepEqual(carryProfileFavorite(['a'], { from: 'other', to: 'new', replaced: true }), ['a']);
+  deepEqual(carryProfileFavorite(['a'], { from: 'a', to: 'a', replaced: true }), ['a']);
+
+  // The destination already being a favourite must not duplicate it.
+  deepEqual(
+    carryProfileFavorite(['old', 'new'], { from: 'old', to: 'new', replaced: true }),
+    ['new']
+  );
+});
+
+await run('an update whose settings already belong to another profile is refused', async () => {
+  // reaprime's update deletes the old row then inserts the new one, untransacted,
+  // so a colliding update destroys the profile being edited and then fails its
+  // INSERT on the unique index. Restoring a copy to its original lands exactly
+  // there, since that makes the copy identical to its parent.
+  const parent = { ...record('parent', 'Gentle and sweet', true), profile: brewProfile('Gentle and sweet', 6) };
+  const copy = { ...record('copy', 'My gentle', false), parentId: 'parent', profile: brewProfile('My gentle', 9) };
+  const profiles = [parent, copy];
+
+  let touchedGateway = false;
+  const deps = {
+    ...failingProfileDeps(),
+    updateProfile: async () => { touchedGateway = true; throw new Error('must not be called'); },
+    createProfile: async () => { touchedGateway = true; throw new Error('must not be called'); }
+  };
+  // the user restored the original, so the copy now carries the parent's settings
+  const result = await saveProfile(
+    { profiles, editingId: 'copy', profile: brewProfile('My gentle', 6), demo: false, nowMs: 1, intent: 'save' as const },
+    deps
+  );
+  equal(result.type, 'blocked');
+  equal(result.type === 'blocked' ? result.conflictId : null, 'parent');
+  equal(result.type === 'blocked' ? result.conflictTitle : null, 'Gentle and sweet');
+  equal(touchedGateway, false);
+  equal(result.type === 'blocked' ? /Gentle and sweet/.test(result.message) : false, true);
+
+  // the title is not part of a profile's identity, so renaming alone still saves
+  const renamed = await saveProfile(
+    { profiles, editingId: 'copy', profile: brewProfile('Renamed', 9), demo: true, nowMs: 2, intent: 'save' as const },
+    failingProfileDeps()
+  );
+  equal(renamed.type, 'saved');
+});
+
+await run('conflictingProfile ignores the profile being edited and the title', () => {
+  const a = { ...record('a', 'A'), profile: brewProfile('A', 9) };
+  const b = { ...record('b', 'B'), profile: brewProfile('B', 6) };
+  const profiles = [a, b];
+  // editing A and keeping its settings is not a conflict with itself
+  equal(conflictingProfile(profiles, brewProfile('A renamed', 9), 'a'), null);
+  // but taking B's settings is
+  equal(conflictingProfile(profiles, brewProfile('A', 6), 'a')?.id, 'b');
+  // a create (no editingId) sees A as a conflict, since nothing is excluded
+  equal(conflictingProfile(profiles, brewProfile('C', 9), null)?.id, 'a');
+});
+
+await run('nothing is ever saved under a name that is already taken', () => {
+  // A profile saved over one of Decent's keeps its name — the original leaves
+  // the list, so there is nothing left to tell it apart from. Everything else
+  // that would collide is numbered instead.
+  equal(uniqueProfileTitle([], 'Gentle and sweet'), 'Gentle and sweet');
+  equal(uniqueProfileTitle([record('a', 'Gentle and sweet')], 'Gentle and sweet'), 'Gentle and sweet 2');
+  equal(
+    uniqueProfileTitle(
+      [record('a', 'Gentle and sweet'), record('b', 'Gentle and sweet 2')],
+      'Gentle and sweet'
+    ),
+    'Gentle and sweet 3'
+  );
+  // an untaken name is left exactly as it is
+  equal(uniqueProfileTitle([record('a', 'Other')], 'New profile'), 'New profile');
+  equal(uniqueProfileTitle([], '  '), 'Profile');
+});
+
+function brewProfile(title: string, pressure: number): Profile {
+  return {
+    title,
+    steps: [
+      {
+        name: 'hold',
+        pump: 'pressure',
+        pressure,
+        temperature: 90,
+        transition: 'fast',
+        seconds: 20,
+        volume: 0,
+        weight: 0,
+        sensor: 'coffee'
+      }
+    ],
+    tank_temperature: 0,
+    target_volume_count_start: 0
+  } as unknown as Profile;
+}
+
 function profile(title: string): Profile {
   return {
     title,
@@ -386,6 +668,9 @@ function failingProfileDeps() {
     },
     restoreProfile: async () => {
       throw new Error('unexpected restore');
+    },
+    hideProfile: async () => {
+      throw new Error('unexpected hide');
     }
   };
 }

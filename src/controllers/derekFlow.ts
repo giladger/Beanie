@@ -556,7 +556,8 @@ export class DerekFlow {
         editingId: null,
         profile: tweak.profile,
         demo: this.host.state().demo,
-        nowMs: Date.now()
+        nowMs: Date.now(),
+        intent: 'copy' as const
       },
       {
         createProfile: (input) => gateway.createProfile(input),
@@ -564,10 +565,14 @@ export class DerekFlow {
         loadProfiles: () => gateway.profiles(),
         invalidateProfileMutation: (profileId) => beanieCache.invalidateProfileMutation(profileId),
         putProfiles: (profiles) => beanieCache.putProfiles(profiles),
-        restoreProfile: (id) => gateway.setProfileVisibility(id, 'visible').then(() => {})
+        restoreProfile: (id) => gateway.setProfileVisibility(id, 'visible').then(() => {}),
+        hideProfile: (id) => gateway.setProfileVisibility(id, 'hidden').then(() => {})
       }
     );
     if (!isCurrent()) return null;
+    // A tweak always creates, so `blocked` is unreachable here — but it carries
+    // the only useful sentence if that ever changes.
+    if (saved.type === 'blocked') throw new Error(saved.message);
     if (saved.type === 'failed') throw new Error('Saving the tweaked profile failed');
     const selection = selectProfileForDraft({
       draft: this.host.state().draft,

@@ -256,6 +256,47 @@ export function decodeProfile(profile: Profile | null): ProfileModel {
 }
 
 /** Encode the normalized model as canonical reaprime v2 profile data. */
+/**
+ * A profile's identity as reaprime sees it. reaprime hashes only the
+ * execution-relevant fields — beverage type, steps, tank temperature and the
+ * stop targets, but never title/author/notes (profile_hash.dart) — and that
+ * hash IS the record's id. Two profiles that agree here therefore cannot both
+ * exist on the machine.
+ *
+ * Both sides are normalised through `decodeProfile` before comparison, so a
+ * profile coming back from the gateway and one built in the editor are judged
+ * on the same footing rather than on incidental JSON differences.
+ */
+export function profileExecutionSignature(profile: Profile): string {
+  const model = decodeProfile(profile);
+  return JSON.stringify({
+    beverageType: model.beverageType,
+    tankTemperature: model.tankTemperature ?? 0,
+    targetWeight: model.targetWeight ?? null,
+    targetVolume: model.targetVolume ?? null,
+    targetVolumeCountStart: model.targetVolumeCountStart ?? 0,
+    steps: model.steps.map((step) => ({
+      pump: step.pump,
+      pressure: round3(step.pressure),
+      flow: round3(step.flow),
+      temperature: round3(step.temperature),
+      sensor: step.sensor,
+      transition: step.transition,
+      seconds: round3(step.seconds),
+      volume: round3(step.volume),
+      weight: round3(step.weight),
+      exit: step.exit
+        ? { type: step.exit.type, condition: step.exit.condition, value: round3(step.exit.value) }
+        : null,
+      limiter: step.limiter ? { value: round3(step.limiter.value), range: round3(step.limiter.range) } : null
+    }))
+  });
+}
+
+function round3(value: number): number {
+  return Number(value.toFixed(3));
+}
+
 export function encodeProfile(model: ProfileModel): Profile {
   const profile: Profile = {
     ...model.extra,

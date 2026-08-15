@@ -56,7 +56,7 @@ run('simple profile: preinfusion_time tweak edits the knob and retitles', () => 
   const parsed = parseStepsToSimple(state.steps);
   equal(parsed?.pre.seconds, 30);
   // The single-parameter promise: nothing else moved.
-  equal(parsed?.hold.pressure, 8.6);
+  equal(parsed?.hold.target, 8.6);
   equal(parsed?.pre.flow, 4);
 });
 
@@ -65,24 +65,21 @@ run('simple pressure profile: peak_pressure tweak edits the hold target', () => 
   if (!result) throw new Error('expected a tweak');
   equal(result.summary, 'Peak pressure 8.6 bar → 7 bar');
   const parsed = parseStepsToSimple(createProfileEditorState(result.profile).steps);
-  equal(parsed?.hold.pressure, 7);
+  equal(parsed?.hold.target, 7);
 });
 
-run('simple flow profile: peak_pressure adjusts an existing pressure limiter only', () => {
-  const base = defaultSimpleKnobs('flow');
-  const withLimiter = {
-    ...base,
-    hold: { ...base.hold, pressure: 8.4 },
-    decline: { ...base.decline, pressure: 8.4 }
-  };
-  const limited = profileWithSteps('Flow', compileSimpleToSteps(withLimiter));
+run('simple flow profile: peak_pressure adjusts an existing pressure cap only', () => {
+  // A flow profile's only pressure knob is its profile-level cap, which hold and
+  // decline share by construction — so one move keeps the pair coherent.
+  const limited = profileWithSteps('Flow', compileSimpleToSteps({ ...defaultSimpleKnobs('flow'), limit: 8.4 }));
   const result = applyProfileTweak(limited, suggestion('peak_pressure', 7.5));
   if (!result) throw new Error('expected a tweak');
-  const parsed = parseStepsToSimple(createProfileEditorState(result.profile).steps);
-  // the cap the hold shares with the decline moves as a pair
-  equal(parsed?.hold.pressure, 7.5);
-  equal(parsed?.decline.pressure, 7.5);
+  const steps = createProfileEditorState(result.profile).steps;
+  equal(parseStepsToSimple(steps)?.limit, 7.5);
+  equal(steps[1]!.limiter?.value, 7.5);
+  equal(steps[2]!.limiter?.value, 7.5);
 
+  // Introducing a cap where there was none is more than a one-knob change.
   const uncapped = profileWithSteps('Flow', compileSimpleToSteps(defaultSimpleKnobs('flow')));
   equal(applyProfileTweak(uncapped, suggestion('peak_pressure', 7.5)), null);
 });

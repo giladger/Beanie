@@ -11,14 +11,11 @@ import {
   nudgeSimpleProfileField,
   nudgeStepField,
   profileFromEditorState,
+  rebaseProfileEditor,
   removeStep,
-  restoreProfileSettings,
   selectStep,
   setAdvancedTab,
-  setEditorMode,
   setProfileMeta,
-  setSimpleProfileType,
-  setSimpleStagePump,
   setStepExit,
   setStepField,
   setStepPump,
@@ -28,15 +25,17 @@ import {
 } from '../components/profileEditor';
 import {
   editProfileEditorInput,
-  loadOriginalProfile,
   newProfileEditorInput,
-  originalProfileId,
+  restoreOriginalProfile,
   saveProfile,
-  selectProfileForDraft
+  selectProfileForDraft,
+  supersededOriginalId,
+  uniqueProfileTitle
 } from './profileEditorController';
+import type { ProfileIdentityMove } from '../domain/profileIdentity';
 import { beanieCache } from '../domain/cache';
 import type { StepFieldKey } from '../domain/profileModel';
-import type { SimpleStageId } from '../domain/simpleProfile';
+import type { NewProfileKind } from '../domain/simpleProfile';
 import { OperationEpoch } from './operationEpoch';
 
 export interface ProfileEditTarget {
@@ -59,6 +58,8 @@ export interface ProfileEditorFlowState {
   draft: RecipeDraft;
   editingProfileId: string | null;
   grinders: Grinder[];
+  /** Retired profiles, where a superseded built-in lives until it is restored. */
+  hiddenProfiles: ProfileRecord[];
   modal: AppModal;
   profileEditor: ProfileEditorState | null;
   profileFocusId: string | null;
@@ -86,6 +87,11 @@ export interface ProfileEditorFlowHost {
   scheduleApply(): void;
   /** Focus the notes textarea on the render right after the notes modal opens. */
   requestNotesFocus(): void;
+  /**
+   * Re-point the markers that name a profile by id — its favourite star — after
+   * a save landed the profile on a new id. See domain/profileIdentity.
+   */
+  carryProfileIdentity(move: ProfileIdentityMove): void;
 }
 
 // Turn a gateway failure into a short, user-facing import error. fetchJson
@@ -149,8 +155,15 @@ export class ProfileEditorFlow {
       'pe-notes-save': () => {
         this.commitProfileNotes();
       },
+      // "New profile" asks what kind first — the one moment a profile's kind is
+      // chosen, since nothing afterwards can change it (de1app's New Preset page).
       'new-profile': () => {
-        this.openNewProfileEditor();
+        this.host.setState({ modal: 'new-profile-kind' });
+      },
+      'new-profile-kind': ({ value }) => {
+        this.openNewProfileEditor(
+          value === 'flow' ? 'flow' : value === 'advanced' ? 'advanced' : 'pressure'
+        );
       },
       'open-import-profile': () => {
         this.openImportProfile();
@@ -164,7 +177,13 @@ export class ProfileEditorFlow {
       'save-profile': async () => {
         await this.submitProfileEditor();
       },
-      'pe-restore-original': async () => {
+      'save-profile-copy': async () => {
+        await this.submitProfileEditor('copy');
+      },
+      'pe-restore-original': () => {
+        this.openRestoreOriginal();
+      },
+      'pe-restore-confirm': async () => {
         await this.restoreProfileOriginal();
       },
       'pe-add-step': () => {
@@ -218,18 +237,6 @@ export class ProfileEditorFlow {
           );
         }
       },
-      'pe-set-mode': ({ value }) => {
-        this.editorDispatch((pe) => setEditorMode(pe, value === 'basic' ? 'basic' : 'advanced'));
-      },
-      'pe-set-simple-type': ({ value }) => {
-        this.editorDispatch((pe) => setSimpleProfileType(pe, value === 'flow' ? 'flow' : 'pressure'));
-      },
-      'pe-simple-pump': ({ el, value }) => {
-        const stage = el.dataset.stage as SimpleStageId | undefined;
-        if (stage) {
-          this.editorDispatch((pe) => setSimpleStagePump(pe, stage, value === 'flow' ? 'flow' : 'pressure'));
-        }
-      },
       'pe-advanced-tab': ({ value }) => {
         this.editorDispatch((pe) => setAdvancedTab(pe, value === 'limits' ? 'limits' : 'steps'));
       },
@@ -280,10 +287,10 @@ export class ProfileEditorFlow {
     this.openProfileEditorInput(input.editingProfileId, input.profile);
   }
 
-  private openNewProfileEditor(): void {
-    const input = newProfileEditorInput();
-    if (input.type === 'missing') return;
-    this.openProfileEditorInput(input.editingProfileId, input.profile);
+  private openNewProfileEditor(kind: NewProfileKind): void {
+    const input = newProfileEditorInput(kind);
+    if (input.type !== 'new') return;
+    this.openProfileEditorInput(input.editingProfileId, input.profile, input.kind);
   }
 
   private openImportProfile(): void {
@@ -337,15 +344,27 @@ export class ProfileEditorFlow {
     );
   }
 
-  private openProfileEditorInput(editingProfileId: string | null, profile: Profile | null): void {
+  private openProfileEditorInput(
+    editingProfileId: string | null,
+    profile: Profile | null,
+    newProfileKind?: NewProfileKind
+  ): void {
     const canceledEditorSave = this.activeEditorSave != null;
     this.editorEpoch.invalidate();
     this.activeEditorSave = null;
     this.activeEditorRestore = null;
+    const base = createProfileEditorState(profile, newProfileKind);
+    // Editing one of Decent's keeps its name: the user's version stands where
+    // the original stood, so there is nothing to tell it apart from. Only a
+    // brand-new profile needs a free name, so two unnamed ones don't collide.
+    const profiles = this.host.state().profiles;
+    const title = editingProfileId == null ? uniqueProfileTitle(profiles, base.title) : base.title;
+    const editor = title === base.title ? base : rebaseProfileEditor({ ...base, title });
     this.host.setState({
       view: 'profile-editor',
+      modal: null,
       editingProfileId,
-      profileEditor: createProfileEditorState(profile),
+      profileEditor: editor,
       profileEdit: null,
       busy: canceledEditorSave ? false : this.host.state().busy
     });
@@ -357,23 +376,33 @@ export class ProfileEditorFlow {
     return null;
   }
 
-  async submitProfileEditor(): Promise<void> {
+  async submitProfileEditor(intent: 'save' | 'copy' = 'save'): Promise<void> {
     const pe = this.host.state().profileEditor;
     if (!pe || this.host.state().busy) return;
+    // A stored profile with nothing pending has nothing to write, and a copy of
+    // one cannot exist beside it — a profile is known by its settings. Both
+    // buttons are disabled for it; this keeps the rule true whatever reaches here.
+    if (this.host.state().editingProfileId != null && !pe.dirty) return;
     const problem = this.validateProfileEditor(pe);
     if (problem) {
-      this.host.setState({ status: problem, profileEditor: { ...pe, saveNotice: { tone: 'error', message: problem } } });
+      this.host.setState({ status: problem, profileEditor: { ...pe, saveError: problem } });
       return;
     }
-    const profile = profileFromEditorState(pe);
     const editingId = this.host.state().editingProfileId;
+    // A copy keeps the source, so it needs a name of its own — checked against
+    // every profile, the source included. The editor reopens on the saved
+    // record, so the user sees the name it took.
+    const listed = this.host.state().profiles;
+    const profile =
+      intent === 'copy' && listed.some((item) => (item.profile.title ?? '').trim() === pe.title.trim())
+        ? profileFromEditorState({ ...pe, title: uniqueProfileTitle(listed, pe.title) })
+        : profileFromEditorState(pe);
     const operation = this.editorEpoch.begin();
     this.activeEditorSave = operation;
-    const cloneOfDefault = Boolean(editingId) && this.host.state().profiles.find((item) => item.id === editingId)?.isDefault === true;
     this.host.setState({
       busy: true,
-      status: cloneOfDefault ? 'Saving a copy' : 'Saving profile',
-      profileEditor: { ...pe, saveNotice: null }
+      status: intent === 'copy' ? 'Saving a copy' : 'Saving profile',
+      profileEditor: { ...pe, saveError: null }
     });
 
     const result = await saveProfile({
@@ -381,17 +410,33 @@ export class ProfileEditorFlow {
       editingId,
       profile,
       demo: this.host.state().demo,
-      nowMs: Date.now()
+      nowMs: Date.now(),
+      intent
     }, {
       createProfile: (input) => gateway.createProfile(input),
       updateProfile: (id, input) => gateway.updateProfile(id, input),
       loadProfiles: () => gateway.profiles(),
       invalidateProfileMutation: (profileId) => beanieCache.invalidateProfileMutation(profileId),
       putProfiles: (profiles) => beanieCache.putProfiles(profiles),
-      restoreProfile: (id) => gateway.setProfileVisibility(id, 'visible').then(() => {})
+      restoreProfile: (id) => gateway.setProfileVisibility(id, 'visible').then(() => {}),
+      hideProfile: (id) => gateway.setProfileVisibility(id, 'hidden').then(() => {})
     });
     if (!this.editorCurrent(operation, editingId)) return;
     this.activeEditorSave = null;
+
+    // Refused before it was sent: these settings already belong to another
+    // profile, and reaprime would delete this one on its way to failing.
+    if (result.type === 'blocked') {
+      const editor = this.host.state().profileEditor;
+      this.host.setState({
+        busy: false,
+        status: result.status,
+        profileEditor: editor
+          ? { ...editor, saveError: result.message }
+          : editor
+      });
+      return;
+    }
 
     if (result.type === 'failed') {
       console.error('[Beanie] Save profile failed', result.error);
@@ -400,7 +445,7 @@ export class ProfileEditorFlow {
         busy: false,
         status: result.status,
         profileEditor: editor
-          ? { ...editor, saveNotice: { tone: 'error', message: profileSaveErrorMessage(result.error) } }
+          ? { ...editor, saveError: profileSaveErrorMessage(result.error) }
           : editor
       });
       return;
@@ -413,88 +458,157 @@ export class ProfileEditorFlow {
     if (result.deduped) {
       const editor = this.host.state().profileEditor;
       const savedTitle = result.profiles.find((item) => item.id === result.profileId)?.profile.title;
-      const notice = {
-        tone: 'error' as const,
-        message: savedTitle
-          ? `These settings already match the existing profile "${savedTitle}". Change a setting to save a separate profile.`
-          : 'These settings already match an existing profile. Change a setting to save a separate profile.'
-      };
+      const notice = savedTitle
+        ? `These settings are identical to “${savedTitle}”. Change something to save this as its own profile.`
+        : 'These settings are identical to a profile you already have. Change something to save this as its own profile.';
       this.host.setState({
         profiles: result.profiles,
         editingProfileId: result.profileId,
         profileFocusId: result.profileId,
         busy: false,
         status: result.status,
-        profileEditor: editor ? { ...editor, dirty: false, saveNotice: notice } : editor
+        profileEditor: editor ? { ...editor, saveError: notice } : editor
       });
       return;
     }
 
-    // A successful save loads the profile straight away and returns to the
-    // workbench: edits to the active profile go live immediately, and a freshly
-    // created one is ready to brew without a separate load step.
+    // The saved profile usually lands on a *new* id — reaprime hashes brew
+    // settings, so any change to them re-ids the record (and copying a default
+    // creates one outright). Take the markers that name it by id along, or the
+    // profile quietly loses its favourite star on the way through Save.
+    if (editingId && result.profileId !== editingId) {
+      this.host.carryProfileIdentity({
+        from: editingId,
+        to: result.profileId,
+        replaced: !result.profiles.some((item) => item.id === editingId)
+      });
+    }
+
+    // A successful save loads the profile straight away — edits to the active
+    // profile go live immediately, and a freshly created one is ready to brew
+    // without a separate load step.
     const selection = selectProfileForDraft({
       draft: this.host.state().draft,
       profiles: result.profiles,
       grinders: this.host.state().grinders,
       profileId: result.profileId
     });
+    // The editor stays open on what was actually stored. Rebuilding it from the
+    // saved record rather than keeping the draft means the numbers on screen are
+    // the ones on the machine, and the header re-reads the saved profile — so a
+    // copy of a default stops offering to copy itself again. The step in hand
+    // and the open tab are carried across so saving doesn't lose the user's place.
+    const editor = this.host.state().profileEditor;
+    const saved = result.profiles.find((item) => item.id === result.profileId);
+    const reopened = saved ? createProfileEditorState(saved.profile) : editor;
+    // A retired original is hidden now, so keep the hidden list honest without
+    // a refetch — and give the undo something to read the original back from.
+    const retired = result.supersededId
+      ? this.host.state().profiles.find((item) => item.id === result.supersededId)
+      : null;
     this.host.setState({
       profiles: result.profiles,
+      hiddenProfiles: retired
+        ? [retired, ...this.host.state().hiddenProfiles.filter((item) => item.id !== retired.id)]
+        : this.host.state().hiddenProfiles,
       draft: selection.draft,
-      view: 'workbench',
-      profileEditor: null,
-      editingProfileId: null,
+      editingProfileId: result.profileId,
       profileFocusId: result.profileId,
       profileSearch: '',
       // Loading a profile replaces whatever Derek tweak was staged (matches pickProfile).
       derekTweakChip: null,
       busy: false,
-      status: result.status
+      status: result.status,
+      // No banner for a save that worked: the profile is on screen under its own
+      // name with nothing left to save, which the Save button says by itself.
+      profileEditor: reopened && editor
+        ? {
+            ...reopened,
+            selectedStep: Math.min(editor.selectedStep, Math.max(0, reopened.steps.length - 1)),
+            advancedTab: editor.advancedTab
+          }
+        : reopened
     });
     this.host.scheduleApply();
   }
 
   /**
-   * Put the edited profile's brewing settings back to the profile it was saved
-   * from — for a copy of a bundled default, the default as Decent shipped it.
-   * The original is loaded into the editor rather than written to the gateway,
-   * so the user sees it on the chart and still chooses whether to Save.
+   * Ask before undoing a replacement. It deletes the user's own profile, which
+   * is not something to do on one tap of a header button.
+   */
+  private openRestoreOriginal(): void {
+    const state = this.host.state();
+    const originalId = supersededOriginalId(state.profiles, state.editingProfileId);
+    if (!originalId || !state.profileEditor || state.busy) return;
+    this.host.setState({ modal: 'restore-original' });
+  }
+
+  /**
+   * Undo a replacement: delete the version saved over one of Decent's built-ins
+   * and put the built-in back in the list. The editor then opens on the restored
+   * original, so what is on screen is what is now installed.
    */
   async restoreProfileOriginal(): Promise<void> {
     const state = this.host.state();
     const editingId = state.editingProfileId;
-    const parentId = originalProfileId(state.profiles, editingId);
-    if (!parentId || !state.profileEditor || state.busy) return;
+    const originalId = supersededOriginalId(state.profiles, editingId);
+    if (!originalId || !editingId || !state.profileEditor || state.busy) return;
 
     const operation = this.editorEpoch.begin();
     this.activeEditorRestore = operation;
-    this.host.setState({ busy: true, status: 'Loading the original profile' });
-    try {
-      const original = await loadOriginalProfile(parentId, {
-        // The visible list already holds most parents; only reach for the
-        // gateway when it doesn't (a hidden or soft-deleted original).
-        loadProfile: async (id) =>
-          this.host.state().profiles.find((item) => item.id === id) ?? (await gateway.profile(id))
-      });
-      if (!this.restoreCurrent(operation, editingId)) return;
-      this.activeEditorRestore = null;
-      const editor = this.host.state().profileEditor;
-      if (!original || !editor) {
-        this.host.setState({ busy: false, status: 'Could not find the original profile' });
-        return;
+    this.host.setState({ modal: null, busy: true, status: 'Restoring the original profile' });
+
+    const result = await restoreOriginalProfile(
+      { profiles: state.profiles, hiddenProfiles: state.hiddenProfiles, editingId, originalId, demo: state.demo },
+      {
+        unhideProfile: (id) => gateway.setProfileVisibility(id, 'visible').then(() => {}),
+        deleteProfile: (id) => gateway.deleteProfile(id),
+        loadProfiles: () => gateway.profiles(),
+        invalidateProfileMutation: (id) => beanieCache.invalidateProfileMutation(id),
+        putProfiles: (profiles) => beanieCache.putProfiles(profiles)
       }
+    );
+    if (!this.restoreCurrent(operation, editingId)) return;
+    this.activeEditorRestore = null;
+
+    if (result.type === 'failed') {
+      if (result.error) console.error('[Beanie] Restore original profile failed', result.error);
+      const editor = this.host.state().profileEditor;
       this.host.setState({
         busy: false,
-        profileEditor: restoreProfileSettings(editor, original.profile),
-        status: 'Original settings restored — save to keep them'
+        status: result.status,
+        profileEditor: editor
+          ? {
+              ...editor,
+              saveError: 'Couldn’t go back to Decent’s version. Nothing was lost — your profile is as you left it.'
+            }
+          : editor
       });
-    } catch (err) {
-      console.error('[Beanie] Restore original profile failed', err);
-      if (!this.restoreCurrent(operation, editingId)) return;
-      this.activeEditorRestore = null;
-      this.host.setState({ busy: false, status: 'Could not load the original profile' });
+      return;
     }
+
+    // The star follows the profile the user is left holding.
+    this.host.carryProfileIdentity({ from: editingId, to: originalId, replaced: true });
+    const selection = selectProfileForDraft({
+      draft: this.host.state().draft,
+      profiles: result.profiles,
+      grinders: this.host.state().grinders,
+      profileId: originalId
+    });
+    this.host.setState({
+      profiles: result.profiles,
+      hiddenProfiles: this.host.state().hiddenProfiles.filter((item) => item.id !== originalId),
+      draft: selection.draft,
+      busy: false,
+      editingProfileId: originalId,
+      profileFocusId: originalId,
+      derekTweakChip: null,
+      status: result.status,
+      // No banner: the editor reopens on Decent's profile with Restore greyed
+      // out, which is the whole of what happened.
+      profileEditor: createProfileEditorState(result.original.profile)
+    });
+    this.host.scheduleApply();
   }
 
   private restoreCurrent(operation: number, editingId: string | null): boolean {

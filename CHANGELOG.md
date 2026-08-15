@@ -1,5 +1,72 @@
 # Changelog
 
+## v0.3.6 - 2026-08-15
+
+The profile editor, largely rebuilt.
+
+- A profile is now a pressure profile, a flow profile, or an advanced one, and
+  you choose which when you create it. The Basic/Advanced toggle is gone: it
+  changed the profile rather than the view — tapping Basic on a profile Basic
+  couldn't show rewrote its steps into a plain three-stage profile to have
+  something to put on screen, so values like flow came back different and
+  Advanced then showed the rewrite instead of what you had. New profile asks what
+  kind first, and from then on the editor you get is whichever that profile is,
+  named in the header. This is how the tablet app has always worked: no toggle,
+  and no way to turn an advanced profile back into a simple one.
+- The simple editor follows one axis, the way the tablet app's does. A pressure
+  profile's stages set a pressure and a flow profile's set a flow, rather than
+  every stage showing both with a Flow/Pressure switch deciding which one
+  counted. The other axis appears once, as a single limit on the whole shot
+  ("limit flow" on a pressure profile, "limit pressure" on a flow one), which is
+  where the tablet app puts it too. Preinfusion is unchanged and works the same
+  in both: a flow, for a time, until pressure comes up. Time and temperature stay
+  per stage. A profile that genuinely mixes the two — one stage chasing pressure,
+  the next chasing flow — isn't something the simple editor can show, so it opens
+  on the steps instead.
+- Editing one of Decent's profiles now just edits it. Save, and your version
+  keeps the name and the place in the list; Decent's goes away entirely, not into
+  the hidden section. You end up with one profile where you had one before,
+  instead of two called the same thing and no way to tell which is which.
+  "Restore original" is the way back — it asks first, because everything you'd
+  saved to that profile goes with it — and it sits greyed in the header, with the
+  reason, on a profile that was never one of Decent's.
+- Added "Save a copy", next to Save. It saves your changes as a new profile and
+  leaves the one you opened untouched — for keeping both a Decent profile and
+  your own take on it, or branching off your own without disturbing it.
+- Saving no longer closes the editor. It stays open on what you just saved, with
+  the numbers refreshed from the machine, so you can keep working. The Save
+  button reads "Saved" and goes quiet once there's nothing left to save, and
+  comes back the moment the profile actually differs from the one you opened —
+  nudge a value up and back down, or retype a name as it was, and there's nothing
+  to save again. "Save a copy" goes quiet with it, a copy having to differ from
+  the profile it came from.
+- Two profiles can no longer land in your list under the same name. Anything that
+  would arrive as a second "LRv3" is saved as "LRv3 2", so two you never got
+  round to naming stay easy to tell apart.
+- Fixed a save that could destroy the profile you were editing. Restoring a
+  profile to its original made it identical to the profile it came from — and
+  since the machine knows a profile by its settings, saving that asked it to hold
+  two identical profiles. It answered by deleting yours and then failing, so the
+  profile was simply gone with a database error on screen. Beanie now sees the
+  clash before anything is sent and says which profile the settings already
+  belong to, leaving yours untouched and the editor open. If you've hit this,
+  check your list — the profile that vanished can't be recovered from here.
+- Fixed an edited profile losing its star. A profile is identified by its brewing
+  settings, so changing any of them gives it a new identity, and the star — which
+  remembered the old one — stayed behind on a profile that no longer existed. The
+  star now travels with the profile through a save, keeping its place in the
+  list, and a copy of a starred profile starts out starred too.
+- Fixed a step's "move on if…" condition being impossible to turn off. Setting
+  one was a one-way door: tapping the lit tile again just set it a second time,
+  and turning its number down to 0 left the condition switched on — which for a
+  "pressure over" is worse than useless, since it fires the instant the step
+  starts. Tapping a lit tile now turns it back off.
+- Fixed the step list not following the step you just added. Past the eighth step
+  the list is taller than the space it has, and adding, duplicating or moving a
+  step selected one you couldn't see — the panel on the right changed but the
+  list looked like it had ignored you. It now keeps the selected step in view,
+  while leaving the list where you put it if you've scrolled it yourself.
+
 ## v0.3.5 - 2026-08-08
 
 - Fixed a new coffee being added twice. Every coffee you added through the bag
