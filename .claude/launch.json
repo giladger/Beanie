@@ -14,6 +14,12 @@
       "runtimeArgs": ["GATEWAY_HOST=127.0.0.1:9", "npm", "run", "dev", "--", "--port", "5198"],
       "port": 5198,
       "autoPort": false
+    },
+    {
+      "name": "dev-lan",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:lan"],
+      "port": 5173
     }
   ]
 }
