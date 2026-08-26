@@ -304,12 +304,13 @@ export function sleepOverlayModel(input: {
   };
 }
 
-// reaprime hosts Beanie inside a flutter_inappwebview pointed at localhost:3000
-// and overrides the webview user agent to the bare string "Decent". The very
-// same origin is reachable from an ordinary browser on the tablet's :3000 port,
-// where we want the on-screen power buttons rather than the full-screen
-// tap-to-wake overlay — so we must tell "inside reaprime" apart from "a browser
-// hitting :3000".
+// reaprime hosts Beanie inside a flutter_inappwebview pointed at its localhost
+// skin server (fixed port 3000 up to decaid 0.8.1, a per-generation random port
+// since 0.8.2) and overrides the webview user agent to the bare string
+// "Decent". The very same skin server is reachable from an ordinary browser on
+// the tablet's LAN address, where we want the on-screen power buttons rather
+// than the full-screen tap-to-wake overlay — so we must tell "inside reaprime"
+// apart from "a browser on the same origin".
 //
 // Detecting this turned out to be fragile, so we layer three signals weakest-last:
 //

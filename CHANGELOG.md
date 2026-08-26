@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.7 - 2026-08-26
+
+- Work again on Decaid 0.8.2. Decaid now serves the skin from a fresh random
+  port each time instead of the fixed port 3000, and Beanie recognised the skin
+  server by that port alone — so on 0.8.2 it looked for the gateway API on its
+  own origin, found nothing, and started in demo mode. Beanie now recognises the
+  skin server by the skin-api script Decaid injects into every page it serves,
+  and finds the gateway on port 8080 of the same host, as before.
+
 ## v0.3.6 - 2026-08-15
 
 The profile editor, largely rebuilt.

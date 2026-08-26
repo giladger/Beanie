@@ -9,6 +9,7 @@ import {
 import {
   GatewayRequestError,
   gateway,
+  gatewayHttpOrigin,
   loadGatewayStartup,
   type GatewayStartupClient
 } from '../api/gateway';
@@ -463,6 +464,54 @@ await run('createBatch nests storageEvents under extras and lifts them back from
     restore();
   }
 });
+
+await run('gateway origin stays same-origin outside decaid (vite dev/preview)', () => {
+  withPageEnv({ port: '5199' }, () => {
+    equal(gatewayHttpOrigin(), '');
+  });
+});
+
+await run('gateway origin targets port 8080 on decaid’s fixed :3000 skin port (≤0.8.1)', () => {
+  withPageEnv({ port: '3000', hostname: 'decent' }, () => {
+    equal(gatewayHttpOrigin(), 'http://decent:8080');
+  });
+});
+
+await run('gateway origin targets port 8080 when the injected skin-api marker is present (0.8.2 random skin port)', () => {
+  withPageEnv({ port: '38311', hostname: '10.0.0.42', decentApp: {} }, () => {
+    equal(gatewayHttpOrigin(), 'http://10.0.0.42:8080');
+  });
+});
+
+await run('gateway origin override beats the skin-api marker', () => {
+  withPageEnv({ port: '38311', decentApp: {}, gatewayOverride: 'http://gateway.test/' }, () => {
+    equal(gatewayHttpOrigin(), 'http://gateway.test');
+  });
+});
+
+function withPageEnv(
+  env: { port: string; hostname?: string; decentApp?: object; gatewayOverride?: string },
+  fn: () => void
+): void {
+  const previousWindow = (globalThis as unknown as { window?: unknown }).window;
+  const previousLocation = (globalThis as unknown as { location?: unknown }).location;
+  (globalThis as unknown as { window: { BEANIE_GATEWAY?: string; decentApp?: object } }).window = {
+    ...(env.gatewayOverride ? { BEANIE_GATEWAY: env.gatewayOverride } : {}),
+    ...(env.decentApp ? { decentApp: env.decentApp } : {})
+  };
+  (globalThis as unknown as { location: { port: string; protocol: string; hostname: string; origin: string } }).location = {
+    port: env.port,
+    protocol: 'http:',
+    hostname: env.hostname ?? 'localhost',
+    origin: ''
+  };
+  try {
+    fn();
+  } finally {
+    (globalThis as unknown as { window?: unknown }).window = previousWindow;
+    (globalThis as unknown as { location?: unknown }).location = previousLocation;
+  }
+}
 
 async function run(name: string, fn: () => void | Promise<void>): Promise<void> {
   try {

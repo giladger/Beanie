@@ -71,10 +71,22 @@ import {
   type WakeSchedule
 } from './settings';
 
+// Decaid's static skin server has no API routes of its own — the gateway API
+// always lives on port 8080 of the same host. Up to decaid 0.8.1 that server
+// sat on the fixed port 3000; since 0.8.2 it serves each skin generation from
+// a fresh random port (3000 only 307-redirects there), so the port no longer
+// identifies it. What does is the /__decent/skin-api.js script it injects into
+// every page it serves, which defines window.decentApp. Anywhere else (vite
+// dev proxy, demo preview) the API stays same-origin.
+function servedByDecaidSkinServer(): boolean {
+  if (location.port === '3000') return true;
+  return window.decentApp != null;
+}
+
 function resolveGatewayOrigin(): string {
   const override = window.BEANIE_GATEWAY;
   if (override) return override.replace(/\/$/, '');
-  if (location.port === '3000') {
+  if (servedByDecaidSkinServer()) {
     return `${location.protocol}//${location.hostname}:8080`;
   }
   return '';

@@ -7,4 +7,6 @@ declare const __BUILD_TIME__: string;
 interface Window {
   BEANIE_GATEWAY?: string;
   __REA_PROXY_TOKEN__?: string;
+  /** Defined by the skin-api.js script decaid injects into pages it serves. */
+  decentApp?: { exitToDashboard?: () => void };
 }
