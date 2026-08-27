@@ -52,6 +52,33 @@ export interface PluginSettingsSpec {
 }
 
 export const PLUGIN_SETTINGS_SPECS: Record<string, PluginSettingsSpec> = {
+  'shot-upload': {
+    id: 'shot-upload',
+    title: 'Decent shot upload',
+    help: 'Upload finished shots to your Decent account at decentespresso.com, and catch up missed ones while the machine is idle. Uses the account linked under Account — there are no separate credentials.',
+    fields: [
+      {
+        key: 'AutoUpload',
+        label: 'Upload shots automatically',
+        type: 'toggle',
+        secret: false,
+        default: false,
+        help: 'Off by default — turning this on is the opt-in. Finished shots upload right away; earlier local shots catch up while the machine is idle.'
+      },
+      {
+        key: 'LengthThreshold',
+        label: 'Minimum shot length to upload',
+        type: 'number',
+        secret: false,
+        min: 0,
+        max: 120,
+        step: 1,
+        unit: 's',
+        default: 5,
+        help: 'Skip uploading very short flushes and rinses.'
+      }
+    ]
+  },
   visualizer: {
     id: 'visualizer',
     title: 'Visualizer',

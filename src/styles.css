@@ -1448,6 +1448,24 @@ p {
   text-overflow: ellipsis;
 }
 
+/* Decent shot-upload fact: this shot reached (or was rejected by) the user's
+   Decent account. Quiet like the rest of line two; the tooltip has the when. */
+.shot-upload-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 1.1;
+}
+
+.shot-upload-mark svg {
+  width: 11px;
+  height: 11px;
+}
+
+.shot-upload-mark.rejected {
+  color: var(--amber);
+}
+
 /* The score + tool controls sit at the right of the header, beside the
    two-line facts block. */
 .pane-actions {

@@ -468,6 +468,10 @@ function validateWorkflowMachine(
   if (!obj) return;
 
   optionalNumber(obj, 'flowCalibration', path, issues, true);
+  optionalString(obj, 'provenanceStatus', path, issues, true);
+  optionalString(obj, 'serialNumber', path, issues, true);
+  optionalString(obj, 'model', path, issues, true);
+  optionalString(obj, 'firmwareVersion', path, issues, true);
 }
 
 function validateProfile(value: unknown, path: string, issues: ValidationIssue[]): void {

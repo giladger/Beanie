@@ -463,6 +463,7 @@ export function demoWakeSchedules(): WakeSchedule[] {
 export function demoPlugins(): PluginInfo[] {
   return [
     { id: 'visualizer', name: 'Visualizer upload', author: 'Decent', version: '1.0.0', loaded: true, autoLoad: true },
+    { id: 'shot-upload', name: 'Decent shot upload', author: 'Decent Espresso', version: '0.2.1', loaded: true, autoLoad: true },
     { id: 'time-to-ready', name: 'Time to ready', author: 'Decent', version: '1.0.0', loaded: false, autoLoad: false }
   ];
 }
@@ -531,11 +532,15 @@ export function readVisualizerImport(value: unknown): VisualizerImportResult {
 }
 
 export function demoPluginSettings(id: string): PluginSettings {
-  if (id.replace(/\.reaplugin$/i, '').toLowerCase() === 'visualizer') {
+  const bare = id.replace(/\.reaplugin$/i, '').toLowerCase();
+  if (bare === 'visualizer') {
     return {
       values: { Username: 'demo@visualizer.coffee', AutoUpload: true, LengthThreshold: 6 },
       secretsSet: { Password: true }
     };
+  }
+  if (bare === 'shot-upload') {
+    return { values: { AutoUpload: false, LengthThreshold: 5 }, secretsSet: {} };
   }
   return { values: {}, secretsSet: {} };
 }

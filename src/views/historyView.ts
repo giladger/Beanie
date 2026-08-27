@@ -10,6 +10,7 @@ import {
 } from '../domain/beanWorkflow';
 import { isDerekedShot } from '../domain/derekShot';
 import { isServiceShot } from '../domain/shotRecord';
+import { decentUploadFact, decentUploadTitle } from '../domain/shotUpload';
 import { buildShotStats, hasShotStats, shotDurationSeconds, type ShotStats } from '../domain/shotStats';
 import { renderStageRail, type LiveStagesView } from './workbenchView';
 import { icon } from '../components/icons';
@@ -189,8 +190,19 @@ function renderShotFacts(shot: ShotRecord): string {
         <div class="pane-facts-line pane-facts-secondary">
           <span class="pane-profile">${escapeHtml(recipe.profileTitle ?? 'No profile')}</span>
           ${grinder ? `<span class="pane-stat">${escapeHtml(grinder)}</span>` : ''}
+          ${renderUploadMark(shot)}
         </div>
       </div>`;
+}
+
+// Raw fact from the gateway's Decent shot-upload plugin: whether this shot
+// reached the user's Decent account. Nothing is shown for shots it never
+// touched.
+function renderUploadMark(shot: ShotRecord): string {
+  const fact = decentUploadFact(shot);
+  if (!fact) return '';
+  const text = fact.kind === 'uploaded' ? 'Decent' : 'Decent rejected';
+  return `<span class="pane-stat shot-upload-mark ${fact.kind}" title="${escapeAttr(decentUploadTitle(fact))}">${icon('upload')}${escapeHtml(text)}</span>`;
 }
 
 function renderShotDetailPane(

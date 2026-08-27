@@ -230,7 +230,7 @@ function settingsSections(
       {
         id: 'plugins',
         title: 'Plugins',
-        terms: 'plugins visualizer extensions enable disable configure credentials',
+        terms: 'plugins visualizer shot upload decent extensions enable disable configure credentials',
         html: renderPluginsSection(bundle, pluginConfig, options)
       },
       connectionSection,

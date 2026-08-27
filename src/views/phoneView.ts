@@ -14,6 +14,7 @@ import {
 import { beanStockSummary } from '../domain/beanDisplay';
 import { isDerekedShot } from '../domain/derekShot';
 import { isServiceShot } from '../domain/shotRecord';
+import { decentUploadFact, decentUploadLabel } from '../domain/shotUpload';
 import { escapeAttr, escapeHtml } from '../components/html';
 import { icon } from '../components/icons';
 import { enjoymentBadge, shotScoreControl } from '../components/shotScore';
@@ -343,6 +344,7 @@ function renderShotDetail(
   const ratio = formatRatio(ratioFor(recipe.dose, recipe.yield));
   const edit = draft ?? shotDraftFallback(shot);
   const freshness = shotFreshnessBadgeForShot(shot, batchForShotFreshness(shot, batchesByBean));
+  const uploadFact = decentUploadFact(shot);
   return `
     <article class="phone-card phone-shot-card">
       <div class="phone-card-head">
@@ -353,7 +355,11 @@ function renderShotDetail(
         </button>
       </div>
       <h2>${escapeHtml(`${formatGrams(recipe.dose)} -> ${formatGrams(recipe.yield)}`)}</h2>
-      <p>${escapeHtml([freshness, recipe.profileTitle, ratio, shotDate(shot.timestamp)].filter(Boolean).join(' · '))}</p>
+      <p>${escapeHtml(
+        [freshness, recipe.profileTitle, ratio, shotDate(shot.timestamp), uploadFact ? decentUploadLabel(uploadFact) : null]
+          .filter(Boolean)
+          .join(' · ')
+      )}</p>
       ${shotScoreControl(edit.enjoyment ?? null, {
         action: 'phone-shot-score',
         shotId: shot.id,

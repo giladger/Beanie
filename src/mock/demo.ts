@@ -216,7 +216,14 @@ export function demoShotsForBean(bean: Bean): ShotRecord[] {
         actualDoseWeight: Number(dose.toFixed(1)),
         actualYield: Number((yieldWeight + (index % 2 ? -0.6 : 0.4)).toFixed(1)),
         enjoyment: Math.max(62, 92 - index * 4),
-        espressoNotes: index === 0 ? 'clean, sweet finish' : index === 1 ? 'a little sharp' : 'reference shot'
+        espressoNotes: index === 0 ? 'clean, sweet finish' : index === 1 ? 'a little sharp' : 'reference shot',
+        // The two most recent shots carry the Decent shot-upload plugin's
+        // durable markers; older shots exercise the unmarked (not-uploaded) case.
+        ...(index === 0
+          ? { extras: { uploaded_to_decent: Math.floor((now - 3_000_000) / 1000) } }
+          : index === 1
+            ? { extras: { decent_upload_rejected: { status: 422, timestamp: Math.floor((now - 90_000_000) / 1000) } } }
+            : {})
       },
       measurements: buildMeasurements(index)
     };

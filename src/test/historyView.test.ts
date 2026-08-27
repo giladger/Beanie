@@ -215,6 +215,36 @@ run('history view renders raw shot stats under the chart, with compare values wh
   includes(compared, 'detail-stat-compare');
 });
 
+run('history view surfaces the Decent upload fact only for marked shots', () => {
+  const uploaded = shot('shot-up', 'espresso');
+  uploaded.annotations = { ...uploaded.annotations, extras: { uploaded_to_decent: 1_756_300_000 } };
+  const rejected = shot('shot-rej', 'espresso');
+  rejected.annotations = {
+    ...rejected.annotations,
+    extras: { decent_upload_rejected: { status: 422, timestamp: 1_756_200_000 } }
+  };
+  const base = {
+    compareShotId: null,
+    comparePicking: false,
+    demo: false,
+    shotsTotal: 3,
+    shotsLoadingMore: false,
+    secondTapHint: null,
+    batchesByBean: {}
+  };
+
+  const uploadedHtml = renderHistoryView({ ...base, shots: [uploaded, rejected, shot('shot-plain', 'espresso')], detailShotId: 'shot-up' });
+  includes(uploadedHtml, 'shot-upload-mark uploaded');
+  includes(uploadedHtml, 'Uploaded to Decent');
+
+  const rejectedHtml = renderHistoryView({ ...base, shots: [uploaded, rejected], detailShotId: 'shot-rej' });
+  includes(rejectedHtml, 'shot-upload-mark rejected');
+  includes(rejectedHtml, 'Decent upload rejected (HTTP 422)');
+
+  const plainHtml = renderHistoryView({ ...base, shots: [shot('shot-plain', 'espresso')], detailShotId: 'shot-plain' });
+  excludes(plainHtml, 'shot-upload-mark');
+});
+
 run('selectedHistoryShot skips service shots and falls back to the first visible shot', () => {
   equal(selectedHistoryShot([shot('steam-shot', 'steam'), shot('shot-a', 'espresso')], 'steam-shot')?.id, 'shot-a');
   equal(selectedHistoryShot([shot('steam-shot', 'steam')], null), null);

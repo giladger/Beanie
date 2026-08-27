@@ -249,6 +249,17 @@ export interface Workflow {
 export interface WorkflowMachine {
   /** The DE1's flow-estimation calibration (calibration_flow_multiplier) at shot time. */
   flowCalibration?: number | null;
+  /**
+   * Capture-time provenance for the identity fields below: `captured` when the
+   * recording gateway snapshotted the machine, `unavailable` when capture was
+   * attempted but failed. Absent on legacy shots recorded before provenance
+   * existed. OPEN SET — tolerate unknown values. Consumers must not fill
+   * missing identity from whichever machine is connected when the shot is read.
+   */
+  provenanceStatus?: string | null;
+  serialNumber?: string | null;
+  model?: string | null;
+  firmwareVersion?: string | null;
 }
 
 export interface ShotAnnotations {

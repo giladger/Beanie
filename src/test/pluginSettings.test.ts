@@ -76,6 +76,27 @@ run('visualizer spec exposes credential + option fields and is verifiable', () =
   equal(pluginSettingsSpec('does-not-exist'), null);
 });
 
+run('shot-upload spec matches the plugin manifest: opt-in, no credentials', () => {
+  const spec = pluginSettingsSpec('shot-upload.reaplugin');
+  if (!spec) throw new Error('expected a shot-upload spec');
+  equal(spec.title, 'Decent shot upload');
+  equal(spec.supportsVerify ?? false, false); // uses the linked Decent account, nothing to verify
+  equal(spec.fields.some((field) => field.secret), false);
+  const autoUpload = spec.fields.find((field) => field.key === 'AutoUpload');
+  equal(autoUpload?.type, 'toggle');
+  equal(autoUpload?.default, false); // beta stance: uploading is opt-in
+  const threshold = spec.fields.find((field) => field.key === 'LengthThreshold');
+  equal(threshold?.type, 'number');
+  equal(threshold?.default, 5);
+});
+
+run('demo shot-upload settings mirror the manifest defaults', () => {
+  const demo = demoPluginSettings('shot-upload.reaplugin');
+  equal(demo.values.AutoUpload, false);
+  equal(demo.values.LengthThreshold, 5);
+  equal(Object.keys(demo.secretsSet).length, 0);
+});
+
 run('every plugin field has an explicit type-safe sensitivity classification', () => {
   for (const spec of Object.values(PLUGIN_SETTINGS_SPECS)) {
     for (const field of spec.fields) {
