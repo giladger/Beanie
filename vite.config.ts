@@ -6,6 +6,7 @@ const env =
     .process?.env ?? {};
 
 const gatewayHost = env.GATEWAY_HOST ?? 'decent:8080';
+const gatewayHostname = gatewayHost.replace(/:\d+$/, '');
 const gitCommit = env.GIT_COMMIT ?? 'dev';
 const requestedVitePort = Number(env.VITE_PORT ?? 5173);
 const vitePort = Number.isInteger(requestedVitePort) && requestedVitePort > 0 && requestedVitePort <= 65535
@@ -28,9 +29,14 @@ export default defineConfig({
     strictPort: true,
     // Decent serves the dev shim from its own hostname while the shim loads
     // source modules from Vite. Keep Vite's loopback policy and allow only that
-    // known cross-origin page instead of exposing source to arbitrary origins.
+    // known cross-origin host instead of exposing source to arbitrary origins.
+    // Decaid 0.8.2 serves each skin generation from a fresh random port (3000
+    // only redirects there), so allow the gateway's hostname on any port.
     cors: {
-      origin: [loopbackDevOrigin, 'http://decent:3000']
+      origin: [
+        loopbackDevOrigin,
+        new RegExp(`^https?://${gatewayHostname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?::\\d+)?$`)
+      ]
     },
     proxy: {
       '/api': {
