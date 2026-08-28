@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.3.8 - 2026-08-28
+
+- Profiles that turn stop-at-weight off are now respected. The gateway stops a
+  shot when the scale reaches the workflow's target yield, and Beanie always
+  wrote the main-screen yield there — so a profile like Filter3, which ships
+  with "stop at weight" set to 0, still had the machine stop at the recipe
+  yield: reach 36g and the filter brew ends. Applying such a profile now writes
+  an explicit 0, so the shot runs until you stop it or the profile ends on its
+  own. The yield stays on the main screen for ratio math and shot records, and
+  the workbench marks it "no auto-stop" while such a profile is loaded.
+  Profiles with a real stop weight are unchanged: your recipe yield still
+  overrides the profile's stored number.
+- Support for Decaid's Decent shot upload plugin. Configure it from Settings →
+  Plugins — auto-upload is opt-in, with a minimum shot length so flushes are
+  skipped — and it uploads to the Decent account already linked on the gateway,
+  so there are no separate credentials to enter. Shots that reached your
+  account show a "Decent" upload mark in the history detail pane and the phone
+  shot card, with the upload time in the tooltip; a shot the server rejected
+  shows "Decent rejected" with the HTTP status. Unmarked shots simply haven't
+  been uploaded.
+- Dev: the beanie-dev live shim loads again on Decaid 0.8.2, which serves
+  skins from a fresh random port each generation — Vite's CORS allowlist now
+  accepts the gateway's hostname on any port instead of only decent:3000.
+
 ## v0.3.7 - 2026-08-26
 
 - Work again on Decaid 0.8.2. Decaid now serves the skin from a fresh random
