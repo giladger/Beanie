@@ -418,6 +418,17 @@ p {
   text-transform: uppercase;
 }
 
+/* Raw fact beside a control label, e.g. "Yield · no auto-stop" when the
+   loaded profile turns stop-at-weight off. Inherits the label's small caps. */
+.control-note {
+  color: var(--amber);
+  font-weight: 700;
+}
+
+.control-note::before {
+  content: '· ';
+}
+
 .top-inline {
   display: flex;
   align-items: center;

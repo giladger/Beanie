@@ -73,6 +73,7 @@ import {
   normalizeDraft,
   parseNumberInput,
   profileBaseTemperature,
+  profileDisablesWeightStop,
   ratioFor,
   recipeFromWorkflow,
   recipeFromShot,
@@ -6554,7 +6555,11 @@ export class BeanieApp {
               summary: this.state.derekTweakChip.summary,
               parameter: this.state.derekTweakChip.parameter
             }
-          : null
+          : null,
+        weightStopDisabled: profileDisablesWeightStop(
+          normalizeDraft(draft, this.state.profiles, this.state.grinders).profile ??
+            this.state.workflow?.profile
+        )
       },
       historyHtml: this.renderHistory()
     });

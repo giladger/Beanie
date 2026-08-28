@@ -7,8 +7,10 @@ import {
   editLastBatchStorageEventDate,
   normalizeDraft,
   profileBaseTemperature,
+  profileDisablesWeightStop,
   ratioFor,
   recipeFromShot,
+  recipeFromWorkflow,
   roastFreshnessLabel,
   selectInitialBean,
   shotFreshnessBadgeLabel,
@@ -265,6 +267,59 @@ run('keeps the base profile when neither override nor draft carries one', () => 
   // workflow's profile. The gateway PUT is a deep-merge and a `profile: null`
   // is rejected with 400, silently dropping the entire update.
   equal(update.profile?.title, 'Existing Profile');
+});
+
+run('applies a weight-stop-off profile with targetYield 0 while keeping the draft yield', () => {
+  // Filter/tea/manual profiles ship target_weight 0 = "do not stop by weight".
+  // The gateway stops the shot at context.targetYield, so applying such a
+  // profile must write 0 there or the machine stops at the recipe yield anyway.
+  const filter3: Profile = { title: 'Filter3', beverage_type: 'pourover', target_weight: 0 };
+  const draft = { profileTitle: 'Filter3', profile: filter3, dose: 18, yield: 36 };
+  const update = buildWorkflowUpdate(beans[0]!, null, draft, filter3);
+
+  equal(update.context?.targetYield, 0);
+  equal(update.context?.targetDoseWeight, 18);
+  equal(draft.yield, 36); // recipe intent stays local for ratio/display
+});
+
+run('weight-stop-off applies through the base workflow profile fallback too', () => {
+  const base: Workflow = {
+    profile: { title: 'Filter3', target_weight: 0 },
+    context: { targetYield: 36 }
+  };
+  const update = buildWorkflowUpdate(beans[0]!, null, { dose: 18, yield: 36 }, null, base);
+  equal(update.context?.targetYield, 0);
+});
+
+run('a profile with a real stop weight still yields to the recipe target', () => {
+  const espresso: Profile = { title: 'Default', target_weight: 36 };
+  const update = buildWorkflowUpdate(beans[0]!, null, { profile: espresso, dose: 18, yield: 40 }, espresso);
+  equal(update.context?.targetYield, 40);
+
+  // Absent target_weight is no opinion — recipe keeps arming the stop.
+  const legacy: Profile = { title: 'Old' };
+  const legacyUpdate = buildWorkflowUpdate(beans[0]!, null, { profile: legacy, dose: 18, yield: 40 }, legacy);
+  equal(legacyUpdate.context?.targetYield, 40);
+});
+
+run('profileDisablesWeightStop reads only an explicit zero', () => {
+  equal(profileDisablesWeightStop({ title: 'F', target_weight: 0 }), true);
+  equal(profileDisablesWeightStop({ title: 'E', target_weight: 36 }), false);
+  equal(profileDisablesWeightStop({ title: 'Old' }), false);
+  equal(profileDisablesWeightStop(null), false);
+});
+
+run('hydrating a draft treats the stored targetYield 0 as no yield, not 0 g', () => {
+  const applied: Workflow = {
+    profile: { title: 'Filter3', target_weight: 0 },
+    context: { targetDoseWeight: 18, targetYield: 0 }
+  };
+  const draft = recipeFromWorkflow(applied);
+  equal(draft.yield, null);
+  equal(draft.dose, 18);
+
+  const armed: Workflow = { profile: { title: 'Default' }, context: { targetYield: 40 } };
+  equal(recipeFromWorkflow(armed).yield, 40);
 });
 
 run('derives and inverts brew ratio', () => {

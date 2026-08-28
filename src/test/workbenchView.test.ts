@@ -139,6 +139,18 @@ run('workbench never decorates the profile name with recipe apply state', () => 
   excludes(html, 'Apply failed');
 });
 
+run('workbench marks the yield control when the profile turns weight stops off', () => {
+  const noStop = renderWorkbench(
+    model({ recipe: { ...model().recipe, weightStopDisabled: true } })
+  );
+  includes(noStop, 'control-note');
+  includes(noStop, 'no auto-stop');
+
+  const normal = renderWorkbench(model());
+  excludes(normal, 'control-note');
+  excludes(normal, 'no auto-stop');
+});
+
 run('page header escapes the title and back value while preserving action html', () => {
   const html = renderPageHeader('Settings <DE1>', 'profiles"bad', '<button data-action="save">Save</button>');
 

@@ -118,7 +118,10 @@ export function recipeFromWorkflow(workflow: Workflow | null): RecipeDraft {
     profile: workflow?.profile ?? null,
     brewTemp: profileBaseTemperature(workflow?.profile),
     dose: numberOrNull(ctx?.targetDoseWeight),
-    yield: numberOrNull(ctx?.targetYield),
+    // A stored 0 is the stop-at-weight OFF marker written for profiles that
+    // disable weight stops (see buildWorkflowUpdate), not a 0 g recipe —
+    // hydrate it as "no yield" instead of clobbering the draft with 0.
+    yield: firstPositive(numberOrNull(ctx?.targetYield)),
     grinderId: ctx?.grinderId ?? null,
     grinderModel: ctx?.grinderModel ?? null,
     grinderSetting: stringOrNull(ctx?.grinderSetting),
@@ -210,6 +213,17 @@ export function normalizeDraft(
   };
 }
 
+/**
+ * True when a profile explicitly opts out of stopping the shot by weight:
+ * `target_weight` present and 0 (de1app's "stop at weight off"), the way
+ * filter, tea, manual, and lever profiles ship. An absent field is no opinion
+ * — the recipe yield keeps arming the stop as before.
+ */
+export function profileDisablesWeightStop(profile: Profile | null | undefined): boolean {
+  const targetWeight = profile?.target_weight;
+  return typeof targetWeight === 'number' && Number.isFinite(targetWeight) && targetWeight <= 0;
+}
+
 export function buildWorkflowUpdate(
   bean: Bean,
   batch: BeanBatch | null,
@@ -217,6 +231,15 @@ export function buildWorkflowUpdate(
   profileOverride?: Profile | null,
   base?: Workflow | null
 ): Workflow {
+  // The gateway's shot sequencer stops the shot once the scale reaches
+  // `context.targetYield` — that field IS the stop-at-weight arm, not just
+  // recipe metadata. A profile that turns weight stops off (target_weight 0,
+  // e.g. Filter/tea/manual profiles) must therefore be applied with
+  // targetYield 0: an explicit off that also shadows any legacy doseData the
+  // base workflow spread carries. The draft keeps the user's yield for ratio
+  // math and display; it just isn't armed on the machine.
+  const effectiveProfile = profileOverride ?? draft.profile ?? base?.profile ?? null;
+  const weightStopOff = profileDisablesWeightStop(effectiveProfile);
   // Spread the existing workflow so unknown fields (id, description,
   // steamSettings, hotWaterData, rinseData, and any context keys Beanie does not
   // model) survive the round-trip instead of being dropped by the PUT.
@@ -227,7 +250,7 @@ export function buildWorkflowUpdate(
     coffeeRoaster: bean.roaster,
     beanBatchId: batch?.id ?? null,
     targetDoseWeight: draft.dose ?? null,
-    targetYield: draft.yield ?? null,
+    targetYield: weightStopOff ? 0 : draft.yield ?? null,
     grinderId: draft.grinderId ?? null,
     grinderModel: draft.grinderModel ?? null,
     grinderSetting: draft.grinderSetting ?? null,
@@ -241,7 +264,7 @@ export function buildWorkflowUpdate(
   // Fall back to the base workflow's profile so a dial-in with no profile
   // loaded does not null it out: the gateway PUT is a deep-merge and a
   // `profile: null` is rejected with 400, dropping the whole update.
-  let profile = profileOverride ?? draft.profile ?? base?.profile ?? null;
+  let profile = effectiveProfile;
   if (profile && draft.brewTemp != null) {
     profile = withProfileTemperature(profile, draft.brewTemp);
   }

@@ -46,6 +46,9 @@ export interface WorkbenchRecipeViewModel {
   /** A Derek change is staged for the next shot; offers one-tap revert and
    * highlights the control carrying the changed value. */
   derekTweak?: { summary: string; parameter: string | null } | null;
+  /** The loaded profile turns stop-at-weight off (target_weight 0): the yield
+   * stays recipe/ratio intent but is not armed on the machine. */
+  weightStopDisabled?: boolean;
 }
 
 export interface WorkbenchViewModel {
@@ -252,7 +255,9 @@ export function renderRecipeEditor(model: WorkbenchRecipeViewModel): string {
     <section class="recipe-grid">
       ${controlProfile(draft.profileTitle ?? 'No profile', model.derekTweak, mark('profile'))}
       ${controlNumber('Dose', 'dose', draft.dose, 0.5, mark('dose'))}
-      ${controlNumber('Yield', 'yield', draft.yield, 1, mark('yield'))}
+      ${controlNumber('Yield', 'yield', draft.yield, 1, mark('yield'), model.weightStopDisabled === true
+        ? { text: 'no auto-stop', title: 'This profile turns stop-at-weight off (stop at weight 0), so the shot will not stop at the yield.' }
+        : null)}
       ${controlRatio(model.ratioLabel)}
       ${controlGrind(draft.grinderSetting ?? '--', model.grinderStep, mark('grind'))}
       ${controlTemp(model.brewTempLabel, mark('temp'))}
@@ -283,10 +288,17 @@ function renderShotCommand(model: WorkbenchTopbarViewModel['machineCommands']): 
   `;
 }
 
-function controlNumber(label: string, field: EditField, value: number | null | undefined, step: number, markClass = ''): string {
+function controlNumber(
+  label: string,
+  field: EditField,
+  value: number | null | undefined,
+  step: number,
+  markClass = '',
+  note: { text: string; title: string } | null = null
+): string {
   return `
     <div class="control panel${markClass}">
-      <label>${escapeHtml(label)}</label>
+      <label>${escapeHtml(label)}${note ? ` <span class="control-note" title="${escapeAttr(note.title)}">${escapeHtml(note.text)}</span>` : ''}</label>
       <div class="stepper compact-stepper">
         <button data-action="adjust" data-field="${field}" data-delta="${-step}" aria-label="Decrease ${escapeAttr(label)}">${icon('minus')}</button>
         <button class="value-button" data-action="edit-field" data-field="${field}">${escapeHtml(value == null ? '--' : value.toString())}</button>
