@@ -439,6 +439,7 @@ import {
   flushValues,
   hotWaterValues,
   matchingPreset,
+  steamHeaterOn,
   steamValues,
   waterControlCapabilities,
   type NumberSpec,
@@ -3086,6 +3087,10 @@ export class BeanieApp {
       this.setState({ status: 'Machine controls are read-only until live data reconnects' });
       return false;
     }
+    if (state === 'steam' && !steamHeaterOn(this.currentSteamSettings())) {
+      this.setState({ status: 'Steam heater is off' });
+      return false;
+    }
     if (this.state.demo) {
       const preflight = machineActionPreflight({
         state,
@@ -4935,6 +4940,11 @@ export class BeanieApp {
       'dialog-commit': async () => {
         await this.commitEditDialog();
       },
+      // Off commits 0 past the dialog's min/max clamp; the domain clamp keeps
+      // anything below the heater minimum as 0 instead of raising it.
+      'dialog-off': async () => {
+        await this.commitEditDialog('0');
+      },
     };
   }
 
@@ -5965,6 +5975,7 @@ export class BeanieApp {
     const unit = el.dataset.unit ?? '';
     const title = el.dataset.title ?? 'Value';
     const value = el.dataset.value ?? '';
+    const offLabel = el.dataset.off ?? null;
     const spec: NumberSpec = { min, max, step, unit, enabled: true };
 
     this.setState({
@@ -5983,9 +5994,10 @@ export class BeanieApp {
         step,
         bigStep: step < 1 ? 1 : Math.max(5, step * 5),
         digits: step < 1 ? 1 : 0,
-        helper: `Between ${min} and ${max}`,
+        helper: offLabel ? `Between ${min} and ${max}, or ${offLabel}` : `Between ${min} and ${max}`,
         maxLength: 6,
-        recentValues: []
+        recentValues: [],
+        offLabel
       })
     });
   }
@@ -6321,11 +6333,11 @@ export class BeanieApp {
     }
   }
 
-  private async commitEditDialog(): Promise<void> {
+  private async commitEditDialog(override?: string): Promise<void> {
     const dialog = this.state.editDialog;
     if (!dialog) return;
 
-    const value = inputDialogCommitValue(dialog);
+    const value = override ?? inputDialogCommitValue(dialog);
     const machineEdit = this.state.machineEdit;
     if (machineEdit) {
       this.setState({
@@ -7089,7 +7101,8 @@ export class BeanieApp {
             presets: steamPresets,
             selectedPreset: steamPreset,
             labelOverrides: this.state.machinePresetLabels,
-            start: laneStart('steam'),
+            // No app-side start while the heater is off; the Temp tile reads "Off".
+            start: steamHeaterOn(steam) ? laneStart('steam') : null,
             values: [
               machineValueTile('steamFlow', 'Flow', steam.flow, capabilities.steam.flow),
               machineValueTile('steamTemp', 'Temp', steam.targetTemperature, capabilities.steam.targetTemperature),

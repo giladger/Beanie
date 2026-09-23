@@ -14,6 +14,8 @@ export interface NumberSpec {
   unit: string;
   enabled: boolean;
   reason?: string;
+  /** When set, a value below `min` means "off"; the tile and editor show this label for it. */
+  offLabel?: string;
 }
 
 export interface WaterSectionSpecs {
@@ -45,6 +47,18 @@ export const DEFAULT_STEAM: Required<SteamSettings> = {
   flow: 0.8,
   stopAtTemperature: 0
 };
+
+/**
+ * The DE1 turns its steam heater off when the target steam temperature it is
+ * sent is below this (de1app and reaprime both use 135). Beanie stores "off"
+ * as 0, so a steam preset whose Temp is Off keeps the heater cold until a
+ * preset with a real temperature is applied.
+ */
+export const STEAM_HEATER_MIN_TEMPERATURE = 135;
+
+export function steamHeaterOn(settings: SteamSettings | null | undefined): boolean {
+  return (settings?.targetTemperature ?? DEFAULT_STEAM.targetTemperature) >= STEAM_HEATER_MIN_TEMPERATURE;
+}
 
 export const DEFAULT_HOT_WATER: Required<HotWaterData> = {
   targetTemperature: 75,
@@ -169,7 +183,7 @@ export function waterControlCapabilities(options: {
     hardware: options.capabilities?.capabilities ?? [],
     source,
     steam: {
-      targetTemperature: spec(135, 170, 1, 'C', true, machineReason),
+      targetTemperature: { ...spec(STEAM_HEATER_MIN_TEMPERATURE, 170, 1, 'C', true, machineReason), offLabel: 'Off' },
       duration: spec(0, 180, 1, 's', true),
       flow: spec(0.1, 2, 0.05, 'ml/s', true, machineReason),
       stopAtTemperature: spec(0, 80, 0.5, 'C', steamStopSupported, STOP_AT_TEMP_UNSUPPORTED)
@@ -190,7 +204,7 @@ export function waterControlCapabilities(options: {
 
 export function clampSteam(settings: SteamSettings, caps: WaterControlCapabilities): SteamSettings {
   return {
-    targetTemperature: clampNumber(settings.targetTemperature, caps.steam.targetTemperature, DEFAULT_STEAM.targetTemperature),
+    targetTemperature: clampSteamTemperature(settings.targetTemperature, caps.steam.targetTemperature),
     duration: clampNumber(settings.duration, caps.steam.duration, DEFAULT_STEAM.duration),
     flow: clampNumber(settings.flow, caps.steam.flow, DEFAULT_STEAM.flow),
     stopAtTemperature: clampNumber(settings.stopAtTemperature, caps.steam.stopAtTemperature!, 0)
@@ -224,6 +238,15 @@ export function matchingPreset<T extends object>(
 
 function spec(min: number, max: number, step: number, unit: string, enabled: boolean, reason?: string): NumberSpec {
   return { min, max, step, unit, enabled, reason };
+}
+
+// Below the heater minimum means "off": normalize to 0 instead of clamping up
+// to the minimum, which would silently turn the heater back on.
+function clampSteamTemperature(value: number | null | undefined, field: NumberSpec): number {
+  const numeric = Number(value ?? DEFAULT_STEAM.targetTemperature);
+  if (!Number.isFinite(numeric)) return DEFAULT_STEAM.targetTemperature;
+  if (numeric < field.min) return 0;
+  return clampNumber(numeric, field, DEFAULT_STEAM.targetTemperature);
 }
 
 function clampNumber(value: number | null | undefined, field: NumberSpec, fallback: number): number {

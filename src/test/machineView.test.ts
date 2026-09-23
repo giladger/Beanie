@@ -81,6 +81,38 @@ run('machine value helpers adapt hot-water weight mode and stop mode tiles', () 
   equal(stopTile.actionValue, 'time');
 });
 
+run('steam temperature tile reads Off below the heater minimum and offers Off in its editor', () => {
+  const spec = { min: 135, max: 170, step: 1, unit: 'C', enabled: true, offLabel: 'Off' };
+  const on = machineValueTile('steamTemp', 'Temp', 150, spec);
+  equal(on.value, '150');
+  equal(on.unit, 'C');
+
+  const off = machineValueTile('steamTemp', 'Temp', 0, spec);
+  equal(off.value, 'Off');
+  equal(off.unit, '');
+
+  const html = renderMachinePage({
+    headerHtml: '',
+    cleaningBarHtml: '',
+    lanes: [
+      {
+        tone: 'steam',
+        eyebrow: 'Steam',
+        title: 'Milk',
+        presetName: 'steamPreset',
+        presets: [],
+        selectedPreset: 'custom',
+        labelOverrides: {},
+        values: [off],
+        start: null
+      }
+    ]
+  });
+  includes(html, 'data-action="machine-edit-value"');
+  includes(html, 'data-value="Off"');
+  includes(html, 'data-off="Off"');
+});
+
 run('cleaning bar renders due state, threshold choices, and opens the wizard', () => {
   const html = renderCleaningBar({
     due: true,

@@ -99,6 +99,44 @@ await run('machine value planning updates fields and stores selected preset over
   equal(plan.machinePresetValues?.['steamPreset:medium-jug']?.duration, 45);
 });
 
+await run('machine value planning stores steam Off as 0 on the selected preset and keeps it off on re-apply', () => {
+  const edit = applyMachineValuePlan({
+    name: 'steamTemp',
+    value: 0,
+    machinePresetValues: {},
+    capabilities: caps(),
+    steamSettings: steam(),
+    hotWaterData: water(),
+    rinseData: rinse()
+  });
+
+  equal(edit.applied, true);
+  equal(edit.steamSettings.targetTemperature, 0);
+  equal(edit.machinePresetValues?.['steamPreset:medium-jug']?.targetTemperature, 0);
+
+  const reapply = applyMachinePresetPlan({
+    name: 'steamPreset',
+    presetId: 'medium-jug',
+    machinePresetValues: edit.machinePresetValues ?? {},
+    capabilities: caps(),
+    steamSettings: steam({ targetTemperature: 155 }),
+    hotWaterData: water(),
+    rinseData: rinse()
+  });
+  equal(reapply.steamSettings.targetTemperature, 0);
+
+  const other = applyMachinePresetPlan({
+    name: 'steamPreset',
+    presetId: 'large-jug',
+    machinePresetValues: edit.machinePresetValues ?? {},
+    capabilities: caps(),
+    steamSettings: edit.steamSettings,
+    hotWaterData: water(),
+    rinseData: rinse()
+  });
+  equal(other.steamSettings.targetTemperature, 155);
+});
+
 await run('machine value planning clamps numeric edits and skips custom preset overrides', () => {
   const plan = applyMachineValuePlan({
     name: 'flushDuration',

@@ -1,13 +1,17 @@
 import type { Workflow } from '../api/types';
 import {
   DEFAULT_HOT_WATER,
+  DEFAULT_STEAM,
   FLUSH_PRESETS,
+  STEAM_HEATER_MIN_TEMPERATURE,
   STEAM_PRESETS,
   clampFlush,
   clampHotWater,
+  clampSteam,
   flushValues,
   hotWaterValues,
   matchingPreset,
+  steamHeaterOn,
   steamValues,
   waterControlCapabilities
 } from '../domain/waterSettings';
@@ -48,6 +52,21 @@ run('clamps settings to the Reaprime-backed control specs', () => {
 
   match(water, { targetTemperature: 100, duration: 180, volume: 0, flow: 12 });
   match(flush, { targetTemperature: 0, duration: 120, flow: 12 });
+});
+
+run('treats a steam temperature below the heater minimum as off', () => {
+  const caps = waterControlCapabilities({ demo: true });
+
+  equal(caps.steam.targetTemperature.min, STEAM_HEATER_MIN_TEMPERATURE);
+  equal(caps.steam.targetTemperature.offLabel, 'Off');
+  equal(steamHeaterOn({ ...DEFAULT_STEAM, targetTemperature: 0 }), false);
+  equal(steamHeaterOn({ ...DEFAULT_STEAM, targetTemperature: 135 }), true);
+  equal(steamHeaterOn({}), true);
+  // Off stays 0 rather than being clamped up to the minimum, which would heat.
+  equal(clampSteam({ ...DEFAULT_STEAM, targetTemperature: 0 }, caps).targetTemperature, 0);
+  equal(clampSteam({ ...DEFAULT_STEAM, targetTemperature: 120 }, caps).targetTemperature, 0);
+  equal(clampSteam({ ...DEFAULT_STEAM, targetTemperature: 200 }, caps).targetTemperature, 170);
+  equal(clampSteam({ ...DEFAULT_STEAM, targetTemperature: undefined }, caps).targetTemperature, 150);
 });
 
 run('keeps future milk-probe steam stop disabled until Reaprime exposes support', () => {

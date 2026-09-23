@@ -33,6 +33,8 @@ export interface InputDialogState {
   allowDecimal: boolean;
   replaceOnNextKey: boolean;
   recentValues: string[];
+  /** Renders an extra quick button that commits "off" (0) without the min/max clamp. */
+  offLabel?: string | null;
   choiceTitle?: string;
   choices: InputDialogChoice[];
   selectedChoiceId?: string | null;
@@ -53,6 +55,7 @@ export interface CreateInputDialogOptions {
   maxLength?: number;
   allowDecimal?: boolean;
   recentValues?: string[];
+  offLabel?: string | null;
   choiceTitle?: string;
   choices?: InputDialogChoice[];
   selectedChoiceId?: string | null;
@@ -162,6 +165,7 @@ export function createInputDialog(options: CreateInputDialogOptions): InputDialo
     allowDecimal: options.allowDecimal ?? preset.allowDecimal,
     replaceOnNextKey: true,
     recentValues: uniqueValues(options.recentValues ?? readInputDialogRecents(options.kind)),
+    offLabel: options.offLabel ?? null,
     choiceTitle: options.choiceTitle,
     choices: options.choices ?? [],
     selectedChoiceId: options.selectedChoiceId ?? null
@@ -287,6 +291,7 @@ export function renderInputDialog(dialog: InputDialogState): string {
               <small>${escapeHtml(dialog.helper)}</small>
             </div>
             <div class="input-dialog-nudges" aria-label="${escapeAttr(dialog.title)} quick adjustments">
+              ${dialog.offLabel ? `<button type="button" class="input-dialog-off" data-action="dialog-off">${escapeHtml(dialog.offLabel)}</button>` : ''}
               ${nudges.map((delta) => `
                 <button type="button" data-action="dialog-adjust" data-delta="${delta}">${delta > 0 ? '+' : ''}${escapeHtml(formatNudge(delta))}</button>
               `).join('')}

@@ -239,7 +239,9 @@ function renderMachineValueTile(tile: MachineValueTile): string {
   const action = tile.action
     ? ` data-action="${escapeAttr(tile.action)}" data-value="${escapeAttr(tile.actionValue ?? '')}"`
     : tile.name && tile.spec?.enabled
-      ? ` data-action="machine-edit-value" data-name="${escapeAttr(tile.name)}" data-title="${escapeAttr(tile.label)}" data-value="${escapeAttr(tile.value)}" data-unit="${escapeAttr(tile.spec.unit)}" data-min="${tile.spec.min}" data-max="${tile.spec.max}" data-step="${tile.spec.step}"`
+      ? ` data-action="machine-edit-value" data-name="${escapeAttr(tile.name)}" data-title="${escapeAttr(tile.label)}" data-value="${escapeAttr(tile.value)}" data-unit="${escapeAttr(tile.spec.unit)}" data-min="${tile.spec.min}" data-max="${tile.spec.max}" data-step="${tile.spec.step}"${
+          tile.spec.offLabel ? ` data-off="${escapeAttr(tile.spec.offLabel)}"` : ''
+        }`
       : '';
   const title = tile.spec?.reason ? ` title="${escapeAttr(tile.spec.reason)}"` : '';
   return `
@@ -273,11 +275,13 @@ function toneLabel(tone: MachineViewTone): string {
 }
 
 export function machineValueTile(name: string, label: string, value: number | undefined, spec: NumberSpec): MachineValueTile {
+  const offLabel = spec.offLabel;
+  const off = offLabel != null && value != null && Number.isFinite(value) && value < spec.min;
   return {
     name,
     label,
-    value: formatMachineValue(value),
-    unit: spec.enabled ? spec.unit : 'Unavailable',
+    value: off ? offLabel : formatMachineValue(value),
+    unit: !spec.enabled ? 'Unavailable' : off ? '' : spec.unit,
     spec,
     disabled: !spec.enabled
   };
