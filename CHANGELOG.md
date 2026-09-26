@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.3.9 - 2026-09-26
+
+- The steam heater can be switched off from the skin. The DE1 turns its steam
+  heater off when the target steam temperature it is sent is below 135°, and
+  the gateway already passes a workflow steam temperature below that on to the
+  machine as 0 — but Beanie clamped the steam Temp editor to 135–170 and raised
+  anything lower back up, so there was no way to say "off". The Temp editor on
+  the Steam · Water · Flush page now has an Off button beside the −5/−1/+1/+5
+  nudges. Off is stored as 0° on whichever steam preset is selected, so any of
+  the three presets can be the "off" one (rename it with the pencil), and
+  tapping a preset with a real temperature turns the heater back on. While the
+  heater is off the Temp tile reads Off, the app-side Start button shown on the
+  simulator and on machines without a GHC is hidden, and a steam start from the
+  skin is refused with "Steam heater is off" instead of steaming cold. The
+  steam stat in the topbar keeps showing the real heater temperature as it
+  cools.
+
 ## v0.3.8 - 2026-08-28
 
 - Profiles that turn stop-at-weight off are now respected. The gateway stops a
