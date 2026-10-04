@@ -1,3 +1,4 @@
+import type { DeviceInfo } from '../api/settings';
 import type { MachineState } from '../api/types';
 import type { SettingsBundle } from '../domain/settingsModel';
 import {
@@ -249,6 +250,7 @@ export class MachineSettingsFlow {
     });
     if (result.devices) this.patchBundle({ devices: result.devices });
     this.host.commit({ status: result.status });
+    if (result.devices) await this.rememberConnectedScale(result.devices);
   }
 
   async handleScaleStatTap(): Promise<void> {
@@ -274,6 +276,22 @@ export class MachineSettingsFlow {
     });
     if (result.devices) this.patchBundle({ devices: result.devices });
     if (result.status) this.host.commit({ status: result.status });
+    if (connect && result.devices) await this.rememberConnectedScale(result.devices, id);
+  }
+
+  /** Records a connected scale as Reaprime's preferred scale so it auto-reconnects after power-off. */
+  private async rememberConnectedScale(devices: readonly DeviceInfo[], id?: string): Promise<void> {
+    const scale = devices.find((device) =>
+      device.type === 'scale' && device.state === 'connected' && (id == null || device.id === id)
+    );
+    const bundle = this.host.snapshot().bundle;
+    if (!scale || !bundle || !this.resourceWritable('rea')) return;
+    await this.applyMutation(this.mutations.setPreferredScale({
+      bundle,
+      scaleId: scale.id,
+      local: this.local,
+      writable: true
+    }));
   }
 
   async setDisplayBrightness(raw: string): Promise<void> {
