@@ -47,6 +47,61 @@ await run('preferred-device actions load provenance before deciding writability'
   equal(harness.state.status, 'Preferred devices are unavailable — reconnect and reload Settings');
 });
 
+await run('connecting a scale remembers it as the preferred scale for auto-reconnect', async () => {
+  const harness = createHarness({
+    connectDevice: async () => ({
+      devices: [{ id: 'arc-1', name: 'ARC', type: 'scale', state: 'connected' }],
+      status: 'Connected'
+    })
+  });
+  await harness.flow.loadBundle();
+
+  await harness.flow.connectDevice('arc-1', true);
+
+  equal(JSON.stringify(harness.persisted), JSON.stringify([['rea', 'preferredScaleId', 'arc-1']]));
+  equal(harness.state.bundle?.rea.preferredScaleId, 'arc-1');
+  equal(harness.state.status, 'Scale connected — it will reconnect automatically');
+
+  await harness.flow.connectDevice('arc-1', true);
+  equal(harness.persisted.length, 1);
+});
+
+await run('connecting a machine or an unwritable rea resource does not touch the preferred scale', async () => {
+  const resources = settingsResourceStates('gateway');
+  resources.rea = { source: 'default', writable: false, message: 'unavailable' };
+  const harness = createHarness({
+    loadBundle: async () => ({ ...gatewayBundleResult(), resources }),
+    connectDevice: async () => ({
+      devices: [
+        { id: 'de1-1', name: 'DE1', type: 'machine', state: 'connected' },
+        { id: 'arc-1', name: 'ARC', type: 'scale', state: 'connected' }
+      ],
+      status: 'Connected'
+    })
+  });
+  await harness.flow.loadBundle();
+
+  await harness.flow.connectDevice('de1-1', true);
+  await harness.flow.connectDevice('arc-1', true);
+
+  equal(harness.persisted.length, 0);
+});
+
+await run('the top-bar reconnect remembers a newly connected scale', async () => {
+  const harness = createHarness({
+    connectPreferredDevices: async () => ({
+      devices: [{ id: 'arc-1', name: 'ARC', type: 'scale', state: 'connected' }],
+      status: 'Scale connected'
+    })
+  });
+  await harness.flow.loadBundle();
+
+  await harness.flow.handleScaleStatTap();
+
+  equal(harness.state.bundle?.rea.preferredScaleId, 'arc-1');
+  equal(harness.persisted.length, 1);
+});
+
 await run('an older refill failure cannot roll back newer optimistic intent', async () => {
   const first = deferred<void>();
   const second = deferred<void>();
@@ -174,6 +229,7 @@ await run('firmware decoding does not dispatch after connected authority is lost
 interface HarnessOverrides {
   readonly loadBundle?: SettingsController['loadSettingsBundle'];
   readonly connectPreferredDevices?: SettingsController['connectPreferredDevices'];
+  readonly connectDevice?: SettingsController['connectDevice'];
   readonly refillWrites?: readonly Promise<void>[];
 }
 
@@ -196,6 +252,7 @@ function createHarness(overrides: HarnessOverrides = {}) {
     connected: true,
     liveMachine: true,
     groundedCalibrations: [] as number[],
+    persisted: [] as unknown[][],
     commands: null as unknown as MutableCommands,
     flow: null as unknown as MachineSettingsFlow
   };
@@ -232,7 +289,7 @@ function createHarness(overrides: HarnessOverrides = {}) {
   harness.commands = commands;
   harness.flow = new MachineSettingsFlow(
     controller(overrides),
-    mutations(),
+    mutations(harness.persisted),
     host,
     commands
   );
@@ -268,7 +325,7 @@ function controller(overrides: HarnessOverrides): SettingsController {
       devices: [],
       status: 'Auto-connect complete'
     })),
-    connectDevice: async () => ({ devices: [], status: 'Connected' }),
+    connectDevice: overrides.connectDevice ?? (async () => ({ devices: [], status: 'Connected' })),
     requestMachineState: async ({ state }: { state: MachineState }) => ({
       status: `Machine → ${state}`,
       sleepRequested: state === 'sleeping'
@@ -308,9 +365,9 @@ function controller(overrides: HarnessOverrides): SettingsController {
   };
 }
 
-function mutations(): SettingsMutationFlow {
+function mutations(persisted: unknown[][] = []): SettingsMutationFlow {
   return new SettingsMutationFlow({
-    persistField: async () => {},
+    persistField: async (group, key, value) => { persisted.push([group, key, value]); },
     setDisplayBrightness: async () => demoSettingsBundle().display,
     deleteSchedule: async () => true,
     updateSchedule: async () => {},
