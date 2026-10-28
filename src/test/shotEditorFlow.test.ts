@@ -31,11 +31,11 @@ await run('shot editor flow rebases interactive annotation changes in the exact 
   const harness = createHarness();
   const latest = {
     ...harness.snapshot.shots[0]!,
-    annotations: { actualDoseWeight: 18, drinkTds: 10.2, enjoyment: 60 }
+    annotations: { actualDoseWeight: 18, drinkTds: 10.2, enjoyment: 6 }
   };
   harness.readShot = latest;
 
-  await harness.flow.updateEnjoyment('shot-1', 80);
+  await harness.flow.updateEnjoyment('shot-1', 8);
 
   deepEqual(harness.calls, [
     'begin-mutation',
@@ -46,7 +46,7 @@ await run('shot editor flow rebases interactive annotation changes in the exact 
     'cache:shot-1'
   ]);
   equal(harness.savedUpdate?.annotations?.drinkTds, 10.2);
-  equal(harness.savedUpdate?.annotations?.enjoyment, 80);
+  equal(harness.savedUpdate?.annotations?.enjoyment, 8);
   equal(harness.events[0]?.type, 'saving');
   equal(harness.events[1]?.type, 'shot-saved');
 });
@@ -54,7 +54,7 @@ await run('shot editor flow rebases interactive annotation changes in the exact 
 await run('shot editor projection settles a saved shot against the latest shell list', () => {
   const original = shot('shot-1');
   const concurrent = shot('shot-2');
-  const saved = { ...original, annotations: { enjoyment: 100 } };
+  const saved = { ...original, annotations: { enjoyment: 10 } };
   const projection = projectShotEditorEvent([concurrent, original], {
     type: 'shot-saved',
     shot: saved,
@@ -63,7 +63,7 @@ await run('shot editor projection settles a saved shot against the latest shell 
 
   equal(projection.shots?.length, 2);
   equal(projection.shots?.[0]?.id, 'shot-2');
-  equal(projection.shots?.[1]?.annotations?.enjoyment, 100);
+  equal(projection.shots?.[1]?.annotations?.enjoyment, 10);
   equal(projection.modal, null);
   equal(projection.busy, false);
 });
@@ -160,7 +160,7 @@ function shot(id: string): ShotRecord {
         targetYield: 40
       }
     },
-    annotations: { actualDoseWeight: 18, drinkTds: 9.1, enjoyment: 60 },
+    annotations: { actualDoseWeight: 18, drinkTds: 9.1, enjoyment: 6 },
     measurements: []
   };
 }

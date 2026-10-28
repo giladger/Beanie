@@ -1,12 +1,14 @@
 import type { ShotRecord } from '../api/types';
+import { normalizeEnjoyment } from '../domain/enjoymentScale';
 import { escapeAttr, escapeHtml } from './html';
 
+// Values are on the gateway's 0-10 enjoyment scale (see domain/enjoymentScale).
 export const SHOT_SCORE_OPTIONS = [
-  { value: 20, label: 'Bad', tone: 'bad' },
-  { value: 40, label: 'Meh', tone: 'meh' },
-  { value: 60, label: 'OK', tone: 'ok' },
-  { value: 80, label: 'Good', tone: 'good' },
-  { value: 100, label: 'Great', tone: 'great' }
+  { value: 2, label: 'Bad', tone: 'bad' },
+  { value: 4, label: 'Meh', tone: 'meh' },
+  { value: 6, label: 'OK', tone: 'ok' },
+  { value: 8, label: 'Good', tone: 'good' },
+  { value: 10, label: 'Great', tone: 'great' }
 ] as const;
 
 export type ShotScoreOption = (typeof SHOT_SCORE_OPTIONS)[number];
@@ -39,11 +41,12 @@ export function shotScoreControl(
 }
 
 export function scoreOptionForValue(value: number | null | undefined): ShotScoreOption | null {
-  if (value == null || value <= 0) return null;
+  const score = normalizeEnjoyment(value);
+  if (score == null) return null;
   let closest: ShotScoreOption = SHOT_SCORE_OPTIONS[0]!;
-  let distance = Math.abs(value - closest.value);
+  let distance = Math.abs(score - closest.value);
   for (const option of SHOT_SCORE_OPTIONS) {
-    const nextDistance = Math.abs(value - option.value);
+    const nextDistance = Math.abs(score - option.value);
     if (nextDistance < distance) {
       closest = option;
       distance = nextDistance;

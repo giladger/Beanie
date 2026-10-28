@@ -36,7 +36,7 @@ function shotWith(measurements: ShotMeasurement[]): ShotRecord {
         grinderSetting: 14.5
       }
     },
-    annotations: { actualDoseWeight: 18.1, actualYield: 38, drinkTds: 8.5, enjoyment: 40 }
+    annotations: { actualDoseWeight: 18.1, actualYield: 38, drinkTds: 8.5, enjoyment: 4 }
   };
 }
 
@@ -69,7 +69,7 @@ run('buildDialInContext assembles bean, grinder, recipe, and shot facts', () => 
   equal(context.recipe.temperatureC, 92);
   equal(context.shot?.peakPressureBar, 8.9);
   equal(context.shot?.stopReason, 'targetWeight');
-  equal(context.shot?.enjoymentLabel, 'meh (40/100)');
+  equal(context.shot?.enjoymentLabel, 'meh (4/10)');
   equal(context.telemetry.length, 3);
 });
 

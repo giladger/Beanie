@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Shot ratings work again on Decaid 0.8.7 and later. Decaid moved shot
+  enjoyment to a 0–10 scale: its database migration rescales every stored
+  rating (80 becomes 8) and the shot API now rejects anything above 10. Beanie
+  kept reading and writing the old 20–100 values, so every rated shot showed
+  "Bad" and tapping a new score failed to save. Bad/Meh/OK/Good/Great are now
+  stored as 2/4/6/8/10, so migrated ratings read correctly right away and new
+  scores save. A gateway older than 0.8.7 still holds 0–100 ratings; Beanie
+  reads those on their old scale using the same rule as Decaid's migration
+  (anything above 10 is a legacy rating), while new scores are written on the
+  0–10 scale so they survive the upgrade unchanged. Derek's dial-in context
+  now quotes the rating as n/10.
+
 ## v0.3.9 - 2026-09-26
 
 - The steam heater can be switched off from the skin. The DE1 turns its steam

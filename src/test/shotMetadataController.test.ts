@@ -11,11 +11,11 @@ import {
 await run('shot enjoyment update preserves existing annotations', () => {
   const update = shotEnjoymentUpdate({
     ...shot('shot-1'),
-    annotations: { drinkTds: 9.1, enjoyment: 60 }
-  }, 80);
+    annotations: { drinkTds: 9.1, enjoyment: 6 }
+  }, 8);
 
   equal(update.annotations?.drinkTds, 9.1);
-  equal(update.annotations?.enjoyment, 80);
+  equal(update.annotations?.enjoyment, 8);
 });
 
 await run('apply shot update preserves workflow fields unless context is replaced', () => {
@@ -40,7 +40,7 @@ await run('apply shot update preserves workflow fields unless context is replace
 await run('shot metadata controller saves demo updates locally without gateway calls', async () => {
   const result = await saveShotUpdate({
     shot: shot('shot-1'),
-    update: { annotations: { enjoyment: 80 } },
+    update: { annotations: { enjoyment: 8 } },
     demo: true,
     successStatus: 'Shot saved',
     demoStatus: 'Shot saved (demo)',
@@ -50,14 +50,14 @@ await run('shot metadata controller saves demo updates locally without gateway c
   equal(result.type, 'saved');
   equal(result.type === 'saved' ? result.remote : null, false);
   equal(result.type === 'saved' ? result.status : null, 'Shot saved (demo)');
-  equal(result.type === 'saved' ? result.shot.annotations?.enjoyment : null, 80);
+  equal(result.type === 'saved' ? result.shot.annotations?.enjoyment : null, 8);
 });
 
 await run('shot metadata controller saves remote updates and writes cache', async () => {
   const calls: string[] = [];
   const result = await saveShotUpdate({
     shot: shot('shot-1'),
-    update: { annotations: { enjoyment: 90 } },
+    update: { annotations: { enjoyment: 9 } },
     demo: false,
     successStatus: 'Score saved',
     demoStatus: 'Score saved (demo)',
@@ -78,14 +78,14 @@ await run('shot metadata controller saves remote updates and writes cache', asyn
   equal(result.type, 'saved');
   equal(result.type === 'saved' ? result.remote : null, true);
   equal(result.type === 'saved' ? result.status : null, 'Score saved');
-  equal(result.type === 'saved' ? result.shot.annotations?.enjoyment : null, 90);
+  equal(result.type === 'saved' ? result.shot.annotations?.enjoyment : null, 9);
   equal(calls.join(','), 'update:shot-1,invalidate:shot-1,cache:shot-1');
 });
 
 await run('shot metadata controller reports update and cache failures', async () => {
   const gatewayFailure = await saveShotUpdate({
     shot: shot('shot-1'),
-    update: { annotations: { enjoyment: 90 } },
+    update: { annotations: { enjoyment: 9 } },
     demo: false,
     successStatus: 'Score saved',
     demoStatus: 'Score saved (demo)',
@@ -103,7 +103,7 @@ await run('shot metadata controller reports update and cache failures', async ()
 
   const cacheFailure = await saveShotUpdate({
     shot: shot('shot-1'),
-    update: { annotations: { enjoyment: 90 } },
+    update: { annotations: { enjoyment: 9 } },
     demo: false,
     successStatus: 'Shot saved',
     demoStatus: 'Shot saved (demo)',

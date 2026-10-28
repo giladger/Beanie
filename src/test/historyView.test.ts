@@ -21,7 +21,7 @@ run('history view hides service shots while keeping pagination based on raw shot
 
 run('history view selects the requested shot and renders score controls', () => {
   const html = renderHistoryView({
-    shots: [shot('shot-a', 'espresso', 80), shot('shot-b', 'espresso', 20)],
+    shots: [shot('shot-a', 'espresso', 8), shot('shot-b', 'espresso', 2)],
     detailShotId: 'shot-b',
     compareShotId: null,
     comparePicking: false,

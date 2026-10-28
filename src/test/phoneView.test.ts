@@ -154,7 +154,7 @@ function model(): PhoneShellModel {
       grinderSetting: '12',
       drinkTds: null,
       drinkEy: null,
-      enjoyment: 80,
+      enjoyment: 8,
       espressoNotes: 'Sweet and clean',
       contextExtras: null,
       annotationExtras: null
@@ -189,7 +189,7 @@ function shot(id: string, beverageType: string, beanBatchId: string | null = nul
         beanBatchId
       }
     },
-    annotations: { enjoyment: 80 },
+    annotations: { enjoyment: 8 },
     measurements: []
   };
 }

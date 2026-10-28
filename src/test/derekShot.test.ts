@@ -13,7 +13,7 @@ function shot(extras?: Record<string, unknown>): ShotRecord {
     id: 's1',
     timestamp: '2026-07-01T08:00:00.000Z',
     measurements: [],
-    annotations: extras ? { enjoyment: 60, extras } : { enjoyment: 60 }
+    annotations: extras ? { enjoyment: 6, extras } : { enjoyment: 6 }
   };
 }
 
@@ -32,7 +32,7 @@ run('answers round-trip through annotations and cap at three, newest last', () =
   equal(derek.answers[0]!.at, 't2');
   equal(latestDerekAnswer(record)?.at, 't4');
   // Unrelated annotation fields survive the merge.
-  equal(annotations.enjoyment, 60);
+  equal(annotations.enjoyment, 6);
 });
 
 run('the applied tip is stored alongside answers without clobbering them', () => {

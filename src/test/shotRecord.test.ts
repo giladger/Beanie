@@ -21,7 +21,7 @@ run('keeps cached measurements while applying fresh summary metadata', () => {
     annotations: {
       actualDoseWeight: 18,
       actualYield: 207.8,
-      enjoyment: 20
+      enjoyment: 2
     },
     shotNotes: 'old note',
     metadata: { local: true },
@@ -44,7 +44,7 @@ run('keeps cached measurements while applying fresh summary metadata', () => {
     annotations: {
       actualDoseWeight: 180,
       actualYield: 110,
-      enjoyment: 100
+      enjoyment: 10
     },
     shotNotes: 'fresh note',
     metadata: { visualizer: true }
@@ -54,7 +54,7 @@ run('keeps cached measurements while applying fresh summary metadata', () => {
 
   equal(merged.annotations?.actualDoseWeight, 180);
   equal(merged.annotations?.actualYield, 110);
-  equal(merged.annotations?.enjoyment, 100);
+  equal(merged.annotations?.enjoyment, 10);
   equal(merged.workflow?.context?.grinderSetting, '10');
   equal(merged.workflow?.context?.targetYield, 11);
   equal(merged.shotNotes, 'fresh note');

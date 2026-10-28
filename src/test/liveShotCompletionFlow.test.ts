@@ -203,7 +203,7 @@ await run('remote completion polls, rebases shot context, caches it, and project
         annotations: {
           actualDoseWeight: 18,
           actualYield: 36,
-          enjoyment: 91,
+          enjoyment: 9,
           extras: { concurrent: true }
         }
       };
@@ -238,7 +238,7 @@ await run('remote completion polls, rebases shot context, caches it, and project
     equal(outcome.contextPersistence, 'saved');
     equal(outcome.shot.metadata?.freshness != null, true);
   }
-  equal(captured.update?.annotations?.enjoyment, 91);
+  equal(captured.update?.annotations?.enjoyment, 9);
   equal(captured.update?.annotations?.extras?.derekTweak, 'Grind finer');
   deepEqual(events.map((event) => event.type), ['routed', 'settled']);
   equal(doseResolved, false);

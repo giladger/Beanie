@@ -215,7 +215,8 @@ export function demoShotsForBean(bean: Bean): ShotRecord[] {
       annotations: {
         actualDoseWeight: Number(dose.toFixed(1)),
         actualYield: Number((yieldWeight + (index % 2 ? -0.6 : 0.4)).toFixed(1)),
-        enjoyment: Math.max(62, 92 - index * 4),
+        // On the gateway's 0-10 enjoyment scale (see domain/enjoymentScale).
+        enjoyment: Math.max(62, 92 - index * 4) / 10,
         espressoNotes: index === 0 ? 'clean, sweet finish' : index === 1 ? 'a little sharp' : 'reference shot',
         // The two most recent shots carry the Decent shot-upload plugin's
         // durable markers; older shots exercise the unmarked (not-uploaded) case.

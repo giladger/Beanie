@@ -2,6 +2,7 @@ import type { Bean, BeanBatch, Grinder, ShotRecord } from '../api/types';
 import { stripCitationMarkers } from './answerMarkdown';
 import { buildShotStats, shotDurationSeconds } from './shotStats';
 import { computeBeanFreshness } from './beanFreshness';
+import { ENJOYMENT_MAX, normalizeEnjoyment } from './enjoymentScale';
 import { FIELD_SPECS } from './profileModel';
 
 // The dial-in helper's pure core: turn a shot + its context into the question
@@ -151,11 +152,13 @@ function shotDerekTweak(shot: ShotRecord | null): string | null {
   return typeof value === 'string' && value.trim() ? value : null;
 }
 
-// Enjoyment is stored 0-100; de1app imports use 0 for "not rated".
+// Enjoyment is stored 0-10 (gateways older than Decaid 0.8.7: 0-100); de1app
+// imports use 0 for "not rated".
 function enjoymentLabel(value: number | null | undefined): string | null {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null;
-  const label = value <= 20 ? 'bad' : value <= 40 ? 'meh' : value <= 60 ? 'OK' : value <= 80 ? 'good' : 'great';
-  return `${label} (${Math.round(value)}/100)`;
+  const score = normalizeEnjoyment(value);
+  if (score == null) return null;
+  const label = score <= 2 ? 'bad' : score <= 4 ? 'meh' : score <= 6 ? 'OK' : score <= 8 ? 'good' : 'great';
+  return `${label} (${Math.round(score * 10) / 10}/${ENJOYMENT_MAX})`;
 }
 
 function firstStepTemperature(steps: unknown[] | undefined): number | null {

@@ -126,7 +126,7 @@ function draft(): ShotEditDraft {
     grinderSetting: '12',
     drinkTds: 9.25,
     drinkEy: 20.5,
-    enjoyment: 80,
+    enjoyment: 8,
     espressoNotes: 'Sweet and round',
     contextExtras: null,
     annotationExtras: null
