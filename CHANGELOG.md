@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.3.10 - 2026-10-28
 
 - Shot ratings work again on Decaid 0.8.7 and later. Decaid moved shot
   enjoyment to a 0–10 scale: its database migration rescales every stored
