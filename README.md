@@ -18,6 +18,8 @@ instead of messier.
 
 Beanie is still early, so feedback is very welcome.
 
+![Beanie home screen: the active bean's recipe, its shot history, and the selected shot's graph](docs/screenshots/home.png)
+
 ## What Beanie Does
 
 1. Opens on the last active bean and its current recipe.
@@ -50,6 +52,17 @@ Choose Android screensaver under Sleep screen to allow Android's own idle
 timer and photo app to take over while the machine sleeps. Configure the delay
 in Android Settings > Display > Screen timeout, and select the photo app under
 Screen saver. Brightness for this mode belongs to the selected Android app.
+
+## Screenshots
+
+Screenshots are from Beanie's demo mode on a 1340×800 tablet screen.
+
+| | |
+| --- | --- |
+| ![Live shot with the previous shot as a ghost overlay](docs/screenshots/live-shot.png) | ![Bean picker with roasters, beans, and bags on hand](docs/screenshots/bean-picker.png) |
+| **Live shot**: pressure, flow, weight, and temperature as the shot runs, with a reference shot ghosted behind it. | **Choose coffee**: every bean with its bags on hand; freeze, edit, or finish a bag. |
+| ![Steam, hot water, and flush presets](docs/screenshots/steam-water-flush.png) | ![Settings with the theme picker](docs/screenshots/themes.png) |
+| **Steam · Water · Flush**: named presets for milk, drinks, and cleaning. | **Settings**: themes, screensaver, clock, and more. |
 
 ## Install
 
