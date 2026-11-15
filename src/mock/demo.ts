@@ -8,6 +8,7 @@ import type {
   Workflow
 } from '../api/types';
 import type { LabelScan, LabelScanEnrichment } from '../domain/labelScan';
+import { simulateExtraction, type SimulatedProfileKind } from '../domain/simulatedExtraction';
 
 const now = Date.now();
 
@@ -191,6 +192,8 @@ export function demoShotsForBean(bean: Bean): ShotRecord[] {
     // (reaprime snapshots it onto workflow.machine). Older shots predate it,
     // exercising the no-stamp fallback.
     const recordedCalibration = index < 3 ? [1, 0.95, 1.05][index]! : null;
+    const grinderSetting = (Number(base.grind) + index * 0.04).toFixed(1);
+    const actualYield = Number((yieldWeight + (index % 2 ? -0.6 : 0.4)).toFixed(1));
     return {
       id: `${bean.id}-shot-${index}`,
       timestamp,
@@ -202,7 +205,7 @@ export function demoShotsForBean(bean: Bean): ShotRecord[] {
           targetYield: Number(yieldWeight.toFixed(1)),
           grinderId: 'grinder-df64',
           grinderModel: 'DF64 Gen 2',
-          grinderSetting: (Number(base.grind) + index * 0.04).toFixed(1),
+          grinderSetting,
           beanBatchId: demoBatches[bean.id]?.[0]?.id ?? null,
           coffeeRoaster: bean.roaster,
           coffeeName: bean.name,
@@ -214,7 +217,7 @@ export function demoShotsForBean(bean: Bean): ShotRecord[] {
       },
       annotations: {
         actualDoseWeight: Number(dose.toFixed(1)),
-        actualYield: Number((yieldWeight + (index % 2 ? -0.6 : 0.4)).toFixed(1)),
+        actualYield,
         // On the gateway's 0-10 enjoyment scale (see domain/enjoymentScale).
         enjoyment: Math.max(62, 92 - index * 4) / 10,
         espressoNotes: index === 0 ? 'clean, sweet finish' : index === 1 ? 'a little sharp' : 'reference shot',
@@ -226,34 +229,78 @@ export function demoShotsForBean(bean: Bean): ShotRecord[] {
             ? { extras: { decent_upload_rejected: { status: 422, timestamp: Math.floor((now - 90_000_000) / 1000) } } }
             : {})
       },
-      measurements: buildMeasurements(index)
+      measurements: buildMeasurements({
+        seed: hashSeed(bean.id) + index,
+        startMs: Date.parse(timestamp),
+        profileTitle: base.profile.title,
+        temperature: base.profile.tank_temperature ?? 93,
+        dose,
+        grinderSetting: Number(grinderSetting),
+        // The machine stops on weight a little early; the rest drips after.
+        stopWeight: actualYield - (1.6 + (index % 3) * 0.35)
+      })
     };
   });
 }
 
-function buildMeasurements(seed: number) {
-  const start = now - seed * 86_400_000;
-  return Array.from({ length: 48 }, (_, i) => {
-    const t = i / 47;
-    const pressure = Math.max(0, Math.sin(t * Math.PI) * 9 - seed * 0.08);
-    const flow = Math.max(0, 1.1 + Math.sin(t * Math.PI * 1.5) * 1.8 - t * 0.6);
-    const weight = Math.max(0, t * (38 + seed * 0.7));
+interface DemoMeasurementOptions {
+  seed: number;
+  startMs: number;
+  profileTitle: string | undefined;
+  temperature: number;
+  dose: number;
+  grinderSetting: number;
+  stopWeight: number;
+}
+
+// Demo shots come from the extraction model, so the history graphs, shot
+// stats, and flow calibrator see realistic preinfusion, step changes, and drip
+// timing. A coarser grind setting lowers puck resistance (faster flow).
+function buildMeasurements(options: DemoMeasurementOptions) {
+  const kind: SimulatedProfileKind =
+    options.profileTitle === 'Blooming Espresso'
+      ? 'blooming'
+      : options.profileTitle === 'LRv3'
+        ? 'lever'
+        : 'pressure';
+  const samples = simulateExtraction({
+    kind,
+    dose: options.dose,
+    stopWeight: options.stopWeight,
+    temperature: options.temperature,
+    resistance: Math.exp(-(options.grinderSetting - 5.5) * 0.55),
+    seed: options.seed
+  });
+  return samples.map((sample) => {
+    const timestamp = new Date(options.startMs + Math.round(sample.seconds * 1000)).toISOString();
     return {
       machine: {
-        timestamp: new Date(start + i * 650).toISOString(),
-        pressure,
-        flow,
-        mixTemperature: 92 + Math.sin(t * Math.PI) * 1.1,
-        groupTemperature: 93
+        timestamp,
+        state: { state: 'espresso', substate: sample.substate },
+        pressure: sample.pressure,
+        flow: sample.flow,
+        targetPressure: sample.targetPressure,
+        targetFlow: sample.targetFlow,
+        mixTemperature: sample.mixTemperature,
+        groupTemperature: sample.groupTemperature,
+        targetMixTemperature: sample.targetTemperature,
+        targetGroupTemperature: sample.targetTemperature,
+        profileFrame: sample.frame
       },
       scale: {
-        timestamp: new Date(start + i * 650).toISOString(),
-        weight,
-        weightFlow: flow * 0.85
+        timestamp,
+        weight: sample.weight,
+        weightFlow: sample.weightFlow
       },
-      volume: t * 40
+      volume: sample.volume
     };
   });
+}
+
+function hashSeed(value: string): number {
+  let hash = 0;
+  for (const char of value) hash = (hash * 31 + char.charCodeAt(0)) % 100_000;
+  return hash;
 }
 
 // Canned extraction so the scanner's review -> commit flow is fully usable in
