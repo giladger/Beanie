@@ -1,4 +1,4 @@
-import { COFFEE_ICONS, beanAppearance, beanDisplayName, beanIcon, beanImage } from '../domain/beanAppearance';
+import { COFFEE_ICONS, automaticCoffeeIcon, coffeeIconLabel, beanAppearance, beanDisplayName, beanIcon, beanImage, beanSavedImage } from '../domain/beanAppearance';
 import type { Bean, BeanBatch } from '../api/types';
 import {
   batchStorageEvents,
@@ -125,7 +125,7 @@ function renderBeanPickerRow(
     <button id="bean-${escapeAttr(bean.id)}" class="bean-row ${options.focused ? 'active' : ''} ${armed || hint ? 'has-second-tap-hint' : ''}" data-action="inspect-bean" data-id="${escapeAttr(bean.id)}">
       <span class="bean-row-image" aria-hidden="true">${image
         ? `<img src="${escapeAttr(image)}" alt="" width="48" height="48" />`
-        : icon(beanIcon(bean, options.batches))}</span>
+        : icon(beanIcon(bean, options.batches, options.favorite))}</span>
       <span class="bean-row-copy">
         ${origin}
         <b>${escapeHtml(bean.roaster)}</b>
@@ -187,7 +187,7 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
             <button type="button" class="icon-button bean-picker-edit-icon" data-action="toggle-bean-details" data-id="${escapeAttr(bean.id)}" aria-expanded="${editingDetails ? 'true' : 'false'}" aria-label="Edit coffee" title="Edit coffee">${icon('pencil')}</button>
             <button type="button" class="bean-fav ${favorite ? 'on' : ''}" data-action="toggle-favorite-bean" data-id="${escapeAttr(bean.id)}" aria-pressed="${favorite}" aria-label="${favorite ? 'Unfavorite' : 'Favorite'} ${escapeAttr(beanLabel(bean))}" title="${favorite ? 'Remove from favorites' : 'Add to favorites'}">${favorite ? '★' : '☆'}</button>
           </div>
-          ${editingDetails ? renderBeanPickerBeanForm(bean, model.prefillBeans, model.formNumbers ?? {}, { showHeader: false, batches }) : ''}
+          ${editingDetails ? renderBeanPickerBeanForm(bean, model.prefillBeans, model.formNumbers ?? {}, { showHeader: false, batches, favorite }) : ''}
         </div>
       </div>
       <div class="bean-picker-batches">
@@ -445,7 +445,7 @@ function renderBeanPickerBeanForm(
   bean: Bean | null,
   prefillBeans: Bean[],
   formNumbers: Record<string, string>,
-  options: { showHeader?: boolean; batches?: BeanBatch[] } = {}
+  options: { showHeader?: boolean; batches?: BeanBatch[]; favorite?: boolean } = {}
 ): string {
   const editing = bean != null;
   const dataId = editing ? ` data-id="${escapeAttr(bean.id)}"` : '';
@@ -469,8 +469,8 @@ function renderBeanPickerBeanForm(
       ${editing ? '' : `<input type="hidden" name="prefillBeanId" value="" />${beanPrefillSelect(prefillBeans)}`}
       <div class="coffee-appearance-fields">
         <p class="coffee-appearance-hint">Name, icon, and photo apply to every bag of this coffee.</p>
-        <label>Display name (optional)<input data-action="bean-picker-bean-field" name="displayName" autocomplete="off" placeholder="${escapeAttr(bean?.name ?? 'e.g. Morning espresso')}" value="${escapeAttr(bean ? beanDisplayName(bean, batches) ?? '' : '')}" /></label>
-        <label>Coffee icon<select name="coffeeIcon" data-action="bean-appearance-field" data-bean-id="${escapeAttr(bean?.id ?? '')}"><option value="">Automatic</option>${COFFEE_ICONS.map((name) => `<option value="${name}" ${beanAppearance(bean ?? {}, batches).icon === name ? 'selected' : ''}>${name.charAt(0).toUpperCase() + name.slice(1)}</option>`).join('')}</select></label>
+        <label class="coffee-name-field">Display name (optional)<input data-action="bean-picker-bean-field" name="displayName" autocomplete="off" placeholder="${escapeAttr(bean?.name ?? 'e.g. Morning espresso')}" value="${escapeAttr(bean ? beanDisplayName(bean, batches) ?? '' : '')}" /></label>
+        ${renderCoffeeIconPicker(bean, batches, options.favorite ?? false)}
         ${bean ? renderCoffeePhotoEditor(bean, batches) : ''}
       </div>
       <div class="bean-picker-fields">
@@ -494,11 +494,26 @@ function renderBeanPickerBeanForm(
   `;
 }
 
+function renderCoffeeIconPicker(bean: Bean | null, batches: BeanBatch[], favorite: boolean): string {
+  const appearance = beanAppearance(bean ?? {}, batches);
+  const current = COFFEE_ICONS.some((name) => name === appearance.icon) ? appearance.icon as string : '';
+  const usingPhoto = bean != null && beanImage(bean, batches) != null;
+  const choice = (value: string, label: string, glyph: string) => `<button type="button" class="coffee-icon-choice" data-action="choose-coffee-icon" data-id="${escapeAttr(bean?.id ?? '')}" data-value="${value}" aria-label="Use ${label} icon" aria-pressed="${!usingPhoto && current === value}">${icon(glyph)}<span>${label}</span></button>`;
+  return `<fieldset class="coffee-icon-picker"><legend>Coffee icon</legend>
+    <input type="hidden" name="coffeeIcon" value="${escapeAttr(current)}" />
+    <input type="hidden" name="appearanceMode" value="${escapeAttr(String(appearance.appearanceMode ?? ''))}" />
+    <div class="coffee-icon-options" role="group" aria-label="Coffee icons">
+      ${choice('', 'Automatic', automaticCoffeeIcon(bean?.id ?? '', favorite))}
+      ${COFFEE_ICONS.map((name) => choice(name, coffeeIconLabel(name), name)).join('')}
+    </div>
+    <p class="coffee-icon-help">Automatic uses a heart for favorites. Choose any icon or use a photo.</p>
+  </fieldset>`;
+}
+
 function renderCoffeePhotoEditor(bean: Bean, batches: BeanBatch[]): string {
-  const image = beanImage(bean, batches);
+  const image = beanSavedImage(bean, batches);
   return `<div class="bag-image-editor">
-    <span class="bag-default-icon" aria-hidden="true">${icon(beanIcon(bean, batches))}</span>
-    ${image ? `<img src="${escapeAttr(image)}" alt="Coffee photo" width="64" height="64" />` : ''}
+    ${image ? `<button type="button" class="coffee-photo-choice" data-action="use-coffee-photo" data-id="${escapeAttr(bean.id)}" aria-label="Use saved coffee photo" aria-pressed="${beanImage(bean, batches) != null}"><img src="${escapeAttr(image)}" alt="Saved coffee photo" width="64" height="64" /><span>Use photo</span></button>` : ''}
     <label class="secondary-button compact"><input type="file" accept="image/*" capture="environment" data-action="bean-image-upload" data-bean-id="${escapeAttr(bean.id)}" aria-label="Take coffee photo" hidden />${icon('camera')}<span>Take photo</span></label>
     <label class="secondary-button compact"><input type="file" accept="image/jpeg,image/png,image/webp" data-action="bean-image-upload" data-bean-id="${escapeAttr(bean.id)}" hidden />${icon('camera')}<span>${image ? 'Choose another photo' : 'Choose photo'}</span></label>
     ${image ? `<button type="button" class="text-button" data-action="bean-image-remove" data-id="${escapeAttr(bean.id)}">Remove photo</button>` : ''}

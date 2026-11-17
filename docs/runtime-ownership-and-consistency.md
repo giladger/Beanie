@@ -231,7 +231,9 @@ Scanner batches have bounded concurrency and total decoded pixels. Screensaver
 imports use the same owner rather than opening an independent decode path.
 Coffee photos use the shell's shared transcoder with a thumbnail pixel limit.
 The inventory browser owns the import lease and writes through the existing
-bean workflow owner after decoding. Closing the editor invalidates the lease.
+bean workflow owner after decoding. Closing the editor invalidates the lease. Appearance writes wait for earlier
+coffee-form and appearance saves, then merge their fields over the latest coffee
+record. Selecting an icon preserves the saved photo for later reuse.
 Both entry points cap their input set, app disposal rejects queued/future image
 work, and an already-acquired lease runs only far enough to execute its cleanup.
 

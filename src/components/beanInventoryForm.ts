@@ -24,7 +24,9 @@ export function readBeanInventoryForm(
       fields: beanFieldsFromForm(data),
       appearance: {
         ...(data.has('displayName') ? { displayName: textOrNull(data.get('displayName')) } : {}),
-        ...(data.has('coffeeIcon') ? { icon: textOrNull(data.get('coffeeIcon')) } : {})
+        ...(data.has('coffeeIcon') ? { icon: textOrNull(data.get('coffeeIcon')) } : {}),
+        ...(data.get('appearanceMode') === 'icon' || data.get('appearanceMode') === 'photo'
+          ? { appearanceMode: data.get('appearanceMode') as 'icon' | 'photo' } : {})
       },
       prefillBeanId: prefillBeanId || null,
       firstStock: readBatchFields(data)
@@ -73,8 +75,8 @@ export function prefillBeanInventoryForm(
   set('notes', bean.notes);
   const appearance = beanAppearance(bean);
   for (const name of ['displayName']) set(name, appearance[name]);
-  const icon = form.elements.namedItem('coffeeIcon');
-  if (icon instanceof HTMLSelectElement) icon.value = String(appearance.icon ?? '');
+  set('coffeeIcon', appearance.icon);
+  set('appearanceMode', appearance.appearanceMode);
 }
 
 function readBatchFields(data: FormData): BeanBatchFormFields {

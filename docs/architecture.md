@@ -370,6 +370,8 @@ Examples:
 - `profileEditor.ts`: profile editor UI session state, field reducers, and
   rendering. Persistent profile decoding and encoding live in
   `domain/profileModel.ts` and are shared by non-UI flows.
+- `coffeeAppearanceForm.ts` in `src/render/`: owns the visual icon selection in
+  an uncontrolled coffee-creation form. Saved-coffee changes use the browser flow.
 - `beanInventoryForm.ts`: browser form reader for typed coffee, bag, and storage
   submissions. Coffee appearance fields use the existing bean workflow owner; bag stock fields use the inventory mutation facade.
   The browser flow owns photo-import leases; the shell injects its shared image
