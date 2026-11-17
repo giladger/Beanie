@@ -93,3 +93,17 @@ test('gateway failure reaches an explicit, usable demo shell', async ({ page }) 
   expect(workflowWrites).toBe(0);
   expect(pageErrors).toEqual([]);
 });
+
+test('landscape tablet keeps a readable shot graph below the setup banner', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1006, height: 600 });
+  await page.route('**/api/v1/**', (route) => route.abort('failed'));
+  await page.goto('/');
+  await expect(page.locator('#detail-canvas')).toBeVisible();
+  const banner = await page.locator('.hero').boundingBox();
+  const chart = await page.locator('#detail-canvas').boundingBox();
+  expect(banner!.height).toBeLessThanOrEqual(100);
+  expect(chart!.height).toBeGreaterThanOrEqual(220);
+  await expect(page.locator('.hero-current-label')).toHaveText('Current bag');
+  await expect(page.getByRole('group', { name: 'Profile presets', exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('tablet-readable-graph.png') });
+});
