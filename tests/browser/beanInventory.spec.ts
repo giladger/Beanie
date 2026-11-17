@@ -185,10 +185,10 @@ test('shared coffee appearance and distinct shortcuts survive selection, new bag
   await expect(page.locator('.bean-row')).toContainText('Neta (Santo Domingo)');
   expect(log.beanPosts[0]).toMatchObject({ extras: { beanie: { displayName: 'Neta (Santo Domingo)' } } });
   await page.getByRole('button', { name: 'Edit coffee', exact: true }).click();
-  await page.locator('[name="coffeeIcon"]').selectOption('heart');
+  await page.getByRole('button', { name: 'Use Heart icon', exact: true }).click();
   await expect(page.locator('.bean-row-image [data-icon="heart"]')).toBeVisible();
-  await expect(page.locator('.bag-default-icon [data-icon="heart"]')).toBeVisible();
-  await expect(page.locator('.bag-default-icon [data-icon="heart"]')).toHaveCSS('fill', 'rgb(237, 121, 149)');
+  await expect(page.locator('.coffee-icon-choice[data-value="heart"] [data-icon="heart"]')).toBeVisible();
+  await expect(page.locator('.coffee-icon-choice[data-value="heart"] [data-icon="heart"]')).toHaveCSS('fill', 'rgb(237, 121, 149)');
   await expect(page.locator('[name="shortcutLabel"]')).toHaveCount(0);
   await expect(page.locator('input[capture="environment"]')).toHaveAttribute('accept', 'image/*');
   await page.locator('[data-action="bean-image-upload"]:not([capture])').setInputFiles({
@@ -204,6 +204,7 @@ test('shared coffee appearance and distinct shortcuts survive selection, new bag
   await expect(page.locator('.bean-name')).toHaveText('Neta (Santo Domingo)');
   await page.getByRole('button', { name: 'Change coffee icon or photo', exact: true }).click();
   await expect(page.locator('[name="coffeeIcon"]')).toHaveValue('heart');
+  await expect(page.getByRole('group', { name: 'Coffee icons', exact: true }).getByRole('button')).toHaveCount(26);
   await page.locator('[data-action="bean-picker-add-batch"]').click();
   await page.getByRole('button', { name: 'Add bag', exact: true }).click();
   await expect(page.locator('.stock-row')).toHaveCount(2);
@@ -326,8 +327,8 @@ test('favorite fills its section and shows a filled heart', async ({ page }, tes
   await page.locator('[name="displayName"]').fill('Neta');
   await page.getByRole('button', { name: 'Add coffee', exact: true }).click();
   await page.getByRole('button', { name: 'Edit coffee', exact: true }).click();
-  await page.locator('[name="coffeeIcon"]').selectOption('heart');
-  await expect(page.locator('.bag-default-icon [data-icon="heart"]')).toBeVisible();
+  await page.getByRole('button', { name: 'Use Heart icon', exact: true }).click();
+  await expect(page.locator('.coffee-icon-choice[data-value="heart"] [data-icon="heart"]')).toBeVisible();
   await page.locator('[data-action="toggle-favorite-bean"]').click();
   await page.locator('.bean-row').click();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
@@ -342,4 +343,41 @@ test('favorite fills its section and shows a filled heart', async ({ page }, tes
   expect(card!.width).toBeGreaterThanOrEqual(available!.width - 1);
   expect(card!.height).toBeGreaterThanOrEqual(64);
   await page.locator('.hero').screenshot({ path: testInfo.outputPath('favorite-heart.png') });
+});
+
+
+test('visual icon choices use hearts automatically only for favorites and preserve saved photos', async ({ page }, testInfo) => {
+  await fakeGateway(page);
+  await page.goto('/');
+  await openCreateForm(page);
+  await page.getByRole('button', { name: 'Use Leaf icon', exact: true }).click();
+  await expect(page.locator('[name="coffeeIcon"]')).toHaveValue('leaf');
+  await page.getByRole('button', { name: 'Add coffee', exact: true }).click();
+  await expect(page.locator('.bean-row-image [data-icon="leaf"]')).toBeVisible();
+  await page.getByRole('button', { name: 'Edit coffee', exact: true }).click();
+  const automatic = page.getByRole('button', { name: 'Use Automatic icon', exact: true });
+  await automatic.click();
+  await expect(page.locator('[name="coffeeIcon"]')).toHaveValue('');
+  await expect(page.locator('.bean-row-image [data-icon="heart"]')).toHaveCount(0);
+  await page.locator('[data-action="toggle-favorite-bean"]').click();
+  await expect(automatic.locator('[data-icon="heart"]')).toBeVisible();
+  await expect(page.locator('.bean-row-image [data-icon="heart"]')).toBeVisible();
+  await page.getByRole('button', { name: 'Use Sun icon', exact: true }).click();
+  await expect(page.locator('.bean-row-image [data-icon="sun"]')).toBeVisible();
+  await page.locator('[data-action="toggle-favorite-bean"]').click();
+  await expect(page.locator('.bean-row-image [data-icon="sun"]')).toBeVisible();
+  await automatic.click();
+  await expect(page.locator('.bean-row-image [data-icon="heart"]')).toHaveCount(0);
+  await page.locator('[data-action="bean-image-upload"]:not([capture])').setInputFiles({
+    name: 'coffee.jpg', mimeType: 'image/jpeg',
+    buffer: await import('node:fs/promises').then((fs) => fs.readFile(new URL('../fixtures/coffee.jpg', import.meta.url)))
+  });
+  await expect(page.locator('.bean-row-image img')).toBeVisible();
+  await page.getByRole('button', { name: 'Use Mountain icon', exact: true }).click();
+  await expect(page.locator('.bean-row-image [data-icon="mountain"]')).toBeVisible();
+  await expect(page.locator('.bean-row-image img')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Use saved coffee photo', exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('coffee-icon-choices.png') });
+  await page.getByRole('button', { name: 'Use saved coffee photo', exact: true }).click();
+  await expect(page.locator('.bean-row-image img')).toBeVisible();
 });

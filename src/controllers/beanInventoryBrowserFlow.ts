@@ -23,7 +23,7 @@ import {
   type BeanFormSubmission,
   type BeanInventoryFormSubmission
 } from '../domain/beanForm';
-import { OperationAuthority } from '../runtime/operationAuthority';
+import { OperationAuthority, type OperationLease } from '../runtime/operationAuthority';
 import type { ClickActionHandler } from './actionContract';
 import {
   BeanInventoryController,
@@ -128,6 +128,7 @@ export class BeanInventoryBrowserFlow {
   private session: BeanInventoryBrowserSession = EMPTY_SESSION;
   private readonly imageImport = new OperationAuthority();
   private pendingBeanEdit: Promise<void> | null = null;
+  private pendingAppearanceSave: Promise<void> | null = null;
 
   constructor(
     private readonly host: BeanInventoryBrowserHost,
@@ -442,15 +443,25 @@ export class BeanInventoryBrowserFlow {
       const image = await prepare();
       if (this.pendingBeanEdit) await this.pendingBeanEdit;
       if (!lease.isCurrent) return;
-      await this.saveBeanAppearance(beanId, { image });
+      await this.saveBeanAppearance(beanId, { image, appearanceMode: 'photo' }, lease);
     } catch {
       if (lease.isCurrent) this.host.emit({ type: 'status-changed', status: 'Could not load that photo. Try a JPEG or PNG.' });
     } finally { lease.finish(); }
   }
 
-  async saveBeanAppearance(beanId: string, patch: BeanAppearancePatch): Promise<void> {
-    if (this.pendingBeanEdit) await this.pendingBeanEdit;
-    this.imageImport.invalidate();
+  async saveBeanAppearance(beanId: string, patch: BeanAppearancePatch, lease?: OperationLease): Promise<void> {
+    if (!lease) this.imageImport.invalidate();
+    while (this.pendingBeanEdit || this.pendingAppearanceSave) {
+      await Promise.all([this.pendingBeanEdit, this.pendingAppearanceSave]);
+    }
+    if (lease && !lease.isCurrent) return;
+    const pending = this.saveAppearanceFields(beanId, patch);
+    this.pendingAppearanceSave = pending;
+    try { await pending; }
+    finally { if (this.pendingAppearanceSave === pending) this.pendingAppearanceSave = null; }
+  }
+
+  private async saveAppearanceFields(beanId: string, patch: BeanAppearancePatch): Promise<void> {
     const snapshot = this.host.snapshot();
     const bean = snapshot.beans.find((item) => item.id === beanId);
     if (!bean || snapshot.busy || !this.requireWrite(snapshot.demo)) return;
@@ -575,6 +586,7 @@ export class BeanInventoryBrowserFlow {
   }
 
   private async submitBean(submission: BeanFormSubmission, autosave: boolean): Promise<void> {
+    if (this.pendingAppearanceSave) await this.pendingAppearanceSave;
     const pending = this.submitBeanFields(submission, autosave);
     this.pendingBeanEdit = pending;
     try { await pending; }

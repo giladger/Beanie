@@ -190,6 +190,16 @@ await run('a coffee photo update preserves its nickname and other skin metadata'
   equal((extras?.workflowSkin as Record<string, unknown>)?.name, 'Original');
 });
 
+await run('rapid coffee appearance choices settle in order instead of dropping the latest choice', async () => {
+  const harness = createHarness();
+  await Promise.all([
+    harness.flow.saveBeanAppearance('bean-1', { icon: 'sun', appearanceMode: 'icon' }),
+    harness.flow.saveBeanAppearance('bean-1', { icon: 'leaf', appearanceMode: 'icon' })
+  ]);
+  equal(harness.beanUpdates.length, 2);
+  equal((harness.state.beans[0]?.extras?.beanie as Record<string, unknown>)?.icon, 'leaf');
+});
+
 function createHarness(): {
   state: MutableSnapshot;
   flow: BeanInventoryBrowserFlow;

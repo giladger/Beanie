@@ -1,6 +1,7 @@
+import { icon } from '../components/icons';
 import { strict as assert } from 'node:assert';
 import type { Bean, BeanBatch } from '../api/types';
-import { beanAppearanceExtras, beanDisplayName, beanIcon, beanImage } from '../domain/beanAppearance';
+import { COFFEE_ICONS, automaticCoffeeIcon, beanAppearanceExtras, beanDisplayName, beanIcon, beanImage, beanSavedImage } from '../domain/beanAppearance';
 const bean: Bean = { id: 'coffee', name: 'Original', roaster: 'Roaster', extras: { otherSkin: { keep: true } } };
 const bag: BeanBatch = { id: 'bag-1', beanId: bean.id, extras: { beanie: { displayName: 'Old nickname', shortcutLabel: 'Old short name', icon: 'heart', image: 'data:image/jpeg;base64,AAAA' } } };
 const second = { ...bag, id: 'bag-2', extras: undefined };
@@ -20,3 +21,17 @@ assert.equal(beanImage(cleared, [bag]), null);
 assert.equal(beanIcon(cleared, [bag]), beanIcon(cleared, [second]));
 assert.equal(beanImage({ extras: { beanie: { image: 'data:image/svg+xml;base64,AAAA' } } }), null);
 console.log('ok - coffee appearance is shared across bags, preserves legacy choices, and clears explicitly');
+
+for (let i = 0; i < 100; i++) {
+  assert.notEqual(automaticCoffeeIcon('coffee-' + i), 'heart');
+  assert.equal(automaticCoffeeIcon('coffee-' + i, true), 'heart');
+}
+for (const name of COFFEE_ICONS) assert.ok(icon(name).startsWith('<svg'), 'Unregistered coffee icon: ' + name);
+assert.equal(beanIcon(bean, [], true), 'heart');
+assert.equal(beanIcon({ ...bean, extras: { beanie: { icon: 'sun' } } }, [], true), 'sun');
+const iconMode = { ...saved, extras: beanAppearanceExtras(saved, [], { icon: 'leaf', appearanceMode: 'icon' }) };
+assert.equal(beanImage(iconMode), null);
+assert.equal(beanSavedImage(iconMode), 'data:image/jpeg;base64,AAAA');
+const photoMode = { ...iconMode, extras: beanAppearanceExtras(iconMode, [], { appearanceMode: 'photo' }) };
+assert.equal(beanImage(photoMode), 'data:image/jpeg;base64,AAAA');
+console.log('ok - automatic hearts are favorite-only, icon choices render, and choosing an icon preserves the saved photo');

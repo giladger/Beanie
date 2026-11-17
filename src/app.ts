@@ -1,3 +1,4 @@
+import { selectDraftCoffeeIcon } from './render/coffeeAppearanceForm';
 import { screensaverWakeLockFrame } from './domain/screensaver';
 import type {
   Bean,
@@ -105,7 +106,7 @@ import {
 
 } from './domain/storage';
 import { rotationBeans } from './domain/beanDisplay';
-import { beanDisplayName, beanIcon, beanImage } from './domain/beanAppearance';
+import { COFFEE_ICONS, beanDisplayName, beanIcon, beanImage } from './domain/beanAppearance';
 import {
   demoBatches,
   demoBeans,
@@ -4909,7 +4910,16 @@ export class BeanieApp {
       // One-tap coffee switch from a hero rotation tile. Same semantics as
       // picking the bean in the picker: swap coffee + recipe and apply it.
       'bean-image-remove': async ({ id }) => {
-        if (id) await this.beanInventoryBrowser.saveBeanAppearance(id, { image: null });
+        if (id) await this.beanInventoryBrowser.saveBeanAppearance(id, { image: null, appearanceMode: 'icon' });
+      },
+      'choose-coffee-icon': async ({ el, id, value }) => {
+        const chosen = value ?? '';
+        if (chosen && !COFFEE_ICONS.some((name) => name === chosen)) return;
+        if (id) await this.beanInventoryBrowser.saveBeanAppearance(id, { icon: chosen || null, appearanceMode: 'icon' });
+        else selectDraftCoffeeIcon(el.closest<HTMLFormElement>('form'), chosen);
+      },
+      'use-coffee-photo': async ({ id }) => {
+        if (id) await this.beanInventoryBrowser.saveBeanAppearance(id, { appearanceMode: 'photo' });
       },
       'edit-bean-appearance': async ({ id }) => {
         if (id) await this.beanInventoryBrowser.openAppearance(id);
@@ -5670,11 +5680,6 @@ export class BeanieApp {
       const files = Array.from(input.files ?? []);
       input.value = '';
       if (files.length > 0) void this.scannerFlow.addScannerPhotos(files);
-      return;
-    }
-    if (target.dataset.action === 'bean-appearance-field') {
-      const beanId = target.dataset.beanId;
-      if (beanId) await this.beanInventoryBrowser.saveBeanAppearance(beanId, { icon: target.value || null });
       return;
     }
     if (target.dataset.action === 'bean-image-upload') {
@@ -6630,7 +6635,7 @@ export class BeanieApp {
       rotation,
       largeButtons: this.state.settingsPreferences.bagButtonSize === 'large',
       image: beanImage(bean, this.state.batchesByBean[bean.id] ?? []),
-      iconName: beanIcon(bean, this.state.batchesByBean[bean.id] ?? []),
+      iconName: beanIcon(bean, this.state.batchesByBean[bean.id] ?? [], this.state.favoriteBeans.includes(bean.id)),
       profileTitle: this.state.draft.profileTitle,
       profilePresets: this.state.favoriteProfiles.flatMap((id) => {
         const record = this.state.profiles.find((item) => item.id === id);
@@ -6659,7 +6664,7 @@ export class BeanieApp {
         image: beanImage(bean, batches),
         name: beanDisplayName(bean, batches) ?? bean.name,
         label: beanDisplayName(bean, batches) ?? bean.name,
-        iconName: beanIcon(bean, this.state.batchesByBean[bean.id] ?? []),
+        iconName: beanIcon(bean, this.state.batchesByBean[bean.id] ?? [], this.state.favoriteBeans.includes(bean.id)),
         selected: bean.id === selected?.id,
         favorite: favorites.has(bean.id)
       };

@@ -30,9 +30,11 @@ Beanie is still early, so feedback is very welcome.
 
 Each coffee has one optional display name, used throughout Beanie.
 Its name, icon, and photo apply to every bag of those beans. Each coffee gets a
-stable default icon. Tap its icon in the banner to open the appearance editor,
-where you can choose an icon, take a photo, or select an existing photo.
+stable default icon. Automatic uses a heart for favorites and ordinary icons
+for other coffees. Tap the banner icon to open the appearance editor,
+where a visual grid offers 25 icon choices. You can also take or choose a photo.
 Uploaded photos are reduced to thumbnails and appear in the coffee picker and shortcuts.
+Choosing an icon switches to it while retaining the saved photo for reuse.
 
 The banner labels the current bag and profile separately from fixed favorite
 coffees, recent coffees, and starred profile presets. Short landscape screens

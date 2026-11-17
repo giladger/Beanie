@@ -11097,3 +11097,14 @@ svg.icon[data-icon="heart"] { fill: #ed7995; stroke: #ffbacb; stroke-width: 1.5;
   .hero .hero-favorite .hero-rotation-name { font-size: 13px; }
   .hero .hero-favorite .icon { width: 20px; height: 20px; }
 }
+
+.coffee-name-field, .coffee-icon-picker { grid-column: 1 / -1; }
+.coffee-icon-picker { min-width: 0; border: 0; margin: 0; padding: 0; }
+.coffee-icon-picker legend { color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; padding: 0 0 8px; }
+.coffee-icon-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 6px; }
+.coffee-icon-choice { min-height: 58px; padding: 6px 3px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); color: var(--ink); font: inherit; font-size: 10px; cursor: pointer; }
+.coffee-icon-choice svg { width: 24px; height: 24px; }
+.coffee-icon-choice[aria-pressed="true"], .coffee-photo-choice[aria-pressed="true"] { border-color: var(--teal); box-shadow: inset 0 0 0 1px var(--teal); background: var(--panel-3); }
+.coffee-icon-choice:focus-visible, .coffee-photo-choice:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.coffee-icon-help { color: var(--muted); font-size: 11px; margin: 8px 0 0; }
+.coffee-photo-choice { padding: 5px; display: grid; gap: 4px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); color: var(--ink); font: inherit; font-size: 10px; cursor: pointer; }
