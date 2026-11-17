@@ -229,9 +229,9 @@ canvas backing stores, and batch pixel budgets as explicit leases. Every path,
 including decode failure and fallback, closes/revokes/releases in `finally`.
 Scanner batches have bounded concurrency and total decoded pixels. Screensaver
 imports use the same owner rather than opening an independent decode path.
-Bag photos use the shell's shared transcoder with a thumbnail pixel limit.
+Coffee photos use the shell's shared transcoder with a thumbnail pixel limit.
 The inventory browser owns the import lease and writes through the existing
-bag mutation facade after decoding. Closing the editor invalidates the lease.
+bean workflow owner after decoding. Closing the editor invalidates the lease.
 Both entry points cap their input set, app disposal rejects queued/future image
 work, and an already-acquired lease runs only far enough to execute its cleanup.
 

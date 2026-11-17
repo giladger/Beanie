@@ -1,3 +1,4 @@
+import { screensaverWakeLockFrame } from './domain/screensaver';
 import type {
   Bean,
   BeanBatch,
@@ -103,7 +104,8 @@ import {
   writeLastBeanId
 
 } from './domain/storage';
-import { bagIcon, bagImage, bagName, bagShortcutLabel, displayBatch, rotationBeans } from './domain/beanDisplay';
+import { rotationBeans } from './domain/beanDisplay';
+import { beanDisplayName, beanIcon, beanImage, beanShortcutLabel } from './domain/beanAppearance';
 import {
   demoBatches,
   demoBeans,
@@ -190,7 +192,7 @@ import {
 import { demoSettingsBundle, type SettingsBundle } from './domain/settingsModel';
 import type { SettingsResourceStates } from './domain/resourceState';
 import type { DecentAccountStatus, DisplayState } from './api/settings';
-import { displayWakeLockRequestFrame, readDisplayState } from './api/settings';
+import { readDisplayState } from './api/settings';
 import { createSettingsController } from './controllers/settingsController';
 import { SettingsMutationFlow } from './controllers/settingsMutationFlow';
 import { MachineSettingsFlow } from './controllers/machineSettingsFlow';
@@ -1657,7 +1659,7 @@ export class BeanieApp {
         this.telemetryStore.ingest('display', snapshot);
       },
       onOpen: () => {
-        this.displayStream.send(displayWakeLockRequestFrame);
+        this.displayStream.send(screensaverWakeLockFrame(this.state.settingsPreferences.screensaverMode));
       },
       onFailure: (failure) => {
         if (failure.phase === 'decode') console.warn('[Beanie] Bad display frame', failure.error);
@@ -4906,9 +4908,11 @@ export class BeanieApp {
     return {
       // One-tap coffee switch from a hero rotation tile. Same semantics as
       // picking the bean in the picker: swap coffee + recipe and apply it.
-      'bag-image-remove': async ({ el, id }) => {
-        const beanId = el.dataset.beanId;
-        if (beanId && id) await this.beanInventoryBrowser.saveBagImage(beanId, id, null);
+      'bean-image-remove': async ({ id }) => {
+        if (id) await this.beanInventoryBrowser.saveBeanAppearance(id, { image: null });
+      },
+      'edit-bean-appearance': async ({ id }) => {
+        if (id) await this.beanInventoryBrowser.openAppearance(id);
       },
       'switch-bean': async ({ id }) => {
         if (!id || id === this.state.selectedBeanId) return;
@@ -5371,7 +5375,7 @@ export class BeanieApp {
     if (target.dataset.action === 'bean-picker-batch-field-draft') {
       const beanId = target.closest<HTMLFormElement>('form')?.dataset.beanId;
       const name = target.name;
-      if (beanId && (name === 'roastDate' || name === 'roastLevel' || name === 'displayName')) {
+      if (beanId && (name === 'roastDate' || name === 'roastLevel')) {
         this.beanInventoryBrowser.captureDraftBatchField(beanId, name, target.value);
       }
     }
@@ -5668,13 +5672,17 @@ export class BeanieApp {
       if (files.length > 0) void this.scannerFlow.addScannerPhotos(files);
       return;
     }
-    if (target.dataset.action === 'bag-image-upload') {
+    if (target.dataset.action === 'bean-appearance-field') {
+      const beanId = target.dataset.beanId;
+      if (beanId) await this.beanInventoryBrowser.saveBeanAppearance(beanId, { icon: target.value || null });
+      return;
+    }
+    if (target.dataset.action === 'bean-image-upload') {
       const input = target as HTMLInputElement;
       const file = input.files?.[0];
       const beanId = input.dataset.beanId;
-      const batchId = input.dataset.batchId;
       input.value = '';
-      if (file && beanId && batchId) await this.beanInventoryBrowser.importBagImage(beanId, batchId, async () => {
+      if (file && beanId) await this.beanInventoryBrowser.importBeanImage(beanId, async () => {
         const result = await this.imageTranscoder.transcode(file, { maxEdge: 480, maxPixels: 480 * 480, mimeType: 'image/jpeg', quality: 0.78 });
         if (result.dataUrl.length > 150_000) throw new Error('Image too large');
         return result.dataUrl;
@@ -6611,7 +6619,7 @@ export class BeanieApp {
     const avgDose = this.averageDoseIn();
     const shotsLeft = remaining != null && avgDose != null ? Math.floor(remaining / avgDose) : null;
     return {
-      beanName: bagName(bean, batch),
+      beanName: beanDisplayName(bean, this.state.batchesByBean[bean.id] ?? []) ?? bean.name,
       roaster: bean.roaster?.trim() || null,
       // Compact "65d" / "65d · 40a" badge form — the hero row has no width to
       // spare for prose, and the picker already teaches the d/a vocabulary.
@@ -6621,8 +6629,8 @@ export class BeanieApp {
       beanId: bean.id,
       rotation,
       largeButtons: this.state.settingsPreferences.bagButtonSize === 'large',
-      image: bagImage(batch),
-      iconName: bagIcon(batch, bean.id),
+      image: beanImage(bean, this.state.batchesByBean[bean.id] ?? []),
+      iconName: beanIcon(bean, this.state.batchesByBean[bean.id] ?? []),
       profileTitle: this.state.draft.profileTitle,
       profilePresets: this.state.favoriteProfiles.flatMap((id) => {
         const record = this.state.profiles.find((item) => item.id === id);
@@ -6645,12 +6653,13 @@ export class BeanieApp {
       ...input, beans: this.state.beans.filter((bean) => !favorites.has(bean.id)), favoriteBeanIds: []
     });
     return [...pinned, ...other].map((bean) => {
-      const batch = bean.id === selected?.id ? this.selectedBatch() : displayBatch(this.state.batchesByBean[bean.id] ?? []);
+      const batches = this.state.batchesByBean[bean.id] ?? [];
       return {
         id: bean.id,
-        name: bagShortcutLabel(batch) ?? bagName(bean, batch),
-        label: bagName(bean, batch),
-        iconName: bagIcon(batch, bean.id),
+        image: beanImage(bean, batches),
+        name: beanShortcutLabel(bean, batches) ?? beanDisplayName(bean, batches) ?? bean.name,
+        label: beanDisplayName(bean, batches) ?? bean.name,
+        iconName: beanIcon(bean, this.state.batchesByBean[bean.id] ?? []),
         selected: bean.id === selected?.id,
         favorite: favorites.has(bean.id)
       };
@@ -7438,7 +7447,10 @@ export class BeanieApp {
     if (beanSelectionChanged || batchSelectionChanged) {
       this.selectionRevision += 1;
     }
+    const saverModeChanged = next.settingsPreferences !== undefined &&
+      next.settingsPreferences.screensaverMode !== this.state.settingsPreferences.screensaverMode;
     this.state = { ...this.state, ...next };
+    if (saverModeChanged) this.displayStream.send(screensaverWakeLockFrame(this.state.settingsPreferences.screensaverMode));
     this.render();
   }
 

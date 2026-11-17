@@ -1,3 +1,4 @@
+import { beanAppearance, beanAppearanceExtras, beanDisplayName, type BeanAppearancePatch } from '../domain/beanAppearance';
 import type { Bean, BeanBatch } from '../api/types';
 import {
   appendBatchStorageEvent,
@@ -7,7 +8,7 @@ import {
   latestBatch,
   setBatchStorageEventDates
 } from '../domain/beanWorkflow';
-import { bagDisplayExtras, bagDisplayName, bagPresentationExtras, dateInputValue } from '../domain/beanDisplay';
+import { dateInputValue } from '../domain/beanDisplay';
 import {
   batchInputFromSubmission,
   beanFieldsUnchanged,
@@ -126,6 +127,7 @@ const EMPTY_SESSION: BeanInventoryBrowserSession = Object.freeze({
 export class BeanInventoryBrowserFlow {
   private session: BeanInventoryBrowserSession = EMPTY_SESSION;
   private readonly imageImport = new OperationAuthority();
+  private pendingBeanEdit: Promise<void> | null = null;
 
   constructor(
     private readonly host: BeanInventoryBrowserHost,
@@ -178,7 +180,7 @@ export class BeanInventoryBrowserFlow {
     return {
       search: snapshot.search,
       autofocusSearch: this.session.autofocusSearch,
-      matches: beans.filter((bean) => [beanLabel(bean), ...(snapshot.batchesByBean[bean.id] ?? []).map(bagDisplayName)]
+      matches: beans.filter((bean) => [beanLabel(bean), beanDisplayName(bean, snapshot.batchesByBean[bean.id] ?? [])]
         .filter(Boolean).join(' ').toLowerCase().includes(query)),
       focusedBean,
       mode: this.session.mode,
@@ -221,7 +223,7 @@ export class BeanInventoryBrowserFlow {
 
   captureDraftBatchField(
     beanId: string,
-    name: 'roastDate' | 'roastLevel' | 'displayName',
+    name: 'roastDate' | 'roastLevel',
     value: string
   ): void {
     this.session = {
@@ -229,9 +231,7 @@ export class BeanInventoryBrowserFlow {
       draftBatch: {
         ...(this.session.draftBatch ?? { beanId }),
         beanId,
-        ...(name === 'displayName'
-          ? { extras: bagDisplayExtras(undefined, value) }
-          : { [name]: value.trim() || null })
+        [name]: value.trim() || null
       }
     };
   }
@@ -430,28 +430,46 @@ export class BeanInventoryBrowserFlow {
     });
   }
 
-  async importBagImage(beanId: string, batchId: string, prepare: () => Promise<string>): Promise<void> {
-    const lease = this.imageImport.begin(batchId);
-    try {
-      const image = await prepare();
-      if (!lease.isCurrent) return;
-      await this.saveBagImage(beanId, batchId, image);
-    } catch {
-      if (lease.isCurrent) this.host.emit({ type: 'status-changed', status: 'Could not load that photo. Try a JPEG or PNG.' });
-    } finally {
-      lease.finish();
-    }
+  async openAppearance(beanId: string): Promise<void> {
+    await this.open(beanId);
+    this.session = { ...this.session, editingBeanId: beanId };
+    this.host.requestRender();
   }
 
-  async saveBagImage(beanId: string, batchId: string, image: string | null): Promise<void> {
+  async importBeanImage(beanId: string, prepare: () => Promise<string>): Promise<void> {
+    const lease = this.imageImport.begin(beanId);
+    try {
+      const image = await prepare();
+      if (this.pendingBeanEdit) await this.pendingBeanEdit;
+      if (!lease.isCurrent) return;
+      await this.saveBeanAppearance(beanId, { image });
+    } catch {
+      if (lease.isCurrent) this.host.emit({ type: 'status-changed', status: 'Could not load that photo. Try a JPEG or PNG.' });
+    } finally { lease.finish(); }
+  }
+
+  async saveBeanAppearance(beanId: string, patch: BeanAppearancePatch): Promise<void> {
+    if (this.pendingBeanEdit) await this.pendingBeanEdit;
     this.imageImport.invalidate();
-    const selection = this.batchAndBean(beanId, batchId);
-    if (!selection || !this.requireWrite(this.host.snapshot().demo)) return;
-    await this.updateBatch({
-      beanId, batchId,
-      patch: { extras: bagPresentationExtras(selection.batch, { image }) },
-      purpose: 'edit', demo: this.host.snapshot().demo
+    const snapshot = this.host.snapshot();
+    const bean = snapshot.beans.find((item) => item.id === beanId);
+    if (!bean || snapshot.busy || !this.requireWrite(snapshot.demo)) return;
+    this.host.emit({ type: 'status-changed', status: 'Saving coffee appearance', busy: true });
+    const result = await this.beanWorkflow.saveBean({
+      beans: [...snapshot.beans], batchesByBean: mutableBatches(snapshot.batchesByBean),
+      editingId: beanId, fields: { extras: beanAppearanceExtras(bean, snapshot.batchesByBean[beanId] ?? [], patch) },
+      demo: snapshot.demo, nowMs: Date.now()
+    }, {
+      createBean: (fields) => this.beans.createBean(fields),
+      updateBean: (id, fields) => this.beans.updateBean(id, fields),
+      putBeans: (beans) => this.beans.putBeans(beans)
     });
+    if (result.type === 'failed') {
+      this.host.emit({ type: 'status-changed', status: result.status, busy: false });
+      return;
+    }
+    const beans = mergeSavedBean(this.host.snapshot().beans, result.bean, true);
+    this.host.emit({ type: 'bean-saved', beans, status: 'Coffee appearance saved' });
   }
 
   async saveBatchValue(
@@ -557,9 +575,23 @@ export class BeanInventoryBrowserFlow {
   }
 
   private async submitBean(submission: BeanFormSubmission, autosave: boolean): Promise<void> {
+    const pending = this.submitBeanFields(submission, autosave);
+    this.pendingBeanEdit = pending;
+    try { await pending; }
+    finally { if (this.pendingBeanEdit === pending) this.pendingBeanEdit = null; }
+  }
+
+  private async submitBeanFields(submission: BeanFormSubmission, autosave: boolean): Promise<void> {
     const snapshot = this.host.snapshot();
     if (snapshot.busy || !beanSubmissionIsComplete(submission)) return;
     const editingId = submission.editingId;
+    const editingBean = snapshot.beans.find((bean) => bean.id === editingId);
+    if (autosave && editingBean && beanFieldsUnchanged(submission.fields, editingBean)) {
+      const appearance = beanAppearance(editingBean, snapshot.batchesByBean[editingBean.id] ?? []);
+      if (Object.entries(submission.appearance ?? {}).every(([key, value]) =>
+        String(value ?? '').trim() === String(appearance[key] ?? '').trim()
+      )) return;
+    }
     // A coffee is added only when its own form is submitted. The edit form has
     // no save button and so depends on the volunteered commit, but a create
     // form must never be read that way: the render after a successful add
@@ -589,7 +621,13 @@ export class BeanInventoryBrowserFlow {
       beans: [...current.beans],
       batchesByBean: mutableBatches(current.batchesByBean),
       editingId,
-      fields: submission.fields,
+      fields: {
+        ...submission.fields,
+        ...(Object.keys(submission.appearance ?? {}).length ? { extras: beanAppearanceExtras(
+          current.beans.find((bean) => bean.id === editingId) ?? {},
+          editingId ? current.batchesByBean[editingId] ?? [] : [], submission.appearance ?? {}
+        ) } : {})
+      },
       demo: current.demo,
       nowMs: Date.now()
     }, {

@@ -806,7 +806,8 @@ const SCREENSAVER_MODE_LABELS: Array<[ScreensaverMode, string]> = [
   ['black', 'Black'],
   ['clock', 'Clock'],
   ['photos', 'Photos'],
-  ['photos-clock', 'Photos + clock']
+  ['photos-clock', 'Photos + clock'],
+  ['system', 'Android screensaver']
 ];
 
 function renderScreensaverRows(model: SettingsShellModel, options: SettingsRenderOptions): string {
@@ -814,7 +815,8 @@ function renderScreensaverRows(model: SettingsShellModel, options: SettingsRende
   const mode = preferences.screensaverMode;
   const black = mode === 'black';
   const syncedDisabled = options.syncedPreferencesWritable === false;
-  const brightnessDetail = black ? 'The black screensaver always turns the screen fully off' : 'Screen backlight while the screensaver shows';
+  const system = mode === 'system';
+  const brightnessDetail = system ? 'Set brightness in the Android screensaver app' : black ? 'The black screensaver always turns the screen fully off' : 'Screen backlight while the screensaver shows';
   const brightnessRow = settingControlRow(
     'Screensaver brightness',
     brightnessDetail,
@@ -822,14 +824,14 @@ function renderScreensaverRows(model: SettingsShellModel, options: SettingsRende
         target: 'screensaver-brightness',
         title: 'Screensaver brightness',
         value: String(preferences.screensaverBrightness),
-        display: black ? 'Screen off' : `${preferences.screensaverBrightness}%`,
+        display: system ? 'Android app' : black ? 'Screen off' : `${preferences.screensaverBrightness}%`,
         min: 0,
         max: 100,
         step: 5,
         unit: '%',
         attrs: a11y.valueAttributes,
         valueId: a11y.valueId,
-        disabled: black || syncedDisabled
+        disabled: black || system || syncedDisabled
       }),
     '',
     'screensaver-brightness'
@@ -852,10 +854,10 @@ function renderScreensaverRows(model: SettingsShellModel, options: SettingsRende
   return `
     ${settingControlRow(
       'Screensaver',
-      'What the tablet shows while the machine sleeps (tap the screen to wake)',
+      system ? 'Starts after Android screen timeout while charging. Choose the photo app in Android Settings > Display > Screen saver.' : 'What the tablet shows while the machine sleeps (tap the screen to wake)',
       (a11y) => `<span class="settings-saver-mode">
           ${segmentedControl('settings-screensaver-mode', mode, SCREENSAVER_MODE_LABELS, a11y.attributes, syncedDisabled)}
-          <button type="button" class="text-button" data-action="screensaver-preview" ${a11y.descriptionAttributes}>${icon('eye')}<span>Preview</span></button>
+          <button type="button" class="text-button" data-action="screensaver-preview" ${a11y.descriptionAttributes} ${system ? 'disabled title="Preview from Android Settings > Display > Screen saver"' : ''}>${icon('eye')}<span>Preview</span></button>
         </span>`,
       'settings-line-stack',
       'screensaver-mode'

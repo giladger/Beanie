@@ -11058,3 +11058,15 @@ p {
   .hero-shortcut-add span { display: none; }
   .hero-shortcut-add:not(:has(svg)) { position: static; width: auto; height: auto; min-height: 38px; padding: 6px; }
 }
+
+.hero-appearance { position: relative; flex: none; padding: 0; border: 0; border-radius: 8px; background: transparent; cursor: pointer; }
+.hero-appearance-edit { position: absolute; bottom: 0; right: 0; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; background: var(--panel-2); border: 1px solid var(--line-strong); }
+.hero-appearance-edit .icon { width: 11px; height: 11px; }
+.hero-appearance:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; }
+.coffee-appearance-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.coffee-appearance-fields label { display: grid; gap: 5px; }
+.coffee-appearance-hint, .coffee-appearance-fields .bag-image-editor { grid-column: 1 / -1; margin: 0; }
+.coffee-appearance-hint { color: var(--muted); font-size: 12px; }
+@media (max-width: 600px) { .coffee-appearance-fields { grid-template-columns: 1fr; } }
+
+.hero-shortcut-image { width: 28px; height: 28px; flex: none; object-fit: cover; border-radius: 5px; }

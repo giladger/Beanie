@@ -1,10 +1,7 @@
 import type { Bean, BeanBatch } from '../api/types';
-import { bagPresentationExtras } from './beanDisplay';
+import type { BeanAppearancePatch } from './beanAppearance';
 
 export interface BeanBatchFormFields {
-  readonly displayName?: { readonly present: boolean; readonly value: string | null };
-  readonly shortcutLabel?: { readonly present: boolean; readonly value: string | null };
-  readonly icon?: { readonly present: boolean; readonly value: string | null };
   readonly roastDate: string | null;
   readonly roastLevel: string | null;
   readonly weight: { readonly present: boolean; readonly value: number | null };
@@ -13,6 +10,7 @@ export interface BeanBatchFormFields {
 
 export interface BeanFormSubmission {
   readonly type: 'bean';
+  readonly appearance?: BeanAppearancePatch;
   readonly editingId: string | null;
   readonly fields: Partial<Bean>;
   readonly prefillBeanId: string | null;
@@ -95,14 +93,7 @@ export function batchInputFromSubmission(
     roastDate: submission.roastDate,
     roastLevel: submission.roastLevel,
     weight,
-    weightRemaining: clampRemainingToWeight(weightRemaining, weight),
-    ...(submission.displayName?.present || submission.shortcutLabel?.present || submission.icon?.present
-      ? { extras: bagPresentationExtras(fallback, {
-          ...(submission.displayName?.present ? { displayName: submission.displayName.value?.trim() || null } : {}),
-          ...(submission.shortcutLabel?.present ? { shortcutLabel: submission.shortcutLabel.value?.trim() || null } : {}),
-          ...(submission.icon?.present ? { icon: submission.icon.value } : {})
-        }) }
-      : {})
+    weightRemaining: clampRemainingToWeight(weightRemaining, weight)
   };
 }
 
@@ -140,10 +131,7 @@ export function batchFieldsFromForm(data: FormData, beanId: string, fallback?: B
     roastLevel: textOrNull(data.get('roastLevel')),
     weight,
     // A bag can't hold more than its size, so "left" is capped at the bag weight.
-    weightRemaining: clampRemainingToWeight(weightRemaining, weight),
-    ...(data.has('displayName')
-      ? { extras: bagPresentationExtras(fallback, { displayName: textOrNull(data.get('displayName')) }) }
-      : {})
+    weightRemaining: clampRemainingToWeight(weightRemaining, weight)
   };
 }
 

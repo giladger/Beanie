@@ -10,6 +10,7 @@ import type {
   Workflow,
   WorkflowContext
 } from '../api/types';
+import { beanDisplayName } from './beanAppearance';
 import { isServiceBeverageType } from './shotRecord';
 
 export {
@@ -30,7 +31,7 @@ export {
 } from './beanFreshness';
 
 export function beanLabel(bean: Bean): string {
-  return `${bean.roaster} ${bean.name}`.trim();
+  return beanDisplayName(bean) ?? `${bean.roaster} ${bean.name}`.trim();
 }
 
 export function formatGrams(value?: number | null): string {

@@ -36,6 +36,7 @@ export interface WorkbenchHeroViewModel {
 }
 
 export interface WorkbenchRotationTile {
+  image?: string | null;
   id: string;
   name: string;
   /** Full "Roaster Name" label for the tooltip/aria — the button shows name only. */
@@ -215,8 +216,12 @@ export function renderHero(model: WorkbenchHeroViewModel): string {
   return `
     <div class="hero panel ${model.rotation.length > 0 ? 'has-rotation' : ''}${model.largeButtons ? ' large-bag-buttons' : ''}">
       <div class="hero-current">
-        <button class="hero-open" data-action="open-bean-picker" aria-label="Choose bean" title="Choose bean">
+        <button class="hero-appearance" data-action="edit-bean-appearance" data-id="${escapeAttr(model.beanId ?? '')}" aria-label="Change coffee icon or photo" title="Change coffee icon or photo" ${model.beanId ? '' : 'disabled'}>
           ${model.image ? `<img class="hero-bag-image" src="${escapeAttr(model.image)}" alt="Current bag" width="68" height="68" />` : `<span class="hero-bag-image hero-image-placeholder" aria-hidden="true">${icon(model.iconName ?? 'bean')}</span>`}
+          <span class="hero-appearance-edit" aria-hidden="true">${icon('pencil')}</span>
+        </button>
+        <button class="hero-open" data-action="open-bean-picker" aria-label="Choose bean" title="Choose bean">
+
           <span class="hero-current-copy">
             <span class="hero-current-label">Current bag</span>
             <span class="bean-title"><span class="bean-name">${escapeHtml(model.beanName)}</span>${icon('chevron-down')}</span>
@@ -239,7 +244,7 @@ export function renderHero(model: WorkbenchHeroViewModel): string {
 }
 
 function renderRotationTile(tile: WorkbenchRotationTile): string {
-  return `<button class="hero-rotation-tile" aria-pressed="${tile.selected === true}" data-action="switch-bean" data-id="${escapeAttr(tile.id)}" aria-label="Switch to ${escapeAttr(tile.label)}" title="Switch to ${escapeAttr(tile.label)}">${icon(tile.iconName ?? 'bean')}<span class="hero-rotation-name">${escapeHtml(tile.name)}</span></button>`;
+  return `<button class="hero-rotation-tile" aria-pressed="${tile.selected === true}" data-action="switch-bean" data-id="${escapeAttr(tile.id)}" aria-label="Switch to ${escapeAttr(tile.label)}" title="Switch to ${escapeAttr(tile.label)}">${tile.image ? `<img class="hero-shortcut-image" src="${escapeAttr(tile.image)}" alt="" width="28" height="28" />` : icon(tile.iconName ?? 'bean')}<span class="hero-rotation-name">${escapeHtml(tile.name)}</span></button>`;
 }
 
 // Which recipe control carries a staged Derek change, per dial-in parameter.
