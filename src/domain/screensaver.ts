@@ -4,9 +4,9 @@
 // wander a clock around to avoid burn-in.
 
 /** What the sleep screensaver shows. 'black' is the classic dim black screen. */
-export type ScreensaverMode = 'black' | 'clock' | 'photos' | 'photos-clock';
+export type ScreensaverMode = 'black' | 'clock' | 'photos' | 'photos-clock' | 'system';
 
-export const SCREENSAVER_MODES: ScreensaverMode[] = ['black', 'clock', 'photos', 'photos-clock'];
+export const SCREENSAVER_MODES: ScreensaverMode[] = ['black', 'clock', 'photos', 'photos-clock', 'system'];
 
 export const DEFAULT_SCREENSAVER_BRIGHTNESS = 25;
 
@@ -44,6 +44,7 @@ export function screensaverShowsClock(mode: ScreensaverMode, photoCount: number)
  */
 export function screensaverDimBrightness(mode: ScreensaverMode, configured: number): number {
   if (mode === 'black') return 0;
+  if (mode === 'system') return 100;
   if (!Number.isFinite(configured)) return DEFAULT_SCREENSAVER_BRIGHTNESS;
   return Math.max(0, Math.min(100, Math.round(configured)));
 }
@@ -87,4 +88,9 @@ export function screensaverClockPosition(randomX: number, randomY: number): Scre
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0.5;
   return Math.max(0, Math.min(1, value));
+}
+
+/** The Android saver needs Android's own idle timer; built-in savers keep the skin awake. */
+export function screensaverWakeLockFrame(mode: ScreensaverMode): string {
+  return JSON.stringify({ command: mode === 'system' ? 'releaseWakeLock' : 'requestWakeLock' });
 }

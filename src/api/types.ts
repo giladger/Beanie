@@ -106,6 +106,7 @@ export interface ScaleSnapshot {
 }
 
 export interface Bean {
+  extras?: Record<string, unknown> | null;
   id: string;
   roaster: string;
   name: string;
@@ -124,6 +125,7 @@ export interface Bean {
 }
 
 export interface BeanBatch {
+  updatedAt?: string;
   /** Skin metadata, preserved by Decaid without changing coffee identity. */
   extras?: Record<string, unknown> | null;
   id: string;

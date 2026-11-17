@@ -1,6 +1,7 @@
 import {
   MAX_SCREENSAVER_PHOTOS,
   isScreensaverMode,
+  screensaverWakeLockFrame,
   mergeScreensaverPhotos,
   nextScreensaverPhotoIndex,
   screensaverClockPosition,
@@ -89,3 +90,10 @@ function equal<T>(actual: T, expected: T): void {
     throw new Error(`Expected ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}`);
   }
 }
+
+run('Android screensaver releases the skin wake lock and uses normal brightness until Android takes over', () => {
+  equal(isScreensaverMode('system'), true);
+  equal(screensaverDimBrightness('system', 5), 100);
+  equal(screensaverWakeLockFrame('system'), JSON.stringify({ command: 'releaseWakeLock' }));
+  equal(screensaverWakeLockFrame('photos'), JSON.stringify({ command: 'requestWakeLock' }));
+});

@@ -371,7 +371,7 @@ Examples:
   rendering. Persistent profile decoding and encoding live in
   `domain/profileModel.ts` and are shared by non-UI flows.
 - `beanInventoryForm.ts`: browser form reader for typed coffee, bag, and storage
-  submissions. Bag presentation fields use the same inventory mutation facade.
+  submissions. Coffee appearance fields use the existing bean workflow owner; bag stock fields use the inventory mutation facade.
   The browser flow owns photo-import leases; the shell injects its shared image
   transcoder. Closing the editor or disposing the app fences pending decoding.
 - `shotEditorForm.ts`: browser form reader for the shot editor's three owned forms.

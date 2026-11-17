@@ -8,67 +8,6 @@ import {
   storageStatusLabel
 } from './beanWorkflow';
 
-/** Optional nickname belongs to the physical bag, independent of coffee metadata. */
-export function bagDisplayName(batch: Partial<BeanBatch> | null | undefined): string | null {
-  const metadata = batch?.extras?.beanie;
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
-  const value = (metadata as Record<string, unknown>).displayName;
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-export function bagShortcutLabel(batch: Partial<BeanBatch> | null | undefined): string | null {
-  const metadata = batch?.extras?.beanie;
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
-  const value = (metadata as Record<string, unknown>).shortcutLabel;
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-export const BAG_ICONS = ['bean', 'coffee', 'heart', 'sun', 'sparkles', 'beaker', 'droplet', 'snowflake'] as const;
-export type BagIcon = typeof BAG_ICONS[number];
-
-export function bagIcon(batch: Partial<BeanBatch> | null | undefined, fallbackId = ''): BagIcon {
-  const metadata = batch?.extras?.beanie;
-  const chosen = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
-    ? (metadata as Record<string, unknown>).icon : null;
-  if (BAG_ICONS.includes(chosen as BagIcon)) return chosen as BagIcon;
-  const id = batch?.id ?? fallbackId;
-  const hash = [...id].reduce((value, ch) => (value * 31 + ch.charCodeAt(0)) >>> 0, 0);
-  return BAG_ICONS[hash % BAG_ICONS.length]!;
-}
-
-export function bagImage(batch: Partial<BeanBatch> | null | undefined): string | null {
-  const metadata = batch?.extras?.beanie;
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
-  const value = (metadata as Record<string, unknown>).image;
-  // Uploaded raster thumbnails only; no remote image fetches or active SVG data.
-  return typeof value === 'string' && /^data:image\/(?:jpeg|png|webp);base64,[a-zA-Z0-9+/=]+$/.test(value) && value.length <= 150_000
-    ? value : null;
-}
-
-export function bagPresentationExtras(
-  batch: Partial<BeanBatch> | null | undefined,
-  fields: { displayName?: string | null; shortcutLabel?: string | null; image?: string | null; icon?: string | null }
-): Record<string, unknown> {
-  const metadata = batch?.extras?.beanie;
-  return { ...batch?.extras, beanie: {
-    ...(metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {}),
-    ...fields
-  } };
-}
-
-export function bagDisplayExtras(batch: BeanBatch | undefined, displayName: string | null): Record<string, unknown> {
-  return bagPresentationExtras(batch, { displayName: displayName?.trim() || null });
-}
-
-/** Match automatic selection: newest usable bag, then newest finished bag. */
-export function displayBatch(batches: readonly BeanBatch[]): BeanBatch | null {
-  return latestBatch(batches.filter((batch) => !isNearlyEmptyBatch(batch))) ?? latestBatch([...batches]);
-}
-
-export function bagName(bean: Bean, batch: Partial<BeanBatch> | null | undefined): string {
-  return bagDisplayName(batch) ?? bean.name;
-}
-
 export interface BeanStockSummary {
   bagCount: number;
   frozenCount: number;
@@ -117,7 +56,7 @@ export function batchOptionLabel(batch: BeanBatch): string {
       ? roast.toLocaleDateString([], { month: 'short', day: 'numeric' })
       : 'Batch';
   const remaining = batch.weightRemaining != null ? ` · ${formatGrams(batch.weightRemaining)}` : '';
-  return `${bagDisplayName(batch) ? `${bagDisplayName(batch)} · ` : ''}${roastText}${remaining}`;
+  return `${roastText}${remaining}`;
 }
 
 export function stockOptionLabel(batch: BeanBatch): string {
@@ -126,7 +65,7 @@ export function stockOptionLabel(batch: BeanBatch): string {
     roast && !Number.isNaN(roast.valueOf())
       ? roast.toLocaleDateString([], { month: 'short', day: 'numeric' })
       : 'Undated stock';
-  return `${bagDisplayName(batch) ? `${bagDisplayName(batch)} · ` : ''}${roastText} · ${formatGrams(batch.weightRemaining)}`;
+  return `${roastText} · ${formatGrams(batch.weightRemaining)}`;
 }
 
 export function stockLocationLabel(batch: BeanBatch): string {

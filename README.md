@@ -26,21 +26,23 @@ Beanie is still early, so feedback is very welcome.
 4. Review previous shots for that bean with compact shot graphs.
 5. Adjust the recipe, pull another shot, and save what worked.
 
-## Bag names and shortcuts
+## Coffee names, appearance, and shortcuts
 
-Each bag can have an optional display name. Add it with a new bag, or open
-Choose coffee, select the bag, and tap Edit. Clearing the display name restores
-the coffee name. Every bag gets a default icon. In the bag editor, choose an
-icon, take a photo with the tablet camera, or select an existing photo. Photos
-are reduced to thumbnails and saved with the bag. A separate shortcut label
-can keep a favorite button short. The original coffee details and saved recipe
-stay attached.
+Each coffee can have an optional display name and a short shortcut label.
+Its name, icon, and photo apply to every bag of those beans. Each coffee gets a
+stable default icon. Tap its icon in the banner to open the appearance editor,
+where you can choose an icon, take a photo, or select an existing photo.
+Uploaded photos are reduced to thumbnails and also appear in coffee shortcuts.
 
-In Settings > App, choose Large under Bag button size for taller workbench
-shortcuts. The banner labels the current bag and profile above separate groups
-for favorite bags, other bags, and starred profile presets. Favorites keep their
-positions when selected. Choose Favorites only to hide recent bag shortcuts. Both preferences sync
-through the gateway.
+The banner labels the current bag and profile separately from fixed favorite
+coffees, recent coffees, and starred profile presets. Short landscape screens
+use a compact banner to keep the shot graph readable. Button size and shortcut
+visibility are configurable in Settings > App and sync through the gateway.
+
+Choose Android screensaver under Sleep screen to allow Android's own idle
+timer and photo app to take over while the machine sleeps. Configure the delay
+in Android Settings > Display > Screen timeout, and select the photo app under
+Screen saver. Brightness for this mode belongs to the selected Android app.
 
 ## Install
 

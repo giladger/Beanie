@@ -1,3 +1,4 @@
+import { beanAppearance } from '../domain/beanAppearance';
 import type { Bean } from '../api/types';
 import {
   beanFieldsFromForm,
@@ -21,6 +22,11 @@ export function readBeanInventoryForm(
       type: 'bean',
       editingId: form.dataset.id || null,
       fields: beanFieldsFromForm(data),
+      appearance: {
+        ...(data.has('displayName') ? { displayName: textOrNull(data.get('displayName')) } : {}),
+        ...(data.has('shortcutLabel') ? { shortcutLabel: textOrNull(data.get('shortcutLabel')) } : {}),
+        ...(data.has('coffeeIcon') ? { icon: textOrNull(data.get('coffeeIcon')) } : {})
+      },
       prefillBeanId: prefillBeanId || null,
       firstStock: readBatchFields(data)
     };
@@ -66,13 +72,14 @@ export function prefillBeanInventoryForm(
   set('region', bean.region);
   set('processing', bean.processing);
   set('notes', bean.notes);
+  const appearance = beanAppearance(bean);
+  for (const name of ['displayName', 'shortcutLabel']) set(name, appearance[name]);
+  const icon = form.elements.namedItem('coffeeIcon');
+  if (icon instanceof HTMLSelectElement) icon.value = String(appearance.icon ?? '');
 }
 
 function readBatchFields(data: FormData): BeanBatchFormFields {
   return {
-    displayName: { present: data.has('displayName'), value: textOrNull(data.get('displayName')) },
-    shortcutLabel: { present: data.has('shortcutLabel'), value: textOrNull(data.get('shortcutLabel')) },
-    icon: { present: data.has('bagIcon'), value: textOrNull(data.get('bagIcon')) },
     roastDate: textOrNull(data.get('roastDate')),
     roastLevel: textOrNull(data.get('roastLevel')),
     weight: {

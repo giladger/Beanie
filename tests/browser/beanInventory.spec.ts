@@ -11,17 +11,23 @@ interface GatewayLog {
   readonly beanPosts: unknown[];
   readonly batchPosts: unknown[];
   readonly beanPuts: unknown[];
+  readonly displayCommands: Array<{ command: string }>;
 }
 
 async function fakeGateway(page: Page): Promise<GatewayLog> {
-  const log: GatewayLog = { beanPosts: [], batchPosts: [], beanPuts: [] };
+  const log: GatewayLog = { beanPosts: [], batchPosts: [], beanPuts: [], displayCommands: [] };
   const beans: Record<string, unknown>[] = [];
   const batches: Record<string, Record<string, unknown>[]> = {};
   const store: Record<string, unknown> = { 'beanie.favorite-profiles': '["preset-1"]' };
   let beanSeq = 0;
   let batchSeq = 0;
 
-  await page.routeWebSocket('**/ws/v1/**', (socket) => { socket.onMessage(() => {}); });
+  await page.routeWebSocket('**/ws/v1/**', (socket) => {
+    socket.onMessage((message) => {
+      if (!socket.url().endsWith('/display')) return;
+      try { log.displayCommands.push(JSON.parse(String(message)) as { command: string }); } catch { /* No-op for non-JSON frames. */ }
+    });
+  });
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -168,30 +174,41 @@ test('the edit form still saves a coffee when focus leaves it', async ({ page })
 });
 
 
-test('bag photo, nickname, and distinct shortcuts survive selection and reload', async ({ page }, testInfo) => {
+test('shared coffee appearance and distinct shortcuts survive selection, new bags, and reload', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1340, height: 800 });
   const log = await fakeGateway(page);
   await page.goto('/');
   await openCreateForm(page);
   await page.locator('[name="displayName"]').fill('Neta (Santo Domingo)');
   await page.getByRole('button', { name: 'Add coffee', exact: true }).click();
-  await expect(page.locator('.stock-row')).toContainText('Neta (Santo Domingo)');
-  expect(log.batchPosts[0]).toMatchObject({ extras: { beanie: { displayName: 'Neta (Santo Domingo)' } } });
-  await page.locator('[data-action="toggle-batch-details"]').click();
-  await page.locator('[name="bagIcon"]').selectOption('heart');
+  await expect(page.locator('.bean-row')).toContainText('Neta (Santo Domingo)');
+  expect(log.beanPosts[0]).toMatchObject({ extras: { beanie: { displayName: 'Neta (Santo Domingo)' } } });
+  await page.getByRole('button', { name: 'Edit coffee', exact: true }).click();
+  await page.locator('[name="coffeeIcon"]').selectOption('heart');
+  await expect(page.locator('.bag-default-icon [data-icon="heart"]')).toBeVisible();
   await page.locator('[name="shortcutLabel"]').fill('Neta');
   await page.locator('.bean-picker-head h2').click();
   await expect(page.locator('[name="shortcutLabel"]')).toHaveValue('Neta');
   await expect(page.locator('input[capture="environment"]')).toHaveAttribute('accept', 'image/*');
-  await page.locator('[data-action="bag-image-upload"]:not([capture])').setInputFiles({
-    name: 'bag.png', mimeType: 'image/png',
-    buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=', 'base64')
+  await page.locator('[data-action="bean-image-upload"]:not([capture])').setInputFiles({
+    name: 'coffee.jpg', mimeType: 'image/jpeg',
+    buffer: await import('node:fs/promises').then((fs) => fs.readFile(new URL('../fixtures/coffee.jpg', import.meta.url)))
   });
   await expect(page.locator('.bag-image-editor img')).toHaveAttribute('src', /^data:image\/jpeg;base64,/);
+  await page.screenshot({ path: testInfo.outputPath('coffee-appearance-editor.png') });
   await page.locator('[data-action="toggle-favorite-bean"]').click();
   await page.locator('.bean-row').click();
   await expect(page.locator('.bean-picker-modal')).toHaveCount(0);
   await expect(page.locator('.bean-name')).toHaveText('Neta (Santo Domingo)');
+  await page.getByRole('button', { name: 'Change coffee icon or photo', exact: true }).click();
+  await expect(page.locator('[name="coffeeIcon"]')).toHaveValue('heart');
+  await page.locator('[data-action="bean-picker-add-batch"]').click();
+  await page.getByRole('button', { name: 'Add bag', exact: true }).click();
+  await expect(page.locator('.stock-row')).toHaveCount(2);
+  await page.locator('.stock-row[data-id="batch-2"]').click();
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.locator('.bean-name')).toHaveText('Neta (Santo Domingo)');
+  await expect(page.locator('img.hero-bag-image')).toBeVisible();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('button', { name: 'App', exact: true }).click();
   await page.locator('[data-action="settings-bag-button-size"][data-value="large"]').click();
@@ -220,4 +237,40 @@ test('bag photo, nickname, and distinct shortcuts survive selection and reload',
   await expect(shortcut).toHaveCount(1);
   await expect(shortcut).toHaveText('Neta');
   await expect(page.locator('img.hero-bag-image')).toBeVisible();
+});
+
+
+test('uploaded coffee photo appears in Other bags before that coffee is selected', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1006, height: 600 });
+  await fakeGateway(page);
+  await page.goto('/');
+  await openCreateForm(page);
+  await page.locator('[name="displayName"]').fill('Morning roast');
+  await page.getByRole('button', { name: 'Add coffee', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit coffee', exact: true }).click();
+  await page.locator('[data-action="bean-image-upload"]:not([capture])').setInputFiles({
+    name: 'coffee.jpg', mimeType: 'image/jpeg',
+    buffer: await import('node:fs/promises').then((fs) => fs.readFile(new URL('../fixtures/coffee.jpg', import.meta.url)))
+  });
+  await expect(page.locator('.bag-image-editor img')).toBeVisible();
+  await page.locator('.bean-row').click();
+  await openCreateForm(page);
+  await page.locator('[name="name"]').fill('Second coffee');
+  await page.getByRole('button', { name: 'Add coffee', exact: true }).click();
+  await page.locator('.bean-row[data-id="bean-2"]').click();
+  await expect(page.locator('.bean-name')).toHaveText('Second coffee');
+  const other = page.getByRole('group', { name: 'Other bags', exact: true }).getByRole('button', { name: 'Switch to Morning roast' });
+  await expect(other.locator('img.hero-shortcut-image')).toHaveAttribute('src', /^data:image\/jpeg;base64,/);
+  await page.screenshot({ path: testInfo.outputPath('other-bags-photo.png') });
+});
+
+
+test('Android screensaver mode releases the tablet wake-lock claim', async ({ page }) => {
+  const log = await fakeGateway(page);
+  await page.goto('/');
+  await expect.poll(() => log.displayCommands.some((frame) => frame.command === 'requestWakeLock')).toBe(true);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'App', exact: true }).click();
+  await page.locator('[data-action="settings-screensaver-mode"][data-value="system"]').click();
+  await expect.poll(() => log.displayCommands.at(-1)?.command).toBe('releaseWakeLock');
 });
