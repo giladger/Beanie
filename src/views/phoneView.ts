@@ -11,7 +11,7 @@ import {
   roastFreshnessLabel,
   shotFreshnessBadgeForShot
 } from '../domain/beanWorkflow';
-import { beanStockSummary } from '../domain/beanDisplay';
+import { bagDisplayName, displayBatch, beanStockSummary } from '../domain/beanDisplay';
 import { isDerekedShot } from '../domain/derekShot';
 import { isServiceShot } from '../domain/shotRecord';
 import { decentUploadFact, decentUploadLabel } from '../domain/shotUpload';
@@ -123,7 +123,7 @@ function renderHomeTab(model: PhoneShellModel): string {
           <span class="phone-card-label">Current bag</span>
           ${icon('chevron-down')}
         </span>
-        <strong class="phone-hero-title">${escapeHtml(bean ? beanLabel(bean) : 'No bean selected')}</strong>
+        <strong class="phone-hero-title">${escapeHtml(bean ? bagDisplayName(batch) ?? beanLabel(bean) : 'No bean selected')}</strong>
         <span class="phone-hero-sub">${escapeHtml(freshness ?? beanMeta(bean) ?? 'Scan or pick a bean to update coffee metadata.')}</span>
         ${facts.length ? `<span class="phone-home-stats">${facts.map((fact) => `<span>${escapeHtml(fact)}</span>`).join('')}</span>` : ''}
       </button>
@@ -205,7 +205,7 @@ function renderScanTab(): string {
 
 function renderBeansTab(model: PhoneShellModel): string {
   const query = model.beanSearch.trim().toLowerCase();
-  const beans = model.beans.filter((bean) => beanLabel(bean).toLowerCase().includes(query));
+  const beans = model.beans.filter((bean) => [beanLabel(bean), ...(model.batchesByBean[bean.id] ?? []).map(bagDisplayName)].filter(Boolean).join(' ').toLowerCase().includes(query));
   return `
     <section class="phone-stack">
       <div class="phone-search-row">
@@ -233,7 +233,7 @@ function renderBeanRow(bean: Bean, model: PhoneShellModel): string {
   return `
     <article class="phone-list-item ${selected ? 'active' : ''}">
       <button type="button" class="phone-list-main" data-action="phone-select-bean" data-id="${escapeAttr(bean.id)}">
-        <strong>${favorite ? '<span class="phone-row-fav">★</span> ' : ''}${escapeHtml(beanLabel(bean))}</strong>
+        <strong>${favorite ? '<span class="phone-row-fav">★</span> ' : ''}${escapeHtml(bagDisplayName(selected ? model.selectedBatch : displayBatch(model.batchesByBean[bean.id] ?? [])) ?? beanLabel(bean))}</strong>
         <span>${escapeHtml(detail)}</span>
       </button>
       <span class="phone-row-actions">

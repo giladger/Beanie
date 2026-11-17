@@ -426,9 +426,10 @@ await run('updateBatch nests storageEvents under extras and lifts them back from
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const events: BeanBatchStorageEvent[] = [{ type: 'frozen', at: '2026-05-22T08:00:00.000Z' }];
   // reaprime has no top-level storageEvents column, so it round-trips them inside `extras`.
-  const restore = installFetchStub(calls, { id: 'batch-1', beanId: 'bean-1', frozen: true, extras: { storageEvents: events } });
+  const extras = { beanie: { displayName: 'Morning coffee' }, workflowSkin: { name: 'Original bag' } };
+  const restore = installFetchStub(calls, { id: 'batch-1', beanId: 'bean-1', frozen: true, extras: { ...extras, storageEvents: events } });
   try {
-    const saved = await gateway.updateBatch('batch-1', { beanId: 'bean-1', frozen: true, storageEvents: events });
+    const saved = await gateway.updateBatch('batch-1', { beanId: 'bean-1', frozen: true, storageEvents: events, extras });
     equal(calls[0]!.init?.method, 'PUT');
     // The request nests the events under extras, not at the top level.
     const sent = JSON.parse(calls[0]!.init?.body as string) as { storageEvents?: unknown; extras?: { storageEvents?: BeanBatchStorageEvent[] } };
@@ -437,7 +438,9 @@ await run('updateBatch nests storageEvents under extras and lifts them back from
     // The response's nested events are lifted back to the top-level field.
     equal(saved.storageEvents?.length, 1);
     equal(saved.storageEvents?.[0]?.at, '2026-05-22T08:00:00.000Z');
-    equal((saved as { extras?: unknown }).extras, undefined);
+    equal((saved.extras?.storageEvents as BeanBatchStorageEvent[])?.[0]?.at, events[0]?.at);
+    equal((saved.extras?.beanie as { displayName: string })?.displayName, 'Morning coffee');
+    equal((JSON.parse(calls[0]!.init?.body as string).extras.beanie as { displayName: string }).displayName, 'Morning coffee');
     equal(saved.frozen, true);
   } finally {
     restore();

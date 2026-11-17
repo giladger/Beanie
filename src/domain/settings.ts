@@ -1,6 +1,8 @@
 import type { MachineSnapshot, ScaleSnapshot } from '../api/types';
 import { FLOW_CALIBRATION_STORAGE_KEYS } from './flowCalibration';
 import {
+  bagButtonSizeKey,
+  bagShortcutsKey,
   clockFormatKey,
   getSyncedItem,
   removeSyncedItem,
@@ -79,6 +81,8 @@ export const THEME_PREFERENCES: ThemePreference[] = [
 export interface SettingsPreferences {
   theme: ThemePreference;
   uiScale: UIScalePreference;
+  bagButtonSize: 'standard' | 'large';
+  bagShortcuts: 'rotation' | 'favorites';
   /** Soft low-water warning threshold in ml (0 = off). The hard block is the
    * machine's own refill threshold (configured via gateway.setRefillLevel). */
   waterSoftLimitMl: number;
@@ -146,6 +150,8 @@ const themeKey = 'beanie:settings:theme';
 
 const preservedResetKeys = new Set([
   uiScaleKey,
+  bagButtonSizeKey,
+  bagShortcutsKey,
   waterSoftKey,
   wakeAppZoneEnabledKey,
   wakeAppZonePositionKey,
@@ -162,6 +168,8 @@ export function readSettingsPreferences(): SettingsPreferences {
   return {
     theme: readLocalTheme(),
     uiScale: readEnum(uiScaleKey, ['compact', 'standard', 'large'], 'standard'),
+    bagButtonSize: readEnum(bagButtonSizeKey, ['standard', 'large'], 'standard'),
+    bagShortcuts: readEnum(bagShortcutsKey, ['rotation', 'favorites'], 'rotation'),
     waterSoftLimitMl: readNonNegativeNumber(waterSoftKey, DEFAULT_WATER_SOFT_ML),
     wakeAppZoneEnabled: readBoolean(wakeAppZoneEnabledKey, false),
     wakeAppZonePosition: readEnum(wakeAppZonePositionKey, WAKE_APP_ZONE_POSITIONS, 'top'),
@@ -180,6 +188,8 @@ export function writeSettingsPreferences(next: SettingsPreferences): void {
 export function writeSettingsPreferencePatch(next: Partial<SettingsPreferences>): void {
   // Theme is per-browser (localStorage); the rest sync via the store.
   if (next.theme !== undefined) writeLocalTheme(next.theme);
+  if (next.bagButtonSize !== undefined) setSyncedItem(bagButtonSizeKey, next.bagButtonSize);
+  if (next.bagShortcuts !== undefined) setSyncedItem(bagShortcutsKey, next.bagShortcuts);
   if (next.uiScale !== undefined) setSyncedItem(uiScaleKey, next.uiScale);
   if (next.waterSoftLimitMl !== undefined) setSyncedItem(waterSoftKey, String(next.waterSoftLimitMl));
   if (next.wakeAppZoneEnabled !== undefined) setSyncedItem(wakeAppZoneEnabledKey, String(next.wakeAppZoneEnabled));

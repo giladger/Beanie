@@ -7,7 +7,7 @@ import {
   latestBatch,
   setBatchStorageEventDates
 } from '../domain/beanWorkflow';
-import { dateInputValue } from '../domain/beanDisplay';
+import { bagDisplayExtras, bagDisplayName, bagPresentationExtras, dateInputValue } from '../domain/beanDisplay';
 import {
   batchInputFromSubmission,
   beanFieldsUnchanged,
@@ -22,6 +22,7 @@ import {
   type BeanFormSubmission,
   type BeanInventoryFormSubmission
 } from '../domain/beanForm';
+import { OperationAuthority } from '../runtime/operationAuthority';
 import type { ClickActionHandler } from './actionContract';
 import {
   BeanInventoryController,
@@ -124,6 +125,7 @@ const EMPTY_SESSION: BeanInventoryBrowserSession = Object.freeze({
  */
 export class BeanInventoryBrowserFlow {
   private session: BeanInventoryBrowserSession = EMPTY_SESSION;
+  private readonly imageImport = new OperationAuthority();
 
   constructor(
     private readonly host: BeanInventoryBrowserHost,
@@ -133,6 +135,7 @@ export class BeanInventoryBrowserFlow {
   ) {}
 
   reset(): void {
+    this.imageImport.invalidate();
     this.session = EMPTY_SESSION;
   }
 
@@ -175,7 +178,8 @@ export class BeanInventoryBrowserFlow {
     return {
       search: snapshot.search,
       autofocusSearch: this.session.autofocusSearch,
-      matches: beans.filter((bean) => beanLabel(bean).toLowerCase().includes(query)),
+      matches: beans.filter((bean) => [beanLabel(bean), ...(snapshot.batchesByBean[bean.id] ?? []).map(bagDisplayName)]
+        .filter(Boolean).join(' ').toLowerCase().includes(query)),
       focusedBean,
       mode: this.session.mode,
       selectedBeanId: snapshot.selectedBeanId,
@@ -217,7 +221,7 @@ export class BeanInventoryBrowserFlow {
 
   captureDraftBatchField(
     beanId: string,
-    name: 'roastDate' | 'roastLevel',
+    name: 'roastDate' | 'roastLevel' | 'displayName',
     value: string
   ): void {
     this.session = {
@@ -225,7 +229,9 @@ export class BeanInventoryBrowserFlow {
       draftBatch: {
         ...(this.session.draftBatch ?? { beanId }),
         beanId,
-        [name]: value.trim() || null
+        ...(name === 'displayName'
+          ? { extras: bagDisplayExtras(undefined, value) }
+          : { [name]: value.trim() || null })
       }
     };
   }
@@ -421,6 +427,30 @@ export class BeanInventoryBrowserFlow {
       patch: batchInputFromSubmission(submission.fields, selection.bean.id, selection.batch),
       purpose: 'edit',
       demo: this.host.snapshot().demo
+    });
+  }
+
+  async importBagImage(beanId: string, batchId: string, prepare: () => Promise<string>): Promise<void> {
+    const lease = this.imageImport.begin(batchId);
+    try {
+      const image = await prepare();
+      if (!lease.isCurrent) return;
+      await this.saveBagImage(beanId, batchId, image);
+    } catch {
+      if (lease.isCurrent) this.host.emit({ type: 'status-changed', status: 'Could not load that photo. Try a JPEG or PNG.' });
+    } finally {
+      lease.finish();
+    }
+  }
+
+  async saveBagImage(beanId: string, batchId: string, image: string | null): Promise<void> {
+    this.imageImport.invalidate();
+    const selection = this.batchAndBean(beanId, batchId);
+    if (!selection || !this.requireWrite(this.host.snapshot().demo)) return;
+    await this.updateBatch({
+      beanId, batchId,
+      patch: { extras: bagPresentationExtras(selection.batch, { image }) },
+      purpose: 'edit', demo: this.host.snapshot().demo
     });
   }
 

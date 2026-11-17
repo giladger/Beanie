@@ -316,20 +316,20 @@ function jsonPost(body: unknown): RequestInit {
 // round-trip. So we stash the freeze/thaw history under `extras.storageEvents`
 // on the way out and lift it back to the top-level field the app reads on the
 // way in. This keeps the dates on the gateway — surviving a browser cache wipe
-// and syncing across devices — with no reaprime schema change. Beanie is the
-// only writer of `extras` here, so owning it wholesale is safe.
+// and syncing across devices — with no reaprime schema change. Preserve the
+// rest of extras, including bag display names and other skins' metadata.
 function toGatewayBatchBody(batch: Partial<BeanBatch>): Record<string, unknown> {
   const { storageEvents, ...rest } = batch;
   if (storageEvents === undefined) return rest;
-  return { ...rest, extras: { storageEvents: storageEvents ?? null } };
+  return { ...rest, extras: { ...batch.extras, storageEvents: storageEvents ?? null } };
 }
 
 function fromGatewayBatch(batch: BeanBatch): BeanBatch {
-  const { extras, ...rest } = batch as BeanBatch & { extras?: unknown };
+  const { extras } = batch;
   if (!extras || typeof extras !== 'object' || Array.isArray(extras)) return batch;
   const events = (extras as Record<string, unknown>).storageEvents;
   if (events === undefined) return batch;
-  return { ...rest, storageEvents: (events as BeanBatchStorageEvent[] | null) ?? null };
+  return { ...batch, storageEvents: (events as BeanBatchStorageEvent[] | null) ?? null };
 }
 
 export function withSkinProxyToken(init: RequestInit): RequestInit {

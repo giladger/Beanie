@@ -103,7 +103,9 @@ run('workbench hero renders one-tap rotation tiles docked after the facts', () =
   // Tiles show the bean name only; the full roaster label lives in the
   // tooltip/aria, and pinned tiles carry a star glyph.
   includes(html, '<span class="hero-rotation-name">Decaf &lt;Cauca&gt;</span>');
-  includes(html, 'hero-rotation-fav');
+  includes(html, 'aria-label="Favorites"');
+  includes(html, 'aria-label="Other bags"');
+  includes(html, 'aria-label="Profile presets"');
   includes(html, 'title="Switch to La &quot;Palma&quot; Decaf &lt;Cauca&gt;"');
   includes(html, 'aria-label="Switch to Rwanda Simbi"');
   excludes(html, '<small>');
@@ -114,7 +116,8 @@ run('workbench hero renders one-tap rotation tiles docked after the facts', () =
     throw new Error('Expected the rotation dock to render after the facts');
   }
   // The whole row still opens the picker: wrapper div plus the two buttons.
-  includes(html, 'div class="hero panel has-rotation" data-action="open-bean-picker"');
+  includes(html, 'hero-current-label">Current bag');
+  excludes(html, 'div class="hero panel has-rotation" data-action="open-bean-picker"');
   includes(html, 'hero-open');
 });
 

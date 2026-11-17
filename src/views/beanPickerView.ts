@@ -8,6 +8,13 @@ import {
   latestBatch
 } from '../domain/beanWorkflow';
 import {
+  bagDisplayName,
+  BAG_ICONS,
+  bagIcon,
+  bagShortcutLabel,
+  bagImage,
+  bagName,
+  displayBatch,
   beanStockSummary,
   dateInputValue,
   isNearlyEmptyBatch,
@@ -86,6 +93,7 @@ export function renderBeanPickerModal(model: BeanPickerViewModel): string {
                                 favorite: favorites.has(bean.id),
                                 secondTapHint: model.secondTapHint,
                                 batches: model.batchesByBean[bean.id] ?? [],
+                                selectedBatchId: bean.id === model.selectedBeanId ? model.selectedBatchId : null,
                                 averageDoseIn: model.averageDoseIn ?? null
                               })
                             )
@@ -109,6 +117,7 @@ function renderBeanPickerRow(
     favorite: boolean;
     secondTapHint: BeanPickerViewModel['secondTapHint'];
     batches: BeanBatch[];
+    selectedBatchId?: string | null;
     averageDoseIn: number | null;
   }
 ): string {
@@ -122,7 +131,7 @@ function renderBeanPickerRow(
       <span>
         ${origin}
         <b>${escapeHtml(bean.roaster)}</b>
-        <strong>${options.favorite ? '<span class="bean-row-fav">★</span> ' : ''}${escapeHtml(bean.name)}</strong>
+        <strong>${options.favorite ? '<span class="bean-row-fav">★</span> ' : ''}${escapeHtml(bagName(bean, options.batches.find((batch) => batch.id === options.selectedBatchId) ?? displayBatch(options.batches)))}</strong>
         ${meta ? `<small class="bean-row-meta">${escapeHtml(meta)}</small>` : ''}
       </span>
       ${status ? `<em class="bean-row-action ${options.current ? 'current' : armed ? 'armed' : ''}">${escapeHtml(status)}</em>` : ''}
@@ -264,6 +273,7 @@ function renderStockRow(bean: Bean, batch: BeanBatch, ctx: StockRowContext): str
     formatGrams(batch.weightRemaining),
     frozen ? 'frozen' : state === 'thawed' ? 'thawed' : null,
     freshness ? `${freshness.activeAgeDays}d` : null,
+    bagDisplayName(batch) ? stockRowDate(batch) : null,
     batch.roastLevel ?? null,
     batch.id === ctx.inUseBatchId ? 'in use' : null,
     finished ? 'finished' : null
@@ -287,7 +297,7 @@ function renderStockRow(bean: Bean, batch: BeanBatch, ctx: StockRowContext): str
         title="${finished ? 'Finished bag' : 'Select this bag'}"
       >
         ${frozen ? `<span class="stock-row-loc" title="In freezer — aging paused">${icon('snowflake')}</span>` : ''}
-        <strong>${escapeHtml(stockRowDate(batch))}</strong>
+        <strong>${escapeHtml(bagDisplayName(batch) ?? stockRowDate(batch))}</strong>
         <small>${escapeHtml(meta || 'Bag')}</small>
         ${focused ? renderStockRowActions(bean, batch, { finished, frozen }) : ''}
       </div>
@@ -379,7 +389,17 @@ function renderStockEditPanel(bean: Bean, batch: BeanBatch): string {
       data-bean-id="${escapeAttr(bean.id)}"
       data-batch-id="${escapeAttr(batch.id)}"
     >
+      <div class="bag-image-editor">
+        <span class="bag-default-icon" aria-hidden="true">${icon(bagIcon(batch))}</span>
+        <label>Bag icon<select name="bagIcon" data-action="bean-picker-batch-field">${BAG_ICONS.map((name) => `<option value="${name}" ${bagIcon(batch) === name ? 'selected' : ''}>${name.charAt(0).toUpperCase() + name.slice(1)}</option>`).join('')}</select></label>
+        ${bagImage(batch) ? `<img src="${escapeAttr(bagImage(batch)!)}" alt="Bag photo" width="64" height="64" />` : ''}
+        <label class="secondary-button compact"><input type="file" accept="image/*" capture="environment" data-action="bag-image-upload" data-bean-id="${escapeAttr(bean.id)}" data-batch-id="${escapeAttr(batch.id)}" aria-label="Take bag photo" hidden />${icon('camera')}<span>Take photo</span></label>
+        <label class="secondary-button compact"><input type="file" accept="image/jpeg,image/png,image/webp" data-action="bag-image-upload" data-bean-id="${escapeAttr(bean.id)}" data-batch-id="${escapeAttr(batch.id)}" hidden />${icon('camera')}<span>${bagImage(batch) ? 'Choose another photo' : 'Choose photo'}</span></label>
+        ${bagImage(batch) ? `<button type="button" class="text-button" data-action="bag-image-remove" data-bean-id="${escapeAttr(bean.id)}" data-id="${escapeAttr(batch.id)}">Remove photo</button>` : ''}
+      </div>
       <div class="bean-picker-batch-fields">
+        <label>Shortcut label (optional)<input data-action="bean-picker-batch-field" name="shortcutLabel" autocomplete="off" placeholder="Display name" value="${escapeAttr(bagShortcutLabel(batch) ?? '')}" /></label>
+        <label>Display name (optional)<input data-action="bean-picker-batch-field" name="displayName" autocomplete="off" placeholder="Coffee name" value="${escapeAttr(bagDisplayName(batch) ?? '')}" /></label>
         <label>Roast date<input data-action="bean-picker-batch-field" type="date" name="roastDate" value="${escapeAttr(dateInputValue(batch.roastDate))}" /></label>
         <label>Roast<input data-action="bean-picker-batch-field" name="roastLevel" autocomplete="off" value="${escapeAttr(inputValue(batch.roastLevel))}" /></label>
         ${batchNumberField(bean, batch, 'weight', 'Bag', batch.weight)}
@@ -494,6 +514,7 @@ function renderBeanPickerFirstStock(formNumbers: Record<string, string>): string
         </div>
       </div>
       <div class="bean-picker-first-stock-fields">
+        <label>Display name (optional)<input name="displayName" autocomplete="off" placeholder="Coffee name" /></label>
         <label>Roast date<input type="date" name="roastDate" value="${escapeAttr(todayDateInputValue())}" /></label>
         <label>Roast<input name="roastLevel" autocomplete="off" /></label>
         ${draftNumber(weightKey, 'weight', 'Bag', weightValue)}
@@ -533,6 +554,7 @@ function renderBeanPickerBatchDraft(
         <small>${escapeHtml(beanLabel(bean))}</small>
       </div>
       <div class="bean-picker-batch-fields">
+        <label>Display name (optional)<input data-action="bean-picker-batch-field-draft" name="displayName" autocomplete="off" placeholder="Coffee name" value="${escapeAttr(bagDisplayName(draft) ?? '')}" /></label>
         <label>Roast date<input data-action="bean-picker-batch-field-draft" type="date" name="roastDate" value="${escapeAttr(roastDate)}" /></label>
         <label>Roast<input data-action="bean-picker-batch-field-draft" name="roastLevel" autocomplete="off" value="${escapeAttr(roastLevel)}" /></label>
         ${draftNumber(weightKey, 'weight', 'Bag', weightValue)}
