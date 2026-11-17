@@ -41,6 +41,7 @@ export function appendBatchStorageEvent(
     ? [...events.slice(0, -1), { type, at: atIso }]
     : [...events, { type, at: atIso }];
   return {
+    ...(batch.extras ? { extras: batch.extras } : {}),
     storageEvents: nextEvents,
     frozen: type === 'frozen'
   };
@@ -57,6 +58,7 @@ export function editLastBatchStorageEventDate(
   const at = dateInputToIso(atDate, latest.at, fallback);
   const nextEvents = [...events.slice(0, -1), { ...latest, at }];
   return {
+    ...(batch.extras ? { extras: batch.extras } : {}),
     storageEvents: nextEvents,
     frozen: latest.type === 'frozen'
   };
@@ -80,6 +82,7 @@ export function setBatchStorageEventDates(
     .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   const last = nextEvents[nextEvents.length - 1];
   return {
+    ...(batch.extras ? { extras: batch.extras } : {}),
     storageEvents: nextEvents,
     frozen: last?.type === 'frozen'
   };

@@ -660,7 +660,7 @@ p {
 
 .surface {
   display: grid;
-  grid-template-rows: 50px 62px minmax(190px, 1fr);
+  grid-template-rows: auto 62px minmax(190px, 1fr);
   gap: var(--workbench-gap);
   min-width: 0;
   min-height: 0;
@@ -10969,3 +10969,56 @@ p {
 .modal-backdrop.water-alert-backdrop {
   z-index: 80;
 }
+
+/* The current setup and the actions to choose another setup have separate rows. */
+.hero,
+.hero.has-rotation,
+.hero.large-bag-buttons.has-rotation {
+  height: auto;
+  display: block;
+  padding: 12px 14px;
+  cursor: default;
+}
+.hero-current {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.hero-open { height: auto; gap: 14px; flex: 1; }
+.hero-current-copy { display: grid; min-width: 0; gap: 4px; }
+.hero-current-label { font-size: 11px; font-weight: 700; color: var(--teal); text-transform: uppercase; letter-spacing: .08em; }
+.hero-current-detail { font-size: 13px; color: var(--muted); }
+.hero-bag-image { width: 68px; height: 68px; border-radius: 8px; object-fit: cover; flex: none; }
+.hero-image-placeholder { display: grid; place-items: center; background: var(--panel-2); color: var(--muted); }
+.hero-image-placeholder svg { width: 28px; height: 28px; }
+.hero-shortcuts { display: grid; grid-template-columns: minmax(140px, .7fr) minmax(220px, 1fr) minmax(260px, 1.2fr); gap: 20px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.hero-shortcut-group { min-width: 0; }
+.hero-shortcut-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 10px; text-transform: uppercase; font-weight: 700; letter-spacing: .06em; }
+.hero-shortcut-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+.hero-rotation-tile,
+.hero-profile-preset,
+.hero-shortcut-add {
+  width: auto; max-width: 100%; min-height: 38px; display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 12px; border: 1px solid var(--line-strong); border-radius: 6px;
+  color: var(--ink); background: transparent; font: inherit; font-size: 13px; cursor: pointer;
+}
+.hero-rotation-name { font-size: 14px; font-weight: 600; }
+.hero-shortcut-add { color: var(--muted); border-style: dashed; }
+.hero-shortcut-buttons svg { width: 15px; height: 15px; flex: none; }
+.hero-profile-preset span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.large-bag-buttons .hero-rotation-tile { min-height: 48px; padding: 10px 18px; }
+.large-bag-buttons .hero-rotation-name { font-size: 16px; }
+.hero-shortcut-buttons button:hover { background: var(--panel-2); }
+.hero-shortcut-buttons button:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.bag-image-editor { display: flex; gap: 10px; align-items: center; padding: 8px 0; }
+.bag-image-editor img { object-fit: cover; border-radius: 6px; }
+@media (max-width: 850px) {
+  .hero-shortcuts { grid-template-columns: 1fr; gap: 12px; }
+  .hero-facts { display: none; }
+}
+
+.bag-default-icon { display: grid; place-items: center; width: 48px; height: 48px; color: var(--teal); background: var(--panel-2); border-radius: 8px; }
+.bag-default-icon svg { width: 26px; height: 26px; }
+.hero-shortcut-buttons .hero-rotation-tile svg { color: var(--teal); width: 18px; height: 18px; }
+.hero-image-placeholder { color: var(--teal); }

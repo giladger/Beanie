@@ -26,8 +26,13 @@ export interface WorkbenchHeroViewModel {
   remaining: string | null;
   shotsLeft: string | null;
   beanId: string | null;
-  /** One-tap switch tiles for the other beans in rotation (may be empty). */
+  /** Fixed favorites and recent bag shortcuts (may be empty). */
   rotation: WorkbenchRotationTile[];
+  largeButtons?: boolean;
+  image?: string | null;
+  iconName?: string;
+  profileTitle?: string | null;
+  profilePresets?: Array<{ id: string; title: string; selected: boolean }>;
 }
 
 export interface WorkbenchRotationTile {
@@ -36,6 +41,8 @@ export interface WorkbenchRotationTile {
   /** Full "Roaster Name" label for the tooltip/aria — the button shows name only. */
   label: string;
   favorite: boolean;
+  iconName?: string;
+  selected?: boolean;
 }
 
 export interface WorkbenchRecipeViewModel {
@@ -197,43 +204,42 @@ export function renderTopbar(model: WorkbenchTopbarViewModel): string {
   `;
 }
 
-// The hero row is one shared hit area for the bean picker (the wrapper div
-// carries the action, so gaps between children still open it) with the
-// rotation dock opting out via its own switch-bean action. The title and
-// facts are real buttons so the picker stays reachable for keyboard/AT users.
-// The dock sits at the fixed right edge with fixed-width slots so the switch
-// targets never move when the (variable-width) bean name or facts change.
+// The active bag has its own labelled row. Favorites, recent bags, and profile
+// presets are actions below it, so a pinned favorite cannot be mistaken for
+// the currently selected setup.
 export function renderHero(model: WorkbenchHeroViewModel): string {
-  const rotation = model.rotation.length === 0
-    ? ''
-    : `<span class="hero-rotation">${model.rotation.map(renderRotationTile).join('')}</span>`;
+  const favorites = model.rotation.filter((tile) => tile.favorite);
+  const otherBags = model.rotation.filter((tile) => !tile.favorite);
+  const presets = model.profilePresets ?? [];
+  const group = (label: string, content: string) => `<div class="hero-shortcut-group" role="group" aria-label="${label}"><span class="hero-shortcut-label">${label}</span><div class="hero-shortcut-buttons">${content}</div></div>`;
   return `
-    <div class="hero panel ${model.rotation.length > 0 ? 'has-rotation' : ''}" data-action="open-bean-picker">
-      <button class="hero-open" data-action="open-bean-picker" aria-label="Choose bean" title="Choose bean">
-        <span class="bean-title">
-          <span class="bean-name">${escapeHtml(model.beanName)}</span>
-          ${model.roaster ? `<span class="bean-roaster">${escapeHtml(model.roaster)}</span>` : ''}
-          ${icon('chevron-down')}
-        </span>
-      </button>
-      <button class="hero-facts" data-action="open-bean-picker" aria-label="Choose bean" title="Choose bean">
-        ${model.remaining ? `<span class="hero-remaining">${escapeHtml(model.remaining)}</span>` : ''}
-        ${model.shotsLeft ? `<span class="hero-shots">${escapeHtml(model.shotsLeft)}</span>` : ''}
-        ${(model.remaining || model.shotsLeft) && model.age ? '<span class="hero-divider" aria-hidden="true"></span>' : ''}
-        ${model.age ? `<span class="hero-roast">${escapeHtml(model.age)}</span>` : ''}
-      </button>
-      ${rotation}
+    <div class="hero panel ${model.rotation.length > 0 ? 'has-rotation' : ''}${model.largeButtons ? ' large-bag-buttons' : ''}">
+      <div class="hero-current">
+        <button class="hero-open" data-action="open-bean-picker" aria-label="Choose bean" title="Choose bean">
+          ${model.image ? `<img class="hero-bag-image" src="${escapeAttr(model.image)}" alt="Current bag" width="68" height="68" />` : `<span class="hero-bag-image hero-image-placeholder" aria-hidden="true">${icon(model.iconName ?? 'bean')}</span>`}
+          <span class="hero-current-copy">
+            <span class="hero-current-label">Current bag</span>
+            <span class="bean-title"><span class="bean-name">${escapeHtml(model.beanName)}</span>${icon('chevron-down')}</span>
+            <span class="hero-current-detail">${[model.roaster, model.profileTitle].filter((value): value is string => Boolean(value)).map(escapeHtml).join(' · ')}</span>
+          </span>
+        </button>
+        <button class="hero-facts" data-action="open-bean-picker" aria-label="Choose bean" title="Choose bean">
+          ${model.remaining ? `<span class="hero-remaining">${escapeHtml(model.remaining)}</span>` : ''}
+          ${model.shotsLeft ? `<span class="hero-shots">${escapeHtml(model.shotsLeft)}</span>` : ''}
+          ${model.age ? `<span class="hero-roast">${escapeHtml(model.age)}</span>` : ''}
+        </button>
+      </div>
+      <div class="hero-shortcuts">
+        ${group('Favorites', favorites.length ? favorites.map(renderRotationTile).join('') : '<button class="hero-shortcut-add" data-action="open-bean-picker">Pin a bag</button>')}
+        ${group('Other bags', `${otherBags.map(renderRotationTile).join('')}<button class="hero-shortcut-add" data-action="open-bean-picker" aria-label="Choose another bag">${icon('plus')}<span>Choose bag</span></button>`)}
+        ${group('Profile presets', `${presets.map((preset) => `<button class="hero-profile-preset" data-action="pick-profile" data-id="${escapeAttr(preset.id)}" aria-label="Use profile ${escapeAttr(preset.title)}" aria-pressed="${preset.selected}">${icon('sliders-horizontal')}<span>${escapeHtml(preset.title)}</span></button>`).join('')}<button class="hero-shortcut-add" data-action="open-profile-picker" aria-label="Choose profile preset">${icon('plus')}<span>Choose profile</span></button>`)}
+      </div>
     </div>
   `;
 }
 
 function renderRotationTile(tile: WorkbenchRotationTile): string {
-  return `
-    <button class="hero-rotation-tile" data-action="switch-bean" data-id="${escapeAttr(tile.id)}" aria-label="Switch to ${escapeAttr(tile.label)}" title="Switch to ${escapeAttr(tile.label)}">
-      ${tile.favorite ? '<span class="hero-rotation-fav" aria-hidden="true">★</span>' : ''}
-      <span class="hero-rotation-name">${escapeHtml(tile.name)}</span>
-    </button>
-  `;
+  return `<button class="hero-rotation-tile" aria-pressed="${tile.selected === true}" data-action="switch-bean" data-id="${escapeAttr(tile.id)}" aria-label="Switch to ${escapeAttr(tile.label)}" title="Switch to ${escapeAttr(tile.label)}">${icon(tile.iconName ?? 'bean')}<span class="hero-rotation-name">${escapeHtml(tile.name)}</span></button>`;
 }
 
 // Which recipe control carries a staged Derek change, per dial-in parameter.

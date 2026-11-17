@@ -103,7 +103,7 @@ import {
   writeLastBeanId
 
 } from './domain/storage';
-import { rotationBeans } from './domain/beanDisplay';
+import { bagIcon, bagImage, bagName, bagShortcutLabel, displayBatch, rotationBeans } from './domain/beanDisplay';
 import {
   demoBatches,
   demoBeans,
@@ -2011,6 +2011,7 @@ export class BeanieApp {
     this.startupAuthorityRevision += 1;
     this.shotCacheGeneration += 1;
     this.startupFlow.dispose();
+    this.beanInventoryBrowser.reset();
     setStorePushHandler(null);
     this.presentationActivity.dispose();
     this.disposeLiveStreams();
@@ -4905,6 +4906,10 @@ export class BeanieApp {
     return {
       // One-tap coffee switch from a hero rotation tile. Same semantics as
       // picking the bean in the picker: swap coffee + recipe and apply it.
+      'bag-image-remove': async ({ el, id }) => {
+        const beanId = el.dataset.beanId;
+        if (beanId && id) await this.beanInventoryBrowser.saveBagImage(beanId, id, null);
+      },
       'switch-bean': async ({ id }) => {
         if (!id || id === this.state.selectedBeanId) return;
         this.setState({ secondTapHint: null });
@@ -5155,6 +5160,12 @@ export class BeanieApp {
           this.machineSettings.updatePreferences({ theme: el.dataset.value });
         }
       },
+      'settings-bag-button-size': ({ value }) => {
+        if (value === 'standard' || value === 'large') this.machineSettings.updatePreferences({ bagButtonSize: value });
+      },
+      'settings-bag-shortcuts': ({ value }) => {
+        if (value === 'rotation' || value === 'favorites') this.machineSettings.updatePreferences({ bagShortcuts: value });
+      },
       'settings-ui-scale': ({ el }) => {
         if (isUIScalePreference(el.dataset.value)) {
           this.machineSettings.updatePreferences({ uiScale: el.dataset.value });
@@ -5360,7 +5371,7 @@ export class BeanieApp {
     if (target.dataset.action === 'bean-picker-batch-field-draft') {
       const beanId = target.closest<HTMLFormElement>('form')?.dataset.beanId;
       const name = target.name;
-      if (beanId && (name === 'roastDate' || name === 'roastLevel')) {
+      if (beanId && (name === 'roastDate' || name === 'roastLevel' || name === 'displayName')) {
         this.beanInventoryBrowser.captureDraftBatchField(beanId, name, target.value);
       }
     }
@@ -5655,6 +5666,19 @@ export class BeanieApp {
       const files = Array.from(input.files ?? []);
       input.value = '';
       if (files.length > 0) void this.scannerFlow.addScannerPhotos(files);
+      return;
+    }
+    if (target.dataset.action === 'bag-image-upload') {
+      const input = target as HTMLInputElement;
+      const file = input.files?.[0];
+      const beanId = input.dataset.beanId;
+      const batchId = input.dataset.batchId;
+      input.value = '';
+      if (file && beanId && batchId) await this.beanInventoryBrowser.importBagImage(beanId, batchId, async () => {
+        const result = await this.imageTranscoder.transcode(file, { maxEdge: 480, maxPixels: 480 * 480, mimeType: 'image/jpeg', quality: 0.78 });
+        if (result.dataUrl.length > 150_000) throw new Error('Image too large');
+        return result.dataUrl;
+      });
       return;
     }
     if (target.dataset.action === 'bean-picker-batch-field') {
@@ -6587,7 +6611,7 @@ export class BeanieApp {
     const avgDose = this.averageDoseIn();
     const shotsLeft = remaining != null && avgDose != null ? Math.floor(remaining / avgDose) : null;
     return {
-      beanName: bean.name?.trim() || beanLabel(bean),
+      beanName: bagName(bean, batch),
       roaster: bean.roaster?.trim() || null,
       // Compact "65d" / "65d · 40a" badge form — the hero row has no width to
       // spare for prose, and the picker already teaches the d/a vocabulary.
@@ -6595,24 +6619,42 @@ export class BeanieApp {
       remaining: remaining == null ? null : formatGrams(remaining),
       shotsLeft: shotsLeft == null ? null : `~${shotsLeft} shot${shotsLeft === 1 ? '' : 's'}`,
       beanId: bean.id,
-      rotation
+      rotation,
+      largeButtons: this.state.settingsPreferences.bagButtonSize === 'large',
+      image: bagImage(batch),
+      iconName: bagIcon(batch, bean.id),
+      profileTitle: this.state.draft.profileTitle,
+      profilePresets: this.state.favoriteProfiles.flatMap((id) => {
+        const record = this.state.profiles.find((item) => item.id === id);
+        return record ? [{ id, title: record.profile.title ?? 'Untitled profile', selected: id === this.profileIdForDraft() }] : [];
+      })
     };
   }
 
   private heroRotationTiles(selected: Bean | null): WorkbenchHeroViewModel['rotation'] {
     const favorites = new Set(this.state.favoriteBeans);
-    return rotationBeans({
+    const input = {
       beans: this.state.beans,
       selectedBeanId: selected?.id ?? null,
       favoriteBeanIds: this.state.favoriteBeans,
       recentBeanIds: readRecentBeanIds(),
       beanUsageAt: this.state.beanUsageAt
-    }).map((bean) => ({
-      id: bean.id,
-      name: bean.name?.trim() || beanLabel(bean),
-      label: beanLabel(bean),
-      favorite: favorites.has(bean.id)
-    }));
+    };
+    const pinned = rotationBeans({ ...input, favoritesOnly: true, limit: this.state.favoriteBeans.length });
+    const other = this.state.settingsPreferences.bagShortcuts === 'favorites' ? [] : rotationBeans({
+      ...input, beans: this.state.beans.filter((bean) => !favorites.has(bean.id)), favoriteBeanIds: []
+    });
+    return [...pinned, ...other].map((bean) => {
+      const batch = bean.id === selected?.id ? this.selectedBatch() : displayBatch(this.state.batchesByBean[bean.id] ?? []);
+      return {
+        id: bean.id,
+        name: bagShortcutLabel(batch) ?? bagName(bean, batch),
+        label: bagName(bean, batch),
+        iconName: bagIcon(batch, bean.id),
+        selected: bean.id === selected?.id,
+        favorite: favorites.has(bean.id)
+      };
+    });
   }
 
   // Average dose-in across the bean's loaded shots (state.shots is already

@@ -168,6 +168,28 @@ await run('bean inventory form adapter produces a typed, trimmed bean submission
   }
 });
 
+await run('closing the bag editor fences a photo that is still decoding', async () => {
+  const harness = createHarness();
+  let finish!: (value: string) => void;
+  const decoding = new Promise<string>((resolve) => { finish = resolve; });
+  const importing = harness.flow.importBagImage('bean-1', 'batch-1', () => decoding);
+  harness.flow.close();
+  finish('data:image/jpeg;base64,AAAA');
+  await importing;
+  equal(harness.inventoryRequests.length, 0);
+});
+
+await run('a photo update preserves the bag nickname and other skin metadata', async () => {
+  const harness = createHarness();
+  const bag = harness.state.batchesByBean['bean-1']![0]!;
+  bag.extras = { workflowSkin: { name: 'Original' }, beanie: { displayName: 'Morning bag', icon: 'sun' } };
+  await harness.flow.saveBagImage('bean-1', 'batch-1', 'data:image/jpeg;base64,AAAA');
+  const extras = harness.inventoryRequests[0]?.patch.extras;
+  equal((extras?.beanie as Record<string, unknown>)?.displayName, 'Morning bag');
+  equal((extras?.beanie as Record<string, unknown>)?.image, 'data:image/jpeg;base64,AAAA');
+  equal((extras?.workflowSkin as Record<string, unknown>)?.name, 'Original');
+});
+
 function createHarness(): {
   state: MutableSnapshot;
   flow: BeanInventoryBrowserFlow;

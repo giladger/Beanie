@@ -26,6 +26,22 @@ Beanie is still early, so feedback is very welcome.
 4. Review previous shots for that bean with compact shot graphs.
 5. Adjust the recipe, pull another shot, and save what worked.
 
+## Bag names and shortcuts
+
+Each bag can have an optional display name. Add it with a new bag, or open
+Choose coffee, select the bag, and tap Edit. Clearing the display name restores
+the coffee name. Every bag gets a default icon. In the bag editor, choose an
+icon, take a photo with the tablet camera, or select an existing photo. Photos
+are reduced to thumbnails and saved with the bag. A separate shortcut label
+can keep a favorite button short. The original coffee details and saved recipe
+stay attached.
+
+In Settings > App, choose Large under Bag button size for taller workbench
+shortcuts. The banner labels the current bag and profile above separate groups
+for favorite bags, other bags, and starred profile presets. Favorites keep their
+positions when selected. Choose Favorites only to hide recent bag shortcuts. Both preferences sync
+through the gateway.
+
 ## Install
 
 Open Decent.app's settings skin installer:

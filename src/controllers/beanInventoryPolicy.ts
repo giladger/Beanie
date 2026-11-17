@@ -60,6 +60,7 @@ export function normalizedPatch(beanId: string, patch: Partial<BeanBatch>): Part
 export function storagePatch(beanId: string, batch: Partial<BeanBatch>): Partial<BeanBatch> {
   return {
     beanId,
+    ...(batch.extras ? { extras: batch.extras } : {}),
     storageEvents: batch.storageEvents ?? null,
     frozen: batch.frozen === true
   };
@@ -286,6 +287,7 @@ export function splitPlan(
       roastLevel: source.roastLevel ?? null,
       weight: grams,
       weightRemaining: grams,
+      ...(source.extras ? { extras: source.extras } : {}),
       storageEvents: frozen.storageEvents ?? null,
       frozen: true
     },

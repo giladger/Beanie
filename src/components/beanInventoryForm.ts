@@ -70,6 +70,9 @@ export function prefillBeanInventoryForm(
 
 function readBatchFields(data: FormData): BeanBatchFormFields {
   return {
+    displayName: { present: data.has('displayName'), value: textOrNull(data.get('displayName')) },
+    shortcutLabel: { present: data.has('shortcutLabel'), value: textOrNull(data.get('shortcutLabel')) },
+    icon: { present: data.has('bagIcon'), value: textOrNull(data.get('bagIcon')) },
     roastDate: textOrNull(data.get('roastDate')),
     roastLevel: textOrNull(data.get('roastLevel')),
     weight: {
