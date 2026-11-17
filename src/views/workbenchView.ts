@@ -244,7 +244,7 @@ export function renderHero(model: WorkbenchHeroViewModel): string {
 }
 
 function renderRotationTile(tile: WorkbenchRotationTile): string {
-  return `<button class="hero-rotation-tile" aria-pressed="${tile.selected === true}" data-action="switch-bean" data-id="${escapeAttr(tile.id)}" aria-label="Switch to ${escapeAttr(tile.label)}" title="Switch to ${escapeAttr(tile.label)}">${tile.image ? `<img class="hero-shortcut-image" src="${escapeAttr(tile.image)}" alt="" width="28" height="28" />` : icon(tile.iconName ?? 'bean')}<span class="hero-rotation-name">${escapeHtml(tile.name)}</span></button>`;
+  return `<button class="hero-rotation-tile${tile.favorite ? ' hero-favorite' : ''}" aria-pressed="${tile.selected === true}" data-action="switch-bean" data-id="${escapeAttr(tile.id)}" aria-label="Switch to ${escapeAttr(tile.label)}" title="Switch to ${escapeAttr(tile.label)}">${tile.image ? `<img class="hero-shortcut-image" src="${escapeAttr(tile.image)}" alt="" width="28" height="28" />` : icon(tile.iconName ?? 'bean')}<span class="hero-rotation-name">${escapeHtml(tile.name)}</span></button>`;
 }
 
 // Which recipe control carries a staged Derek change, per dial-in parameter.
