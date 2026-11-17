@@ -182,7 +182,7 @@ function settingsSections(
     {
       id: 'app',
       title: 'App',
-      terms: 'bag buttons coffee favorites shortcuts size appearance theme ui skin update diagnostics about version brightness screen display sleep wake tap zone area machine asleep screensaver saver clock photos slideshow',
+      terms: 'cafe café banner header name bag buttons coffee favorites shortcuts size appearance theme ui skin update diagnostics about version brightness screen display sleep wake tap zone area machine asleep screensaver saver clock photos slideshow',
       html: [
         renderSection('Beanie display', renderAppearanceRows(model.preferences, options)),
         renderSection('Sleep screen', renderSleepScreenRows(model, options)),
@@ -708,6 +708,12 @@ function renderGatewayRows(model: SettingsShellModel): string {
 function renderAppearanceRows(preferences: SettingsPreferences, options: SettingsRenderOptions): string {
   const syncedDisabled = options.syncedPreferencesWritable === false;
   return `
+    ${settingControlRow(
+      'Café name',
+      'Shown in the current bag banner. Leave blank to hide it.',
+      (a11y) => `<input class="settings-input" type="text" data-action="settings-cafe-name" maxlength="48" autocomplete="off" placeholder="e.g. The Coffee Lab" value="${escapeAttr(preferences.cafeName)}" ${a11y.attributes} ${syncedDisabled ? 'disabled' : ''} />`,
+      '', 'appearance-cafe-name'
+    )}
     ${settingControlRow(
       'Theme',
       'Skin color theme (tap a swatch to preview it live)',

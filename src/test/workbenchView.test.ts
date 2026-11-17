@@ -41,6 +41,17 @@ run('workbench renders topbar metrics, hero bean actions, recipe controls, and h
   excludes(html, '<history>');
 });
 
+run('cafe header escapes its custom name and offers desktop and compact layouts', () => {
+  const base = model();
+  const html = renderWorkbench(model({ hero: { ...base.hero, cafeName: 'Cafe <img src=x onerror=alert(1)>' } }));
+  includes(html, 'cafe-header-full');
+  includes(html, 'cafe-header-compact');
+  includes(html, 'Cafe &lt;img src=x onerror=alert(1)&gt;');
+  includes(html, 'data-action="open-cafe-settings"');
+  excludes(html, '<img src=x');
+  excludes(renderWorkbench(base), 'cafe-header-full');
+});
+
 run('workbench marks the status stat with the alert tone when the gateway link is down', () => {
   const base = model();
   const html = renderWorkbench(

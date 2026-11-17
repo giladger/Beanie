@@ -10,3 +10,4 @@ The example uploaded photo is from [Unsplash](https://images.unsplash.com/photo-
 - `shot-rating.png`: long profile text and Derek notes do not clip the rating badge.
 - `favorite-heart.png`: a larger favorite target and the filled heart style.
 - `coffee-icon-choices.png`: the visual icon grid and a retained photo option.
+- `cafe-header.png`: optional custom café sign in the available banner space.

@@ -20,6 +20,7 @@ export interface WorkbenchTopbarViewModel {
 }
 
 export interface WorkbenchHeroViewModel {
+  cafeName?: string;
   beanName: string;
   roaster: string | null;
   age: string | null;
@@ -212,7 +213,7 @@ export function renderHero(model: WorkbenchHeroViewModel): string {
   const favorites = model.rotation.filter((tile) => tile.favorite);
   const otherBags = model.rotation.filter((tile) => !tile.favorite);
   const presets = model.profilePresets ?? [];
-  const group = (label: string, content: string) => `<div class="hero-shortcut-group" role="group" aria-label="${label}"><span class="hero-shortcut-label">${label}</span><div class="hero-shortcut-buttons">${content}</div></div>`;
+  const group = (label: string, content: string, heading = '') => `<div class="hero-shortcut-group" role="group" aria-label="${label}"><div class="hero-shortcut-heading"><span class="hero-shortcut-label">${label}</span>${heading}</div><div class="hero-shortcut-buttons">${content}</div></div>`;
   return `
     <div class="hero panel ${model.rotation.length > 0 ? 'has-rotation' : ''}${model.largeButtons ? ' large-bag-buttons' : ''}">
       <div class="hero-current">
@@ -228,6 +229,7 @@ export function renderHero(model: WorkbenchHeroViewModel): string {
             <span class="hero-current-detail">${[model.roaster, model.profileTitle].filter((value): value is string => Boolean(value)).map(escapeHtml).join(' · ')}</span>
           </span>
         </button>
+        ${renderCafeHeader(model.cafeName ?? '', 'full')}
         <button class="hero-facts" data-action="open-bean-picker" aria-label="Choose bean" title="Choose bean">
           ${model.remaining ? `<span class="hero-remaining">${escapeHtml(model.remaining)}</span>` : ''}
           ${model.shotsLeft ? `<span class="hero-shots">${escapeHtml(model.shotsLeft)}</span>` : ''}
@@ -237,10 +239,19 @@ export function renderHero(model: WorkbenchHeroViewModel): string {
       <div class="hero-shortcuts">
         ${group('Favorites', favorites.length ? favorites.map(renderRotationTile).join('') : '<button class="hero-shortcut-add" data-action="open-bean-picker">Pin a bag</button>')}
         ${group('Other bags', `${otherBags.map(renderRotationTile).join('')}<button class="hero-shortcut-add" data-action="open-bean-picker" aria-label="Choose another bag">${icon('plus')}<span>Choose bag</span></button>`)}
-        ${group('Profile presets', `${presets.map((preset) => `<button class="hero-profile-preset" data-action="pick-profile" data-id="${escapeAttr(preset.id)}" aria-label="Use profile ${escapeAttr(preset.title)}" aria-pressed="${preset.selected}">${icon('sliders-horizontal')}<span>${escapeHtml(preset.title)}</span></button>`).join('')}<button class="hero-shortcut-add" data-action="open-profile-picker" aria-label="Choose profile preset">${icon('plus')}<span>Choose profile</span></button>`)}
+        ${group('Profile presets', `${presets.map((preset) => `<button class="hero-profile-preset" data-action="pick-profile" data-id="${escapeAttr(preset.id)}" aria-label="Use profile ${escapeAttr(preset.title)}" aria-pressed="${preset.selected}">${icon('sliders-horizontal')}<span>${escapeHtml(preset.title)}</span></button>`).join('')}<button class="hero-shortcut-add" data-action="open-profile-picker" aria-label="Choose profile preset">${icon('plus')}<span>Choose profile</span></button>`, renderCafeHeader(model.cafeName ?? '', 'compact'))}
       </div>
     </div>
   `;
+}
+
+function renderCafeHeader(name: string, size: 'full' | 'compact'): string {
+  if (!name.trim()) return '';
+  return `<button type="button" class="cafe-header cafe-header-${size}" data-action="open-cafe-settings" aria-label="Customize café header: ${escapeAttr(name)}" title="Customize café header">
+    <span class="cafe-header-line"><span class="cafe-header-prompt" aria-hidden="true">&gt;_</span><span class="cafe-header-title">${escapeHtml(name)}</span><span class="cafe-header-cursor" aria-hidden="true"></span></span>
+    <span class="cafe-header-subtitle" aria-hidden="true">BREW / CODE / 1337</span>
+    <span class="cafe-header-mark" aria-hidden="true">${icon('coffee')}</span>
+  </button>`;
 }
 
 function renderRotationTile(tile: WorkbenchRotationTile): string {

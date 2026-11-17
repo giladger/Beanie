@@ -99,6 +99,12 @@ test('landscape tablet keeps a readable shot graph below the setup banner', asyn
   await page.route('**/api/v1/**', (route) => route.abort('failed'));
   await page.goto('/');
   await expect(page.locator('#detail-canvas')).toBeVisible();
+  await page.getByRole('button', { name: 'Settings', exact: true }).first().click();
+  await page.getByRole('button', { name: 'App', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Café name', exact: true }).fill("Omer's Cafe");
+  await page.getByRole('textbox', { name: 'Café name', exact: true }).press('Tab');
+  await page.locator('[data-action="go-view"][data-value="workbench"]').first().click();
+  await expect(page.locator('.cafe-header-compact')).toBeVisible();
   const banner = await page.locator('.hero').boundingBox();
   const chart = await page.locator('#detail-canvas').boundingBox();
   expect(banner!.height).toBeLessThanOrEqual(100);

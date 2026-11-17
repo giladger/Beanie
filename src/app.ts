@@ -1,4 +1,4 @@
-import { selectDraftCoffeeIcon } from './render/coffeeAppearanceForm';
+import { selectDraftCoffeeIcon, syncDraftCoffeeIcon } from './render/coffeeAppearanceForm';
 import { screensaverWakeLockFrame } from './domain/screensaver';
 import type {
   Bean,
@@ -399,6 +399,7 @@ import { scoreValueFromTap } from './components/shotScore';
 import { isServiceShot } from './domain/shotRecord';
 import {
   applySettingsPreferences,
+  normalizeCafeName,
   isClockFormat,
   isWakeAppZonePosition,
   readSettingsPreferences,
@@ -5098,6 +5099,9 @@ export class BeanieApp {
       'dismiss-store-error': async () => {
         await this.dismissStoreError();
       },
+      'open-cafe-settings': () => {
+        this.machineSettings.open('app');
+      },
       'open-settings': () => {
         this.machineSettings.open();
       },
@@ -5682,6 +5686,10 @@ export class BeanieApp {
       if (files.length > 0) void this.scannerFlow.addScannerPhotos(files);
       return;
     }
+    if (target.dataset.action === 'settings-cafe-name') {
+      this.machineSettings.updatePreferences({ cafeName: normalizeCafeName(target.value) });
+      return;
+    }
     if (target.dataset.action === 'bean-image-upload') {
       const input = target as HTMLInputElement;
       const file = input.files?.[0];
@@ -5703,7 +5711,9 @@ export class BeanieApp {
     if (target.dataset.action === 'bean-prefill') {
       const select = target as HTMLSelectElement;
       const bean = this.state.beans.find((item) => item.id === select.value) ?? null;
-      prefillBeanInventoryForm(select.closest<HTMLFormElement>('form'), bean);
+      const form = select.closest<HTMLFormElement>('form');
+      prefillBeanInventoryForm(form, bean);
+      syncDraftCoffeeIcon(form);
       select.value = '';
       return;
     }
@@ -6617,13 +6627,14 @@ export class BeanieApp {
   private heroViewModel(bean: Bean | null): WorkbenchHeroViewModel {
     const rotation = this.heroRotationTiles(bean);
     if (!bean) {
-      return { beanName: 'Pick a bag', roaster: null, age: null, remaining: null, shotsLeft: null, beanId: null, rotation };
+      return { cafeName: this.state.settingsPreferences.cafeName, beanName: 'Pick a bag', roaster: null, age: null, remaining: null, shotsLeft: null, beanId: null, rotation };
     }
     const batch = this.selectedBatch();
     const remaining = positiveNumber(batch?.weightRemaining);
     const avgDose = this.averageDoseIn();
     const shotsLeft = remaining != null && avgDose != null ? Math.floor(remaining / avgDose) : null;
     return {
+      cafeName: this.state.settingsPreferences.cafeName,
       beanName: beanDisplayName(bean, this.state.batchesByBean[bean.id] ?? []) ?? bean.name,
       roaster: bean.roaster?.trim() || null,
       // Compact "65d" / "65d · 40a" badge form — the hero row has no width to

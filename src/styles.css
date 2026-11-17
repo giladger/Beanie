@@ -11108,3 +11108,33 @@ svg.icon[data-icon="heart"] { fill: #ed7995; stroke: #ffbacb; stroke-width: 1.5;
 .coffee-icon-choice:focus-visible, .coffee-photo-choice:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
 .coffee-icon-help { color: var(--muted); font-size: 11px; margin: 8px 0 0; }
 .coffee-photo-choice { padding: 5px; display: grid; gap: 4px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); color: var(--ink); font: inherit; font-size: 10px; cursor: pointer; }
+
+/* Optional household sign: a small terminal plaque in the unused hero space. */
+.hero-shortcut-heading { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.cafe-header { color: #dcffed; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-align: left; cursor: pointer; }
+.cafe-header-full { position: relative; flex: 0 1 360px; min-width: 190px; max-width: 43%; height: 68px; padding: 10px 54px 10px 16px; display: grid; align-content: center; gap: 5px; overflow: hidden; border: 1px solid rgba(112, 255, 192, .26); border-left: 3px solid #75e8b8; border-radius: 8px; background: repeating-linear-gradient(0deg, transparent 0 3px, rgba(143, 255, 200, .025) 3px 4px), linear-gradient(115deg, #12221e, #101716); box-shadow: inset 0 1px rgba(173, 255, 209, .07), 0 0 20px rgba(71, 217, 158, .045); }
+.cafe-header-line { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.cafe-header-prompt { flex: none; color: #75e8b8; font-size: 15px; font-weight: 700; letter-spacing: -3px; }
+.cafe-header-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: clamp(18px, 2.1vw, 27px); font-weight: 750; letter-spacing: -.06em; line-height: 1.1; text-shadow: 0 0 14px rgba(137, 255, 202, .16); }
+.cafe-header-cursor { flex: none; width: 5px; height: 20px; background: #e993ad; opacity: .85; }
+.cafe-header-subtitle { color: #78a492; font-size: 9px; font-weight: 600; letter-spacing: .15em; padding-left: 26px; white-space: nowrap; }
+.cafe-header-mark { position: absolute; right: 10px; top: 11px; opacity: .14; }
+.hero .cafe-header-mark .icon { width: 44px; height: 44px; color: #91f5c4; stroke-width: 1; }
+.cafe-header:hover { border-color: rgba(137, 255, 202, .6); }
+.cafe-header:focus-visible { outline: 2px solid #75e8b8; outline-offset: 3px; }
+.cafe-header-compact { display: none; }
+@media (min-width: 851px) and (max-height: 750px) {
+  .cafe-header-full { display: none; }
+  .hero-shortcut-heading { justify-content: space-between; padding-right: 26px; gap: 6px; }
+  .hero-shortcut-heading .hero-shortcut-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 0; }
+  .cafe-header-compact { flex: 0 1 auto; min-width: 0; max-width: 54%; height: 18px; margin-bottom: 3px; padding: 0; display: block; border: 0; background: transparent; }
+  .cafe-header-compact .cafe-header-line { gap: 4px; }
+  .cafe-header-compact .cafe-header-title { font-size: 11px; letter-spacing: -.04em; }
+  .cafe-header-compact .cafe-header-prompt { font-size: 9px; letter-spacing: -2px; }
+  .cafe-header-compact .cafe-header-cursor, .cafe-header-compact .cafe-header-subtitle, .cafe-header-compact .cafe-header-mark { display: none; }
+}
+@media (max-width: 850px) {
+  .hero-current { flex-wrap: wrap; }
+  .cafe-header-full { flex-basis: 100%; max-width: 100%; height: 54px; }
+  .cafe-header-title { font-size: 22px; }
+}

@@ -41,6 +41,11 @@ coffees, recent coffees, and starred profile presets. Short landscape screens
 use a compact banner to keep the shot graph readable. Button size and shortcut
 visibility are configurable in Settings > App and sync through the gateway.
 
+Set an optional Café name in Settings > App to add a custom header sign.
+Click the sign to edit it. Wide screens show a terminal-style plaque; short
+landscape screens show a compact title beside the preset heading to preserve
+graph height. Leave the name blank to hide the sign.
+
 Choose Android screensaver under Sleep screen to allow Android's own idle
 timer and photo app to take over while the machine sleeps. Configure the delay
 in Android Settings > Display > Screen timeout, and select the photo app under

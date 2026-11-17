@@ -352,6 +352,12 @@ test('visual icon choices use hearts automatically only for favorites and preser
   await openCreateForm(page);
   await page.getByRole('button', { name: 'Use Leaf icon', exact: true }).click();
   await expect(page.locator('[name="coffeeIcon"]')).toHaveValue('leaf');
+  await page.evaluate(() => fetch('/api/v1/store/beanie/beanie.settings.cafe-name', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify('Draft icon check')
+  }));
+  await expect(page.locator('.cafe-header-full .cafe-header-title')).toHaveText('Draft icon check', { timeout: 12000 });
+  await expect(page.getByRole('button', { name: 'Use Leaf icon', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('[name="coffeeIcon"]')).toHaveValue('leaf');
   await page.getByRole('button', { name: 'Add coffee', exact: true }).click();
   await expect(page.locator('.bean-row-image [data-icon="leaf"]')).toBeVisible();
   await page.getByRole('button', { name: 'Edit coffee', exact: true }).click();
@@ -380,4 +386,35 @@ test('visual icon choices use hearts automatically only for favorites and preser
   await page.screenshot({ path: testInfo.outputPath('coffee-icon-choices.png') });
   await page.getByRole('button', { name: 'Use saved coffee photo', exact: true }).click();
   await expect(page.locator('.bean-row-image img')).toBeVisible();
+});
+
+
+test('custom cafe header fits the existing banner, links to settings, and survives reload', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1340, height: 800 });
+  await fakeGateway(page);
+  await page.goto('/');
+  await openCreateForm(page);
+  await page.locator('[name="displayName"]').fill('Neta (Santo Domingo)');
+  await page.getByRole('button', { name: 'Add coffee', exact: true }).click();
+  await page.locator('.bean-row').click();
+  const before = await page.locator('.hero').boundingBox();
+  await expect(page.locator('.cafe-header')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'App', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Café name', exact: true }).fill("Omer's Cafe");
+  await page.getByRole('textbox', { name: 'Café name', exact: true }).press('Tab');
+  await page.locator('[data-action="go-view"][data-value="workbench"]').first().click();
+  await expect(page.locator('.cafe-header-full .cafe-header-title')).toHaveText("Omer's Cafe");
+  const after = await page.locator('.hero').boundingBox();
+  expect(after!.height).toBeLessThanOrEqual(before!.height + 1);
+  await page.locator('.hero').screenshot({ path: testInfo.outputPath('cafe-header.png') });
+  await page.locator('.cafe-header-full').click();
+  await expect(page.getByRole('textbox', { name: 'Café name', exact: true })).toHaveValue("Omer's Cafe");
+  await page.locator('[data-action="go-view"][data-value="workbench"]').first().click();
+  await page.reload();
+  await expect(page.locator('.cafe-header-full .cafe-header-title')).toHaveText("Omer's Cafe");
+  await page.setViewportSize({ width: 1006, height: 600 });
+  await expect(page.locator('.cafe-header-full')).toBeHidden();
+  await expect(page.locator('.cafe-header-compact')).toBeVisible();
+  expect((await page.locator('.hero').boundingBox())!.height).toBeLessThanOrEqual(100);
 });
