@@ -8,3 +8,4 @@ The example uploaded photo is from [Unsplash](https://images.unsplash.com/photo-
 
 - `coffee-picker.png`: saved photos and default icons in the coffee picker.
 - `shot-rating.png`: long profile text and Derek notes do not clip the rating badge.
+- `favorite-heart.png`: a larger favorite target and the filled heart style.

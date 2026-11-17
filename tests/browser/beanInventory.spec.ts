@@ -188,6 +188,7 @@ test('shared coffee appearance and distinct shortcuts survive selection, new bag
   await page.locator('[name="coffeeIcon"]').selectOption('heart');
   await expect(page.locator('.bean-row-image [data-icon="heart"]')).toBeVisible();
   await expect(page.locator('.bag-default-icon [data-icon="heart"]')).toBeVisible();
+  await expect(page.locator('.bag-default-icon [data-icon="heart"]')).toHaveCSS('fill', 'rgb(237, 121, 149)');
   await expect(page.locator('[name="shortcutLabel"]')).toHaveCount(0);
   await expect(page.locator('input[capture="environment"]')).toHaveAttribute('accept', 'image/*');
   await page.locator('[data-action="bean-image-upload"]:not([capture])').setInputFiles({
@@ -227,9 +228,15 @@ test('shared coffee appearance and distinct shortcuts survive selection, new bag
   await expect(page.locator('.hero-current-detail')).toContainText('Morning preset');
   await expect(page.locator('.bean-name')).toHaveText('Neta (Santo Domingo)');
   const size = await shortcut.boundingBox();
-  expect(size!.height).toBeGreaterThanOrEqual(48);
+  expect(size!.height).toBeGreaterThanOrEqual(64);
+  const favoriteArea = await page.getByRole('group', { name: 'Favorites', exact: true }).locator('.hero-shortcut-buttons').boundingBox();
+  expect(size!.width).toBeGreaterThanOrEqual(favoriteArea!.width - 1);
   const recipeBox = await page.locator('.recipe-grid').boundingBox();
   expect(size!.y + size!.height).toBeLessThanOrEqual(recipeBox!.y);
+  await page.setViewportSize({ width: 1006, height: 600 });
+  expect((await shortcut.boundingBox())!.height).toBeLessThanOrEqual(50);
+  expect((await page.locator('.hero').boundingBox())!.height).toBeLessThanOrEqual(100);
+  await page.setViewportSize({ width: 1340, height: 800 });
   await shortcut.click();
   await expect(page.locator('.bean-name')).toHaveText('Neta (Santo Domingo)');
   await page.screenshot({ path: testInfo.outputPath('bag-banner.png') });
@@ -309,4 +316,30 @@ test('shot rating stays visible with long profile text and Derek notes', async (
   expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(list!.x + list!.width);
   expect(await page.locator('.shot-list').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   await page.screenshot({ path: testInfo.outputPath('visible-shot-rating.png') });
+});
+
+test('favorite fills its section and shows a filled heart', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1340, height: 800 });
+  await fakeGateway(page);
+  await page.goto('/');
+  await openCreateForm(page);
+  await page.locator('[name="displayName"]').fill('Neta');
+  await page.getByRole('button', { name: 'Add coffee', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit coffee', exact: true }).click();
+  await page.locator('[name="coffeeIcon"]').selectOption('heart');
+  await expect(page.locator('.bag-default-icon [data-icon="heart"]')).toBeVisible();
+  await page.locator('[data-action="toggle-favorite-bean"]').click();
+  await page.locator('.bean-row').click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'App', exact: true }).click();
+  await page.locator('[data-action="settings-bag-button-size"][data-value="large"]').click();
+  await page.locator('[data-action="go-view"][data-value="workbench"]').first().click();
+  const group = page.getByRole('group', { name: 'Favorites', exact: true });
+  const button = group.getByRole('button', { name: 'Switch to Neta', exact: true });
+  await expect(button.locator('[data-icon="heart"]')).toHaveCSS('fill', 'rgb(237, 121, 149)');
+  const card = await button.boundingBox();
+  const available = await group.locator('.hero-shortcut-buttons').boundingBox();
+  expect(card!.width).toBeGreaterThanOrEqual(available!.width - 1);
+  expect(card!.height).toBeGreaterThanOrEqual(64);
+  await page.locator('.hero').screenshot({ path: testInfo.outputPath('favorite-heart.png') });
 });
