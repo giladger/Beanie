@@ -626,6 +626,7 @@ function settingsModel(): SettingsShellModel {
       uiScale: 'standard',
       bagButtonSize: 'standard',
       bagShortcuts: 'rotation',
+      cafeName: '',
       waterSoftLimitMl: 400,
       wakeAppZoneEnabled: false,
       wakeAppZonePosition: 'top',

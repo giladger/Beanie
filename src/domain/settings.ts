@@ -3,6 +3,7 @@ import { FLOW_CALIBRATION_STORAGE_KEYS } from './flowCalibration';
 import {
   bagButtonSizeKey,
   bagShortcutsKey,
+  cafeNameKey,
   clockFormatKey,
   getSyncedItem,
   removeSyncedItem,
@@ -83,6 +84,8 @@ export interface SettingsPreferences {
   uiScale: UIScalePreference;
   bagButtonSize: 'standard' | 'large';
   bagShortcuts: 'rotation' | 'favorites';
+  /** Optional household sign, synced across browsers. Empty hides it. */
+  cafeName: string;
   /** Soft low-water warning threshold in ml (0 = off). The hard block is the
    * machine's own refill threshold (configured via gateway.setRefillLevel). */
   waterSoftLimitMl: number;
@@ -152,6 +155,7 @@ const preservedResetKeys = new Set([
   uiScaleKey,
   bagButtonSizeKey,
   bagShortcutsKey,
+  cafeNameKey,
   waterSoftKey,
   wakeAppZoneEnabledKey,
   wakeAppZonePositionKey,
@@ -164,12 +168,17 @@ const preservedResetKeys = new Set([
   ...FLOW_CALIBRATION_STORAGE_KEYS
 ]);
 
+export function normalizeCafeName(value: string): string {
+  return [...value.replace(/\s+/g, ' ').trim()].slice(0, 48).join('');
+}
+
 export function readSettingsPreferences(): SettingsPreferences {
   return {
     theme: readLocalTheme(),
     uiScale: readEnum(uiScaleKey, ['compact', 'standard', 'large'], 'standard'),
     bagButtonSize: readEnum(bagButtonSizeKey, ['standard', 'large'], 'standard'),
     bagShortcuts: readEnum(bagShortcutsKey, ['rotation', 'favorites'], 'rotation'),
+    cafeName: normalizeCafeName(getSyncedItem(cafeNameKey) ?? ''),
     waterSoftLimitMl: readNonNegativeNumber(waterSoftKey, DEFAULT_WATER_SOFT_ML),
     wakeAppZoneEnabled: readBoolean(wakeAppZoneEnabledKey, false),
     wakeAppZonePosition: readEnum(wakeAppZonePositionKey, WAKE_APP_ZONE_POSITIONS, 'top'),
@@ -188,6 +197,7 @@ export function writeSettingsPreferences(next: SettingsPreferences): void {
 export function writeSettingsPreferencePatch(next: Partial<SettingsPreferences>): void {
   // Theme is per-browser (localStorage); the rest sync via the store.
   if (next.theme !== undefined) writeLocalTheme(next.theme);
+  if (next.cafeName !== undefined) setSyncedItem(cafeNameKey, normalizeCafeName(next.cafeName));
   if (next.bagButtonSize !== undefined) setSyncedItem(bagButtonSizeKey, next.bagButtonSize);
   if (next.bagShortcuts !== undefined) setSyncedItem(bagShortcutsKey, next.bagShortcuts);
   if (next.uiScale !== undefined) setSyncedItem(uiScaleKey, next.uiScale);
