@@ -4,7 +4,6 @@ export const COFFEE_ICONS = ['bean', 'coffee', 'heart', 'sun', 'sparkles', 'beak
 export type CoffeeIcon = typeof COFFEE_ICONS[number];
 export interface BeanAppearancePatch {
   displayName?: string | null;
-  shortcutLabel?: string | null;
   icon?: string | null;
   image?: string | null;
 }
@@ -29,10 +28,6 @@ export function beanDisplayName(bean: Partial<Bean>, batches: readonly BeanBatch
   return text(beanAppearance(bean, batches).displayName);
 }
 
-export function beanShortcutLabel(bean: Partial<Bean>, batches: readonly BeanBatch[] = []): string | null {
-  return text(beanAppearance(bean, batches).shortcutLabel);
-}
-
 export function beanIcon(bean: Bean, batches: readonly BeanBatch[] = []): CoffeeIcon {
   const selected = beanAppearance(bean, batches).icon;
   if (COFFEE_ICONS.includes(selected as CoffeeIcon)) return selected as CoffeeIcon;
@@ -46,10 +41,11 @@ export function beanImage(bean: Partial<Bean>, batches: readonly BeanBatch[] = [
 }
 
 export function beanAppearanceExtras(bean: Partial<Bean>, batches: readonly BeanBatch[], patch: BeanAppearancePatch): Record<string, unknown> {
+  const appearance = beanAppearance(bean, batches);
+  delete appearance.shortcutLabel;
   return { ...bean.extras, beanie: {
-    ...record(bean.extras?.beanie),
     // Explicit defaults make clearing a field override legacy bag metadata.
-    displayName: null, shortcutLabel: null, icon: null, image: null,
-    ...beanAppearance(bean, batches), ...patch
+    displayName: null, icon: null, image: null,
+    ...appearance, ...patch
   } };
 }

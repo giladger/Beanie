@@ -28,11 +28,11 @@ Beanie is still early, so feedback is very welcome.
 
 ## Coffee names, appearance, and shortcuts
 
-Each coffee can have an optional display name and a short shortcut label.
+Each coffee has one optional display name, used throughout Beanie.
 Its name, icon, and photo apply to every bag of those beans. Each coffee gets a
 stable default icon. Tap its icon in the banner to open the appearance editor,
 where you can choose an icon, take a photo, or select an existing photo.
-Uploaded photos are reduced to thumbnails and also appear in coffee shortcuts.
+Uploaded photos are reduced to thumbnails and appear in the coffee picker and shortcuts.
 
 The banner labels the current bag and profile separately from fixed favorite
 coffees, recent coffees, and starred profile presets. Short landscape screens

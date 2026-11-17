@@ -1,3 +1,4 @@
+import { demoShotsForBean } from '../../src/mock/demo';
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
@@ -185,16 +186,16 @@ test('shared coffee appearance and distinct shortcuts survive selection, new bag
   expect(log.beanPosts[0]).toMatchObject({ extras: { beanie: { displayName: 'Neta (Santo Domingo)' } } });
   await page.getByRole('button', { name: 'Edit coffee', exact: true }).click();
   await page.locator('[name="coffeeIcon"]').selectOption('heart');
+  await expect(page.locator('.bean-row-image [data-icon="heart"]')).toBeVisible();
   await expect(page.locator('.bag-default-icon [data-icon="heart"]')).toBeVisible();
-  await page.locator('[name="shortcutLabel"]').fill('Neta');
-  await page.locator('.bean-picker-head h2').click();
-  await expect(page.locator('[name="shortcutLabel"]')).toHaveValue('Neta');
+  await expect(page.locator('[name="shortcutLabel"]')).toHaveCount(0);
   await expect(page.locator('input[capture="environment"]')).toHaveAttribute('accept', 'image/*');
   await page.locator('[data-action="bean-image-upload"]:not([capture])').setInputFiles({
     name: 'coffee.jpg', mimeType: 'image/jpeg',
     buffer: await import('node:fs/promises').then((fs) => fs.readFile(new URL('../fixtures/coffee.jpg', import.meta.url)))
   });
   await expect(page.locator('.bag-image-editor img')).toHaveAttribute('src', /^data:image\/jpeg;base64,/);
+  await expect(page.locator('.bean-row-image img')).toHaveAttribute('src', /^data:image\/jpeg;base64,/);
   await page.screenshot({ path: testInfo.outputPath('coffee-appearance-editor.png') });
   await page.locator('[data-action="toggle-favorite-bean"]').click();
   await page.locator('.bean-row').click();
@@ -216,7 +217,7 @@ test('shared coffee appearance and distinct shortcuts survive selection, new bag
   await page.locator('[data-action="go-view"][data-value="workbench"]').first().click();
   const shortcut = page.locator('.hero-rotation-tile');
   await expect(shortcut).toHaveCount(1);
-  await expect(shortcut).toHaveText('Neta');
+  await expect(shortcut).toHaveText('Neta (Santo Domingo)');
   await expect(page.locator('img.hero-bag-image')).toBeVisible();
   await expect(page.getByRole('group', { name: 'Favorites', exact: true })).toBeVisible();
   await expect(page.getByRole('group', { name: 'Other bags', exact: true })).toBeVisible();
@@ -235,7 +236,7 @@ test('shared coffee appearance and distinct shortcuts survive selection, new bag
   await page.reload();
   await expect(page.locator('.hero.large-bag-buttons')).toBeVisible();
   await expect(shortcut).toHaveCount(1);
-  await expect(shortcut).toHaveText('Neta');
+  await expect(shortcut).toHaveText('Neta (Santo Domingo)');
   await expect(page.locator('img.hero-bag-image')).toBeVisible();
 });
 
@@ -257,6 +258,12 @@ test('uploaded coffee photo appears in Other bags before that coffee is selected
   await openCreateForm(page);
   await page.locator('[name="name"]').fill('Second coffee');
   await page.getByRole('button', { name: 'Add coffee', exact: true }).click();
+  await expect(page.locator('.bean-row-image img')).toHaveCount(1);
+  await expect(page.locator('.bean-row-image svg')).toHaveCount(1);
+  const imageBox = await page.locator('.bean-row-image img').boundingBox();
+  const textBox = await page.locator('.bean-row').first().locator('.bean-row-copy').boundingBox();
+  expect(textBox!.x - (imageBox!.x + imageBox!.width)).toBeLessThanOrEqual(16);
+  await page.screenshot({ path: testInfo.outputPath('coffee-picker-images.png') });
   await page.locator('.bean-row[data-id="bean-2"]').click();
   await expect(page.locator('.bean-name')).toHaveText('Second coffee');
   const other = page.getByRole('group', { name: 'Other bags', exact: true }).getByRole('button', { name: 'Switch to Morning roast' });
@@ -273,4 +280,33 @@ test('Android screensaver mode releases the tablet wake-lock claim', async ({ pa
   await page.getByRole('button', { name: 'App', exact: true }).click();
   await page.locator('[data-action="settings-screensaver-mode"][data-value="system"]').click();
   await expect.poll(() => log.displayCommands.at(-1)?.command).toBe('releaseWakeLock');
+});
+
+
+test('shot rating stays visible with long profile text and Derek notes', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1006, height: 600 });
+  await fakeGateway(page);
+  const shot = demoShotsForBean({ id: 'bean-1', roaster: 'Test', name: 'Test' })[0]!;
+  shot.id = 'rated-shot';
+  shot.workflow!.context = { ...shot.workflow!.context, beanId: 'bean-1', beanBatchId: 'batch-1' };
+  shot.workflow!.profile = { ...shot.workflow!.profile!, title: 'Neta - Gentle and sweet with a very long profile name (17g to 35g)' };
+  shot.annotations = { ...shot.annotations, enjoyment: 8, extras: { derekTweak: 'Example saved tip' } };
+  await page.route('**/api/v1/shots**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify(new URL(route.request().url()).pathname === '/api/v1/shots'
+      ? { items: [shot], total: 1, limit: 24, offset: 0 } : shot)
+  }));
+  await page.goto('/');
+  await openCreateForm(page);
+  await page.getByRole('button', { name: 'Add coffee', exact: true }).click();
+  await page.locator('.bean-row').click();
+  const row = page.locator('.shot-item[data-id="rated-shot"]');
+  const rating = row.locator('.enjoyment-badge');
+  await expect(rating).toHaveText('Good');
+  await expect(rating).toBeInViewport();
+  const bounds = await rating.boundingBox();
+  const list = await page.locator('.shot-list').boundingBox();
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(list!.x + list!.width);
+  expect(await page.locator('.shot-list').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('visible-shot-rating.png') });
 });

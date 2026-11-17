@@ -1,4 +1,4 @@
-import { COFFEE_ICONS, beanAppearance, beanDisplayName, beanIcon, beanImage, beanShortcutLabel } from '../domain/beanAppearance';
+import { COFFEE_ICONS, beanAppearance, beanDisplayName, beanIcon, beanImage } from '../domain/beanAppearance';
 import type { Bean, BeanBatch } from '../api/types';
 import {
   batchStorageEvents,
@@ -120,9 +120,13 @@ function renderBeanPickerRow(
   const status = options.current ? 'Current' : armed ? 'Tap again' : '';
   const origin = bean.country ? `<small>${escapeHtml(bean.country)}</small>` : '';
   const meta = beanRowMeta(options.batches, options.averageDoseIn);
+  const image = beanImage(bean, options.batches);
   return `
     <button id="bean-${escapeAttr(bean.id)}" class="bean-row ${options.focused ? 'active' : ''} ${armed || hint ? 'has-second-tap-hint' : ''}" data-action="inspect-bean" data-id="${escapeAttr(bean.id)}">
-      <span>
+      <span class="bean-row-image" aria-hidden="true">${image
+        ? `<img src="${escapeAttr(image)}" alt="" width="48" height="48" />`
+        : icon(beanIcon(bean, options.batches))}</span>
+      <span class="bean-row-copy">
         ${origin}
         <b>${escapeHtml(bean.roaster)}</b>
         <strong>${options.favorite ? '<span class="bean-row-fav">★</span> ' : ''}${escapeHtml(beanDisplayName(bean, options.batches) ?? bean.name)}</strong>
@@ -465,8 +469,7 @@ function renderBeanPickerBeanForm(
       ${editing ? '' : `<input type="hidden" name="prefillBeanId" value="" />${beanPrefillSelect(prefillBeans)}`}
       <div class="coffee-appearance-fields">
         <p class="coffee-appearance-hint">Name, icon, and photo apply to every bag of this coffee.</p>
-        <label>Display name (optional)<input data-action="bean-picker-bean-field" name="displayName" autocomplete="off" placeholder="Coffee name" value="${escapeAttr(bean ? beanDisplayName(bean, batches) ?? '' : '')}" /></label>
-        <label>Shortcut label (optional)<input data-action="bean-picker-bean-field" name="shortcutLabel" autocomplete="off" placeholder="Display name" value="${escapeAttr(bean ? beanShortcutLabel(bean, batches) ?? '' : '')}" /></label>
+        <label>Display name (optional)<input data-action="bean-picker-bean-field" name="displayName" autocomplete="off" placeholder="${escapeAttr(bean?.name ?? 'e.g. Morning espresso')}" value="${escapeAttr(bean ? beanDisplayName(bean, batches) ?? '' : '')}" /></label>
         <label>Coffee icon<select name="coffeeIcon" data-action="bean-appearance-field" data-bean-id="${escapeAttr(bean?.id ?? '')}"><option value="">Automatic</option>${COFFEE_ICONS.map((name) => `<option value="${name}" ${beanAppearance(bean ?? {}, batches).icon === name ? 'selected' : ''}>${name.charAt(0).toUpperCase() + name.slice(1)}</option>`).join('')}</select></label>
         ${bean ? renderCoffeePhotoEditor(bean, batches) : ''}
       </div>
