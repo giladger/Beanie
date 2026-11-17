@@ -105,7 +105,7 @@ import {
 
 } from './domain/storage';
 import { rotationBeans } from './domain/beanDisplay';
-import { beanDisplayName, beanIcon, beanImage, beanShortcutLabel } from './domain/beanAppearance';
+import { beanDisplayName, beanIcon, beanImage } from './domain/beanAppearance';
 import {
   demoBatches,
   demoBeans,
@@ -6657,7 +6657,7 @@ export class BeanieApp {
       return {
         id: bean.id,
         image: beanImage(bean, batches),
-        name: beanShortcutLabel(bean, batches) ?? beanDisplayName(bean, batches) ?? bean.name,
+        name: beanDisplayName(bean, batches) ?? bean.name,
         label: beanDisplayName(bean, batches) ?? bean.name,
         iconName: beanIcon(bean, this.state.batchesByBean[bean.id] ?? []),
         selected: bean.id === selected?.id,

@@ -24,7 +24,6 @@ export function readBeanInventoryForm(
       fields: beanFieldsFromForm(data),
       appearance: {
         ...(data.has('displayName') ? { displayName: textOrNull(data.get('displayName')) } : {}),
-        ...(data.has('shortcutLabel') ? { shortcutLabel: textOrNull(data.get('shortcutLabel')) } : {}),
         ...(data.has('coffeeIcon') ? { icon: textOrNull(data.get('coffeeIcon')) } : {})
       },
       prefillBeanId: prefillBeanId || null,
@@ -73,7 +72,7 @@ export function prefillBeanInventoryForm(
   set('processing', bean.processing);
   set('notes', bean.notes);
   const appearance = beanAppearance(bean);
-  for (const name of ['displayName', 'shortcutLabel']) set(name, appearance[name]);
+  for (const name of ['displayName']) set(name, appearance[name]);
   const icon = form.elements.namedItem('coffeeIcon');
   if (icon instanceof HTMLSelectElement) icon.value = String(appearance.icon ?? '');
 }
