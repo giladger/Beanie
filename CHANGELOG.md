@@ -28,6 +28,10 @@
   lock so Android's own screen timeout and screensaver app take over while the
   machine sleeps. Set the delay in Android Settings > Display > Screen timeout
   and pick the app under Screen saver; brightness is controlled by that app.
+- Add coffee and Add bag are greyed out while Beanie is still saving or
+  applying something else, such as the recipe of a coffee you just picked.
+  A tap during that moment used to be silently ignored, so the bag or coffee
+  was never added.
 - Demo mode shots look like real espresso. History shots and the simulated
   live shot come from a small extraction model (preinfusion, pressure build,
   flow limits, puck erosion, drip lag), with stage markers and target lines on

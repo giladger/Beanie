@@ -394,6 +394,19 @@ run('bean picker renders second tap hint for matching bean only', () => {
   includes(html, 'has-second-tap-hint');
 });
 
+run('bean picker disables add coffee and add bag while another mutation is busy', () => {
+  const addBag = /<button type="submit"[^>]*>[^]*?<span>Add bag<\/span>/;
+  const addCoffee = /<button type="submit"[^>]*>[^]*?<span>Add coffee<\/span>/;
+  const draft = { draftBatchBeanId: 'bean-1' };
+  const idleBag = renderBeanPickerModal(model(draft)).match(addBag)?.[0] ?? '';
+  const busyBag = renderBeanPickerModal(model({ ...draft, busy: true })).match(addBag)?.[0] ?? '';
+  const busyCoffee = renderBeanPickerModal(model({ mode: 'create', focusedBean: null, busy: true })).match(addCoffee)?.[0] ?? '';
+  includes(idleBag, 'Add bag');
+  notIncludes(idleBag, 'disabled');
+  includes(busyBag, 'disabled');
+  includes(busyCoffee, 'disabled');
+});
+
 run('batch storage modal shows bag details with an editable date for every event', () => {
   const html = renderBatchStorageModal(beans[0]!, batches[0]!);
 
