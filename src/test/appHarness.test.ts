@@ -595,6 +595,72 @@ await run('staging an edited recipe synchronously replaces desired recipe identi
   app.dispose();
 });
 
+await run('espresso start uses the visible Adaptive recipe instead of an older Filter workflow', async () => {
+  const root = new FakeElement();
+  const app = new BeanieApp(root as unknown as HTMLElement);
+  const harness = app as unknown as {
+    setState(next: Record<string, unknown>): void;
+    machineAction(state: 'espresso', options: { skipScaleCheck: boolean }): Promise<boolean>;
+    scheduleApply(): void;
+    recipeApply: { snapshot: { scheduled: boolean } };
+    machineWorkflowCommands: { synchronizeAuthoritative(workflow: unknown): void };
+    machineActions: {
+      start(request: { workflow: import('../api/types').Workflow | null }): {
+        type: 'queued'; state: 'espresso'; service: null; status: string;
+        completion: Promise<{ type: 'sent'; state: 'espresso'; service: null; status: string; restore: null }>;
+      };
+    };
+  };
+  const filter = {
+    profile: { title: 'Filter3', target_weight: 0, steps: [{ name: 'Bloom' }] },
+    context: { beanId: 'nahat', targetDoseWeight: 20, targetYield: 0 }
+  };
+  harness.setState({
+    settingsLoaded: true, loading: false, demo: false, startupPhase: 'connected',
+    asleep: false, busy: false, gatewayLinkDown: false,
+    beans: [{ id: 'nahat', name: 'Nahat 58', roaster: 'Nahat' }],
+    selectedBeanId: 'nahat', selectedBatchId: 'bag',
+    batchesByBean: { nahat: [{ id: 'bag', beanId: 'nahat' }] },
+    profiles: [], grinders: [], workflow: filter,
+    draft: {
+      profileTitle: 'Adaptive v3',
+      profile: { title: 'Adaptive v3', target_weight: 36, steps: [{ name: 'Fill' }] },
+      dose: 20, yield: 40, grinderSetting: '5.2'
+    }
+  });
+  includes(root.innerHTML, 'Adaptive v3');
+  harness.machineWorkflowCommands.synchronizeAuthoritative(filter);
+  const starts: import('../api/types').Workflow[] = [];
+  harness.machineActions.start = (request) => {
+    if (request.workflow) starts.push(request.workflow);
+    return {
+      type: 'queued', state: 'espresso', service: null, status: 'Starting shot',
+      completion: Promise.resolve({
+        type: 'sent', state: 'espresso', service: null, status: 'shot started', restore: null
+      })
+    };
+  };
+  try {
+    equal(await harness.machineAction('espresso', { skipScaleCheck: true }), true);
+    equal(starts[0]?.profile?.title, 'Adaptive v3');
+    equal(starts[0]?.context?.targetYield, 40);
+    equal(starts[0]?.context?.grinderSetting, '5.2');
+
+    // Start must also consume the debounce instead of rewriting a running shot.
+    harness.scheduleApply();
+    equal(harness.recipeApply.snapshot.scheduled, true);
+    await harness.machineAction('espresso', { skipScaleCheck: true });
+    equal(harness.recipeApply.snapshot.scheduled, false);
+
+    // An incomplete visible recipe must not fall back to the hidden Filter.
+    harness.setState({ draft: {}, busy: false });
+    equal(await harness.machineAction('espresso', { skipScaleCheck: true }), false);
+    equal(starts.length, 2);
+  } finally {
+    app.dispose();
+  }
+});
+
 await run('an offline Wake rejection keeps the sleeping presentation intact', async () => {
   const root = new FakeElement();
   const app = new BeanieApp(root as unknown as HTMLElement);
