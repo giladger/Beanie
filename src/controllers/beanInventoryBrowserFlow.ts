@@ -89,6 +89,8 @@ export interface BeanInventoryBrowserPresentation {
   readonly showAllBags: boolean;
   readonly formNumbers: Record<string, string>;
   readonly secondTapHint: BeanInventoryBrowserSnapshot['secondTapHint'];
+  /** Submits are ignored while another mutation runs; the view disables them. */
+  readonly busy: boolean;
 }
 
 interface BeanInventoryBrowserSession {
@@ -198,7 +200,8 @@ export class BeanInventoryBrowserFlow {
       editingBatchId: this.session.editingBatchId,
       showAllBags: this.session.showAllBags,
       formNumbers: { ...snapshot.formNumbers },
-      secondTapHint: snapshot.secondTapHint
+      secondTapHint: snapshot.secondTapHint,
+      busy: snapshot.busy
     };
   }
 

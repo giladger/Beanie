@@ -6,6 +6,7 @@ import type {
   LiveChartMarker
 } from './liveChartModel';
 import { LIVE_SERIES } from './liveChartModel';
+import { simulateExtraction } from './simulatedExtraction';
 
 // Pure live-shot data layer. Ingests live machine + scale WebSocket snapshots,
 // runs a small shot-detection state machine, and accumulates telemetry into a
@@ -415,85 +416,53 @@ export interface SimulateShotOptions {
   startMs?: number;
   // Frame rate of the generated stream (Hz). Default ~25 Hz.
   rateHz?: number;
-  // Seconds of idle/preinfusion lead-in before the pour ramps.
-  preinfusionSeconds?: number;
-  // Total active pour duration in seconds (after lead-in).
-  pourSeconds?: number;
-  // Final dose weight in grams.
+  // The simulated machine stops the pour at this scale weight (grams).
   targetWeight?: number;
 }
 
-// Pure simulated-shot generator. Produces a realistic ~30s espresso shot as a
-// sequence of LiveFrames using smooth index-based math (no randomness), so the
-// app can replay it on a timer to throttle-test the canvas without hardware.
+// Pure simulated-shot generator: replays the deterministic extraction model as
+// LiveFrames so the app can drive the live canvas on a timer without hardware.
 export function simulateShotFrames(options?: SimulateShotOptions): LiveFrame[] {
   const startMs = options?.startMs ?? 0;
   const rateHz = options?.rateHz ?? 25;
-  const preinfusionSeconds = options?.preinfusionSeconds ?? 5;
-  const pourSeconds = options?.pourSeconds ?? 25;
-  const targetWeight = options?.targetWeight ?? 36;
+  const samples = simulateExtraction({
+    kind: 'pressure',
+    stopWeight: options?.targetWeight ?? 36,
+    temperature: 93,
+    sampleSeconds: 1 / rateHz,
+    seed: 7
+  });
 
-  const dt = 1 / rateHz;
-  const totalSeconds = preinfusionSeconds + pourSeconds;
-  const frameCount = Math.max(1, Math.round(totalSeconds * rateHz) + 1);
-
-  const frames: LiveFrame[] = [];
-  let weight = 0;
-
-  for (let index = 0; index < frameCount; index += 1) {
-    const seconds = index * dt;
-    const tMs = startMs + Math.round(seconds * 1000);
-    const inPreinfusion = seconds < preinfusionSeconds;
-    const pourProgress = clamp01((seconds - preinfusionSeconds) / pourSeconds);
-
-    // Pressure: low during preinfusion (~2 bar), ramp to ~9 bar, gentle decline.
-    const pressure = inPreinfusion
-      ? 2 + (seconds / preinfusionSeconds) * 0.5
-      : 9 - 1.5 * pourProgress;
-
-    // Flow: a brief fill spike during preinfusion, then declining from ~2.6.
-    const flow = inPreinfusion
-      ? 2 * Math.sin((seconds / preinfusionSeconds) * Math.PI)
-      : 2.6 - 1.4 * pourProgress;
-
-    // Group temperature: steady ~92C with a tiny dip under load.
-    const groupTemperature = 92 - 0.8 * Math.sin(pourProgress * Math.PI);
-
-    // Weight only grows during the pour; smooth rise to the target.
-    const weightFlow = inPreinfusion ? 0 : Math.max(0, 2.4 - 1.6 * pourProgress);
-    if (!inPreinfusion) {
-      weight = Math.min(targetWeight, targetWeight * easeOut(pourProgress));
-    }
-
-    const substate = inPreinfusion ? 'preinfusion' : 'pouring';
-
-    frames.push({
+  const frames: LiveFrame[] = samples.map((sample) => {
+    const tMs = startMs + Math.round(sample.seconds * 1000);
+    return {
       tMs,
       machine: {
         timestamp: new Date(tMs).toISOString(),
-        state: { state: 'espresso', substate },
-        flow: round2(Math.max(0, flow)),
-        pressure: round2(Math.max(0, pressure)),
-        targetFlow: inPreinfusion ? 2 : 2.2,
-        targetPressure: inPreinfusion ? 2 : 9,
-        mixTemperature: round2(groupTemperature - 1),
-        groupTemperature: round2(groupTemperature),
-        targetMixTemperature: 92,
-        targetGroupTemperature: 93,
-        profileFrame: inPreinfusion ? 0 : 1,
+        state: { state: 'espresso', substate: sample.substate },
+        flow: sample.flow,
+        pressure: sample.pressure,
+        targetFlow: sample.targetFlow,
+        targetPressure: sample.targetPressure,
+        mixTemperature: sample.mixTemperature,
+        groupTemperature: sample.groupTemperature,
+        targetMixTemperature: sample.targetTemperature,
+        targetGroupTemperature: sample.targetTemperature,
+        profileFrame: sample.frame,
         steamTemperature: 0
       },
       scale: {
         timestamp: new Date(tMs).toISOString(),
-        weight: round2(weight),
-        weightFlow: round2(weightFlow),
+        weight: sample.weight,
+        weightFlow: sample.weightFlow,
         status: 'connected'
       }
-    });
-  }
+    };
+  });
 
   // Trailing idle frame so the shot cleanly ends (machine leaves espresso pour).
-  const endMs = startMs + Math.round(totalSeconds * 1000) + Math.round(dt * 1000);
+  const last = samples[samples.length - 1]!;
+  const endMs = startMs + Math.round(last.seconds * 1000) + Math.round(1000 / rateHz);
   frames.push({
     tMs: endMs,
     machine: {
@@ -503,37 +472,22 @@ export function simulateShotFrames(options?: SimulateShotOptions): LiveFrame[] {
       pressure: 0,
       targetFlow: 0,
       targetPressure: 0,
-      mixTemperature: 90,
-      groupTemperature: 90,
-      targetMixTemperature: 92,
-      targetGroupTemperature: 93,
+      mixTemperature: last.mixTemperature,
+      groupTemperature: last.groupTemperature,
+      targetMixTemperature: last.targetTemperature,
+      targetGroupTemperature: last.targetTemperature,
       profileFrame: 0,
       steamTemperature: 0
     },
     scale: {
       timestamp: new Date(endMs).toISOString(),
-      weight: round2(weight),
+      weight: last.weight,
       weightFlow: 0,
       status: 'connected'
     }
   });
 
   return frames;
-}
-
-function easeOut(progress: number): number {
-  // Smooth deceleration: fast early extraction, tapering toward the target.
-  return 1 - Math.pow(1 - clamp01(progress), 2);
-}
-
-function clamp01(value: number): number {
-  if (value < 0) return 0;
-  if (value > 1) return 1;
-  return value;
-}
-
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
 }
 
 function numeric(value: unknown): number | null {

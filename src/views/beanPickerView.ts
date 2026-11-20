@@ -45,6 +45,8 @@ export interface BeanPickerViewModel {
   formNumbers?: Record<string, string>;
   secondTapHint: { kind: 'shot' | 'bean' | 'profile'; id: string } | null;
   averageDoseIn?: number | null;
+  /** Disables the add submits, which the flow ignores while busy. */
+  busy?: boolean;
 }
 
 export function renderBeanPickerModal(model: BeanPickerViewModel): string {
@@ -154,7 +156,7 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
   if (model.mode === 'create' || !bean) {
     return `
       <div class="bean-picker-inspector">
-        ${renderBeanPickerBeanForm(null, model.prefillBeans, model.formNumbers ?? {})}
+        ${renderBeanPickerBeanForm(null, model.prefillBeans, model.formNumbers ?? {}, { busy: model.busy })}
       </div>
     `;
   }
@@ -202,7 +204,7 @@ function renderBeanPickerInspector(model: BeanPickerViewModel): string {
           </div>
         </div>
         ${model.draftBatchBeanId === bean.id
-          ? renderBeanPickerBatchDraft(bean, latest, model.formNumbers ?? {}, model.draftBatch ?? null)
+          ? renderBeanPickerBatchDraft(bean, latest, model.formNumbers ?? {}, model.draftBatch ?? null, model.busy ?? false)
           : ''}
         ${
           batches.length === 0
@@ -445,7 +447,7 @@ function renderBeanPickerBeanForm(
   bean: Bean | null,
   prefillBeans: Bean[],
   formNumbers: Record<string, string>,
-  options: { showHeader?: boolean; batches?: BeanBatch[]; favorite?: boolean } = {}
+  options: { showHeader?: boolean; batches?: BeanBatch[]; favorite?: boolean; busy?: boolean } = {}
 ): string {
   const editing = bean != null;
   const dataId = editing ? ` data-id="${escapeAttr(bean.id)}"` : '';
@@ -487,7 +489,7 @@ function renderBeanPickerBeanForm(
           ? ''
           : `<div class="bean-picker-form-actions">
               <button type="button" class="secondary-button compact" data-action="close-modal"><span>Cancel</span></button>
-              <button type="submit" class="primary-button compact">${icon('check')}<span>Add coffee</span></button>
+              <button type="submit" class="primary-button compact" ${options.busy ? 'disabled' : ''}>${icon('check')}<span>Add coffee</span></button>
             </div>`
       }
     </form>
@@ -547,7 +549,8 @@ function renderBeanPickerBatchDraft(
   bean: Bean,
   latest: BeanBatch | null,
   formNumbers: Record<string, string>,
-  draft: Partial<BeanBatch> | null
+  draft: Partial<BeanBatch> | null,
+  busy: boolean
 ): string {
   const weightKey = newStockFormKey(bean.id, 'weight');
   const remainingKey = newStockFormKey(bean.id, 'weightRemaining');
@@ -580,7 +583,7 @@ function renderBeanPickerBatchDraft(
       </div>
       <div class="stock-draft-actions">
         <button type="button" class="secondary-button compact" data-action="cancel-batch-draft"><span>Cancel</span></button>
-        <button type="submit" class="primary-button compact">${icon('check')}<span>Add bag</span></button>
+        <button type="submit" class="primary-button compact" ${busy ? 'disabled' : ''}>${icon('check')}<span>Add bag</span></button>
       </div>
     </form>
   `;

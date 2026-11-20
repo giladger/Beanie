@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.3.11 - 2026-11-19
+
+- Coffees can have a name, an icon, and a photo. Give a coffee an optional
+  display name and Beanie uses it everywhere instead of the roaster/bean
+  label; its name, icon, and photo apply to every bag of those beans, so a
+  new bag of the same coffee looks the same. Tap the icon in the current-bag
+  banner to open the appearance editor: pick one of 25 icons from a visual
+  grid, or take or choose a photo. Photos are shrunk to thumbnails before
+  they are saved, and switching back to an icon keeps the photo around for
+  later. Every coffee gets a stable default icon; Automatic shows a heart
+  only for favorites.
+- One-tap bag shortcuts below the current setup. The banner now labels the
+  current bag and profile on their own, followed by your favorite coffees in a
+  fixed order, recent coffees, and starred profile presets. Settings > App has
+  a Bag shortcuts option (Favorites & recent, or Favorites only) and a Bag
+  button size option (Standard or Large); both sync through the gateway.
+  Favorites have larger targets and a softer filled heart.
+- Optional café sign. Set a Café name in Settings > App to add a header sign;
+  tap the sign to edit it. Wide screens show a terminal-style plaque, short
+  landscape screens a compact title beside the preset heading. Leave it blank
+  to hide the sign.
+- The shot graph stays readable on landscape tablets. Short screens such as
+  the 1340×800 machine tablet use a compact banner so the graph keeps its
+  height.
+- Android screensaver option under Sleep screen. It releases Beanie's wake
+  lock so Android's own screen timeout and screensaver app take over while the
+  machine sleeps. Set the delay in Android Settings > Display > Screen timeout
+  and pick the app under Screen saver; brightness is controlled by that app.
+- Add coffee and Add bag are greyed out while Beanie is still saving or
+  applying something else, such as the recipe of a coffee you just picked.
+  A tap during that moment used to be silently ignored, so the bag or coffee
+  was never added.
+- Demo mode shots look like real espresso. History shots and the simulated
+  live shot come from a small extraction model (preinfusion, pressure build,
+  flow limits, puck erosion, drip lag), with stage markers and target lines on
+  the graph. The README has demo-mode screenshots.
+
 ## v0.3.10 - 2026-10-28
 
 - Shot ratings work again on Decaid 0.8.7 and later. Decaid moved shot
