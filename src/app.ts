@@ -3132,6 +3132,14 @@ export class BeanieApp {
       this.setState({ busy: true, status: 'Stopping machine' });
       return this.finishMachineActionOutcome(await this.machineActions.stopSafely());
     }
+    // A hydrated or restored draft can differ from the last staged workflow.
+    // The coffee button must capture the recipe the controls currently show.
+    const candidate = state === 'espresso' ? this.currentRecipeCandidate() : null;
+    if (state === 'espresso' && !candidate?.draft.profile) {
+      this.setState({ status: 'Choose a coffee and profile before starting' });
+      return false;
+    }
+    if (candidate) this.machineWorkflowCommands.stageDesired(candidate.workflow);
     const workflow = this.machineWorkflowCommands.desiredOr(this.state.workflow);
     const preparedCalibration = state === 'espresso'
       ? this.flowCalibrator.resolvedForProfile(workflow?.profile?.title ?? null)
@@ -3150,7 +3158,14 @@ export class BeanieApp {
         : { flowMultiplier: preparedCalibration, persist: !this.machineSettings.local }
     });
     if (started.type !== 'queued') return this.finishMachineActionOutcome(started);
-    this.setState({ busy: true, status: started.status });
+    // The exact start transaction now owns this recipe. A pending debounce or
+    // older apply response must not rewrite it once the shot has started.
+    if (candidate) this.recipeApply.cancel(new Error('Recipe captured for shot start'));
+    this.setState({
+      busy: true,
+      ...(candidate ? { applyState: 'stale' as const } : {}),
+      status: started.status
+    });
     return this.finishMachineActionOutcome(await started.completion);
   }
 
