@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.3.12 - 2026-11-22
+
+- Shot now starts the recipe shown on screen. After a reload or wake, the
+  workbench could show a restored recipe such as Adaptive v3 while the machine
+  still held an older workflow such as Filter3, and pressing Shot ran the older
+  one. Starting an espresso now sends the profile, dose, yield, and grind the
+  controls currently show, and a pending recipe save can no longer rewrite the
+  shot once it has started. If no profile is showing, Beanie doesn't start and
+  asks you to choose a coffee and profile. Thanks to Omer Rosenbaum for the
+  fix.
+
 ## v0.3.11 - 2026-11-19
 
 - Coffees can have a name, an icon, and a photo. Give a coffee an optional
