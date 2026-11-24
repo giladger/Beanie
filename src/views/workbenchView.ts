@@ -61,6 +61,8 @@ export interface WorkbenchViewModel {
   hero: WorkbenchHeroViewModel;
   recipe: WorkbenchRecipeViewModel;
   historyHtml: string;
+  /** Shown while no scale is connected; `blocking` says whether shots are blocked. */
+  scaleBanner?: { blocking: boolean } | null;
 }
 
 export interface LiveStageView {
@@ -98,6 +100,7 @@ type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
 export function renderWorkbench(model: WorkbenchViewModel): string {
   return `
     ${renderTopbar(model.topbar)}
+    ${renderScaleBanner(model.scaleBanner ?? null)}
     <main class="workbench">
       <section class="surface">
         ${renderHero(model.hero)}
@@ -105,6 +108,19 @@ export function renderWorkbench(model: WorkbenchViewModel): string {
         ${model.historyHtml}
       </section>
     </main>
+  `;
+}
+
+export function renderScaleBanner(banner: { blocking: boolean } | null): string {
+  if (!banner) return '';
+  const message = banner.blocking
+    ? 'No scale connected. Shots are blocked until it connects.'
+    : 'No scale connected. Shots will stop on volume, not weight.';
+  return `
+    <div class="scale-banner ${banner.blocking ? 'scale-banner-blocking' : ''}" role="alert" id="scale-banner">
+      <span class="scale-banner-text">${icon('scale')}<span>${escapeHtml(message)}</span></span>
+      <button type="button" class="command scale-banner-action" data-action="scale-stat">Connect scale</button>
+    </div>
   `;
 }
 

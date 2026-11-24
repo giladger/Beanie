@@ -406,6 +406,34 @@ p {
   background: color-mix(in srgb, var(--bg) 94%, transparent);
 }
 
+.scale-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--warn, #e0a030) 18%, var(--bg));
+  color: var(--text);
+  font-weight: 700;
+}
+
+.scale-banner-blocking {
+  background: color-mix(in srgb, var(--danger, #d9534f) 22%, var(--bg));
+}
+
+.scale-banner-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.scale-banner-action {
+  flex: none;
+  min-height: 40px;
+}
+
 .eyebrow,
 .control label,
 .select-control label,
