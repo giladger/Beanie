@@ -41,17 +41,6 @@ run('workbench renders topbar metrics, hero bean actions, recipe controls, and h
   excludes(html, '<history>');
 });
 
-run('cafe header escapes its custom name and offers desktop and compact layouts', () => {
-  const base = model();
-  const html = renderWorkbench(model({ hero: { ...base.hero, cafeName: 'Cafe <img src=x onerror=alert(1)>' } }));
-  includes(html, 'cafe-header-full');
-  includes(html, 'cafe-header-compact');
-  includes(html, 'Cafe &lt;img src=x onerror=alert(1)&gt;');
-  includes(html, 'data-action="open-cafe-settings"');
-  excludes(html, '<img src=x');
-  excludes(renderWorkbench(base), 'cafe-header-full');
-});
-
 run('workbench marks the status stat with the alert tone when the gateway link is down', () => {
   const base = model();
   const html = renderWorkbench(
@@ -114,9 +103,8 @@ run('workbench hero renders one-tap rotation tiles docked after the facts', () =
   // Tiles show the bean name only; the full roaster label lives in the
   // tooltip/aria, and pinned tiles carry a star glyph.
   includes(html, '<span class="hero-rotation-name">Decaf &lt;Cauca&gt;</span>');
-  includes(html, 'aria-label="Favorites"');
-  includes(html, 'aria-label="Other bags"');
-  includes(html, 'aria-label="Profile presets"');
+  excludes(html, 'aria-label="Profile presets"');
+  excludes(html, 'Current bag');
   includes(html, 'title="Switch to La &quot;Palma&quot; Decaf &lt;Cauca&gt;"');
   includes(html, 'aria-label="Switch to Rwanda Simbi"');
   excludes(html, '<small>');
@@ -127,8 +115,7 @@ run('workbench hero renders one-tap rotation tiles docked after the facts', () =
     throw new Error('Expected the rotation dock to render after the facts');
   }
   // The whole row still opens the picker: wrapper div plus the two buttons.
-  includes(html, 'hero-current-label">Current bag');
-  excludes(html, 'div class="hero panel has-rotation" data-action="open-bean-picker"');
+  includes(html, 'div class="hero panel has-rotation" data-action="open-bean-picker"');
   includes(html, 'hero-open');
 });
 

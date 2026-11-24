@@ -57,7 +57,7 @@ test('waking a restored Adaptive recipe starts Adaptive instead of the previous 
   });
 
   await page.goto('/');
-  await expect(page.locator('.hero-current-detail')).toContainText('Adaptive v3');
+  await expect(page.locator('.profile-button')).toContainText('Adaptive v3');
   expect(writes).toHaveLength(0);
   await page.getByRole('button', { name: 'Wake', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Shot', exact: true })).toBeEnabled();

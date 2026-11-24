@@ -182,7 +182,7 @@ function settingsSections(
     {
       id: 'app',
       title: 'App',
-      terms: 'cafe café banner header name bag buttons coffee favorites shortcuts size appearance theme ui skin update diagnostics about version brightness screen display sleep wake tap zone area machine asleep screensaver saver clock photos slideshow',
+      terms: 'bag buttons coffee favorites shortcuts appearance theme ui skin update diagnostics about version brightness screen display sleep wake tap zone area machine asleep screensaver saver clock photos slideshow',
       html: [
         renderSection('Beanie display', renderAppearanceRows(model.preferences, options)),
         renderSection('Sleep screen', renderSleepScreenRows(model, options)),
@@ -709,12 +709,6 @@ function renderAppearanceRows(preferences: SettingsPreferences, options: Setting
   const syncedDisabled = options.syncedPreferencesWritable === false;
   return `
     ${settingControlRow(
-      'Café name',
-      'Shown in the current bag banner. Leave blank to hide it.',
-      (a11y) => `<input class="settings-input" type="text" data-action="settings-cafe-name" maxlength="48" autocomplete="off" placeholder="e.g. The Coffee Lab" value="${escapeAttr(preferences.cafeName)}" ${a11y.attributes} ${syncedDisabled ? 'disabled' : ''} />`,
-      '', 'appearance-cafe-name'
-    )}
-    ${settingControlRow(
       'Theme',
       'Skin color theme (tap a swatch to preview it live)',
       (a11y) => themePicker(preferences.theme, a11y.attributes),
@@ -733,16 +727,8 @@ function renderAppearanceRows(preferences: SettingsPreferences, options: Setting
       'appearance-ui-scale'
     )}
     ${settingControlRow(
-      'Bag button size',
-      'Larger touch targets for the bag shortcuts below the current setup',
-      (a11y) => segmentedControl('settings-bag-button-size', preferences.bagButtonSize, [
-        ['standard', 'Standard'], ['large', 'Large']
-      ], a11y.attributes, syncedDisabled),
-      '', 'appearance-bag-button-size'
-    )}
-    ${settingControlRow(
       'Bag shortcuts',
-      'Favorites stay visible in a fixed order, including the current coffee',
+      'Bag buttons beside the current coffee: favorites first, in a fixed order',
       (a11y) => segmentedControl('settings-bag-shortcuts', preferences.bagShortcuts, [
         ['rotation', 'Favorites & recent'], ['favorites', 'Favorites only']
       ], a11y.attributes, syncedDisabled),

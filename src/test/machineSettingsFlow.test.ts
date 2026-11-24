@@ -331,9 +331,7 @@ function preferences(): SettingsPreferences {
   return {
     theme: 'dark',
     uiScale: 'standard',
-      bagButtonSize: 'standard',
       bagShortcuts: 'rotation',
-      cafeName: '',
     waterSoftLimitMl: 0,
     wakeAppZoneEnabled: false,
     wakeAppZonePosition: 'top',

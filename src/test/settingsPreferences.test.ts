@@ -1,6 +1,5 @@
 import {
   isWakeAppZonePosition,
-  normalizeCafeName,
   readSettingsPreferences,
   writeSettingsPreferencePatch,
   writeSettingsPreferences
@@ -99,18 +98,3 @@ function equal<T>(actual: T, expected: T): void {
     throw new Error(`Expected ${String(expected)}, received ${String(actual)}`);
   }
 }
-
-
-await run('optional cafe header name syncs and normalizes without changing other preferences', () => {
-  clearSyncedCache();
-  setStorePushHandler(null);
-  equal(readSettingsPreferences().cafeName, '');
-  const scale = readSettingsPreferences().uiScale;
-  writeSettingsPreferencePatch({ cafeName: "  Omer's\n Cafe  " });
-  equal(readSettingsPreferences().cafeName, "Omer's Cafe");
-  equal(readSettingsPreferences().uiScale, scale);
-  equal([...normalizeCafeName('☕'.repeat(60))].length, 48);
-  writeSettingsPreferencePatch({ cafeName: '  ' });
-  equal(readSettingsPreferences().cafeName, '');
-  clearSyncedCache();
-});

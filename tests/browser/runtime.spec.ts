@@ -94,22 +94,16 @@ test('gateway failure reaches an explicit, usable demo shell', async ({ page }) 
   expect(pageErrors).toEqual([]);
 });
 
-test('landscape tablet keeps a readable shot graph below the setup banner', async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 1006, height: 600 });
+test('landscape tablet keeps a readable shot graph below the one-row hero', async ({ page }, testInfo) => {
+  // The machine tablet's WebView viewport.
+  await page.setViewportSize({ width: 1007, height: 602 });
   await page.route('**/api/v1/**', (route) => route.abort('failed'));
   await page.goto('/');
   await expect(page.locator('#detail-canvas')).toBeVisible();
-  await page.getByRole('button', { name: 'Settings', exact: true }).first().click();
-  await page.getByRole('button', { name: 'App', exact: true }).click();
-  await page.getByRole('textbox', { name: 'Café name', exact: true }).fill("Omer's Cafe");
-  await page.getByRole('textbox', { name: 'Café name', exact: true }).press('Tab');
-  await page.locator('[data-action="go-view"][data-value="workbench"]').first().click();
-  await expect(page.locator('.cafe-header-compact')).toBeVisible();
-  const banner = await page.locator('.hero').boundingBox();
+  const hero = await page.locator('.hero').boundingBox();
   const chart = await page.locator('#detail-canvas').boundingBox();
-  expect(banner!.height).toBeLessThanOrEqual(100);
+  expect(hero!.height).toBeLessThanOrEqual(60);
   expect(chart!.height).toBeGreaterThanOrEqual(220);
-  await expect(page.locator('.hero-current-label')).toHaveText('Current bag');
-  await expect(page.getByRole('group', { name: 'Profile presets', exact: true })).toBeVisible();
+  await expect(page.locator('.cafe-header, .hero-current-label, .hero-profile-preset')).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('tablet-readable-graph.png') });
 });

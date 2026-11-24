@@ -214,50 +214,39 @@ test('shared coffee appearance and distinct shortcuts survive selection, new bag
   await expect(page.locator('img.hero-bag-image')).toBeVisible();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('button', { name: 'App', exact: true }).click();
-  await page.locator('[data-action="settings-bag-button-size"][data-value="large"]').click();
+  await expect(page.locator('[data-action="settings-bag-button-size"], [data-action="settings-cafe-name"]')).toHaveCount(0);
   await page.locator('[data-action="settings-bag-shortcuts"][data-value="favorites"]').click();
   await page.locator('[data-action="go-view"][data-value="workbench"]').first().click();
   const shortcut = page.locator('.hero-rotation-tile');
   await expect(shortcut).toHaveCount(1);
   await expect(shortcut).toHaveText('Neta (Santo Domingo)');
   await expect(page.locator('img.hero-bag-image')).toBeVisible();
-  await expect(page.getByRole('group', { name: 'Favorites', exact: true })).toBeVisible();
-  await expect(page.getByRole('group', { name: 'Other bags', exact: true })).toBeVisible();
-  await expect(page.getByRole('group', { name: 'Profile presets', exact: true })).toBeVisible();
-  await expect(page.locator('.hero-current-label')).toHaveText('Current bag');
-  await page.getByRole('button', { name: 'Use profile Morning preset' }).click();
-  await expect(page.locator('.hero-current-detail')).toContainText('Morning preset');
-  await expect(page.locator('.bean-name')).toHaveText('Neta (Santo Domingo)');
-  const size = await shortcut.boundingBox();
-  expect(size!.height).toBeGreaterThanOrEqual(64);
-  const favoriteArea = await page.getByRole('group', { name: 'Favorites', exact: true }).locator('.hero-shortcut-buttons').boundingBox();
-  expect(size!.width).toBeGreaterThanOrEqual(favoriteArea!.width - 1);
-  const recipeBox = await page.locator('.recipe-grid').boundingBox();
-  expect(size!.y + size!.height).toBeLessThanOrEqual(recipeBox!.y);
-  // The 1340x800 machine tablet and shorter landscape screens use the compact banner.
-  for (const viewport of [{ width: 1340, height: 800 }, { width: 1006, height: 600 }]) {
+  await expect(page.locator('.hero-current-detail')).toHaveText('Test');
+  await expect(page.locator('.hero-current-label, .hero-profile-preset, .cafe-header')).toHaveCount(0);
+  // One fixed-height row on the tablet and on a desktop window: the current
+  // coffee, the facts, and the dock share one vertical center.
+  for (const viewport of [{ width: 1007, height: 602 }, { width: 1340, height: 900 }]) {
     await page.setViewportSize(viewport);
-    expect((await shortcut.boundingBox())!.height).toBeLessThanOrEqual(50);
-    expect((await page.locator('.hero').boundingBox())!.height).toBeLessThanOrEqual(100);
-    // A taller favorite must not lift its column above Other bags and Profile presets.
-    const labelTops = await page.locator('.hero-shortcut-label').evaluateAll((labels) => labels.map((label) => Math.round(label.getBoundingClientRect().top)));
-    expect(new Set(labelTops).size).toBe(1);
-    const buttonTops = await page.locator('.hero-shortcut-buttons > button:first-child:not(.hero-shortcut-add)').evaluateAll((buttons) => buttons.map((button) => Math.round(button.getBoundingClientRect().top)));
-    expect(new Set(buttonTops).size).toBe(1);
+    expect((await page.locator('.hero').boundingBox())!.height).toBeLessThanOrEqual(60);
+    const size = await shortcut.boundingBox();
+    expect(Math.round(size!.width)).toBe(132);
+    const centers = await page.locator('.hero > *').evaluateAll((items) => items.map((item) => {
+      const box = item.getBoundingClientRect();
+      return Math.round(box.top + box.height / 2);
+    }));
+    expect(new Set(centers).size).toBe(1);
   }
-  await page.setViewportSize({ width: 1340, height: 900 });
   await shortcut.click();
   await expect(page.locator('.bean-name')).toHaveText('Neta (Santo Domingo)');
   await page.screenshot({ path: testInfo.outputPath('bag-banner.png') });
   await page.reload();
-  await expect(page.locator('.hero.large-bag-buttons')).toBeVisible();
   await expect(shortcut).toHaveCount(1);
   await expect(shortcut).toHaveText('Neta (Santo Domingo)');
   await expect(page.locator('img.hero-bag-image')).toBeVisible();
 });
 
 
-test('uploaded coffee photo appears in Other bags before that coffee is selected', async ({ page }, testInfo) => {
+test('uploaded coffee photo appears in the bag dock before that coffee is selected', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1006, height: 600 });
   await fakeGateway(page);
   await page.goto('/');
@@ -282,7 +271,7 @@ test('uploaded coffee photo appears in Other bags before that coffee is selected
   await page.screenshot({ path: testInfo.outputPath('coffee-picker-images.png') });
   await page.locator('.bean-row[data-id="bean-2"]').click();
   await expect(page.locator('.bean-name')).toHaveText('Second coffee');
-  const other = page.getByRole('group', { name: 'Other bags', exact: true }).getByRole('button', { name: 'Switch to Morning roast' });
+  const other = page.locator('.hero-rotation').getByRole('button', { name: 'Switch to Morning roast' });
   await expect(other.locator('img.hero-shortcut-image')).toHaveAttribute('src', /^data:image\/jpeg;base64,/);
   await page.screenshot({ path: testInfo.outputPath('other-bags-photo.png') });
 });
@@ -327,8 +316,8 @@ test('shot rating stays visible with long profile text and Derek notes', async (
   await page.screenshot({ path: testInfo.outputPath('visible-shot-rating.png') });
 });
 
-test('favorite fills its section and shows a filled heart', async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 1340, height: 900 });
+test('a favorite shows a filled heart in its fixed dock slot', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1007, height: 602 });
   await fakeGateway(page);
   await page.goto('/');
   await openCreateForm(page);
@@ -339,17 +328,11 @@ test('favorite fills its section and shows a filled heart', async ({ page }, tes
   await expect(page.locator('.coffee-icon-choice[data-value="heart"] [data-icon="heart"]')).toBeVisible();
   await page.locator('[data-action="toggle-favorite-bean"]').click();
   await page.locator('.bean-row').click();
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByRole('button', { name: 'App', exact: true }).click();
-  await page.locator('[data-action="settings-bag-button-size"][data-value="large"]').click();
-  await page.locator('[data-action="go-view"][data-value="workbench"]').first().click();
-  const group = page.getByRole('group', { name: 'Favorites', exact: true });
-  const button = group.getByRole('button', { name: 'Switch to Neta', exact: true });
+  const button = page.locator('.hero-rotation').getByRole('button', { name: 'Switch to Neta', exact: true });
   await expect(button.locator('[data-icon="heart"]')).toHaveCSS('fill', 'rgb(237, 121, 149)');
   const card = await button.boundingBox();
-  const available = await group.locator('.hero-shortcut-buttons').boundingBox();
-  expect(card!.width).toBeGreaterThanOrEqual(available!.width - 1);
-  expect(card!.height).toBeGreaterThanOrEqual(64);
+  expect(Math.round(card!.width)).toBe(132);
+  expect(Math.round(card!.height)).toBe(38);
   await page.locator('.hero').screenshot({ path: testInfo.outputPath('favorite-heart.png') });
 });
 
@@ -360,10 +343,12 @@ test('visual icon choices use hearts automatically only for favorites and preser
   await openCreateForm(page);
   await page.getByRole('button', { name: 'Use Leaf icon', exact: true }).click();
   await expect(page.locator('[name="coffeeIcon"]')).toHaveValue('leaf');
-  await page.evaluate(() => fetch('/api/v1/store/beanie/beanie.settings.cafe-name', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify('Draft icon check')
+  // A synced setting arriving from the gateway re-renders the shell under the open draft.
+  await expect(page.locator('#top-clock')).toBeVisible();
+  await page.evaluate(() => fetch('/api/v1/store/beanie/beanie.settings.topbar-clock', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify('false')
   }));
-  await expect(page.locator('.cafe-header-full .cafe-header-title')).toHaveText('Draft icon check', { timeout: 12000 });
+  await expect(page.locator('#top-clock')).toHaveCount(0, { timeout: 12000 });
   await expect(page.getByRole('button', { name: 'Use Leaf icon', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('[name="coffeeIcon"]')).toHaveValue('leaf');
   await page.getByRole('button', { name: 'Add coffee', exact: true }).click();
@@ -394,37 +379,4 @@ test('visual icon choices use hearts automatically only for favorites and preser
   await page.screenshot({ path: testInfo.outputPath('coffee-icon-choices.png') });
   await page.getByRole('button', { name: 'Use saved coffee photo', exact: true }).click();
   await expect(page.locator('.bean-row-image img')).toBeVisible();
-});
-
-
-test('custom cafe header fits the existing banner, links to settings, and survives reload', async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 1340, height: 900 });
-  await fakeGateway(page);
-  await page.goto('/');
-  await openCreateForm(page);
-  await page.locator('[name="displayName"]').fill('Neta (Santo Domingo)');
-  await page.getByRole('button', { name: 'Add coffee', exact: true }).click();
-  await page.locator('.bean-row').click();
-  const before = await page.locator('.hero').boundingBox();
-  await expect(page.locator('.cafe-header')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByRole('button', { name: 'App', exact: true }).click();
-  await page.getByRole('textbox', { name: 'Café name', exact: true }).fill("Omer's Cafe");
-  await page.getByRole('textbox', { name: 'Café name', exact: true }).press('Tab');
-  await page.locator('[data-action="go-view"][data-value="workbench"]').first().click();
-  await expect(page.locator('.cafe-header-full .cafe-header-title')).toHaveText("Omer's Cafe");
-  const after = await page.locator('.hero').boundingBox();
-  expect(after!.height).toBeLessThanOrEqual(before!.height + 1);
-  await page.locator('.hero').screenshot({ path: testInfo.outputPath('cafe-header.png') });
-  await page.locator('.cafe-header-full').click();
-  await expect(page.getByRole('textbox', { name: 'Café name', exact: true })).toHaveValue("Omer's Cafe");
-  await page.locator('[data-action="go-view"][data-value="workbench"]').first().click();
-  await page.reload();
-  await expect(page.locator('.cafe-header-full .cafe-header-title')).toHaveText("Omer's Cafe");
-  for (const viewport of [{ width: 1340, height: 800 }, { width: 1006, height: 600 }]) {
-    await page.setViewportSize(viewport);
-    await expect(page.locator('.cafe-header-full')).toBeHidden();
-    await expect(page.locator('.cafe-header-compact')).toBeVisible();
-    expect((await page.locator('.hero').boundingBox())!.height).toBeLessThanOrEqual(100);
-  }
 });

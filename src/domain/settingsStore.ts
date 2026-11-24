@@ -18,8 +18,6 @@ export const SETTINGS_STORE_NAMESPACE = 'beanie';
 // In particular, never add the Gemini API key here: storage.ts owns its
 // device-local value and deletes the historic gateway copy during migration.
 export const uiScaleKey = 'beanie.settings.ui-scale';
-export const cafeNameKey = 'beanie.settings.cafe-name';
-export const bagButtonSizeKey = 'beanie.settings.bag-button-size';
 export const bagShortcutsKey = 'beanie.settings.bag-shortcuts';
 export const waterSoftKey = 'beanie.settings.water-soft-ml';
 export const wakeAppZoneEnabledKey = 'beanie.settings.wake-app-zone';
@@ -50,8 +48,6 @@ const inputDialogRecentKeys = inputDialogRecentKinds.map((kind) => `${inputDialo
 
 export const SYNCED_SETTING_KEYS: readonly string[] = [
   uiScaleKey,
-  bagButtonSizeKey,
-  cafeNameKey,
   bagShortcutsKey,
   waterSoftKey,
   wakeAppZoneEnabledKey,

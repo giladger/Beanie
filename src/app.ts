@@ -399,7 +399,6 @@ import { scoreValueFromTap } from './components/shotScore';
 import { isServiceShot } from './domain/shotRecord';
 import {
   applySettingsPreferences,
-  normalizeCafeName,
   isClockFormat,
   isWakeAppZonePosition,
   readSettingsPreferences,
@@ -742,6 +741,9 @@ function isPhoneTab(value: string | undefined): value is PhoneTab {
 function isSettingsMachineState(value: string | undefined): value is MachineState {
   return value === 'descaling' || value === 'sleeping';
 }
+
+/** Fixed-width bag slots in the workbench hero dock, favorites first. */
+const HERO_DOCK_SLOTS = 3;
 
 export class BeanieApp {
   private readonly gatewayMutations = new GatewayMutationCoordinator<string>();
@@ -5114,9 +5116,6 @@ export class BeanieApp {
       'dismiss-store-error': async () => {
         await this.dismissStoreError();
       },
-      'open-cafe-settings': () => {
-        this.machineSettings.open('app');
-      },
       'open-settings': () => {
         this.machineSettings.open();
       },
@@ -5192,9 +5191,6 @@ export class BeanieApp {
         if (isThemePreference(el.dataset.value)) {
           this.machineSettings.updatePreferences({ theme: el.dataset.value });
         }
-      },
-      'settings-bag-button-size': ({ value }) => {
-        if (value === 'standard' || value === 'large') this.machineSettings.updatePreferences({ bagButtonSize: value });
       },
       'settings-bag-shortcuts': ({ value }) => {
         if (value === 'rotation' || value === 'favorites') this.machineSettings.updatePreferences({ bagShortcuts: value });
@@ -5699,10 +5695,6 @@ export class BeanieApp {
       const files = Array.from(input.files ?? []);
       input.value = '';
       if (files.length > 0) void this.scannerFlow.addScannerPhotos(files);
-      return;
-    }
-    if (target.dataset.action === 'settings-cafe-name') {
-      this.machineSettings.updatePreferences({ cafeName: normalizeCafeName(target.value) });
       return;
     }
     if (target.dataset.action === 'bean-image-upload') {
@@ -6642,14 +6634,13 @@ export class BeanieApp {
   private heroViewModel(bean: Bean | null): WorkbenchHeroViewModel {
     const rotation = this.heroRotationTiles(bean);
     if (!bean) {
-      return { cafeName: this.state.settingsPreferences.cafeName, beanName: 'Pick a bag', roaster: null, age: null, remaining: null, shotsLeft: null, beanId: null, rotation };
+      return { beanName: 'Pick a bag', roaster: null, age: null, remaining: null, shotsLeft: null, beanId: null, rotation };
     }
     const batch = this.selectedBatch();
     const remaining = positiveNumber(batch?.weightRemaining);
     const avgDose = this.averageDoseIn();
     const shotsLeft = remaining != null && avgDose != null ? Math.floor(remaining / avgDose) : null;
     return {
-      cafeName: this.state.settingsPreferences.cafeName,
       beanName: beanDisplayName(bean, this.state.batchesByBean[bean.id] ?? []) ?? bean.name,
       roaster: bean.roaster?.trim() || null,
       // Compact "65d" / "65d · 40a" badge form — the hero row has no width to
@@ -6659,14 +6650,8 @@ export class BeanieApp {
       shotsLeft: shotsLeft == null ? null : `~${shotsLeft} shot${shotsLeft === 1 ? '' : 's'}`,
       beanId: bean.id,
       rotation,
-      largeButtons: this.state.settingsPreferences.bagButtonSize === 'large',
       image: beanImage(bean, this.state.batchesByBean[bean.id] ?? []),
-      iconName: beanIcon(bean, this.state.batchesByBean[bean.id] ?? [], this.state.favoriteBeans.includes(bean.id)),
-      profileTitle: this.state.draft.profileTitle,
-      profilePresets: this.state.favoriteProfiles.flatMap((id) => {
-        const record = this.state.profiles.find((item) => item.id === id);
-        return record ? [{ id, title: record.profile.title ?? 'Untitled profile', selected: id === this.profileIdForDraft() }] : [];
-      })
+      iconName: beanIcon(bean, this.state.batchesByBean[bean.id] ?? [], this.state.favoriteBeans.includes(bean.id))
     };
   }
 
@@ -6683,7 +6668,8 @@ export class BeanieApp {
     const other = this.state.settingsPreferences.bagShortcuts === 'favorites' ? [] : rotationBeans({
       ...input, beans: this.state.beans.filter((bean) => !favorites.has(bean.id)), favoriteBeanIds: []
     });
-    return [...pinned, ...other].map((bean) => {
+    // The dock's fixed-width slots fit three beside the facts on the tablet.
+    return [...pinned, ...other].slice(0, HERO_DOCK_SLOTS).map((bean) => {
       const batches = this.state.batchesByBean[bean.id] ?? [];
       return {
         id: bean.id,
