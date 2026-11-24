@@ -239,6 +239,11 @@ test('shared coffee appearance and distinct shortcuts survive selection, new bag
     await page.setViewportSize(viewport);
     expect((await shortcut.boundingBox())!.height).toBeLessThanOrEqual(50);
     expect((await page.locator('.hero').boundingBox())!.height).toBeLessThanOrEqual(100);
+    // A taller favorite must not lift its column above Other bags and Profile presets.
+    const labelTops = await page.locator('.hero-shortcut-label').evaluateAll((labels) => labels.map((label) => Math.round(label.getBoundingClientRect().top)));
+    expect(new Set(labelTops).size).toBe(1);
+    const buttonTops = await page.locator('.hero-shortcut-buttons > button:first-child:not(.hero-shortcut-add)').evaluateAll((buttons) => buttons.map((button) => Math.round(button.getBoundingClientRect().top)));
+    expect(new Set(buttonTops).size).toBe(1);
   }
   await page.setViewportSize({ width: 1340, height: 900 });
   await shortcut.click();

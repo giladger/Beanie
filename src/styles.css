@@ -11048,6 +11048,10 @@ p {
   .hero-shortcut-label { padding-right: 24px; font-size: 9px; line-height: 18px; margin-bottom: 3px; }
   .hero-shortcut-buttons { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; padding-bottom: 2px; }
   .hero-shortcut-buttons button { flex: none; }
+  /* One fixed row height keeps every column's label and buttons on the same line,
+     whether a section holds photos, plain tiles, or only its add button. */
+  .hero-shortcut-buttons { min-height: 40px; }
+  .hero-shortcut-buttons > button:not(.hero-shortcut-add) { height: 38px; padding-block: 0; line-height: 1.1; }
   .hero-profile-preset { min-height: 38px; padding: 8px; font-size: 11px; }
   .hero .hero-rotation-tile { padding: 8px 10px; }
   .hero .hero-rotation-name { font-size: 13px; }
@@ -11093,7 +11097,8 @@ p {
 .hero .hero-favorite .icon { width: 25px; height: 25px; }
 svg.icon[data-icon="heart"] { fill: #ed7995; stroke: #ffbacb; stroke-width: 1.5; filter: drop-shadow(0 1px 2px rgba(154, 45, 79, .28)); }
 @media (min-width: 851px) and (max-height: 850px) {
-  .hero .hero-favorite, .hero.large-bag-buttons .hero-favorite { min-height: 48px; }
+  /* Match the other shortcut buttons so every banner column lines up. */
+  .hero .hero-favorite, .hero.large-bag-buttons .hero-favorite { min-height: 38px; }
   .hero .hero-favorite .hero-rotation-name { font-size: 13px; }
   .hero .hero-favorite .icon { width: 20px; height: 20px; }
 }
