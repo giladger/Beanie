@@ -11024,7 +11024,7 @@ p {
 .hero-image-placeholder { color: var(--teal); }
 
 /* Landscape tablets need the plot to retain most of the vertical space. */
-@media (min-width: 851px) and (max-height: 750px) {
+@media (min-width: 851px) and (max-height: 850px) {
   .hero,
   .hero.has-rotation,
   .hero.large-bag-buttons.has-rotation {
@@ -11092,7 +11092,7 @@ p {
 .hero .hero-favorite .hero-rotation-name { font-size: 18px; }
 .hero .hero-favorite .icon { width: 25px; height: 25px; }
 svg.icon[data-icon="heart"] { fill: #ed7995; stroke: #ffbacb; stroke-width: 1.5; filter: drop-shadow(0 1px 2px rgba(154, 45, 79, .28)); }
-@media (min-width: 851px) and (max-height: 750px) {
+@media (min-width: 851px) and (max-height: 850px) {
   .hero .hero-favorite, .hero.large-bag-buttons .hero-favorite { min-height: 48px; }
   .hero .hero-favorite .hero-rotation-name { font-size: 13px; }
   .hero .hero-favorite .icon { width: 20px; height: 20px; }
@@ -11123,7 +11123,7 @@ svg.icon[data-icon="heart"] { fill: #ed7995; stroke: #ffbacb; stroke-width: 1.5;
 .cafe-header:hover { border-color: rgba(137, 255, 202, .6); }
 .cafe-header:focus-visible { outline: 2px solid #75e8b8; outline-offset: 3px; }
 .cafe-header-compact { display: none; }
-@media (min-width: 851px) and (max-height: 750px) {
+@media (min-width: 851px) and (max-height: 850px) {
   .cafe-header-full { display: none; }
   .hero-shortcut-heading { justify-content: space-between; padding-right: 26px; gap: 6px; }
   .hero-shortcut-heading .hero-shortcut-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 0; }

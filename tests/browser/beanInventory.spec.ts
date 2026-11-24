@@ -176,7 +176,7 @@ test('the edit form still saves a coffee when focus leaves it', async ({ page })
 
 
 test('shared coffee appearance and distinct shortcuts survive selection, new bags, and reload', async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 1340, height: 800 });
+  await page.setViewportSize({ width: 1340, height: 900 });
   const log = await fakeGateway(page);
   await page.goto('/');
   await openCreateForm(page);
@@ -234,10 +234,13 @@ test('shared coffee appearance and distinct shortcuts survive selection, new bag
   expect(size!.width).toBeGreaterThanOrEqual(favoriteArea!.width - 1);
   const recipeBox = await page.locator('.recipe-grid').boundingBox();
   expect(size!.y + size!.height).toBeLessThanOrEqual(recipeBox!.y);
-  await page.setViewportSize({ width: 1006, height: 600 });
-  expect((await shortcut.boundingBox())!.height).toBeLessThanOrEqual(50);
-  expect((await page.locator('.hero').boundingBox())!.height).toBeLessThanOrEqual(100);
-  await page.setViewportSize({ width: 1340, height: 800 });
+  // The 1340x800 machine tablet and shorter landscape screens use the compact banner.
+  for (const viewport of [{ width: 1340, height: 800 }, { width: 1006, height: 600 }]) {
+    await page.setViewportSize(viewport);
+    expect((await shortcut.boundingBox())!.height).toBeLessThanOrEqual(50);
+    expect((await page.locator('.hero').boundingBox())!.height).toBeLessThanOrEqual(100);
+  }
+  await page.setViewportSize({ width: 1340, height: 900 });
   await shortcut.click();
   await expect(page.locator('.bean-name')).toHaveText('Neta (Santo Domingo)');
   await page.screenshot({ path: testInfo.outputPath('bag-banner.png') });
@@ -320,7 +323,7 @@ test('shot rating stays visible with long profile text and Derek notes', async (
 });
 
 test('favorite fills its section and shows a filled heart', async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 1340, height: 800 });
+  await page.setViewportSize({ width: 1340, height: 900 });
   await fakeGateway(page);
   await page.goto('/');
   await openCreateForm(page);
@@ -390,7 +393,7 @@ test('visual icon choices use hearts automatically only for favorites and preser
 
 
 test('custom cafe header fits the existing banner, links to settings, and survives reload', async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 1340, height: 800 });
+  await page.setViewportSize({ width: 1340, height: 900 });
   await fakeGateway(page);
   await page.goto('/');
   await openCreateForm(page);
@@ -413,8 +416,10 @@ test('custom cafe header fits the existing banner, links to settings, and surviv
   await page.locator('[data-action="go-view"][data-value="workbench"]').first().click();
   await page.reload();
   await expect(page.locator('.cafe-header-full .cafe-header-title')).toHaveText("Omer's Cafe");
-  await page.setViewportSize({ width: 1006, height: 600 });
-  await expect(page.locator('.cafe-header-full')).toBeHidden();
-  await expect(page.locator('.cafe-header-compact')).toBeVisible();
-  expect((await page.locator('.hero').boundingBox())!.height).toBeLessThanOrEqual(100);
+  for (const viewport of [{ width: 1340, height: 800 }, { width: 1006, height: 600 }]) {
+    await page.setViewportSize(viewport);
+    await expect(page.locator('.cafe-header-full')).toBeHidden();
+    await expect(page.locator('.cafe-header-compact')).toBeVisible();
+    expect((await page.locator('.hero').boundingBox())!.height).toBeLessThanOrEqual(100);
+  }
 });
