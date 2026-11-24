@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.3.13 - 2026-11-24
+
+- The top of the workbench is one row again. v0.3.11's two-row banner took
+  half the tablet's height once several profiles were starred, squashing the
+  shot graph. The header is back to its earlier single row, keeping the new
+  coffee icons and photos: the current coffee (tap its icon or photo to change
+  it, tap the name to pick another bag) with its roaster, then grams left,
+  shots left and age, then up to three fixed-size bag buttons at the right
+  edge, favorites first. Settings > App > Bag shortcuts still chooses between
+  favorites and recent bags or favorites only.
+- Removed with the banner: the "Current bag" label, the profile name in the
+  header (it stays in the Profile control below), the starred profile preset
+  buttons, the café sign, and the Bag button size setting.
+
 ## v0.3.12 - 2026-11-22
 
 - Shot now starts the recipe shown on screen. After a reload or wake, the
