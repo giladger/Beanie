@@ -6627,8 +6627,16 @@ export class BeanieApp {
             this.state.workflow?.profile
         )
       },
-      historyHtml: this.renderHistory()
+      historyHtml: this.renderHistory(),
+      scaleBanner: this.scaleBannerModel()
     });
+  }
+
+  private scaleBannerModel(): { blocking: boolean } | null {
+    if (this.state.demo || this.state.gatewayLinkDown || this.state.asleep) return null;
+    const bundle = this.state.settingsBundle;
+    if (!bundle || scaleConnected(this.state.scale)) return null;
+    return { blocking: bundle.rea.blockOnNoScale === true };
   }
 
   private heroViewModel(bean: Bean | null): WorkbenchHeroViewModel {
