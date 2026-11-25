@@ -415,7 +415,7 @@ p {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 14px;
+  padding: 4px 14px;
   border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--warn, #e0a030) 18%, var(--bg));
   color: var(--text);
@@ -435,7 +435,8 @@ p {
 
 .scale-banner-action {
   flex: none;
-  min-height: 40px;
+  min-height: 34px;
+  padding-block: 4px;
 }
 
 .eyebrow,
