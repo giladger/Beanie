@@ -317,6 +317,11 @@ run('workbench shows a scale banner only while no scale is connected, and says w
   excludes(renderWorkbench(model()), 'id="scale-banner"');
   const blocking = renderWorkbench({ ...model(), scaleBanner: { blocking: true } });
   includes(blocking, 'id="scale-banner"');
+  // The app shell is a two-row grid: the banner must share a row with the topbar.
+  includes(blocking, 'class="top-stack"');
+  const stack = blocking.slice(blocking.indexOf('class="top-stack"'), blocking.indexOf('<main class="workbench">'));
+  includes(stack, 'class="topbar"');
+  includes(stack, 'id="scale-banner"');
   includes(blocking, 'scale-banner-blocking');
   includes(blocking, 'Shots are blocked until it connects.');
   includes(blocking, 'data-action="scale-stat"');

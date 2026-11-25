@@ -99,8 +99,10 @@ type EditField = 'dose' | 'yield' | 'ratio' | 'grinderSetting' | 'temperature';
 
 export function renderWorkbench(model: WorkbenchViewModel): string {
   return `
-    ${renderTopbar(model.topbar)}
-    ${renderScaleBanner(model.scaleBanner ?? null)}
+    <div class="top-stack">
+      ${renderTopbar(model.topbar)}
+      ${renderScaleBanner(model.scaleBanner ?? null)}
+    </div>
     <main class="workbench">
       <section class="surface">
         ${renderHero(model.hero)}

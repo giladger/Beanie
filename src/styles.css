@@ -406,6 +406,10 @@ p {
   background: color-mix(in srgb, var(--bg) 94%, transparent);
 }
 
+.top-stack {
+  min-width: 0;
+}
+
 .scale-banner {
   display: flex;
   align-items: center;
