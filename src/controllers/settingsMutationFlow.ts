@@ -113,6 +113,11 @@ export interface SetNoScaleBlockRequest extends SettingsMutationContext {
   previousKnown: boolean;
 }
 
+export interface SetPreferredScaleRequest extends SettingsMutationContext {
+  bundle: SettingsBundle;
+  scaleId: string;
+}
+
 interface MutationPlan<Value> {
   key: string;
   optimistic: SettingsBundleMutation;
@@ -312,6 +317,27 @@ export class SettingsMutationFlow {
       reconcile: () => ({ type: 'set-field', field, value: request.enabled }),
       confirmed: () => ({ type: 'set-field', field, value: request.enabled }),
       effect: () => ({ noScaleBlock: request.enabled ? 'enabled' : 'disabled' })
+    });
+  }
+
+  /**
+   * Reaprime only runs its scale auto-reconnect for `preferredScaleId`, and its
+   * REST connect endpoint does not record one, so Beanie remembers the scale.
+   */
+  setPreferredScale(request: SetPreferredScaleRequest): SettingsMutationStart {
+    const previous = request.bundle.rea.preferredScaleId;
+    if (previous === request.scaleId) return { type: 'unchanged' };
+    const field = { group: 'rea' as const, key: 'preferredScaleId' };
+    return this.start({
+      key: fieldMutationKey(field.group, field.key),
+      context: request,
+      optimistic: { type: 'set-field', field, value: request.scaleId },
+      rollback: { type: 'set-field', field, value: previous },
+      optimisticStatus: null,
+      runRemote: () => this.remote.persistField('rea', 'preferredScaleId', request.scaleId),
+      savedStatus: () => 'Scale connected — it will reconnect automatically',
+      failureStatus: 'Scale connected, but saving it for auto-reconnect failed',
+      confirmed: () => ({ type: 'set-field', field, value: request.scaleId })
     });
   }
 

@@ -172,18 +172,31 @@ export function createSettingsController(gateway: SettingsControllerGateway): Se
     async connectPreferredDevices({ local, preferredScaleId }) {
       if (local) return { devices: null, status: 'Auto-connect unavailable in demo mode' };
       try {
-        const devices = await gateway.connectPreferredDevices();
-        const preferredScale = preferredScaleId
-          ? devices.find((device) => device.id === preferredScaleId && device.type === 'scale')
-          : null;
-        const preferredScaleConnected = preferredScale?.state === 'connected';
+        let devices = await gateway.connectPreferredDevices();
+        const scales = devices.filter((device) => device.type === 'scale');
+        if (preferredScaleId) {
+          const preferredScaleConnected = scales.some(
+            (device) => device.id === preferredScaleId && device.state === 'connected'
+          );
+          return {
+            devices,
+            status: preferredScaleConnected ? 'Preferred scale connected' : 'Preferred scale not found — is it on?'
+          };
+        }
+        if (scales.some((device) => device.state === 'connected')) {
+          return { devices, status: 'Scale connected' };
+        }
+        // No preferred scale yet: an unambiguous single scale is connected directly.
+        if (scales.length === 1) {
+          await gateway.connectDevice(scales[0].id);
+          devices = await gateway.devices().catch(() => devices);
+          return { devices, status: 'Scale connected' };
+        }
         return {
           devices,
-          status: preferredScaleId
-            ? preferredScaleConnected
-              ? 'Preferred scale connected'
-              : 'Preferred scale not found'
-            : 'Auto-connect complete'
+          status: scales.length === 0
+            ? 'No scale found — is it on?'
+            : 'Several scales found — pick one in Settings → Connection'
         };
       } catch {
         return { devices: null, status: 'Auto-connect failed' };

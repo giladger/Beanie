@@ -48,7 +48,41 @@ await run('settings controller reports preferred scale connection status', async
   equal(connected.status, 'Preferred scale connected');
 
   const missing = await controller.connectPreferredDevices({ local: false, preferredScaleId: 'scale-missing' });
-  equal(missing.status, 'Preferred scale not found');
+  equal(missing.status, 'Preferred scale not found — is it on?');
+});
+
+await run('settings controller connects the only scale when no preferred scale is set', async () => {
+  const gateway = fakeGateway();
+  const scale = { id: 'arc-1', name: 'ARC', type: 'scale' as const, state: 'disconnected' as const };
+  const connected: string[] = [];
+  gateway.connectPreferredDevices = async () => [scale];
+  gateway.connectDevice = async (id) => { connected.push(id); };
+  gateway.devices = async () => [{ ...scale, state: 'connected' }];
+  const controller = createSettingsController(gateway);
+
+  const result = await controller.connectPreferredDevices({ local: false, preferredScaleId: null });
+  equal(connected.join(','), 'arc-1');
+  equal(result.status, 'Scale connected');
+  equal(result.devices?.[0]?.state, 'connected');
+});
+
+await run('settings controller does not guess between several scales', async () => {
+  const gateway = fakeGateway();
+  const connected: string[] = [];
+  gateway.connectPreferredDevices = async () => [
+    { id: 'arc-1', name: 'ARC', type: 'scale', state: 'disconnected' },
+    { id: 'lunar-1', name: 'Lunar', type: 'scale', state: 'disconnected' }
+  ];
+  gateway.connectDevice = async (id) => { connected.push(id); };
+  const controller = createSettingsController(gateway);
+
+  const several = await controller.connectPreferredDevices({ local: false, preferredScaleId: null });
+  equal(connected.length, 0);
+  equal(several.status, 'Several scales found — pick one in Settings → Connection');
+
+  gateway.connectPreferredDevices = async () => [];
+  const none = await controller.connectPreferredDevices({ local: false, preferredScaleId: null });
+  equal(none.status, 'No scale found — is it on?');
 });
 
 await run('settings controller handles demo and gateway account operations', async () => {
